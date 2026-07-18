@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/bubbletea-tui-design-system-5c2f3709-9093-45fd-9762-fbe0a39b6c7b/tokens/fonts.css">
+<link rel="stylesheet" href="_ds/bubbletea-tui-design-system-5c2f3709-9093-45fd-9762-fbe0a39b6c7b/tokens/colors.css">
+<link rel="stylesheet" href="_ds/bubbletea-tui-design-system-5c2f3709-9093-45fd-9762-fbe0a39b6c7b/tokens/typography.css">
+<link rel="stylesheet" href="_ds/bubbletea-tui-design-system-5c2f3709-9093-45fd-9762-fbe0a39b6c7b/tokens/spacing.css">
+<link rel="stylesheet" href="_ds/bubbletea-tui-design-system-5c2f3709-9093-45fd-9762-fbe0a39b6c7b/styles.css">
+<script src="_ds/bubbletea-tui-design-system-5c2f3709-9093-45fd-9762-fbe0a39b6c7b/_ds_bundle.js"></script>
+<style>
+  html, body { margin: 0; }
+  body {
+    background: var(--bg-void);
+    background-image:
+      radial-gradient(1400px 600px at 30% -10%, rgba(125,86,244,0.16), transparent 70%),
+      linear-gradient(var(--grid-tron) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-tron) 1px, transparent 1px);
+    background-size: auto, 30px 30px, 30px 30px;
+    font-family: var(--font-mono);
+    color: var(--text-body);
+  }
+  a { color: var(--neon-cyan); text-decoration: none; }
+  a:hover { color: var(--neon-cyan-hi); text-decoration: underline; }
+</style>
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 300" width="480" height="300" data-bg-color="#08080F">
+    <rect width="480" height="300" fill="#08080F"/>
+    <rect x="96" y="66" width="288" height="168" rx="14" fill="#0E0E1A" stroke="#3A3A66" stroke-width="2"/>
+    <circle cx="120" cy="92" r="6" fill="#FF5FA2"/>
+    <circle cx="140" cy="92" r="6" fill="#FFC64B"/>
+    <circle cx="160" cy="92" r="6" fill="#00F0A8"/>
+    <text x="128" y="176" font-family="'JetBrains Mono',monospace" font-size="58" font-weight="700" fill="#4EE6FF">&#10095;</text>
+    <rect x="172" y="132" width="26" height="46" fill="#4EE6FF"/>
+    <text x="128" y="216" font-family="'JetBrains Mono',monospace" font-size="20" font-weight="700" fill="#FF5FA2">harness</text>
+  </svg>
+</template>
+</helmet>
+
+<section style="display:flex; flex-direction:column; gap:24px; padding:48px 48px 8px; box-sizing:border-box; align-items:flex-start;">
+
+  <div style="display:flex; align-items:baseline; gap:16px; flex-wrap:wrap;">
+    <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.2em; color:var(--neon-cyan);">// TURN 2 — THE DENSE TABLE, EXPANDED</span>
+    <span style="font-size:13px; color:var(--text-dim);">you preferred 1B — here's what <span style="color:var(--neon-cyan); font-weight:700;">↵</span> does, and a right-panel cockpit</span>
+  </div>
+
+  <div style="display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start;">
+
+    <div id="2a" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-on-accent); background:var(--neon-cyan); padding:4px 8px;">2A</span>
+        <span style="font-size:13px; color:var(--text-bright); font-weight:700;">Enter attaches — table becomes a rail</span>
+        <span style="font-size:12px; color:var(--text-dim);">the list stays; the live terminal opens on the right</span>
+      </div>
+
+      <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TerminalWindow" title="harness — signal-ops" glow="cyan" padding="0" style="width:1180px; height:600px;" hint-size="1180px,600px">
+        <div style="display:flex; flex-direction:column; height:100%; font-size:13px;">
+          <div style="display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line-dim); background:linear-gradient(180deg, var(--tint-primary), transparent);">
+            <span style="color:var(--charm-pink); font-weight:700;">harness</span>
+            <span style="color:var(--text-dim);">│</span>
+            <span style="color:var(--text-muted);">profile:</span>
+            <span style="color:var(--neon-cyan); font-weight:700;">signal-ops ▾</span>
+            <span style="margin-left:auto;"></span>
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Badge" tone="info" variant="outline" dot="{{ true }}" hint-size="auto,auto">daemon: local</x-import>
+          </div>
+
+          <div style="display:flex; flex:1; min-height:0;">
+            <div style="width:330px; border-right:1px solid var(--line-dim); padding:14px 10px; display:flex; flex-direction:column; gap:2px; overflow:hidden;">
+              <div style="font-family:var(--font-pixel); font-size:10px; letter-spacing:0.16em; color:var(--text-muted); padding:0 6px 8px;">HARNESSES · SIGNAL-OPS</div>
+
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px; background:var(--tint-accent); box-shadow:inset 3px 0 0 var(--charm-pink);">
+                <span style="color:var(--charm-pink); width:1ch; font-weight:700;">›</span>
+                <span style="color:var(--neon-mint);">●</span>
+                <span style="color:var(--text-bright); font-weight:700; flex:1;">crush-signal</span>
+                <span style="font-family:var(--font-pixel); font-size:9px; letter-spacing:0.1em; color:var(--text-on-accent); background:var(--neon-cyan); padding:2px 6px;">↵ ATTACHED</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                <span style="width:1ch;"> </span><span style="color:var(--neon-mint);">●</span>
+                <span style="color:var(--text-body); flex:1;">claude-src</span>
+                <span style="color:var(--text-dim); font-size:12px;">↻0 · 2h14m</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                <span style="width:1ch;"> </span><span style="color:var(--neon-gold);">◐</span>
+                <span style="color:var(--text-body); flex:1;">reduit-agent</span>
+                <span style="color:var(--neon-gold); font-size:12px;">↻3 · 8s</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                <span style="width:1ch;"> </span><span style="color:var(--neon-coral);">✖</span>
+                <span style="color:var(--text-body); flex:1;">docs-glow</span>
+                <span style="color:var(--text-dim); font-size:12px;">exit 1</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                <span style="width:1ch;"> </span><span style="color:var(--text-dim);">○</span>
+                <span style="color:var(--text-muted); flex:1;">backup-watch</span>
+                <span style="color:var(--text-dim); font-size:12px;">stopped</span>
+              </div>
+
+              <div style="margin-top:auto; display:flex; align-items:center; gap:6px; padding:8px 6px 0; border-top:1px solid var(--line-dim); font-size:11.5px; color:var(--text-dim);">
+                <span style="color:var(--neon-cyan); font-weight:700;">↵</span> on a row opens its terminal →
+              </div>
+            </div>
+
+            <div style="flex:1; min-width:0; display:flex; flex-direction:column; box-shadow:inset 0 0 0 1.5px rgba(78,230,255,0.4);">
+              <div style="display:flex; align-items:center; gap:10px; padding:9px 16px; border-bottom:1px solid var(--line-dim); background:color-mix(in oklab, transparent 88%, var(--neon-mint)); font-size:12.5px;">
+                <span style="color:var(--neon-mint);">●</span><span style="color:var(--text-bright); font-weight:700;">crush-signal</span><span style="color:var(--neon-mint);">running</span>
+                <span style="margin-left:auto; color:var(--text-dim);">↻0 · 2h14m · native</span>
+                <span style="color:var(--text-muted);"><span style="color:var(--neon-cyan); font-weight:700;">^b d</span> detach</span>
+              </div>
+              <div style="flex:1; background:var(--bg-terminal); padding:16px 20px; font-size:14px; line-height:1.62; display:flex; flex-direction:column; gap:2px;">
+                <div><span style="color:var(--charm-pink);">crush ▸</span> <span style="color:var(--text-muted);">signal channel connected (server:signal)</span></div>
+                <div><span style="color:var(--neon-cyan);">◆ incoming</span> <span style="color:var(--text-body);">“deploy the staging branch”</span></div>
+                <div><span style="color:var(--neon-lilac);">▸ tool</span> <span style="color:var(--text-body);">bash · git fetch &amp;&amp; git checkout staging</span></div>
+                <div style="color:var(--neon-mint);">&nbsp;&nbsp;✓ switched to branch 'staging'</div>
+                <div><span style="color:var(--neon-lilac);">▸ tool</span> <span style="color:var(--text-body);">bash · make deploy ENV=staging</span></div>
+                <div style="color:var(--neon-mint);">&nbsp;&nbsp;✓ deployed staging · replied on signal</div>
+                <div style="color:var(--text-body);">&nbsp;waiting for next message…<span style="display:inline-block; width:0.55em; height:1.05em; margin-left:2px; background:var(--cursor); vertical-align:text-bottom; animation:tui-blink var(--blink) steps(1) infinite;"></span></div>
+              </div>
+              <div style="padding:8px 16px; border-top:1px solid var(--line-dim); background:var(--bg-inset); font-size:11.5px; color:var(--text-dim);">
+                <span style="color:var(--neon-cyan); font-weight:700;">↑↓</span> scroll <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">/</span> search <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">[ ]</span> prev/next harness <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">esc</span> back to table
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; flex-wrap:wrap; align-items:center; gap:2px; padding:9px 16px; border-top:1px solid var(--line-dim); background:var(--bg-inset); font-size:12px; color:var(--text-dim);">
+            <span><span style="color:var(--neon-cyan); font-weight:700;">↵</span> attach</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">↑↓</span> select</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">r</span> restart</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">/</span> filter</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">?</span> help</span>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div id="2b" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-on-accent); background:var(--charm-purple); padding:4px 8px;">2B</span>
+        <span style="font-size:13px; color:var(--text-bright); font-weight:700;">Command center — table + right panels</span>
+        <span style="font-size:12px; color:var(--text-dim);">attach in the middle, details · health · events stacked at right</span>
+      </div>
+
+      <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TerminalWindow" title="harness — reduit" glow="purple" padding="0" style="width:1380px; height:648px;" hint-size="1380px,648px">
+        <div style="display:flex; flex-direction:column; height:100%; font-size:13px;">
+          <div style="display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line-dim); background:linear-gradient(180deg, var(--tint-primary), transparent);">
+            <span style="color:var(--charm-pink); font-weight:700;">harness</span>
+            <span style="color:var(--text-dim);">│</span>
+            <span style="color:var(--text-muted);">profile:</span>
+            <span style="color:var(--neon-cyan); font-weight:700;">reduit ▾</span>
+            <span style="margin-left:auto;"></span>
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Badge" tone="warning" variant="outline" dot="{{ true }}" hint-size="auto,auto">1 flapping</x-import>
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Badge" tone="info" variant="outline" dot="{{ true }}" hint-size="auto,auto">daemon: local</x-import>
+          </div>
+
+          <div style="display:flex; flex:1; min-height:0;">
+            <div style="width:236px; border-right:1px solid var(--line-dim); padding:14px 10px; display:flex; flex-direction:column; gap:2px; overflow:hidden;">
+              <div style="font-family:var(--font-pixel); font-size:10px; letter-spacing:0.16em; color:var(--text-muted); padding:0 6px 8px;">HARNESSES · REDUIT</div>
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px; background:var(--tint-accent); box-shadow:inset 3px 0 0 var(--charm-pink);">
+                <span style="color:var(--charm-pink); width:1ch; font-weight:700;">›</span><span style="color:var(--neon-gold);">◐</span>
+                <span style="color:var(--text-bright); font-weight:700; flex:1;">reduit-agent</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                <span style="width:1ch;"> </span><span style="color:var(--neon-mint);">●</span>
+                <span style="color:var(--text-body); flex:1;">claude-src</span>
+              </div>
+              <div style="margin-top:12px; font-family:var(--font-pixel); font-size:10px; letter-spacing:0.16em; color:var(--text-dim); padding:0 6px 6px;">OTHER PROFILES</div>
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px; opacity:.7;">
+                <span style="width:1ch;"> </span><span style="color:var(--neon-mint);">●</span>
+                <span style="color:var(--text-muted); flex:1;">crush-signal</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px; opacity:.7;">
+                <span style="width:1ch;"> </span><span style="color:var(--text-dim);">○</span>
+                <span style="color:var(--text-muted); flex:1;">backup-watch</span>
+              </div>
+            </div>
+
+            <div style="flex:1; min-width:0; display:flex; flex-direction:column; box-shadow:inset 0 0 0 1.5px rgba(78,230,255,0.4);">
+              <div style="display:flex; align-items:center; gap:10px; padding:9px 16px; border-bottom:1px solid var(--line-dim); background:color-mix(in oklab, transparent 86%, var(--neon-gold)); font-size:12.5px;">
+                <span style="color:var(--neon-gold);">◐</span><span style="color:var(--text-bright); font-weight:700;">reduit-agent</span><span style="color:var(--neon-gold);">degraded</span>
+                <span style="margin-left:auto; color:var(--neon-gold);">↻3 · retry 8s · native</span>
+                <span style="color:var(--text-muted);"><span style="color:var(--neon-cyan); font-weight:700;">^b d</span> detach</span>
+              </div>
+              <div style="flex:1; background:var(--bg-terminal); padding:16px 20px; font-size:14px; line-height:1.62; display:flex; flex-direction:column; gap:2px;">
+                <div><span style="color:var(--neon-mint);">▸</span> <span style="color:var(--text-body);">starting reduit/agent…</span></div>
+                <div style="color:var(--neon-coral);">✖ process exited (code 1)</div>
+                <div style="color:var(--text-body);">panic: assignment to entry in nil map</div>
+                <div style="color:var(--text-dim);">&nbsp;&nbsp;goroutine 1 [running]:</div>
+                <div style="color:var(--text-dim);">&nbsp;&nbsp;reduit/agent.(*Loop).step(reduit/agent/loop.go:88)</div>
+                <div style="color:var(--neon-gold);">↻ restart 3 — backing off (exp, cap 60s)</div>
+                <div style="color:var(--neon-cyan);">◌ next attempt in 8s…<span style="display:inline-block; width:0.55em; height:1.05em; margin-left:2px; background:var(--cursor); vertical-align:text-bottom; animation:tui-blink var(--blink) steps(1) infinite;"></span></div>
+              </div>
+              <div style="padding:8px 16px; border-top:1px solid var(--line-dim); background:var(--bg-inset); font-size:11.5px; color:var(--text-dim);">
+                <span style="color:var(--neon-cyan); font-weight:700;">↑↓</span> scroll <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">/</span> search <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">[ ]</span> hop <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">esc</span> back
+              </div>
+            </div>
+
+            <div style="width:320px; border-left:1px solid var(--line-dim); background:var(--bg-inset); padding:14px; display:flex; flex-direction:column; gap:12px; overflow:hidden;">
+              <div style="background:var(--bg-surface); border:1px solid var(--line-dim); border-radius:var(--radius-md); padding:11px 13px;">
+                <div style="font-family:var(--font-pixel); font-size:10px; letter-spacing:0.16em; color:var(--text-muted); margin-bottom:8px;">DETAILS</div>
+                <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:12px;">
+                  <span style="color:var(--text-dim);">cmd</span><span style="color:var(--text-body);">claude --dangerously-skip-permissions</span>
+                  <span style="color:var(--text-dim);">cwd</span><span style="color:var(--text-body);">~/src/reduit</span>
+                  <span style="color:var(--text-dim);">env</span><span style="color:var(--text-muted);">—</span>
+                  <span style="color:var(--text-dim);">backend</span><span style="color:var(--neon-cyan);">native</span>
+                </div>
+              </div>
+
+              <div style="background:var(--bg-surface); border:1px solid var(--neon-gold); border-radius:var(--radius-md); padding:11px 13px;">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                  <span style="font-family:var(--font-pixel); font-size:10px; letter-spacing:0.16em; color:var(--neon-gold);">HEALTH</span>
+                  <span style="margin-left:auto; font-family:var(--font-pixel); font-size:9px; letter-spacing:0.1em; color:var(--text-on-accent); background:var(--neon-gold); padding:2px 6px;">FLAPPING</span>
+                </div>
+                <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:12px;">
+                  <span style="color:var(--text-dim);">state</span><span style="color:var(--neon-gold); font-weight:700;">◐ degraded</span>
+                  <span style="color:var(--text-dim);">restarts</span><span style="color:var(--neon-gold);">↻3 · 3 exits / 42s</span>
+                  <span style="color:var(--text-dim);">last exit</span><span style="color:var(--neon-coral);">code 1 · panic</span>
+                  <span style="color:var(--text-dim);">backoff</span><span style="color:var(--text-body);">exponential · next 8s</span>
+                  <span style="color:var(--text-dim);">uptime</span><span style="color:var(--text-muted);">— (never held)</span>
+                </div>
+                <div style="margin-top:10px; padding-top:9px; border-top:1px solid var(--line-dim); font-size:11.5px; color:var(--text-dim);">
+                  <span style="color:var(--neon-cyan); font-weight:700;">r</span> restart now <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">x</span> stop
+                </div>
+              </div>
+
+              <div style="flex:1; min-height:0; background:var(--bg-surface); border:1px solid var(--line-dim); border-radius:var(--radius-md); padding:11px 13px; display:flex; flex-direction:column;">
+                <div style="font-family:var(--font-pixel); font-size:10px; letter-spacing:0.16em; color:var(--text-muted); margin-bottom:8px;">EVENTS</div>
+                <div style="display:flex; flex-direction:column; gap:5px; font-size:11.5px; overflow:hidden;">
+                  <div><span style="color:var(--text-dim);">14:44:02</span> <span style="color:var(--neon-coral);">exited</span> <span style="color:var(--text-muted);">code 1</span></div>
+                  <div><span style="color:var(--text-dim);">14:44:04</span> <span style="color:var(--neon-cyan);">restarting</span> <span style="color:var(--text-muted);">delay 2s</span></div>
+                  <div><span style="color:var(--text-dim);">14:44:06</span> <span style="color:var(--neon-mint);">started</span></div>
+                  <div><span style="color:var(--text-dim);">14:44:39</span> <span style="color:var(--neon-coral);">exited</span> <span style="color:var(--text-muted);">code 1</span></div>
+                  <div><span style="color:var(--text-dim);">14:44:40</span> <span style="color:var(--neon-gold);">degraded</span> <span style="color:var(--text-muted);">flapping</span></div>
+                  <div><span style="color:var(--text-dim);">14:44:40</span> <span style="color:var(--neon-cyan);">backoff</span> <span style="color:var(--text-muted);">next 8s</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; flex-wrap:wrap; align-items:center; gap:2px; padding:9px 16px; border-top:1px solid var(--line-dim); background:var(--bg-inset); font-size:12px; color:var(--text-dim);">
+            <span><span style="color:var(--neon-cyan); font-weight:700;">↵</span> attach</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">r</span> restart</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">l</span> logs</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">tab</span> focus panel</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">p</span> profile</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">?</span> help</span>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div id="2c" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-on-accent); background:var(--neon-mint); padding:4px 8px;">2C</span>
+        <span style="font-size:13px; color:var(--text-bright); font-weight:700;">Attached — normal terminal size</span>
+        <span style="font-size:12px; color:var(--text-dim);">classic 80×24-ish proportions · a full session to sit inside</span>
+      </div>
+
+      <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TerminalWindow" title="harness — attached · ◉ crush-signal" glow="cyan" padding="0" style="width:820px; height:760px;" hint-size="820px,760px">
+        <div style="display:flex; flex-direction:column; height:100%;">
+          <div style="display:flex; align-items:center; gap:10px; padding:10px 18px; border-bottom:1px solid var(--line-dim); background:color-mix(in oklab, transparent 88%, var(--neon-mint)); font-size:13px;">
+            <span style="color:var(--neon-mint);">●</span><span style="color:var(--text-bright); font-weight:700;">crush-signal</span><span style="color:var(--neon-mint);">running</span>
+            <span style="margin-left:auto; color:var(--text-dim);">↻0 · 2h14m · native</span>
+            <span style="color:var(--text-muted);"><span style="color:var(--neon-cyan); font-weight:700;">^b d</span> detach</span>
+          </div>
+
+          <div style="flex:1; min-height:0; background:var(--bg-terminal); padding:18px 22px; font-size:14px; line-height:1.65; display:flex; flex-direction:column; gap:1px; overflow:hidden; box-shadow:inset 0 0 0 1.5px rgba(78,230,255,0.4);">
+            <div><span style="color:var(--charm-pink);">crush ▸</span> <span style="color:var(--text-muted);">signal channel connected (server:signal)</span></div>
+            <div style="color:var(--text-dim);">&nbsp;&nbsp;listening for messages · model claude-sonnet · cwd ~/.local/share/crush-signal-channel</div>
+            <div style="height:8px;"></div>
+            <div><span style="color:var(--neon-cyan);">◆ incoming</span> <span style="color:var(--text-body);">“deploy the staging branch and run smoke tests”</span></div>
+            <div><span style="color:var(--charm-fuchsia);">✻ thinking</span> <span style="color:var(--text-muted);">planning 3 steps…</span></div>
+            <div><span style="color:var(--neon-lilac);">▸ tool</span> <span style="color:var(--text-body);">bash · git fetch origin</span></div>
+            <div style="color:var(--neon-mint);">&nbsp;&nbsp;✓ fetched · 4 new commits on staging</div>
+            <div><span style="color:var(--neon-lilac);">▸ tool</span> <span style="color:var(--text-body);">bash · git checkout staging</span></div>
+            <div style="color:var(--neon-mint);">&nbsp;&nbsp;✓ switched to branch 'staging'</div>
+            <div><span style="color:var(--neon-lilac);">▸ tool</span> <span style="color:var(--text-body);">bash · make deploy ENV=staging</span></div>
+            <div style="color:var(--text-muted);">&nbsp;&nbsp;→ building images … <span style="color:var(--neon-mint);">7/7</span></div>
+            <div style="color:var(--text-muted);">&nbsp;&nbsp;→ pushing to registry.staging.internal</div>
+            <div style="color:var(--neon-mint);">&nbsp;&nbsp;✓ rollout complete · 3/3 replicas healthy</div>
+            <div><span style="color:var(--neon-lilac);">▸ tool</span> <span style="color:var(--text-body);">bash · make smoke ENV=staging</span></div>
+            <div style="color:var(--neon-mint);">&nbsp;&nbsp;✓ 128 passed · 0 failed · 2.4s</div>
+            <div><span style="color:var(--neon-mint);">▸ replied on signal ✓</span> <span style="color:var(--text-muted);">“staging is deployed and green ✅”</span></div>
+            <div style="height:8px;"></div>
+            <div style="color:var(--text-body);">waiting for next message…<span style="display:inline-block; width:0.55em; height:1.05em; margin-left:2px; background:var(--cursor); vertical-align:text-bottom; animation:tui-blink var(--blink) steps(1) infinite;"></span></div>
+          </div>
+
+          <div style="padding:9px 18px; border-top:1px solid var(--line-dim); background:var(--bg-inset); font-size:11.5px; color:var(--text-dim);">
+            <span style="color:var(--neon-cyan); font-weight:700;">↑↓</span> scroll <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">/</span> search <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">g/G</span> top/bottom <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">[ ]</span> prev/next harness <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">esc</span> dashboard
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+  </div>
+</section>
+
+<section style="display:flex; flex-direction:column; gap:28px; padding:48px; box-sizing:border-box; align-items:flex-start;">
+
+  <header style="display:flex; align-items:flex-end; gap:40px 56px; flex-wrap:wrap; width:100%; max-width:1828px; margin-bottom:2px;">
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.2em; color:var(--charm-pink);">// AGENT-OPS COCKPIT · DESIGN EXPLORATION</span>
+      <div style="display:flex; align-items:baseline; gap:18px; flex-wrap:wrap;">
+        <span style="font-family:var(--font-display); font-weight:700; font-size:46px; letter-spacing:-0.04em; background:var(--grad-charm); -webkit-background-clip:text; background-clip:text; color:transparent;">harness</span>
+        <span style="font-size:15px; color:var(--text-muted);">a keyboard-driven dashboard for supervising AI harnesses</span>
+      </div>
+      <span style="font-size:13px; color:var(--text-dim);">turning <a href="https://github.com/stump-wtf/zsh-harnessd">zsh-harnessd</a> into a client-server Bubble Tea TUI · <span style="color:var(--text-muted);">spec-tui.md</span> · two dashboard directions, then the overlays &amp; the hop</span>
+    </div>
+
+    <div style="margin-left:auto; display:flex; flex-direction:column; gap:14px; align-items:flex-end;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-size:12px; color:var(--text-dim);">theme</span>
+        <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Toggle" on="{{ isDay }}" onLabel="day" offLabel="night" tone="info" onClick="{{ toggleTheme }}" style="cursor:pointer" hint-size="auto,auto"></x-import>
+      </div>
+      <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap; font-size:12px; padding:9px 15px; background:var(--bg-surface); border:1px solid var(--line-dim); border-radius:var(--radius-md);">
+        <span style="color:var(--neon-mint);">● <span style="color:var(--text-muted);">running</span></span>
+        <span style="color:var(--neon-gold);">◐ <span style="color:var(--text-muted);">degraded</span></span>
+        <span style="color:var(--neon-cyan);">◌ <span style="color:var(--text-muted);">starting</span></span>
+        <span style="color:var(--text-dim);">○ <span style="color:var(--text-muted);">stopped</span></span>
+        <span style="color:var(--neon-coral);">✖ <span style="color:var(--text-muted);">failed</span></span>
+        <span style="color:var(--neon-cyan);">👁 <span style="color:var(--text-muted);">read-only</span></span>
+      </div>
+    </div>
+  </header>
+
+  <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-muted); margin-top:8px;">▸ DASHBOARD — TWO DIRECTIONS</span>
+
+  <div style="display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start;">
+
+    <div id="1a" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-on-accent); background:var(--charm-pink); padding:4px 8px;">1A</span>
+        <span style="font-size:13px; color:var(--text-bright); font-weight:700;">Split cockpit</span>
+        <span style="font-size:12px; color:var(--text-dim);">list + live peek — the canonical layout</span>
+      </div>
+
+      <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TerminalWindow" title="harness — signal-ops" glow="purple" padding="0" style="width:860px; height:560px;" hint-size="860px,560px">
+        <div style="display:flex; flex-direction:column; height:100%; font-size:13px;">
+
+          <div style="display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line-dim); background:linear-gradient(180deg, var(--tint-primary), transparent);">
+            <span style="color:var(--charm-pink); font-weight:700;">harness</span>
+            <span style="color:var(--text-dim);">│</span>
+            <span style="color:var(--text-muted);">profile:</span>
+            <span style="color:var(--neon-cyan); font-weight:700;">signal-ops ▾</span>
+            <span style="margin-left:auto;"></span>
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Badge" tone="info" variant="outline" dot="{{ true }}" hint-size="auto,auto">daemon: local</x-import>
+          </div>
+
+          <div style="display:flex; flex:1; min-height:0;">
+            <div style="width:330px; border-right:1px solid var(--line-dim); padding:14px 10px; display:flex; flex-direction:column; gap:2px; overflow:hidden;">
+              <div style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-muted); padding:0 6px 8px;">HARNESSES · SIGNAL-OPS</div>
+
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px; background:var(--tint-accent); box-shadow:inset 3px 0 0 var(--charm-pink);">
+                <span style="color:var(--charm-pink); width:1ch; font-weight:700;">›</span>
+                <span style="color:var(--neon-mint);">●</span>
+                <span style="color:var(--text-bright); font-weight:700; flex:1;">crush-signal</span>
+                <span style="color:var(--neon-mint); font-size:12px;">running</span>
+                <span style="color:var(--text-dim); font-size:12px; width:34px; text-align:right;">↻0</span>
+                <span style="color:var(--text-muted); font-size:12px; width:52px; text-align:right;">2h14m</span>
+              </div>
+
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                <span style="width:1ch;"> </span>
+                <span style="color:var(--neon-mint);">●</span>
+                <span style="color:var(--text-body); flex:1;">claude-src</span>
+                <span style="color:var(--neon-mint); font-size:12px;">running</span>
+                <span style="color:var(--text-dim); font-size:12px; width:34px; text-align:right;">↻0</span>
+                <span style="color:var(--text-muted); font-size:12px; width:52px; text-align:right;">2h14m</span>
+              </div>
+
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                <span style="width:1ch;"> </span>
+                <span style="color:var(--neon-gold);">◐</span>
+                <span style="color:var(--text-body); flex:1;">reduit-agent</span>
+                <span style="color:var(--neon-gold); font-size:12px;">degraded</span>
+                <span style="color:var(--neon-gold); font-size:12px; width:34px; text-align:right;">↻3</span>
+                <span style="color:var(--neon-gold); font-size:12px; width:52px; text-align:right;">8s ⟳</span>
+              </div>
+
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                <span style="width:1ch;"> </span>
+                <span style="color:var(--neon-coral);">✖</span>
+                <span style="color:var(--text-body); flex:1;">docs-glow</span>
+                <span style="color:var(--neon-coral); font-size:12px;">failed</span>
+                <span style="color:var(--text-dim); font-size:12px; width:34px; text-align:right;">exit1</span>
+                <span style="color:var(--text-muted); font-size:12px; width:52px; text-align:right;">—</span>
+              </div>
+
+              <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                <span style="width:1ch;"> </span>
+                <span style="color:var(--text-dim);">○</span>
+                <span style="color:var(--text-muted); flex:1;">backup-watch</span>
+                <span style="color:var(--text-dim); font-size:12px;">stopped</span>
+                <span style="color:var(--text-dim); font-size:12px; width:34px; text-align:right;">—</span>
+                <span style="color:var(--text-dim); font-size:12px; width:52px; text-align:right;"></span>
+              </div>
+
+              <div style="margin-top:auto; padding:8px 8px 0; color:var(--text-dim); font-size:12px; border-top:1px solid var(--line-dim);">+ show all · 2 hidden by profile</div>
+            </div>
+
+            <div style="flex:1; min-width:0; padding:14px; display:flex; flex-direction:column; gap:12px;">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <span style="color:var(--neon-mint);">●</span>
+                <span style="color:var(--text-bright); font-weight:700;">crush-signal</span>
+                <span style="color:var(--text-dim); font-size:12px;">live preview · read-only</span>
+              </div>
+
+              <div style="flex:1; min-height:0; background:var(--bg-terminal); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; overflow:hidden; font-size:12.5px; line-height:1.5; display:flex; flex-direction:column; gap:2px;">
+                <div><span style="color:var(--charm-pink);">crush ▸</span> <span style="color:var(--text-muted);">signal channel connected (server:signal)</span></div>
+                <div><span style="color:var(--neon-cyan);">◆ incoming</span> <span style="color:var(--text-body);">“deploy the staging branch”</span></div>
+                <div><span style="color:var(--neon-lilac);">▸ tool</span> <span style="color:var(--text-body);">bash · git fetch &amp;&amp; git checkout staging</span></div>
+                <div style="color:var(--neon-mint);">&nbsp;&nbsp;✓ switched to branch 'staging'</div>
+                <div><span style="color:var(--neon-lilac);">▸ tool</span> <span style="color:var(--text-body);">bash · make deploy ENV=staging</span></div>
+                <div style="color:var(--text-muted);">&nbsp;&nbsp;… building images (3/7)</div>
+                <div><span style="color:var(--neon-mint);">▸ replied on signal ✓</span></div>
+                <div style="margin-top:4px;">
+                  <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Spinner" kind="braille" tone="info" label="waiting for next message…" hint-size="auto,auto"></x-import>
+                </div>
+              </div>
+
+              <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:12px;">
+                <span style="color:var(--text-dim);">cmd</span><span style="color:var(--text-body); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">crush --yolo --data-dir {workdir} --channels server:signal</span>
+                <span style="color:var(--text-dim);">cwd</span><span style="color:var(--text-body);">~/.local/share/crush-signal-channel</span>
+                <span style="color:var(--text-dim);">env</span><span style="color:var(--text-body);">~/.config/vault/secrets-static.env</span>
+                <span style="color:var(--text-dim);">meta</span><span style="color:var(--text-muted);">exit 0 · started 14:02 · backend <span style="color:var(--neon-cyan);">native</span></span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; flex-wrap:wrap; align-items:center; gap:2px; padding:9px 16px; border-top:1px solid var(--line-dim); background:var(--bg-inset); font-size:12px; color:var(--text-dim);">
+            <span><span style="color:var(--neon-cyan); font-weight:700;">↵</span> attach</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">s</span> start</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">x</span> stop</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">r</span> restart</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">e</span> edit</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">n</span> new</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">p</span> profile</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">/</span> search</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">?</span> help</span>
+          </div>
+
+        </div>
+      </x-import>
+    </div>
+
+    <div id="1b" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-on-accent); background:var(--neon-cyan); padding:4px 8px;">1B</span>
+        <span style="font-size:13px; color:var(--text-bright); font-weight:700;">Dense ops table</span>
+        <span style="font-size:12px; color:var(--text-dim);">k9s-style density · peek drawer · state-first</span>
+      </div>
+
+      <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TerminalWindow" title="harness — all profiles" glow="cyan" padding="0" style="width:900px; height:560px;" hint-size="900px,560px">
+        <div style="display:flex; flex-direction:column; height:100%; font-size:13px;">
+
+          <div style="display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--line-dim); background:linear-gradient(180deg, var(--tint-primary), transparent);">
+            <span style="color:var(--charm-pink); font-weight:700;">harness</span>
+            <span style="color:var(--text-dim);">│</span>
+            <span style="color:var(--text-muted);">profile:</span>
+            <span style="color:var(--neon-cyan); font-weight:700;">all ▾</span>
+            <span style="margin-left:auto; color:var(--text-dim); font-size:12px;">/ filter ⌁</span>
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Badge" tone="info" variant="outline" dot="{{ true }}" hint-size="auto,auto">daemon: local</x-import>
+          </div>
+
+          <div style="display:grid; grid-template-columns:112px 1fr 196px 46px 82px 52px 72px; gap:0; padding:10px 16px 6px; font-family:var(--font-pixel); font-size:10px; letter-spacing:0.16em; color:var(--text-muted);">
+            <span>STATE</span><span>NAME</span><span>PROFILES</span><span style="text-align:right;">↻</span><span style="text-align:right;">UPTIME</span><span style="text-align:right;">EXIT</span><span style="text-align:right;">BACKEND</span>
+          </div>
+
+          <div style="flex:1; min-height:0; overflow:hidden; padding:0 8px;">
+            <div style="display:grid; grid-template-columns:112px 1fr 196px 46px 82px 52px 72px; align-items:center; padding:8px; font-size:12.5px;">
+              <span style="color:var(--neon-mint);">● running</span><span style="color:var(--text-body);">crush-signal</span><span style="color:var(--text-dim);">signal-ops</span><span style="text-align:right; color:var(--text-dim);">0</span><span style="text-align:right; color:var(--text-muted);">2h14m</span><span style="text-align:right; color:var(--text-dim);">0</span><span style="text-align:right; color:var(--neon-cyan);">native</span>
+            </div>
+            <div style="display:grid; grid-template-columns:112px 1fr 196px 46px 82px 52px 72px; align-items:center; padding:8px; font-size:12.5px;">
+              <span style="color:var(--neon-mint);">● running</span><span style="color:var(--text-body);">claude-src</span><span style="color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">default·signal-ops·reduit</span><span style="text-align:right; color:var(--text-dim);">0</span><span style="text-align:right; color:var(--text-muted);">2h14m</span><span style="text-align:right; color:var(--text-dim);">0</span><span style="text-align:right; color:var(--neon-cyan);">native</span>
+            </div>
+            <div style="display:grid; grid-template-columns:112px 1fr 196px 46px 82px 52px 72px; align-items:center; padding:8px; font-size:12.5px; background:var(--tint-primary); box-shadow:inset 3px 0 0 var(--charm-pink);">
+              <span style="color:var(--neon-gold); font-weight:700;">◐ degraded</span><span style="color:var(--text-bright); font-weight:700;">reduit-agent</span><span style="color:var(--text-muted);">reduit</span><span style="text-align:right; color:var(--neon-gold);">3</span><span style="text-align:right; color:var(--neon-gold);">8s ⟳</span><span style="text-align:right; color:var(--neon-gold);">1</span><span style="text-align:right; color:var(--neon-cyan);">native</span>
+            </div>
+            <div style="display:grid; grid-template-columns:112px 1fr 196px 46px 82px 52px 72px; align-items:center; padding:8px; font-size:12.5px;">
+              <span style="color:var(--neon-coral);">✖ failed</span><span style="color:var(--text-body);">docs-glow</span><span style="color:var(--text-dim);">—</span><span style="text-align:right; color:var(--text-dim);">5</span><span style="text-align:right; color:var(--text-muted);">—</span><span style="text-align:right; color:var(--neon-coral);">1</span><span style="text-align:right; color:var(--neon-cyan);">native</span>
+            </div>
+            <div style="display:grid; grid-template-columns:112px 1fr 196px 46px 82px 52px 72px; align-items:center; padding:8px; font-size:12.5px;">
+              <span style="color:var(--text-dim);">○ stopped</span><span style="color:var(--text-muted);">backup-watch</span><span style="color:var(--text-dim);">—</span><span style="text-align:right; color:var(--text-dim);">0</span><span style="text-align:right; color:var(--text-dim);">—</span><span style="text-align:right; color:var(--text-dim);">0</span><span style="text-align:right; color:var(--text-dim);">tmux</span>
+            </div>
+          </div>
+
+          <div style="border-top:1px solid var(--line-dim); background:var(--bg-inset); padding:12px 16px; display:flex; flex-direction:column; gap:10px;">
+            <div style="display:flex; align-items:center; gap:10px; padding:6px 12px; background:color-mix(in oklab, transparent 84%, var(--neon-gold)); border-left:3px solid var(--neon-gold); font-size:12px;">
+              <span style="color:var(--neon-gold); font-weight:700;">◐ degraded</span>
+              <span style="color:var(--text-body);">reduit-agent — 3 exits in 42s · exponential backoff · next retry in <span style="color:var(--neon-gold); font-weight:700;">8s</span></span>
+              <span style="margin-left:auto; color:var(--text-dim);"><span style="color:var(--neon-cyan); font-weight:700;">l</span> logs · <span style="color:var(--neon-cyan); font-weight:700;">r</span> restart</span>
+            </div>
+            <div style="display:flex; gap:14px;">
+              <div style="flex:1; min-width:0; background:var(--bg-terminal); border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px 12px; font-size:12px; line-height:1.5;">
+                <div style="color:var(--neon-coral);">✖ process exited (code 1)</div>
+                <div style="color:var(--text-body);">panic: assignment to entry in nil map</div>
+                <div style="color:var(--text-dim);">&nbsp;&nbsp;reduit/agent.(*Loop).step(...)</div>
+                <div style="color:var(--neon-gold);">↻ restart 3 — backing off (exp)</div>
+                <div style="color:var(--neon-cyan);">◌ next attempt in 8s…</div>
+              </div>
+              <div style="width:280px; display:grid; grid-template-columns:auto 1fr; gap:4px 12px; font-size:12px; align-content:start;">
+                <span style="color:var(--text-dim);">cmd</span><span style="color:var(--text-body);">claude --dangerously-skip-permissions</span>
+                <span style="color:var(--text-dim);">cwd</span><span style="color:var(--text-body);">~/src/reduit</span>
+                <span style="color:var(--text-dim);">env</span><span style="color:var(--text-muted);">—</span>
+                <span style="color:var(--text-dim);">backend</span><span style="color:var(--neon-cyan);">native</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; flex-wrap:wrap; align-items:center; gap:2px; padding:9px 16px; border-top:1px solid var(--line-dim); background:var(--bg-inset); font-size:12px; color:var(--text-dim);">
+            <span><span style="color:var(--neon-cyan); font-weight:700;">↑↓</span> move</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">↵</span> attach</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">r</span> restart</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">l</span> logs</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">/</span> filter</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">p</span> profile</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">?</span> help</span>
+          </div>
+
+        </div>
+      </x-import>
+    </div>
+
+  </div>
+
+  <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-muted); margin-top:8px;">▸ OVERLAYS — PALETTE · PROFILES · FORM</span>
+
+  <div style="display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start;">
+
+    <div id="1d" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-on-accent); background:var(--charm-purple); padding:4px 8px;">1D</span>
+        <span style="font-size:13px; color:var(--text-bright); font-weight:700;">Command palette</span>
+        <span style="font-size:12px; color:var(--text-dim);">^K · fuzzy over verbs + harness names</span>
+      </div>
+
+      <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TerminalWindow" title="harness — signal-ops" glow="purple" padding="0" style="width:566px; height:452px;" hint-size="566px,452px">
+        <div style="position:relative; height:408px; overflow:hidden;">
+          <div style="padding:16px; display:flex; flex-direction:column; gap:8px; filter:blur(0.4px); opacity:.5; font-size:12px;">
+            <div style="color:var(--text-dim); font-family:var(--font-pixel); font-size:10px; letter-spacing:0.16em;">HARNESSES · SIGNAL-OPS</div>
+            <div style="color:var(--text-muted);">● crush-signal &nbsp; running</div>
+            <div style="color:var(--text-muted);">● claude-src &nbsp;&nbsp; running</div>
+            <div style="color:var(--text-muted);">◐ reduit-agent &nbsp; degraded</div>
+            <div style="color:var(--text-muted);">○ backup-watch &nbsp; stopped</div>
+          </div>
+          <div style="position:absolute; inset:0; background:var(--scrim);"></div>
+          <div style="position:absolute; inset:0; display:flex; align-items:flex-start; justify-content:center; padding-top:44px;">
+            <div style="width:460px; background:var(--bg-surface); border:1.5px solid var(--neon-cyan); border-radius:var(--radius-sm); box-shadow:var(--shadow-panel); overflow:hidden;">
+              <div style="display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line-dim);">
+                <span style="font-family:var(--font-pixel); font-size:10px; letter-spacing:0.16em; color:var(--charm-pink);">⌘ COMMAND PALETTE</span>
+                <span style="margin-left:auto; color:var(--text-dim); font-size:11px;">esc</span>
+              </div>
+              <div style="padding:12px 14px;">
+                <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TextInput" value="rest" prompt="❯ " focused="{{ true }}" width="100%" hint-size="100%,40px"></x-import>
+              </div>
+              <div style="padding:2px 6px 10px; display:flex; flex-direction:column; gap:1px; font-size:13px;">
+                <div style="display:flex; align-items:center; gap:8px; padding:7px 8px; background:var(--tint-accent); box-shadow:inset 3px 0 0 var(--charm-pink);">
+                  <span style="color:var(--charm-pink); width:1ch; font-weight:700;">›</span>
+                  <span style="color:var(--text-bright);"><span style="color:var(--neon-cyan); font-weight:700;">rest</span>art reduit-agent</span>
+                  <span style="margin-left:auto; color:var(--text-dim); font-size:11px;">↵ run</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                  <span style="width:1ch;"> </span>
+                  <span style="color:var(--text-body);"><span style="color:var(--neon-cyan); font-weight:700;">rest</span>art crush-signal</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                  <span style="width:1ch;"> </span>
+                  <span style="color:var(--text-body);"><span style="color:var(--neon-cyan); font-weight:700;">re</span>load config <span style="color:var(--neon-cyan); font-weight:700;">st</span>ate</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                  <span style="width:1ch;"> </span>
+                  <span style="color:var(--text-body);">p<span style="color:var(--neon-cyan); font-weight:700;">r</span>ofil<span style="color:var(--neon-cyan); font-weight:700;">e</span> → reduit</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; padding:7px 8px;">
+                  <span style="width:1ch;"> </span>
+                  <span style="color:var(--text-body);"><span style="color:var(--neon-cyan); font-weight:700;">r</span>ead-only atta<span style="color:var(--neon-cyan); font-weight:700;">e</span>… docs-glow 👁</span>
+                </div>
+              </div>
+              <div style="padding:8px 14px; border-top:1px solid var(--line-dim); background:var(--bg-inset); font-size:11.5px; color:var(--text-dim);">
+                <span style="color:var(--neon-cyan); font-weight:700;">↑↓</span> move <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">↵</span> run <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">esc</span> close
+              </div>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div id="1e" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-on-accent); background:var(--charm-purple); padding:4px 8px;">1E</span>
+        <span style="font-size:13px; color:var(--text-bright); font-weight:700;">Profile switcher</span>
+        <span style="font-size:12px; color:var(--text-dim);">p · hop between configurations</span>
+      </div>
+
+      <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TerminalWindow" title="harness — signal-ops" glow="purple" padding="0" style="width:566px; height:452px;" hint-size="566px,452px">
+        <div style="position:relative; height:408px; overflow:hidden;">
+          <div style="padding:16px; display:flex; flex-direction:column; gap:8px; filter:blur(0.4px); opacity:.5; font-size:12px;">
+            <div style="color:var(--text-dim); font-family:var(--font-pixel); font-size:10px; letter-spacing:0.16em;">HARNESSES · SIGNAL-OPS</div>
+            <div style="color:var(--text-muted);">● crush-signal &nbsp; running</div>
+            <div style="color:var(--text-muted);">● claude-src &nbsp;&nbsp; running</div>
+            <div style="color:var(--text-muted);">◐ reduit-agent &nbsp; degraded</div>
+          </div>
+          <div style="position:absolute; inset:0; background:var(--scrim);"></div>
+          <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:16px;">
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Dialog" title="switch profile" icon="⬢" tone="primary" width="470" hint-size="470px,auto">
+              <div style="display:flex; flex-direction:column; gap:2px; margin:-4px 0 2px;">
+                <div style="display:flex; align-items:flex-start; gap:10px; padding:8px 10px; background:var(--tint-primary); box-shadow:inset 3px 0 0 var(--charm-pink); border-radius:var(--radius-xs);">
+                  <span style="color:var(--charm-pink); font-weight:700;">›</span>
+                  <div style="flex:1; min-width:0;">
+                    <div style="display:flex; align-items:center; gap:8px;"><span style="color:var(--text-bright); font-weight:700;">signal-ops</span><span style="font-family:var(--font-pixel); font-size:9px; letter-spacing:0.12em; color:var(--neon-mint); border:1px solid var(--neon-mint); padding:1px 5px;">ACTIVE</span></div>
+                    <div style="color:var(--text-muted); font-size:12px;">Headless agents wired to Signal</div>
+                  </div>
+                  <span style="color:var(--text-dim); font-size:12px;">2 harnesses</span>
+                </div>
+                <div style="display:flex; align-items:flex-start; gap:10px; padding:8px 10px;">
+                  <span style="width:1ch;"> </span>
+                  <div style="flex:1; min-width:0;">
+                    <div style="display:flex; align-items:center; gap:8px;"><span style="color:var(--text-body); font-weight:700;">default</span><span style="color:var(--neon-cyan); font-size:11px;">autostart</span></div>
+                    <div style="color:var(--text-dim); font-size:12px;">always-on baseline</div>
+                  </div>
+                  <span style="color:var(--text-dim); font-size:12px;">1 harness</span>
+                </div>
+                <div style="display:flex; align-items:flex-start; gap:10px; padding:8px 10px;">
+                  <span style="width:1ch;"> </span>
+                  <div style="flex:1; min-width:0;">
+                    <div style="color:var(--text-body); font-weight:700;">reduit</div>
+                    <div style="color:var(--text-dim); font-size:12px;">Everything for the reduit project</div>
+                  </div>
+                  <span style="color:var(--text-dim); font-size:12px;">2 harnesses</span>
+                </div>
+              </div>
+              <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--line-dim); color:var(--text-muted); font-size:12.5px; line-height:1.5;">
+                start <span style="color:var(--text-bright);">signal-ops</span>'s <span style="color:var(--neon-mint); font-weight:700;">1</span> stopped harness? <span style="color:var(--text-dim);">non-destructive — others keep running</span>
+              </div>
+              <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:14px;">
+                <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Button" variant="ghost" size="sm" hint-size="auto,auto">just switch</x-import>
+                <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Button" variant="accent" size="sm" focused="{{ true }}" hint-size="auto,auto">start stopped ↵</x-import>
+              </div>
+            </x-import>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div id="1f" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; align-items:center; gap:12px;">
+        <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-on-accent); background:var(--charm-purple); padding:4px 8px;">1F</span>
+        <span style="font-size:13px; color:var(--text-bright); font-weight:700;">Harness form</span>
+        <span style="font-size:12px; color:var(--text-dim);">n new / e edit (Huh) → writes harnessd.toml</span>
+      </div>
+
+      <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TerminalWindow" title="harness — edit · reduit-agent" glow="purple" padding="0" style="width:600px; height:560px;" hint-size="600px,560px">
+        <div style="display:flex; flex-direction:column; height:100%; font-size:13px;">
+          <div style="display:flex; align-items:center; gap:10px; padding:11px 16px; border-bottom:1px solid var(--line-dim); background:linear-gradient(180deg, var(--tint-primary), transparent);">
+            <span style="color:var(--charm-pink);">◆</span>
+            <span style="color:var(--text-bright); font-weight:700;">edit harness</span>
+            <span style="margin-left:auto; color:var(--text-dim); font-size:11.5px;">~/.config/harnessd/harnessd.toml</span>
+          </div>
+
+          <div style="flex:1; min-height:0; overflow:hidden; padding:16px; display:flex; flex-direction:column; gap:13px;">
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TextInput" label="name" value="reduit-agent" prompt="" focused="{{ false }}" width="100%" hint-size="100%,52px"></x-import>
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TextInput" label="cmd" value="claude" prompt="" focused="{{ true }}" width="100%" hint-size="100%,52px"></x-import>
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TextInput" label="args" value="--dangerously-skip-permissions" prompt="" focused="{{ false }}" width="100%" hint-size="100%,52px"></x-import>
+            <div style="display:grid; grid-template-columns:1fr 148px; gap:14px;">
+              <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TextInput" label="workdir" value="~/src/reduit" prompt="" focused="{{ false }}" width="100%" hint-size="100%,52px"></x-import>
+              <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TextInput" label="restart_delay" value="2s" prompt="" focused="{{ false }}" width="100%" hint-size="100%,52px"></x-import>
+            </div>
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TextInput" label="env_file" value="~/.config/vault/secrets-static.env" prompt="" focused="{{ false }}" width="100%" hint-size="100%,52px"></x-import>
+
+            <div style="display:flex; align-items:center; gap:14px;">
+              <span style="font-size:12px; color:var(--text-muted); letter-spacing:0.04em; width:96px;">backend</span>
+              <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Toggle" on="{{ false }}" offLabel="native" onLabel="tmux" tone="info" hint-size="auto,auto"></x-import>
+            </div>
+
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <span style="font-size:12px; color:var(--text-muted); letter-spacing:0.04em; width:96px;">profiles</span>
+              <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Checkbox" label="reduit" checked="{{ true }}" cursor="{{ true }}" hint-size="auto,auto"></x-import>
+              <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Checkbox" label="signal-ops" checked="{{ false }}" hint-size="auto,auto"></x-import>
+              <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Checkbox" label="default" checked="{{ false }}" hint-size="auto,auto"></x-import>
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:2px; padding:10px 16px; border-top:1px solid var(--line-dim); background:var(--bg-inset); font-size:12px; color:var(--text-dim);">
+            <span><span style="color:var(--neon-cyan); font-weight:700;">tab</span> next</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">^e</span> raw TOML</span><span style="color:var(--line-bright); margin:0 8px;">•</span>
+            <span><span style="color:var(--neon-cyan); font-weight:700;">esc</span> cancel</span>
+            <span style="margin-left:auto;">
+              <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Button" variant="accent" size="sm" focused="{{ true }}" hint-size="auto,auto">save ↵</x-import>
+            </span>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+  </div>
+
+  <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-muted); margin-top:8px;">▸ THE HOP — THE SIGNATURE MOMENT</span>
+
+  <div id="1g" style="display:flex; flex-direction:column; gap:10px;">
+    <div style="display:flex; align-items:center; gap:12px;">
+      <span style="font-family:var(--font-pixel); font-size:11px; letter-spacing:0.18em; color:var(--text-on-accent); background:var(--neon-cyan); padding:4px 8px;">1G</span>
+      <span style="font-size:13px; color:var(--text-bright); font-weight:700;">The hop</span>
+      <span style="font-size:12px; color:var(--text-dim);">click [ / ] — switch harness without leaving the terminal · watch the slide + ribbon flash</span>
+    </div>
+
+    <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.TerminalWindow" title="harness — attached · ◉ selected" glow="cyan" padding="0" style="width:1160px; height:620px;" hint-size="1160px,620px">
+      <div style="display:flex; flex-direction:column; height:100%;">
+        <div style="flex:1; min-height:0; overflow:hidden; position:relative; box-shadow: {{ ribbonFlash }}; transition: box-shadow 360ms var(--ease-out);">
+          <div style="display:flex; height:100%; width:300%; transform: {{ hopOffset }}; transition: transform 340ms var(--ease-out);">
+
+            <div style="flex:0 0 33.3333%; display:flex; flex-direction:column; min-width:0;">
+              <div style="display:flex; align-items:center; gap:10px; padding:9px 16px; border-bottom:1px solid var(--line-dim); background:color-mix(in oklab, transparent 88%, var(--neon-mint)); font-size:12.5px;">
+                <span style="color:var(--neon-mint);">●</span><span style="color:var(--text-bright); font-weight:700;">crush-signal</span><span style="color:var(--neon-mint);">running</span>
+                <span style="margin-left:auto; color:var(--text-dim);">↻0 · 2h14m · native</span>
+                <span style="color:var(--text-muted);"><span style="color:var(--neon-cyan); font-weight:700;">^b d</span> detach</span>
+              </div>
+              <div style="flex:1; background:var(--bg-terminal); padding:18px 22px; font-size:14px; line-height:1.62; display:flex; flex-direction:column; gap:2px;">
+                <div><span style="color:var(--charm-pink);">crush ▸</span> <span style="color:var(--text-muted);">signal channel connected (server:signal)</span></div>
+                <div><span style="color:var(--neon-cyan);">◆ incoming</span> <span style="color:var(--text-body);">“deploy the staging branch”</span></div>
+                <div><span style="color:var(--neon-lilac);">▸ tool</span> <span style="color:var(--text-body);">bash · git checkout staging &amp;&amp; make deploy</span></div>
+                <div style="color:var(--neon-mint);">&nbsp;&nbsp;✓ deployed staging · replied on signal</div>
+                <div style="color:var(--text-body);">&nbsp;waiting for next message…<span style="display:inline-block; width:0.55em; height:1.05em; margin-left:2px; background:var(--cursor); vertical-align:text-bottom; animation:tui-blink var(--blink) steps(1) infinite;"></span></div>
+              </div>
+            </div>
+
+            <div style="flex:0 0 33.3333%; display:flex; flex-direction:column; min-width:0;">
+              <div style="display:flex; align-items:center; gap:10px; padding:9px 16px; border-bottom:1px solid var(--line-dim); background:color-mix(in oklab, transparent 88%, var(--neon-mint)); font-size:12.5px;">
+                <span style="color:var(--neon-mint);">●</span><span style="color:var(--text-bright); font-weight:700;">claude-src</span><span style="color:var(--neon-mint);">running</span>
+                <span style="margin-left:auto; color:var(--text-dim);">↻0 · 2h14m · native</span>
+                <span style="color:var(--text-muted);"><span style="color:var(--neon-cyan); font-weight:700;">^b d</span> detach</span>
+              </div>
+              <div style="flex:1; background:var(--bg-terminal); padding:18px 22px; font-size:14px; line-height:1.62; display:flex; flex-direction:column; gap:2px;">
+                <div><span style="color:var(--neon-mint);">●</span> <span style="color:var(--text-muted);">Claude Code · ~/src</span></div>
+                <div><span style="color:var(--charm-fuchsia);">✻ ran 2 tools</span> <span style="color:var(--text-body);">· edited 3 files</span></div>
+                <div style="color:var(--text-dim);">&nbsp;&nbsp;⎿ harness/registry.go &nbsp;<span style="color:var(--neon-mint);">+42 -8</span></div>
+                <div style="color:var(--text-dim);">&nbsp;&nbsp;⎿ harness/supervisor.go <span style="color:var(--neon-mint);">+11 -2</span></div>
+                <div><span style="color:var(--neon-cyan);">▸</span> <span style="color:var(--text-body);">writing tests for restart backoff…</span><span style="display:inline-block; width:0.55em; height:1.05em; margin-left:2px; background:var(--cursor); vertical-align:text-bottom; animation:tui-blink var(--blink) steps(1) infinite;"></span></div>
+              </div>
+            </div>
+
+            <div style="flex:0 0 33.3333%; display:flex; flex-direction:column; min-width:0;">
+              <div style="display:flex; align-items:center; gap:10px; padding:9px 16px; border-bottom:1px solid var(--line-dim); background:color-mix(in oklab, transparent 86%, var(--neon-gold)); font-size:12.5px;">
+                <span style="color:var(--neon-gold);">◐</span><span style="color:var(--text-bright); font-weight:700;">reduit-agent</span><span style="color:var(--neon-gold);">degraded</span>
+                <span style="margin-left:auto; color:var(--neon-gold);">↻3 · retry 8s · native</span>
+                <span style="color:var(--text-muted);"><span style="color:var(--neon-cyan); font-weight:700;">^b d</span> detach</span>
+              </div>
+              <div style="flex:1; background:var(--bg-terminal); padding:18px 22px; font-size:14px; line-height:1.62; display:flex; flex-direction:column; gap:2px;">
+                <div style="color:var(--neon-coral);">✖ process exited (code 1)</div>
+                <div style="color:var(--text-body);">panic: assignment to entry in nil map</div>
+                <div style="color:var(--text-dim);">&nbsp;&nbsp;goroutine 1 [running]:</div>
+                <div style="color:var(--text-dim);">&nbsp;&nbsp;reduit/agent.(*Loop).step(...)</div>
+                <div style="color:var(--neon-gold);">↻ restart 3 — backing off (exp)</div>
+                <div style="color:var(--neon-cyan);">◌ next attempt in 8s…<span style="display:inline-block; width:0.55em; height:1.05em; margin-left:2px; background:var(--cursor); vertical-align:text-bottom; animation:tui-blink var(--blink) steps(1) infinite;"></span></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:14px; padding:10px 16px; border-top:1px solid var(--line-dim); background:var(--bg-inset); font-size:12px;">
+          <span style="color:var(--text-muted);">attached: <span style="color:var(--text-bright); font-weight:700;">{{ hopName }}</span> <span style="color:var(--text-dim);">· {{ hopNum }}/3</span></span>
+          <span style="margin-left:auto; display:flex; align-items:center; gap:10px;">
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Button" variant="ghost" size="sm" onClick="{{ hopPrev }}" style="cursor:pointer" hint-size="auto,auto">[ prev</x-import>
+            <x-import component-from-global-scope="BubbleteaTUIDesignSystem_5c2f37.Button" variant="ghost" size="sm" onClick="{{ hopNext }}" style="cursor:pointer" hint-size="auto,auto">next ]</x-import>
+          </span>
+          <span style="color:var(--text-dim);"><span style="color:var(--neon-cyan); font-weight:700;">[ ]</span> hop <span style="color:var(--line-bright); margin:0 6px;">•</span> <span style="color:var(--neon-cyan); font-weight:700;">esc</span> dashboard</span>
+        </div>
+      </div>
+    </x-import>
+  </div>
+
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { isDay: false, hop: 0, flashing: false };
+  componentDidMount() {
+    try {
+      const t = localStorage.getItem('btds-theme');
+      const day = t === 'day';
+      document.documentElement.dataset.theme = day ? 'day' : '';
+      this.setState({ isDay: day });
+    } catch (e) {}
+  }
+  toggleTheme = () => {
+    const day = !this.state.isDay;
+    document.documentElement.dataset.theme = day ? 'day' : '';
+    try { localStorage.setItem('btds-theme', day ? 'day' : 'night'); } catch (e) {}
+    this.setState({ isDay: day });
+  };
+  hopTo = (dir) => {
+    let h = this.state.hop + dir;
+    if (h < 0) h = 2; if (h > 2) h = 0;
+    this.setState({ hop: h, flashing: true });
+    clearTimeout(this._ft);
+    this._ft = setTimeout(() => this.setState({ flashing: false }), 360);
+  };
+  renderVals() {
+    const { isDay, hop, flashing } = this.state;
+    const names = ['crush-signal', 'claude-src', 'reduit-agent'];
+    return {
+      isDay,
+      hopName: names[hop],
+      hopNum: hop + 1,
+      toggleTheme: this.toggleTheme,
+      hopPrev: () => this.hopTo(-1),
+      hopNext: () => this.hopTo(1),
+      hopOffset: `translateX(-${(hop * 100) / 3}%)`,
+      ribbonFlash: flashing
+        ? 'inset 0 0 0 2px var(--neon-cyan)'
+        : 'inset 0 0 0 1.5px rgba(78,230,255,0.4)',
+    };
+  }
+}
+</script>
+</body>
+</html>
