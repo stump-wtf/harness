@@ -1,177 +1,203 @@
 ---
-id: SPEC-0001
-title: The TUI
 status: draft
+date: 2026-07-18
 implements: [ADR-0001, ADR-0002, ADR-0003, ADR-0006, ADR-0007]
 requires: [SPEC-0002]
 ---
 
-# Spec — The TUI
+# SPEC-0001: The TUI
 
-- **Status:** Draft (the surface Claude Design should push on hardest)
-- **Relates to:** ADR-0001 (Bubble Tea/Bubbles/Lip Gloss/Huh), ADR-0002 (thin
-  client), ADR-0003 (embedded `vt` terminal pane), ADR-0006 (profiles),
-  ADR-0007 (scrollback)
+## Overview
 
-## Purpose
+`harness` (no args) opens a keyboard-driven dashboard onto the daemon: see
+every harness and its state, **hop** into any one as a live terminal, switch
+between **profiles** ("configurations"), and start/stop/edit — without ever
+touching `systemctl`, `tmux`, or `$EDITOR` unless you want to. Built with
+Bubble Tea / Bubbles / Lip Gloss / Huh (ADR-0001) as a thin client of the
+daemon protocol (SPEC-0002). Layouts, visual direction, and the design
+exploration live in `design.md` and `docs/design/`.
 
-`harness` (no args) opens a keyboard-driven dashboard onto the daemon: see every
-harness and its state, **hop** into any one as a live terminal, switch between
-**profiles** ("configurations"), and start/stop/edit — without ever touching
-`systemctl`, `tmux`, or `$EDITOR` unless you want to.
+## Requirements
 
-## Two primary modes
+### Requirement: Mode Machine
 
-The whole app is a small mode machine:
+The app SHALL be a small mode machine with two primary modes — **Dashboard**
+(the list/overview, default landing screen) and **Attached** (full-attention
+live terminal for one harness) — plus overlays that can appear over either
+mode: command palette, profile switcher, harness form, confirm dialogs, and
+help.
 
-1. **Dashboard** — the list/overview. Default landing screen.
-2. **Attached** — full-attention live terminal for one harness (the embedded `vt`
-   pane, ADR-0003). `Esc`/detach hotkey returns to Dashboard; the harness keeps
-   running.
+#### Scenario: Detach returns home
 
-Overlays that can appear over either mode: **Command palette**, **Profile
-switcher**, **Harness form** (create/edit, Huh), **Confirm** dialogs, **Help**.
+- **WHEN** the user detaches from an attached harness (`Esc` or detach chord)
+- **THEN** the TUI returns to the Dashboard and the harness keeps running
 
-## Dashboard layout
+### Requirement: Dashboard
 
-```
-┌ harness ───────────────────────────── profile: signal-ops ▾ ──── ⬢ daemon: local ─┐
-│                                                                                     │
-│  HARNESSES (signal-ops)                    │  crush-signal                          │
-│  ● crush-signal      running    ↻0  2h14m  │  ┌───────────────────────────────────┐ │
-│  ● claude-src        running    ↻0  2h14m  │  │ …last ~12 lines of live output as  │ │
-│  ◐ reduit-agent      degraded   ↻3  restart│  │  a preview of the selected harness │ │
-│  ○ backup-watch      stopped              │  │  (read-only peek; Enter to attach) │ │
-│                                            │  │                                    │ │
-│  + all harnesses (4 hidden by profile)     │  └───────────────────────────────────┘ │
-│                                            │  cmd  crush --yolo --data-dir … --cha… │
-│                                            │  cwd  ~/.local/share/crush-signal-chan │
-│                                            │  env  ~/.config/vault/secrets-static.… │
-│                                            │  exit 0    started 14:02    backend na │
-│                                                                                     │
-├─────────────────────────────────────────────────────────────────────────────────────┤
-│ ↵ attach   s start   x stop   r restart   e edit   n new   p profile   / search   ? │
-└─────────────────────────────────────────────────────────────────────────────────────┘
-```
+The Dashboard SHALL show a list of harnesses filtered to the active profile
+(with a toggle to show all), each row carrying status glyph, name, state,
+restart count (`↻`), and uptime/next-action. It SHALL show a detail/peek pane
+for the selected harness — a live read-only tail of its output (streamed via
+SPEC-0002 snapshot+tail) plus its config summary (`cmd`/`cwd`/`env`/exit/
+started/backend). The header SHALL show app name, active profile, and daemon
+identity (`local` or `user@host`); the footer SHALL be a key bar (`?` expands
+to full help).
 
-- **Left:** a [Bubbles `list`](https://github.com/charmbracelet/bubbles) of
-  harnesses, filtered to the active profile (toggle to show all). Each row: status
-  glyph + name + state + restart count (`↻`) + uptime/next-action.
-- **Right:** a **detail/peek pane** for the selected harness — a live read-only
-  tail of its output (streamed from the daemon; ADR-0007 snapshot+tail) plus its
-  config summary (`cmd`/`cwd`/`env`/exit/started/backend). This is the "glance
-  before you hop" affordance.
-- **Header:** app name · active **profile** (dropdown → profile switcher) · daemon
-  identity (`local` or `user@host` when connected over SSH — ADR-0004).
-- **Footer:** a Bubbles `help` key bar (short list; `?` expands to full help).
+#### Scenario: Glance before you hop
 
-## Attached mode
+- **WHEN** the user moves the selection to a different harness
+- **THEN** the peek pane switches to a live read-only tail of that harness
+  without attaching
 
-```
-┌ crush-signal ● running ─────────────────────── ↻0 · 2h14m · native ── ^b d detach ─┐
-│                                                                                     │
-│   (the harness's actual terminal, full width/height, rendered from the daemon's     │
-│    x/vt screen — colors, cursor, TUI apps inside it all work; you type, it goes      │
-│    straight to the PTY)                                                              │
-│                                                                                     │
-│                                                                                     │
-├─────────────────────────────────────────────────────────────────────────────────────┤
-│ SCROLL ↑↓ · / search · g/G top/bottom · [ ] prev/next harness · Esc dashboard        │
-└─────────────────────────────────────────────────────────────────────────────────────┘
-```
+### Requirement: Attached Mode
 
-- The body is the embedded terminal pane (ADR-0003). In **interactive** substate,
-  keystrokes forward to the PTY; a **detach chord** (default `Ctrl-b d`, tmux-muscle-
-  memory-friendly, rebindable) or `Esc`-`Esc` returns to Dashboard.
-- **Scrollback substate** (`Ctrl-b [` or `PgUp`): freezes the view, enables
-  `↑/↓/PgUp/PgDn/g/G`, and `/` search over scrollback (ADR-0007). `q`/`Esc` exits
-  scrollback back to live.
-- `[` / `]` **hop to prev/next harness** without returning to the dashboard — the
-  core "hop between harnesses" verb, one keystroke.
-- A thin **status ribbon** (top) always shows which harness you're driving, its
-  state, and the detach hint — so you never forget you're inside a live agent.
-- **Read-only attach** (ADR-0008) shows a `👁 read-only` badge and ignores input.
+Attached mode SHALL render the harness's actual terminal full-width/height
+from the daemon's `x/vt` screen — colors, cursor, and TUI apps inside it all
+work; keystrokes forward straight to the PTY. A thin status ribbon SHALL
+always show which harness is being driven, its state, and the detach hint. A
+rebindable detach chord (default `Ctrl-b d`, tmux-muscle-memory-friendly) or
+`Esc`-`Esc` SHALL return to the Dashboard. Read-only attaches (ADR-0008) SHALL
+show a visible read-only badge and ignore input.
 
-## Overlays
+#### Scenario: Driving a live agent
 
-- **Command palette** (`Ctrl-k` / `:`) — fuzzy over verbs *and* harness names:
-  `attach crush-signal`, `restart reduit-agent`, `profile signal-ops`, `new`.
-  Mirrors the CLI verbs so the palette and the scriptable CLI stay 1:1.
-- **Profile switcher** (`p`) — a list of `[profile.*]` with description + member
-  count; selecting one filters the dashboard and offers "start this profile's
-  stopped harnesses?" (non-destructive per ADR-0006).
-- **Harness form** (`n` new / `e` edit) — a [Huh](https://github.com/charmbracelet/huh)
-  form over the harness schema (`cmd`/`args`/`workdir`/`env_file`/`restart_delay`/
-  `backend`/`description`/profile membership). Writes back to `harnessd.toml`
-  (ADR-0006). `e` on an existing harness pre-fills it. An "edit raw TOML" escape
-  hatch opens `$EDITOR` for power users.
-- **Confirm** — stop/restart/delete get a small confirm (destructive-action guard),
-  skippable with a `--yes`-style setting.
-- **Help** (`?`) — full keymap via Bubbles `help`, and a "connected to: …" / daemon
-  version line.
+- **WHEN** the user types while attached in interactive substate
+- **THEN** the keystrokes go straight to the harness PTY
 
-## State glyphs & color (maps to spec-harness-lifecycle)
+#### Scenario: Read-only badge
 
-| glyph | state | color (adaptive) | meaning |
-|-------|-------|------------------|---------|
-| `●` | running | green | supervisor up + process alive |
-| `◐` | degraded / flapping | yellow/amber | crash-looping or restart-backoff (ADR-0005) |
-| `◌` | starting / restarting | cyan | transient |
-| `○` | stopped | gray/dim | intentionally down |
-| `✖` | failed | red | exited non-zero, not restarting |
-| `👁` | read-only attach | blue accent | you can watch but not type |
+- **WHEN** a harness is attached in read-only mode
+- **THEN** a `👁 read-only` badge is visible and input is ignored
 
-Colors via Lip Gloss adaptive palettes so light/dark terminals both look right,
-with [`colorprofile`](https://github.com/charmbracelet/colorprofile) degrading the
-palette when the terminal (or a remote SSH client) is 256/16-color or mono —
-**an explicit ask for Claude Design: define the palette + the two themes, and how
-they degrade.** Keep the green/amber/red semantics load-bearing and colorblind-safe
-(pair color with glyph, never color alone — the table already does).
+### Requirement: Scrollback Substate
 
-## Keybinding philosophy
+From attached mode, `Ctrl-b [` or `PgUp` SHALL enter a scrollback substate
+that freezes the view and enables `↑/↓/PgUp/PgDn/g/G` navigation and `/`
+search over the daemon-owned scrollback (ADR-0007). `q`/`Esc` SHALL exit
+scrollback back to live.
 
-- **tmux-adjacent where it helps muscle memory** (`Ctrl-b d` detach, `Ctrl-b [`
-  scrollback) but rebindable, and never *required* (Esc always works).
-- Single-key verbs on the dashboard (`s/x/r/e/n/p`), vim-ish scroll (`j/k/g/G`),
-  `/` search everywhere, `?` help everywhere, `Ctrl-k` palette everywhere.
-- All bindings declared through the Bubbles `key.Binding` registry so `help`
-  renders them and a future config can remap them.
+#### Scenario: Searching history
 
-## Empty / error / connection states (design these, don't skip them)
+- **WHEN** the user presses `/` in scrollback and enters a term
+- **THEN** matches in the scrollback ring are navigable without disturbing
+  the live harness
 
-- **No daemon running:** offer to start it (`harness daemon` / the service) inline,
-  don't just error.
-- **No harnesses / empty profile:** a friendly zero-state with a "press `n` to
-  create your first harness" call to action (mirrors today's "no harnesses" hint).
-- **Config parse error on reload:** a non-fatal banner ("using last-good config;
-  line 12: …") — never a crash (ADR-0006).
-- **Daemon disconnect (esp. remote):** a reconnecting overlay; harnesses are fine,
-  it's just the view that dropped (ADR-0002).
-- **Harness flapping:** the `◐` row expands to show last exit code + backoff
-  countdown; one keystroke to open its logs.
+### Requirement: Harness Hop
 
-## Visual direction (for Claude Design — the brief)
+`[` / `]` SHALL hop to the previous/next harness directly from attached mode —
+one keystroke, without returning to the Dashboard. The hop is the product's
+signature interaction and SHOULD feel instant and physical (subtle
+slide/status-ribbon flash; springs via `harmonica` rather than linear easing).
 
-- **Personality:** a calm ops cockpit, not a toy. Dense but legible; think
-  `k9s`/`lazygit` restraint, with Charm's warmth. It's watching autonomous agents
-  with scary permissions — it should feel *trustworthy and clear about state*.
-- **Signature moment:** the **hop** — switching harnesses (`[`/`]` or palette)
-  should feel instant and physical (a subtle slide/status-ribbon flash), because
-  that's the product's whole promise. [`harmonica`](https://github.com/charmbracelet/harmonica)
-  (spring physics) is the tool for making that motion feel right rather than linear.
-- **State legibility over decoration:** the single most important thing a glance
-  must answer is "which of my agents are healthy, which need me." Status column,
-  glyphs, and the degraded/flapping treatment carry that.
-- **Deliverables we'd love:** the color system + light/dark themes (+ how they
-  degrade via `colorprofile`); the header and status-ribbon treatment; the
-  degraded/flapping row design; the attach-mode chrome (how much frame vs.
-  bleed-to-edge for the terminal); the empty/error states; a
-  [`vhs`](https://github.com/charmbracelet/vhs)-recorded demo tape of the hop, and
-  [`freeze`](https://github.com/charmbracelet/freeze) stills for docs.
+#### Scenario: One-keystroke hop
 
-## Explicitly out of scope for v1 (see ADRs)
+- **WHEN** the user presses `]` while attached to harness A
+- **THEN** the view switches to the next harness in the list, attached, with
+  the ribbon reflecting the new harness
+
+### Requirement: Command Palette
+
+`Ctrl-k` / `:` SHALL open a command palette that fuzzy-matches over verbs
+*and* harness names (`attach crush-signal`, `restart reduit-agent`,
+`profile signal-ops`, `new`). The palette SHALL mirror the scriptable CLI
+verbs 1:1 so the palette and CLI never drift.
+
+#### Scenario: Verb plus target
+
+- **WHEN** the user types "rest redu" in the palette
+- **THEN** `restart reduit-agent` is offered and executes on Enter
+
+### Requirement: Profile Switcher
+
+`p` SHALL open a profile switcher listing `[profile.*]` entries with
+description and member count. Selecting a profile SHALL filter the dashboard
+and offer to start that profile's stopped harnesses — non-destructively:
+harnesses outside the profile keep running (ADR-0006).
+
+#### Scenario: Non-destructive switch
+
+- **WHEN** the user switches from profile A to profile B and accepts "start
+  stopped"
+- **THEN** B's stopped members start, and A's running members keep running
+
+### Requirement: Harness Form
+
+`n` (new) and `e` (edit) SHALL open a Huh form over the harness schema
+(`cmd`/`args`/`workdir`/`env_file`/`restart_delay`/`backend`/`description`/
+profile membership) that writes back to `harnessd.toml` (ADR-0006 — file is
+truth). `e` SHALL pre-fill from the existing harness. An "edit raw TOML"
+escape hatch SHALL open `$EDITOR`.
+
+#### Scenario: Create without leaving the TUI
+
+- **WHEN** the user completes the `n` form
+- **THEN** the new harness lands in `harnessd.toml`, the daemon reloads, and
+  the harness appears on the dashboard
+
+### Requirement: Confirmation Guards
+
+Stop, restart, and delete SHALL present a small confirm dialog
+(destructive-action guard), skippable via a `--yes`-style setting.
+
+#### Scenario: Accidental stop
+
+- **WHEN** the user presses `x` on a running harness
+- **THEN** a confirm dialog intercepts before anything is signaled
+
+### Requirement: State Presentation
+
+The TUI SHALL render lifecycle states (SPEC-0003) with paired glyph + color:
+`●` running (green), `◐` degraded/flapping (amber), `◌` starting/restarting
+(cyan), `○` stopped (dim), `✖` failed (red), `👁` read-only (blue accent).
+Colors SHALL use Lip Gloss adaptive palettes for light/dark terminals, degrade
+via `colorprofile` on 256/16-color or mono terminals, and never carry meaning
+alone — the glyph always accompanies the color (colorblind-safe).
+
+#### Scenario: Mono terminal
+
+- **WHEN** the TUI runs in a monochrome terminal or degraded SSH client
+- **THEN** state remains fully legible from glyphs and text
+
+### Requirement: Keybinding Registry
+
+All bindings SHALL be declared through the Bubbles `key.Binding` registry so
+help renders them and a future config can remap them. Defaults: single-key
+verbs on the dashboard (`s/x/r/e/n/p`), vim-ish scroll (`j/k/g/G`), `/`
+search everywhere, `?` help everywhere, `Ctrl-k` palette everywhere.
+tmux-adjacent chords (`Ctrl-b d`, `Ctrl-b [`) are provided but never
+*required* — `Esc` always works.
+
+#### Scenario: Discoverable keymap
+
+- **WHEN** the user presses `?` in any mode
+- **THEN** the full current keymap renders from the binding registry
+
+### Requirement: Zero And Error States
+
+The TUI SHALL design, not skip, its edge states: **no daemon** (offer to start
+it inline, don't just error); **no harnesses / empty profile** (friendly
+zero-state with "press `n` to create your first harness"); **config parse
+error on reload** (non-fatal banner "using last-good config; line 12: …" —
+never a crash, ADR-0006); **daemon disconnect** (reconnecting overlay —
+harnesses are fine, only the view dropped, ADR-0002); **flapping harness**
+(the `◐` row expands to show last exit code + backoff countdown, one keystroke
+to logs).
+
+#### Scenario: Daemon not running
+
+- **WHEN** `harness` starts and no daemon socket is found
+- **THEN** the TUI offers to start the daemon inline instead of printing an
+  error and exiting
+
+#### Scenario: Bad config reload
+
+- **WHEN** a TOML reload fails to parse
+- **THEN** the daemon keeps the last-good config and the TUI shows a
+  non-fatal banner with the parse location
+
+## Out of scope for v1
 
 - Tiled multi-pane (several harnesses on screen at once) — ADR-0003 keeps it
   possible; v1 is single-attach + fast hop.
 - Full tmux copy-mode selection semantics — v1 is scrollback + search.
-- Mouse-first interaction — keyboard-first; mouse is a bonus, not the design center.
+- Mouse-first interaction — keyboard-first; mouse is a bonus.

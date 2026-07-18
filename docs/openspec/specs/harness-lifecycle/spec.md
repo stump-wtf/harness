@@ -1,89 +1,131 @@
 ---
-id: SPEC-0003
-title: Harness lifecycle state machine
 status: draft
+date: 2026-07-18
 implements: [ADR-0005, ADR-0006, ADR-0007]
-requires: []
 ---
 
-# Spec — Harness lifecycle state machine
+# SPEC-0003: Harness Lifecycle State Machine
 
-- **Status:** Draft
-- **Relates to:** ADR-0005 (daemon supervises harnesses), ADR-0007 (persisted
-  runtime state), spec-tui (glyphs/colors), spec-daemon-protocol (`state` field &
-  events)
+## Overview
 
-## States
+The explicit state machine every harness moves through under daemon
+supervision. Today's implementation collapses everything to green/yellow/red by
+ANDing "supervisor active" with "tmux session up"; this spec makes the machine
+explicit, adds crash-loop safety, and gives the TUI real states to render. See
+ADR-0005 (supervision layers) and `design.md` for the transition diagram.
 
-| state | glyph | meaning |
-|-------|-------|---------|
-| `stopped` | `○` | Not running; intentionally down. Not autostarted. |
-| `starting` | `◌` | Spawn in progress (PTY allocated, process starting). |
-| `running` | `●` | Process alive under supervision. |
-| `degraded` | `◐` | Alive but flapping recently, **or** in restart backoff (crash-loop detected). |
-| `restarting` | `◌` | Exited while enabled; waiting `restart_delay` before respawn. |
-| `stopping` | `◌` | Stop requested; sending SIGTERM→(grace)→SIGKILL. |
-| `failed` | `✖` | Exited and **not** being restarted (disabled, or backoff gave up / manual stop after crash). |
+## Requirements
 
-`enabled` is an orthogonal boolean (does the daemon want this running?), persisted
-in state.json (ADR-0007). A harness can be `enabled && stopped` briefly during a
-restart cycle; `enabled` is intent, `state` is reality.
+### Requirement: State Model
 
-## Transitions
+The daemon SHALL track each harness in exactly one of seven states: `stopped`
+(`○`), `starting` (`◌`), `running` (`●`), `degraded` (`◐`), `restarting` (`◌`),
+`stopping` (`◌`), and `failed` (`✖`). Separately from `state`, the daemon SHALL
+persist an orthogonal `enabled` boolean (does the daemon want this running?) in
+its state file (ADR-0007). `enabled` is intent; `state` is reality.
 
-```
-                 start / autostart(enabled|profile)
-        stopped ─────────────────────────────▶ starting
-           ▲                                      │ spawn ok
-    stop   │                                      ▼
-   (grace) │                                   running ───────────┐
-        stopping ◀──── stop ──────────────────────┤               │ healthy exit(0)
-           │                                       │ crash/exit≠0  │ while enabled?
-           │ exited                                ▼               ▼
-           └──────────────▶ stopped        restarting          (enabled? → restarting)
-                                               │  wait restart_delay   (disabled? → stopped)
-                                               ▼
-                                            starting
-                                               │
-                              too-fast/too-often exits in window
-                                               ▼
-                                           degraded  ──(a clean run resets)──▶ running
-                                               │  backoff exhausted / give-up
-                                               ▼
-                                            failed
-```
+#### Scenario: Intent vs. reality
 
-### Rules
+- **WHEN** a harness exits while `enabled` is true during a restart cycle
+- **THEN** the harness MAY briefly report `enabled && stopped` without either
+  field being considered inconsistent
 
-- **Autostart:** on daemon start, every `enabled` harness (directly, or via an
-  `autostart` profile — ADR-0006) → `starting`. (ADR-0005)
-- **Healthy exit (code 0):** if still `enabled`, treated like any exit → restart
-  per policy (agents/watchers are meant to be long-lived; a clean exit still
-  restarts unless the harness is disabled). If `!enabled`, → `stopped`.
-- **Crash (code ≠ 0) while enabled:** → `restarting`, wait `restart_delay`, →
-  `starting`. Restart count (`↻`) increments.
-- **Crash-loop detection (ADR-0005):** N exits within window T → `degraded`;
-  `restart_delay` escalates (capped exponential backoff). A single run that
-  survives longer than T resets the counter and returns to `running`.
-- **Backoff give-up:** after the cap / a max attempts threshold, → `failed`; the
-  daemon stops auto-restarting and the TUI surfaces it loudly (needs a human).
-  Manual `restart` clears it.
-- **Stop:** `running|degraded|restarting → stopping`: SIGTERM, wait grace period,
-  SIGKILL if needed, kill the PTY session → `stopped`, set `enabled=false`.
-- **Config change to a running harness (ADR-0006):** applies on next (re)start;
-  the TUI can flag "config changed — restart to apply."
+### Requirement: Autostart
 
-## Events emitted (spec-daemon-protocol)
+On daemon start, every harness that is `enabled` — directly or via an
+`autostart` profile (ADR-0006) — SHALL transition to `starting`.
 
-- `harness_state_changed { name, from, to }`
-- `harness_exited { name, code }`
-- `harness_flapping { name, restarts, next_retry_in }`
+#### Scenario: Daemon boot
 
-## Comparison to today
+- **WHEN** the daemon starts and a harness is marked `enabled`
+- **THEN** the daemon spawns it (state `starting`) without operator action
 
-Today: two of these concepts existed implicitly — the systemd unit's active/failed
-and the in-pane `while true; …; sleep` restart. There was **no** flapping
-detection, no backoff, no distinct `degraded`/`failed`, and the `harnessd`
-plugin's `_harnessd_state` collapsed everything to green/yellow/red by ANDing
-"supervisor active" with "tmux session up." This spec makes the implicit machine
-explicit, adds crash-loop safety, and gives the TUI real states to render.
+### Requirement: Restart On Exit
+
+While a harness is `enabled`, any exit — including a clean exit code 0 — SHALL
+be followed by a restart per policy (`restarting`, wait `restart_delay`, then
+`starting`), incrementing the restart count (`↻`). If the harness is not
+`enabled`, an exit SHALL transition it to `stopped`.
+
+#### Scenario: Clean exit while enabled
+
+- **WHEN** an enabled harness exits with code 0
+- **THEN** the daemon restarts it after `restart_delay` (agents and watchers
+  are meant to be long-lived)
+
+#### Scenario: Exit while disabled
+
+- **WHEN** a harness exits and `enabled` is false
+- **THEN** the harness transitions to `stopped` and is not respawned
+
+### Requirement: Crash-Loop Detection
+
+The daemon SHALL detect crash loops: N exits within a window T transitions the
+harness to `degraded`, and `restart_delay` SHALL escalate as a capped
+exponential backoff (ADR-0005). A single run surviving longer than T SHALL
+reset the counter and return the harness to `running`.
+
+#### Scenario: Flapping harness
+
+- **WHEN** a harness exits N times within window T
+- **THEN** its state becomes `degraded` and subsequent restart delays escalate
+  exponentially up to the cap
+
+#### Scenario: Recovery resets backoff
+
+- **WHEN** a degraded harness's current run survives longer than window T
+- **THEN** the exit counter resets and the state returns to `running`
+
+### Requirement: Backoff Give-Up
+
+After the backoff cap / a maximum-attempts threshold, the daemon SHALL stop
+auto-restarting the harness and transition it to `failed`. The TUI surfaces
+`failed` loudly (needs a human). A manual `restart` SHALL clear the failed
+state and begin a fresh start cycle.
+
+#### Scenario: Giving up
+
+- **WHEN** a degraded harness exhausts its restart attempts
+- **THEN** the daemon moves it to `failed` and stops respawning it
+
+#### Scenario: Manual recovery
+
+- **WHEN** an operator issues `restart` on a `failed` harness
+- **THEN** the failure latch clears and the harness transitions to `starting`
+
+### Requirement: Graceful Stop
+
+A stop request on a `running`, `degraded`, or `restarting` harness SHALL
+transition it to `stopping`: send SIGTERM, wait a grace period, SIGKILL if
+needed, tear down the PTY session, then transition to `stopped` and set
+`enabled=false`.
+
+#### Scenario: Process ignores SIGTERM
+
+- **WHEN** a stop-requested process is still alive after the grace period
+- **THEN** the daemon sends SIGKILL, reaps the PTY, and records `stopped`
+
+### Requirement: Config Change Application
+
+Configuration changes to a running harness (ADR-0006 hot reload) SHALL apply on
+the next (re)start, never by silently bouncing the process. The daemon SHALL
+expose enough information for the TUI to flag "config changed — restart to
+apply."
+
+#### Scenario: Edit while running
+
+- **WHEN** `harnessd.toml` changes a running harness's definition and is
+  reloaded
+- **THEN** the running process is untouched and the change takes effect on the
+  next restart
+
+### Requirement: Lifecycle Events
+
+The daemon SHALL emit protocol events (SPEC-0002) on lifecycle activity:
+`harness_state_changed { name, from, to }`, `harness_exited { name, code }`,
+and `harness_flapping { name, restarts, next_retry_in }`.
+
+#### Scenario: State change notification
+
+- **WHEN** any harness transitions between states
+- **THEN** subscribed clients receive `harness_state_changed` without polling

@@ -21,6 +21,26 @@ This project uses the [SDD plugin](https://github.com/joestump/claude-plugin-sdd
 
 Run `/sdd:prime [topic]` at the start of a session to load relevant ADRs and specs into context.
 
+### SDD Configuration
+
+#### Tracker
+
+- Type: Gitea
+- Owner: stump.wtf
+- Repo: harness
+- Host: https://gitea.stump.rocks
+
+#### Branch Conventions
+
+- Prefix: feature
+- Epic Prefix: epic
+
+#### PR Conventions
+
+- Close Keyword: Closes
+- Ref Keyword: Part of
+- Include Spec Reference: yes
+
 ### Governing Comments
 
 When implementing code governed by ADRs or specs, leave comments referencing the governing artifacts:
