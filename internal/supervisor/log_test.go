@@ -80,6 +80,45 @@ func TestRotatingLogContentPreserved(t *testing.T) {
 	}
 }
 
+// A harness pruning its own rotated logs must never delete a sibling harness
+// whose name merely shares its prefix (kebab-case names like "web" / "web-api").
+func TestRotatingLogPruneLeavesSiblingHarnessAlone(t *testing.T) {
+	dir := t.TempDir()
+	// Sibling harness "web-api" files that a naive `web-*.log` glob would match.
+	sibActive := filepath.Join(dir, "web-api.log")
+	sibBackup := filepath.Join(dir, "web-api-20260101T000000.000.log")
+	if err := os.WriteFile(sibActive, []byte("sibling active\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sibBackup, []byte("sibling backup\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rl, err := newRotatingLog("web", LogConfig{Dir: dir, MaxBytes: 16, MaxBackups: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rl.Close()
+	// Force several rotations of "web" so its prune path runs repeatedly.
+	for i := 0; i < 8; i++ {
+		if _, err := rl.Write([]byte("0123456789")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := os.Stat(sibActive); err != nil {
+		t.Errorf("sibling active log web-api.log deleted by web's prune: %v", err)
+	}
+	if _, err := os.Stat(sibBackup); err != nil {
+		t.Errorf("sibling backup web-api-*.log deleted by web's prune: %v", err)
+	}
+	// "web" must still enforce its own MaxBackups on its own rotated files.
+	own, _ := filepath.Glob(filepath.Join(dir, "web-2*.log"))
+	if len(own) > 1 {
+		t.Errorf("web MaxBackups=1 not enforced on own backups: %d", len(own))
+	}
+}
+
 func TestRotatingLogWriteAfterClose(t *testing.T) {
 	dir := t.TempDir()
 	rl, err := newRotatingLog("closed", LogConfig{Dir: dir})

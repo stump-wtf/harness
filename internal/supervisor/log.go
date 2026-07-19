@@ -10,9 +10,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
+
+// rotatedStampLayout is the timestamp suffix stamped onto rotated log files.
+// Kept in one place so rotation and pruning agree on the exact shape and a
+// pruning harness only ever matches its own backups.
+const rotatedStampLayout = "20060102T150405.000"
 
 // LogConfig tunes per-harness log rotation. Zero values fall back to defaults
 // in newRotatingLog.
@@ -121,7 +127,7 @@ func (rl *rotatingLog) rotate() error {
 	}
 	// Only rename if there is content to preserve.
 	if rl.size > 0 {
-		stamp := time.Now().Format("20060102T150405.000")
+		stamp := time.Now().Format(rotatedStampLayout)
 		rotated := filepath.Join(rl.cfg.Dir, fmt.Sprintf("%s-%s.log", rl.name, stamp))
 		if err := os.Rename(rl.path(), rotated); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("supervisor: rotate log: %w", err)
@@ -135,9 +141,20 @@ func (rl *rotatingLog) rotate() error {
 // prune failures never fail a write.
 func (rl *rotatingLog) pruneBackups() {
 	pattern := filepath.Join(rl.cfg.Dir, rl.name+"-*.log")
-	matches, err := filepath.Glob(pattern)
+	globbed, err := filepath.Glob(pattern)
 	if err != nil {
 		return
+	}
+	// Filter to THIS harness's own backups. A bare glob on `<name>-*.log` also
+	// matches sibling harnesses whose name shares our prefix (e.g. pruning
+	// "web" would otherwise sweep up "web-api.log" and "web-api-<stamp>.log"),
+	// deleting another harness's logs. isOwnBackup keeps only files whose suffix
+	// parses as our rotation timestamp.
+	matches := globbed[:0]
+	for _, m := range globbed {
+		if rl.isOwnBackup(m) {
+			matches = append(matches, m)
+		}
 	}
 	if len(matches) <= rl.cfg.MaxBackups {
 		return
@@ -147,6 +164,23 @@ func (rl *rotatingLog) pruneBackups() {
 	for _, old := range matches[:len(matches)-rl.cfg.MaxBackups] {
 		_ = os.Remove(old)
 	}
+}
+
+// isOwnBackup reports whether path is one of THIS harness's rotated backups —
+// exactly `<name>-<timestamp>.log` — and not a sibling harness that merely
+// shares our name as a prefix.
+func (rl *rotatingLog) isOwnBackup(path string) bool {
+	base := filepath.Base(path)
+	mid := strings.TrimSuffix(base, ".log")
+	if mid == base {
+		return false // no .log suffix
+	}
+	stamp := strings.TrimPrefix(mid, rl.name+"-")
+	if stamp == mid {
+		return false // not `<name>-…`
+	}
+	_, err := time.Parse(rotatedStampLayout, stamp)
+	return err == nil
 }
 
 // Close closes the active file. Implements io.Closer.
