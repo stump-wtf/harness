@@ -10,6 +10,7 @@ package supervisor
 // owns the event Bus, the state.json persistence, and the config-reload path.
 
 import (
+	"io"
 	"sync"
 	"time"
 
@@ -30,14 +31,23 @@ type ManagerOptions struct {
 	LogDir string
 	// LogCfg tunes rotation (Dir is overridden by LogDir).
 	LogCfg LogConfig
+	// ExtraOutFor, if set, returns an additional io.Writer that each harness's
+	// raw PTY output is teed to alongside its durable log (ADR-0003/ADR-0007).
+	// The daemon uses this to feed the per-harness x/vt emulator + scrollback
+	// ring that backs live attach (SPEC-0002 REQ "Attach Session"). Returning
+	// nil for a name disables the tee for that harness. The reviewer flagged the
+	// absence of this Manager-level ExtraOut wiring in the prior package; this
+	// closes it.
+	ExtraOutFor func(name string) io.Writer
 }
 
 // Manager supervises every harness in a config.
 type Manager struct {
-	policy    Policy
-	statePath string
-	logCfg    LogConfig
-	bus       *Bus
+	policy      Policy
+	statePath   string
+	logCfg      LogConfig
+	bus         *Bus
+	extraOutFor func(name string) io.Writer
 
 	mu            sync.Mutex
 	cfg           *core.Config
@@ -70,6 +80,7 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 		statePath:   statePath,
 		logCfg:      logCfg,
 		bus:         NewBus(),
+		extraOutFor: opts.ExtraOutFor,
 		cfg:         cfg,
 		supervisors: make(map[string]*Supervisor),
 		dirty:       make(chan struct{}, 1),
@@ -94,10 +105,20 @@ func (m *Manager) addSupervisor(h core.Harness) {
 		Policy:   m.policy,
 		Bus:      m.bus,
 		LogCfg:   m.logCfg,
+		ExtraOut: m.extraOut(h.Name),
 		OnChange: m.markDirty,
 	})
 	m.supervisors[h.Name] = s
 	m.order = append(m.order, h.Name)
+}
+
+// extraOut resolves the per-harness tee writer (the attach emulator/ring) from
+// the configured factory, or nil when none is set.
+func (m *Manager) extraOut(name string) io.Writer {
+	if m.extraOutFor == nil {
+		return nil
+	}
+	return m.extraOutFor(name)
 }
 
 // markDirty signals the persist loop that state changed (non-blocking).
@@ -176,6 +197,69 @@ func (m *Manager) Restart(name string) bool {
 		return true
 	}
 	return false
+}
+
+// Resize resizes a single harness's live PTY (ADR-0003), ok=false if unknown.
+func (m *Manager) Resize(name string, cols, rows int) bool {
+	if s := m.get(name); s != nil {
+		s.Resize(cols, rows)
+		return true
+	}
+	return false
+}
+
+// WriteInput delivers attach keystrokes to a single harness's PTY (SPEC-0002
+// REQ "Attach Session"), ok=false if unknown.
+func (m *Manager) WriteInput(name string, p []byte) bool {
+	if s := m.get(name); s != nil {
+		s.WriteInput(p)
+		return true
+	}
+	return false
+}
+
+// Config returns the manager's current parsed config (ADR-0006 source of
+// truth). The daemon uses it to answer describe/profiles and to project
+// Cmd/Backend/Description into control responses.
+func (m *Manager) Config() *core.Config {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cfg
+}
+
+// LogDir returns the per-harness log directory (ADR-0007). The daemon reads
+// <dir>/<name>.log to service the logs control op.
+func (m *Manager) LogDir() string { return m.logCfg.Dir }
+
+// ActiveProfile returns the currently active profile name, if any (ADR-0006).
+func (m *Manager) ActiveProfile() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.activeProfile
+}
+
+// UseProfile activates a profile: it records the active profile and starts
+// (enables) every member harness, the "hop into a configuration" gesture
+// (ADR-0006). Returns false if the profile is unknown. Non-members are left
+// untouched — switching does not stop harnesses out from under other work.
+func (m *Manager) UseProfile(name string) bool {
+	m.mu.Lock()
+	p, ok := m.cfg.Profiles[name]
+	if !ok {
+		m.mu.Unlock()
+		return false
+	}
+	members := append([]string(nil), p.Harnesses...)
+	m.activeProfile = name
+	m.mu.Unlock()
+
+	for _, hn := range members {
+		if s := m.get(hn); s != nil {
+			s.Start()
+		}
+	}
+	m.markDirty()
+	return true
 }
 
 // Snapshot returns one harness's runtime snapshot, ok=false if unknown.
@@ -262,6 +346,7 @@ func (m *Manager) addSupervisorLocked(h core.Harness) {
 		Policy:   m.policy,
 		Bus:      m.bus,
 		LogCfg:   m.logCfg,
+		ExtraOut: m.extraOut(h.Name),
 		OnChange: m.markDirty,
 	})
 	m.supervisors[h.Name] = s
