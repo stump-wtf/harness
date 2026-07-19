@@ -1,0 +1,59 @@
+/* ============================================================
+   Bubbletea TUI — Typography
+   ------------------------------------------------------------
+   Monospace-first. The terminal is a fixed character grid, so
+   sizing is expressed in a modest scale and line-height stays
+   close to 1 cell. Space Mono is the chunky display voice;
+   JetBrains Mono is the readable workhorse.
+   ============================================================ */
+
+:root {
+  /* ---- Families ---- */
+  --font-mono:     'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+  --font-display:  'Space Mono', 'JetBrains Mono', ui-monospace, monospace;
+  --font-pixel:    'Silkscreen', 'Space Mono', monospace;
+
+  /* Everything is mono — these aliases keep intent readable */
+  --font-body:     var(--font-mono);
+  --font-ui:       var(--font-mono);
+
+  /* ---- Type scale (px) ---- */
+  --text-2xs:  11px;
+  --text-xs:   12px;
+  --text-sm:   13px;
+  --text-base: 15px;
+  --text-md:   17px;
+  --text-lg:   20px;
+  --text-xl:   26px;
+  --text-2xl:  34px;
+  --text-3xl:  46px;
+  --text-4xl:  62px;
+  --text-5xl:  84px;   /* web hero (HTML/HTMX language) */
+
+  /* ---- Weights ---- */
+  --weight-regular: 400;
+  --weight-medium:  500;
+  --weight-bold:    700;
+  --weight-black:   800;
+
+  /* ---- Line heights (cell-aware) ---- */
+  --leading-cell:  1.35;   /* body of terminal text */
+  --leading-tight: 1.15;   /* headings */
+  --leading-snug:  1.25;
+  --leading-loose: 1.6;    /* prose / help */
+
+  /* ---- Tracking ---- */
+  --tracking-tight:  -0.02em;
+  --tracking-normal: 0em;
+  --tracking-wide:   0.08em;
+  --tracking-caps:   0.18em;  /* pixel labels / eyebrows */
+
+  /* ---- Semantic roles ---- */
+  --type-display:  var(--weight-bold) var(--text-3xl)/var(--leading-tight) var(--font-display);
+  --type-title:    var(--weight-bold) var(--text-xl)/var(--leading-snug) var(--font-display);
+  --type-heading:  var(--weight-bold) var(--text-md)/var(--leading-snug) var(--font-mono);
+  --type-body:     var(--weight-regular) var(--text-base)/var(--leading-cell) var(--font-mono);
+  --type-ui:       var(--weight-medium) var(--text-sm)/var(--leading-snug) var(--font-mono);
+  --type-hint:     var(--weight-regular) var(--text-xs)/var(--leading-snug) var(--font-mono);
+  --type-eyebrow:  var(--weight-bold) var(--text-2xs)/1 var(--font-pixel);
+}

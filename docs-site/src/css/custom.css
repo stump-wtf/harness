@@ -1,0 +1,448 @@
+/**
+ * Harness Docs — Docusaurus Custom Styles
+ *
+ * Styled with the Bubbletea TUI / charm-web design system from
+ * docs/design/_ds/bubbletea-tui-design-system-*. Tokens are vendored
+ * into ./tokens/ (colors, fonts, typography, spacing) with the design
+ * system's `data-theme="day"` mode remapped to Docusaurus's
+ * `data-theme="light"`. The token :root values are the dark ("void")
+ * theme, which is also this site's default color mode.
+ *
+ * Component surface: badge components, RFC 2119 keyword highlighting,
+ * ADR consequence keywords, requirement boxes, cross-reference chips,
+ * and command tiles — all keyed to the Charm palette (purple / pink /
+ * neon cyan / mint / gold / coral on a blue-black terminal void).
+ */
+
+@import './tokens/fonts.css';
+@import './tokens/colors.css';
+@import './tokens/typography.css';
+@import './tokens/spacing.css';
+
+/* ============================================
+   Infima mapping — Charm purple as primary
+   ============================================ */
+:root {
+  /* Dark-first: token :root values are the terminal "void" theme */
+  --ifm-color-primary: #7d56f4;
+  --ifm-color-primary-dark: #6642e0;
+  --ifm-color-primary-darker: #5d3ad6;
+  --ifm-color-primary-darkest: #4e2ec0;
+  --ifm-color-primary-light: #9b7cff;
+  --ifm-color-primary-lighter: #a98eff;
+  --ifm-color-primary-lightest: #c8a2ff;
+
+  --ifm-font-family-base: var(--font-mono);
+  --ifm-font-family-monospace: var(--font-mono);
+  --ifm-heading-font-family: var(--font-display);
+
+  --ifm-code-font-size: 95%;
+  --ifm-font-size-base: var(--text-base);
+  --ifm-line-height-base: var(--leading-loose);
+  --ifm-global-radius: var(--radius-md);
+  --ifm-code-border-radius: var(--radius-xs);
+
+  --docusaurus-highlighted-code-line-bg: rgba(125, 86, 244, 0.12);
+}
+
+/* Light ("day") mode — lavender paper, deepened brand hues */
+[data-theme='light'] {
+  --ifm-color-primary: #6c46ea;
+  --ifm-color-primary-dark: #5a36d6;
+  --ifm-color-primary-darker: #5230c9;
+  --ifm-color-primary-darkest: #4628b8;
+  --ifm-color-primary-light: #7d56f4;
+  --ifm-color-primary-lighter: #8b6bf0;
+  --ifm-color-primary-lightest: #9b7cff;
+
+  --ifm-background-color: var(--bg-terminal);
+  --ifm-background-surface-color: var(--bg-surface);
+  --ifm-navbar-background-color: var(--bg-void);
+  --ifm-footer-background-color: var(--bg-void);
+  --ifm-color-content: var(--text-body);
+  --ifm-heading-color: var(--text-bright);
+  --ifm-toc-border-color: var(--line-dim);
+  --ifm-hr-border-color: var(--line-dim);
+  --ifm-table-border-color: var(--line);
+  --ifm-blockquote-border-left-width: var(--border-bold);
+
+  --docusaurus-highlighted-code-line-bg: rgba(108, 70, 234, 0.1);
+}
+
+/* Dark ("void") mode — deep blue-black lit by ANSI neon */
+[data-theme='dark'] {
+  --ifm-color-primary: #9b7cff;
+  --ifm-color-primary-dark: #7d56f4;
+  --ifm-color-primary-darker: #6642e0;
+  --ifm-color-primary-darkest: #5d3ad6;
+  --ifm-color-primary-light: #a98eff;
+  --ifm-color-primary-lighter: #b89dff;
+  --ifm-color-primary-lightest: #c8a2ff;
+
+  --ifm-background-color: var(--bg-terminal);
+  --ifm-background-surface-color: var(--bg-surface);
+  --ifm-navbar-background-color: var(--bg-void);
+  --ifm-footer-background-color: var(--bg-void);
+  --ifm-color-content: var(--text-body);
+  --ifm-heading-color: var(--text-bright);
+  --ifm-toc-border-color: var(--line-dim);
+  --ifm-hr-border-color: var(--line-dim);
+  --ifm-table-border-color: var(--line);
+  --ifm-menu-color: var(--text-muted);
+  --ifm-blockquote-border-left-width: var(--border-bold);
+
+  --docusaurus-highlighted-code-line-bg: rgba(125, 86, 244, 0.16);
+}
+
+/* ============================================
+   Chrome — terminal-window feel
+   ============================================ */
+.navbar {
+  border-bottom: var(--border-hair) solid var(--line-dim);
+  box-shadow: none;
+}
+.navbar__title {
+  font-family: var(--font-display);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-wide);
+}
+.navbar__title::before {
+  content: '❯ ';
+  color: var(--charm-pink);
+}
+.footer {
+  border-top: var(--border-hair) solid var(--line-dim);
+}
+.footer__title {
+  font-family: var(--font-display);
+  letter-spacing: var(--tracking-wide);
+}
+
+h1, h2, h3 {
+  letter-spacing: var(--tracking-tight);
+}
+
+.theme-doc-sidebar-container {
+  border-right: var(--border-hair) solid var(--line-dim) !important;
+}
+.menu__link {
+  font-size: var(--text-sm);
+}
+.menu__link--active {
+  color: var(--ifm-color-primary);
+}
+
+article a:not(.card):not(.rfc-ref) {
+  color: var(--neon-cyan);
+}
+[data-theme='light'] article a:not(.card):not(.rfc-ref) {
+  color: var(--charm-purple);
+}
+
+table thead tr {
+  background: var(--bg-surface);
+}
+
+/* ============================================
+   Badge Components - Shared Base Styles
+   Terminal chip: tinted fill + neon text + hairline border,
+   theme-aware because the hue tokens flip per theme.
+   ============================================ */
+.severity-badge,
+.domain-badge,
+.priority-badge,
+.status-badge,
+.date-badge,
+.rfc-level-badge {
+  display: inline-block;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-xs);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  font-family: var(--font-mono);
+  border: var(--border-hair) solid transparent;
+}
+
+/* Badge hue recipe */
+.severity-badge.critical,
+.priority-badge.p0,
+.status-badge.rejected,
+.rfc-level-badge.critical {
+  background-color: color-mix(in srgb, var(--neon-coral) 14%, transparent);
+  color: var(--neon-coral);
+  border-color: color-mix(in srgb, var(--neon-coral) 45%, transparent);
+}
+.severity-badge.high,
+.priority-badge.p1,
+.status-badge.superseded,
+.rfc-level-badge.high {
+  background-color: color-mix(in srgb, var(--neon-gold) 14%, transparent);
+  color: var(--neon-gold);
+  border-color: color-mix(in srgb, var(--neon-gold) 45%, transparent);
+}
+.severity-badge.medium,
+.priority-badge.p2 {
+  background-color: color-mix(in srgb, var(--charm-fuchsia) 14%, transparent);
+  color: var(--charm-fuchsia);
+  border-color: color-mix(in srgb, var(--charm-fuchsia) 45%, transparent);
+}
+.severity-badge.low,
+.status-badge.approved,
+.status-badge.accepted,
+.status-badge.active {
+  background-color: color-mix(in srgb, var(--neon-mint) 14%, transparent);
+  color: var(--neon-mint);
+  border-color: color-mix(in srgb, var(--neon-mint) 45%, transparent);
+}
+.severity-badge.info,
+.priority-badge.p3,
+.status-badge.proposed,
+.status-badge.draft,
+.rfc-level-badge.optional {
+  background-color: color-mix(in srgb, var(--neon-cyan) 14%, transparent);
+  color: var(--neon-cyan);
+  border-color: color-mix(in srgb, var(--neon-cyan) 45%, transparent);
+}
+.severity-badge.unknown,
+.priority-badge.p4,
+.status-badge.deprecated,
+.status-badge.inactive,
+.status-badge.unknown,
+.rfc-level-badge.unknown,
+.date-badge {
+  background-color: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+  border-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
+}
+.domain-badge {
+  background-color: var(--tint-primary);
+  color: var(--charm-purple-hi);
+  border-color: color-mix(in srgb, var(--charm-purple) 45%, transparent);
+}
+[data-theme='light'] .domain-badge {
+  color: var(--charm-purple);
+}
+
+.status-badge.deprecated,
+.status-badge.superseded {
+  text-decoration: line-through;
+}
+
+/* ============================================
+   RFC 2119 Keyword Highlighting
+   MUST → coral · SHOULD → gold · MAY → cyan
+   ============================================ */
+.rfc-keyword {
+  font-weight: var(--weight-bold);
+  padding: 0.05rem 0.25rem;
+  border-radius: var(--radius-xs);
+  letter-spacing: var(--tracking-normal);
+}
+.rfc-keyword.must,
+.rfc-keyword.shall,
+.rfc-keyword.required {
+  background-color: color-mix(in srgb, var(--neon-coral) 13%, transparent);
+  color: var(--neon-coral);
+}
+.rfc-keyword.should,
+.rfc-keyword.recommended {
+  background-color: color-mix(in srgb, var(--neon-gold) 13%, transparent);
+  color: var(--neon-gold);
+}
+.rfc-keyword.may,
+.rfc-keyword.optional {
+  background-color: color-mix(in srgb, var(--neon-cyan) 13%, transparent);
+  color: var(--neon-cyan);
+}
+
+/* ============================================
+   ADR Consequence Keywords (Good, Bad, Neutral, etc.)
+   ============================================ */
+.consequence-keyword {
+  font-weight: var(--weight-bold);
+  padding: 0.05rem 0.3rem;
+  border-radius: var(--radius-xs);
+}
+.consequence-keyword.good {
+  background-color: color-mix(in srgb, var(--neon-mint) 14%, transparent);
+  color: var(--neon-mint);
+}
+.consequence-keyword.neutral {
+  background-color: color-mix(in srgb, var(--neon-cyan) 14%, transparent);
+  color: var(--neon-cyan);
+}
+.consequence-keyword.bad {
+  background-color: color-mix(in srgb, var(--neon-coral) 14%, transparent);
+  color: var(--neon-coral);
+}
+.consequence-keyword.meh,
+.consequence-keyword.okay {
+  background-color: color-mix(in srgb, var(--neon-gold) 14%, transparent);
+  color: var(--neon-gold);
+}
+
+/* ============================================
+   RFC Reference Links (ADR-0001 / SPEC-0001 chips)
+   ============================================ */
+.rfc-ref {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
+  font-size: 0.9em;
+  text-decoration: none;
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--radius-xs);
+  background-color: var(--tint-primary);
+  color: var(--ifm-color-primary);
+  border: var(--border-hair) solid color-mix(in srgb, var(--charm-purple) 40%, transparent);
+  transition: background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+  white-space: nowrap;
+}
+.rfc-ref:hover {
+  background-color: color-mix(in srgb, var(--charm-purple) 24%, transparent);
+  border-color: var(--charm-purple);
+  box-shadow: var(--glow-soft);
+  text-decoration: none;
+  color: var(--ifm-color-primary);
+}
+
+/* ============================================
+   Requirement Box — a Lip Gloss rounded panel
+   ============================================ */
+.requirement-box {
+  border: var(--border-hair) solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  margin: var(--space-5) 0;
+  background-color: var(--surface-card);
+  transition: border-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+.requirement-box:target {
+  border-color: var(--border-focus);
+  box-shadow: var(--glow-cyan);
+}
+.requirement-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.requirement-id {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+  font-size: var(--text-sm);
+  color: var(--text-bright);
+}
+.requirement-id::before {
+  content: '◆ ';
+  color: var(--charm-pink);
+}
+.requirement-id a {
+  color: inherit;
+  text-decoration: none;
+}
+.requirement-id a:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--charm-pink);
+}
+.requirement-meta {
+  display: flex;
+  gap: var(--space-3);
+}
+.requirement-body {
+  font-size: var(--text-sm);
+  line-height: var(--leading-loose);
+}
+
+/* ============================================
+   Field and FieldGroup — metadata readout strip
+   ============================================ */
+.dd-field-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  margin: var(--space-5) 0;
+  padding: var(--space-4) var(--space-5);
+  background-color: var(--surface-card);
+  border-radius: var(--radius-md);
+  border: var(--border-hair) solid var(--line-dim);
+}
+.dd-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.dd-field-label {
+  font-weight: var(--weight-bold);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-dim);
+}
+.dd-field-value {
+  color: var(--text-body);
+  font-size: var(--text-sm);
+}
+
+/* ============================================
+   Deprecated/Superseded ADR Sidebar Strikethrough
+   ============================================ */
+.adr-struck > a {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+/* ============================================
+   Command Tiles (guides/commands.mdx)
+   ============================================ */
+.command-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-5);
+  margin: var(--space-5) 0 var(--space-8) 0;
+}
+.command-tile {
+  display: block;
+  padding: var(--space-5);
+  border: var(--border-hair) solid var(--line);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-card);
+  text-decoration: none !important;
+  color: inherit !important;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-spring),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+.command-tile:hover {
+  border-color: var(--border-brand);
+  transform: translateY(-2px);
+  box-shadow: var(--glow-soft);
+  text-decoration: none !important;
+}
+.command-tile__header {
+  margin-bottom: var(--space-3);
+}
+.command-tile__name {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+  color: var(--ifm-color-primary);
+}
+.command-tile__name::before {
+  content: '❯ ';
+  color: var(--charm-pink);
+  font-weight: var(--weight-regular);
+}
+.command-tile__description {
+  font-size: var(--text-sm);
+  margin: var(--space-3) 0;
+  color: var(--text-muted);
+}
+.command-tile__hint {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}

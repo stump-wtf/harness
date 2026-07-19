@@ -1,0 +1,103 @@
+/* ============================================================
+   Bubbletea TUI — Spacing, Borders, Radii, Motion
+   ------------------------------------------------------------
+   The terminal grid is measured in cells. We keep a character
+   cell reference (--cell) and a matching 4px spatial scale for
+   the DOM recreations that surround the terminal.
+   ============================================================ */
+
+:root {
+  /* ---- Character cell (the atomic terminal unit) ---- */
+  --cell-w: 0.62em;   /* approx advance width of the mono */
+  --cell-h: 1.35em;   /* one text row */
+
+  /* ---- Spacing scale (4px base) ---- */
+  --space-0:  0;
+  --space-1:  2px;
+  --space-2:  4px;
+  --space-3:  8px;
+  --space-4:  12px;
+  --space-5:  16px;
+  --space-6:  20px;
+  --space-7:  24px;
+  --space-8:  32px;
+  --space-9:  40px;
+  --space-10: 48px;
+  --space-12: 64px;
+  --space-16: 96px;
+  --space-20: 128px;
+  --space-24: 160px;
+
+  /* ---- Web-scale layout (HTML/HTMX language) ----
+     Browser surfaces assume big screens: wide containers,
+     generous section padding, readable measures. */
+  --container-web:  1160px;  /* @kind other */
+  --container-text: 68ch;    /* @kind other */
+  --section-pad:    96px;
+  --gap-web:        32px;
+
+  /* ---- Radii ----
+     TUIs are square, but Lip Gloss's RoundedBorder (╭╮╰╯) is the
+     Charm signature. Our DOM chrome mirrors that soft-square feel. */
+  --radius-none: 0;
+  --radius-xs:   3px;
+  --radius-sm:   5px;
+  --radius-md:   8px;     /* default panel / button */
+  --radius-lg:   12px;    /* terminal window */
+  --radius-xl:   16px;
+  --radius-2xl:  24px;    /* browser-language cards */
+  --radius-pill: 999px;
+
+  /* ---- Border widths ---- */
+  --border-hair: 1px;
+  --border-thin: 1.5px;
+  --border-bold: 2px;
+
+  /* ---- Box-drawing glyph reference (for authors) ----
+     rounded : ╭ ╮ ╰ ╯   line : ─ │   heavy : ━ ┃
+     tee     : ├ ┤ ┬ ┴ ┼  block: █ ▓ ▒ ░  half : ▀ ▄ ▌ ▐
+     cursor  : █ ▏        arrows: ↑ ↓ ← → • ◆ ● ○ ✓ ✗ */
+
+  /* ---- Motion ----
+     Charm animations are springy (Harmonica) and quick. Cursor
+     blink is the heartbeat of every TUI.
+     RULE: never `transition: all` — list explicit properties
+     (transform, color, border-color, box-shadow, background-color);
+     `all` catches initial style application and can freeze layout. */
+  --ease-spring:  cubic-bezier(0.34, 1.56, 0.64, 1); /* @kind other */
+  --ease-out:     cubic-bezier(0.16, 1, 0.3, 1);     /* @kind other */
+  --ease-in-out:  cubic-bezier(0.65, 0, 0.35, 1);    /* @kind other */
+  --dur-fast:     120ms;  /* @kind other */
+  --dur-base:     200ms;  /* @kind other */
+  --dur-slow:     340ms;  /* @kind other */
+  --blink:        1.06s;  /* @kind other */
+
+  /* ---- Z-index ---- */
+  --z-base:    0;     /* @kind other */
+  --z-raised:  10;    /* @kind other */
+  --z-overlay: 100;   /* @kind other */
+  --z-modal:   1000;  /* @kind other */
+  --z-toast:   2000;  /* @kind other */
+}
+
+/* Cursor blink — the signature TUI heartbeat */
+@keyframes tui-blink {
+  0%, 49%   { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* Braille-ish spinner rotation helper */
+@keyframes tui-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Neon flicker for headings */
+@keyframes tui-flicker {
+  0%, 100%   { opacity: 1; }
+  92%, 94%   { opacity: 0.72; }
+  93%        { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+}

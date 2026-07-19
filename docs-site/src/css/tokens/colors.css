@@ -1,0 +1,162 @@
+/* ============================================================
+   Bubbletea TUI — Color System
+   ------------------------------------------------------------
+   A terminal palette: deep blue-black backgrounds lit by ANSI
+   neon. Charm's signature purple + hot pink anchor the brand;
+   cyan + mint push it toward Tron. Every hue is tuned to glow
+   on a dark surface.
+   ============================================================ */
+
+:root {
+  /* ---- Brand core (Charm signature) ---- */
+  --charm-purple:      #7D56F4;  /* THE Charm purple */
+  --charm-purple-lo:   #6642E0;
+  --charm-purple-hi:   #9B7CFF;
+  --charm-pink:        #FF5FA2;  /* hot magenta-pink */
+  --charm-pink-hi:     #FF8AC0;
+  --charm-fuchsia:     #EE6FF8;  /* bright fuchsia */
+
+  /* ---- Neon accents (the Tron end) ---- */
+  --neon-cyan:         #4EE6FF;
+  --neon-cyan-hi:      #A6F4FF;
+  --neon-mint:         #00F0A8;  /* success / go */
+  --neon-mint-lo:      #04B575;
+  --neon-gold:         #FFC64B;  /* warning / highlight */
+  --neon-coral:        #FF6E5E;  /* error / danger */
+  --neon-lilac:        #C8A2FF;
+
+  /* ---- Terminal surfaces (blue-black) ---- */
+  --bg-void:           #08080F;  /* deepest — page void */
+  --bg-terminal:       #0E0E1A;  /* terminal canvas */
+  --bg-surface:        #15152A;  /* raised panel */
+  --bg-surface-2:      #1E1E38;  /* elevated / selected row */
+  --bg-surface-3:      #2A2A4A;  /* hover / active cell */
+  --bg-inset:          #0A0A14;  /* sunken input well */
+
+  /* ---- Grid & lines ---- */
+  --line-dim:          #262645;  /* faint box-drawing */
+  --line:              #3A3A66;  /* default border */
+  --line-bright:       #55558F;  /* focused border */
+  --grid-tron:         rgba(78, 230, 255, 0.06); /* Tron floor grid */
+
+  /* ---- Text (phosphor) ---- */
+  --text-bright:       #F4F4FF;  /* headings / active */
+  --text-body:         #C9C9E8;  /* default body */
+  --text-muted:        #8888B0;  /* secondary */
+  --text-dim:          #5B5B84;  /* comments / hints */
+  --text-on-accent:    #0E0E1A;  /* text on neon fills */
+  --text-on-purple:    #FFFFFF;
+
+  /* ---- Cursor ---- */
+  --cursor:            #4EE6FF;
+  --cursor-text:       #08080F;
+
+  /* ---- Semantic ANSI roles ---- */
+  --role-primary:      var(--charm-purple);
+  --role-accent:       var(--charm-pink);
+  --role-info:         var(--neon-cyan);
+  --role-success:      var(--neon-mint);
+  --role-warning:      var(--neon-gold);
+  --role-danger:       var(--neon-coral);
+
+  /* ---- Semantic surface aliases ---- */
+  --surface-page:      var(--bg-void);
+  --surface-terminal:  var(--bg-terminal);
+  --surface-card:      var(--bg-surface);
+  --surface-raised:    var(--bg-surface-2);
+  --surface-hover:     var(--bg-surface-3);
+  --surface-input:     var(--bg-inset);
+
+  /* ---- Semantic border aliases ---- */
+  --border-default:    var(--line);
+  --border-subtle:     var(--line-dim);
+  --border-focus:      var(--neon-cyan);
+  --border-brand:      var(--charm-purple);
+
+  /* ---- Signature gradients ---- */
+  --grad-charm:        linear-gradient(90deg, #FF5FA2 0%, #7D56F4 100%); /* @kind color */
+  --grad-tron:         linear-gradient(90deg, #7D56F4 0%, #4EE6FF 100%); /* @kind color */
+  --grad-boba:         linear-gradient(135deg, #FF5FA2 0%, #EE6FF8 40%, #7D56F4 100%); /* @kind color */
+  --grad-neon-bar:     linear-gradient(90deg, #00F0A8 0%, #4EE6FF 50%, #7D56F4 100%);  /* @kind color */
+
+  /* ---- Glow shadows (neon bloom) ---- */
+  --glow-purple:       0 0 12px rgba(125, 86, 244, 0.55);
+  --glow-pink:         0 0 12px rgba(255, 95, 162, 0.55);
+  --glow-cyan:         0 0 12px rgba(78, 230, 255, 0.55);
+  --glow-mint:         0 0 12px rgba(0, 240, 168, 0.50);
+  --glow-soft:         0 0 24px rgba(125, 86, 244, 0.25);
+
+  /* ---- Elevation (terminal windows float on void) ---- */
+  --shadow-window:     0 24px 60px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(125, 86, 244, 0.15);
+  --shadow-panel:      0 8px 24px -8px rgba(0, 0, 0, 0.6);
+  --scrim:             rgba(8, 8, 15, 0.72);
+
+  /* ---- Tinted fills & focus rings (theme-aware) ---- */
+  --tint-primary:      rgba(125, 86, 244, 0.16);
+  --tint-accent:       rgba(255, 95, 162, 0.10);
+  --tint-info:         rgba(78, 230, 255, 0.10);
+  --focus-ring:        0 0 0 3px rgba(78, 230, 255, 0.25);
+  --focus-ring-soft:   0 0 0 3px rgba(78, 230, 255, 0.14);
+}
+
+/* ============================================================
+   DAY MODE — apply data-theme="day" on <html>.
+   Lavender paper instead of the void; the same brand hues,
+   deepened for contrast; glow becomes soft colored shadow.
+   ============================================================ */
+[data-theme='light'] {
+  /* brand, deepened */
+  --charm-purple:      #6C46EA;
+  --charm-purple-lo:   #5A36D6;
+  --charm-purple-hi:   #5230C9;
+  --charm-pink:        #E43A8C;
+  --charm-pink-hi:     #B92368;
+  --charm-fuchsia:     #C238CE;
+  --neon-cyan:         #0793B4;
+  --neon-cyan-hi:      #056A83;
+  --neon-mint:         #059669;
+  --neon-mint-lo:      #04785A;
+  --neon-gold:         #B4770A;
+  --neon-coral:        #DC4433;
+  --neon-lilac:        #6D4FD0;
+
+  /* surfaces — lavender paper */
+  --bg-void:           #EEEDFA;
+  --bg-terminal:       #FDFDFF;
+  --bg-surface:        #F6F5FD;
+  --bg-surface-2:      #ECEAF9;
+  --bg-surface-3:      #E0DDF4;
+  --bg-inset:          #F1F0FA;
+
+  --line-dim:          #E2DFF4;
+  --line:              #CCC7EA;
+  --line-bright:       #A79FDB;
+  --grid-tron:         rgba(108, 70, 234, 0.06);
+
+  --text-bright:       #17162B;
+  --text-body:         #333155;
+  --text-muted:        #625F92;
+  --text-dim:          #908DBA;
+  --text-on-accent:    #FFFFFF;
+  --text-on-purple:    #FFFFFF;
+
+  --cursor:            #0793B4;
+  --cursor-text:       #FFFFFF;
+
+  /* glow → soft colored shadow */
+  --glow-purple:       0 2px 10px rgba(108, 70, 234, 0.30);
+  --glow-pink:         0 2px 10px rgba(228, 58, 140, 0.30);
+  --glow-cyan:         0 2px 10px rgba(7, 147, 180, 0.30);
+  --glow-mint:         0 2px 10px rgba(5, 150, 105, 0.28);
+  --glow-soft:         0 4px 24px rgba(108, 70, 234, 0.14);
+
+  --shadow-window:     0 24px 60px -18px rgba(35, 30, 80, 0.25), 0 0 0 1px rgba(108, 70, 234, 0.10);
+  --shadow-panel:      0 8px 24px -10px rgba(35, 30, 80, 0.16);
+  --scrim:             rgba(38, 34, 74, 0.45);
+
+  --tint-primary:      rgba(108, 70, 234, 0.10);
+  --tint-accent:       rgba(228, 58, 140, 0.10);
+  --tint-info:         rgba(7, 147, 180, 0.10);
+  --focus-ring:        0 0 0 3px rgba(7, 147, 180, 0.30);
+  --focus-ring-soft:   0 0 0 3px rgba(7, 147, 180, 0.18);
+}

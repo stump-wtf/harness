@@ -1,0 +1,77 @@
+{
+  "version": "5.2.0",
+  "mode": "scaffold",
+  "siteDir": "docs-site",
+  "createdAt": "2026-07-19T18:02:23.666160+00:00",
+  "updatedAt": "2026-07-19T18:02:23.666160+00:00",
+  "files": {
+    "docs-site/plugins/sdd-content/index.js": {
+      "checksum": "sha256:a1b3df2e556da15ff1aafdb2c88e62b85b6c55aaa2f5515231927aaea0a13bd5",
+      "managed": true
+    },
+    "docs-site/src/components/CommandTile.tsx": {
+      "checksum": "sha256:fa5b8bf590a11bfb91dc869934c4cb4de446417261049e862a9efc74e7ffb088",
+      "managed": true
+    },
+    "docs-site/src/components/DateBadge.tsx": {
+      "checksum": "sha256:95479dae4e1c7d23336939d0cc8a1f1063817c54761acf2862b439f1d7958089",
+      "managed": true
+    },
+    "docs-site/src/components/DomainBadge.tsx": {
+      "checksum": "sha256:008581e6c6fc1949949bc2798d3a2f135ee4b3bbd05355acfb1725ca8c94ef93",
+      "managed": true
+    },
+    "docs-site/src/components/Field.tsx": {
+      "checksum": "sha256:52b5a8a389be1ef50939dc5a7cd5003e3f945d8521e5fe4a45ac7d0ea5474b6d",
+      "managed": true
+    },
+    "docs-site/src/components/FieldGroup.tsx": {
+      "checksum": "sha256:21b282db4398cde0a755e8f9144fe309ddd5303cb5c9c3436bbf85e675946ed9",
+      "managed": true
+    },
+    "docs-site/src/components/PriorityBadge.tsx": {
+      "checksum": "sha256:01ea2e91579584edf3a25d486f689250e983bc511a6f9aff4fbf7d7f85796731",
+      "managed": true
+    },
+    "docs-site/src/components/RFCLevelBadge.tsx": {
+      "checksum": "sha256:db8298dc3ff244bf6cee2655bf719dfd1d4155d520aeb623b6050c8344d40295",
+      "managed": true
+    },
+    "docs-site/src/components/RequirementBox.tsx": {
+      "checksum": "sha256:3a965858dcfc085b4a1827ed6e9293a7d0f3e10391eb99f1bde20793bbad2def",
+      "managed": true
+    },
+    "docs-site/src/components/SeverityBadge.tsx": {
+      "checksum": "sha256:264cba317e3f41737ca5c69dfd193b19b8b2cba57e9ad9b9d663411fca3651a3",
+      "managed": true
+    },
+    "docs-site/src/components/StatusBadge.tsx": {
+      "checksum": "sha256:8cbcf33b10d969c9f069f62b75f0b7622c0dc7d9fe4c7e982f5927251a360543",
+      "managed": true
+    },
+    "docs-site/src/css/custom.css": {
+      "checksum": "sha256:271a7af891e26d65876836a3ce07be3500c318301c9136c8ebe91b4bacde6009",
+      "managed": true
+    },
+    "docs-site/src/css/tokens/colors.css": {
+      "checksum": "sha256:d4623124f911dc9f776ac0fb45520cadad70a2b70cb4a35fe5a9b7cab04cad85",
+      "managed": true
+    },
+    "docs-site/src/css/tokens/fonts.css": {
+      "checksum": "sha256:5ed92e25b3549aeaf00625ec7197572721377c6e3cd4ee7c8313ba79a1cbcf16",
+      "managed": true
+    },
+    "docs-site/src/css/tokens/spacing.css": {
+      "checksum": "sha256:fe292b815627e5c9187334428e39082d51780c36b8969f0e0f97a460b29a7ac2",
+      "managed": true
+    },
+    "docs-site/src/css/tokens/typography.css": {
+      "checksum": "sha256:b78f4fb2a2eb019911de9813d35fde0756f4250de955ee5923d452e721205df7",
+      "managed": true
+    },
+    "docs-site/src/theme/MDXComponents.tsx": {
+      "checksum": "sha256:602c22dd5ddd07d9b2051eaed372d4a033026b2470e0935d1687d243164aa97f",
+      "managed": true
+    }
+  }
+}

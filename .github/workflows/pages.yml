@@ -1,0 +1,61 @@
+# Build the Docusaurus docs site (docs-site/) and publish it to GitHub Pages.
+# Live at: https://stump-wtf.github.io/harness/  (same build as Gitea Pages; only `url` differs,
+# supplied via DOCS_URL — baseUrl is /switchboard/ on both).
+#
+# GitHub Pages deploys via the repo's own token (no external secret). Requires Pages to be enabled
+# for the repo with source = GitHub Actions. Note: GitHub Pages on a PRIVATE repo needs GitHub Pro
+# or higher; on a free plan, make the repo public or rely on Gitea Pages.
+name: Deploy Docs to GitHub Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'docs-site/**'
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; don't cancel an in-progress prod deploy.
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: docs-site/package-lock.json
+      - name: Install dependencies
+        working-directory: docs-site
+        run: npm ci
+      - name: Build
+        working-directory: docs-site
+        run: npm run build
+        env:
+          DOCS_URL: https://stump-wtf.github.io
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
