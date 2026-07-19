@@ -15,12 +15,14 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
+	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
 func main() {
 	gfs := flag.NewFlagSet("harness", flag.ExitOnError)
 	socket := gfs.String("socket", protocol.DefaultSocketPath(), "daemon socket path")
+	configPath := gfs.String("config", config.DefaultPath(), "harnessd.toml path (TUI harness form writes here)")
 	jsonOut := gfs.Bool("json", false, "machine-readable JSON output")
 	showVersion := gfs.Bool("version", false, "print version and exit")
 	gfs.Usage = usage
@@ -31,9 +33,15 @@ func main() {
 		return
 	}
 
+	// No verb → open the cockpit TUI (SPEC-0001: `harness` with no args opens
+	// the keyboard-driven dashboard onto the daemon).
 	verb := gfs.Arg(0)
 	if verb == "" {
-		verb = "list"
+		if err := runTUI(*socket, *configPath); err != nil {
+			fmt.Fprintf(os.Stderr, "harness: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	// Per-verb flags (also re-declares --json so it may follow the verb).
