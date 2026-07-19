@@ -41,6 +41,25 @@ type rawProfile struct {
 	Autostart   bool     `toml:"autostart"`
 }
 
+// rawServer mirrors the [server] table before validation (ADR-0004/0008 remote
+// access). authorized_keys accepts either bare key lines or [[server.key]]
+// sub-tables carrying a per-key read_only flag; both are merged.
+type rawServer struct {
+	Enabled            bool              `toml:"enabled"`
+	Listen             string            `toml:"listen"`
+	AuthorizedKeys     []string          `toml:"authorized_keys"`
+	AuthorizedKeysFile string            `toml:"authorized_keys_file"`
+	HostKeyPath        string            `toml:"host_key"`
+	Keys               []rawAuthzKeyTOML `toml:"key"`
+}
+
+// rawAuthzKeyTOML is a [[server.key]] sub-table: an SSH public-key line with an
+// optional read_only annotation (ADR-0008 per-key read-only scoping).
+type rawAuthzKeyTOML struct {
+	Key      string `toml:"key"`
+	ReadOnly bool   `toml:"read_only"`
+}
+
 // DefaultPath returns the conventional config location,
 // $XDG_CONFIG_HOME/harnessd/harnessd.toml (falling back to ~/.config).
 func DefaultPath() string {
@@ -117,6 +136,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 		line    int
 	}
 	var pending []pendingProfile
+	var serverSeen bool
 
 	for _, h := range headers {
 		switch {
@@ -124,6 +144,22 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 			continue // the namespace parent header itself
 		case len(h.parts) == 1 && h.parts[0] == "profile":
 			continue
+
+		case len(h.parts) == 1 && h.parts[0] == "server":
+			// The optional remote-access front door (ADR-0004/0008).
+			if serverSeen {
+				return nil, newError(filename, h.line, "duplicate [server] table")
+			}
+			serverSeen = true
+			var rs rawServer
+			if err := md.PrimitiveDecode(top["server"], &rs); err != nil {
+				return nil, newError(filename, h.line, "[server]: %v", err)
+			}
+			sc, err := buildServer(filename, h.line, rs)
+			if err != nil {
+				return nil, err
+			}
+			cfg.Server = sc
 
 		case len(h.parts) == 1:
 			// Bare [name] table — backward-compatible harness (ADR-0006).
@@ -227,6 +263,40 @@ func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness
 	cfg.Harnesses[name] = h
 	cfg.HarnessOrder = append(cfg.HarnessOrder, name)
 	return nil
+}
+
+// buildServer validates and normalizes a [server] table into a
+// core.ServerConfig (ADR-0004/0008). Bare authorized_keys entries default to
+// read-write; [[server.key]] sub-tables carry an explicit read_only flag.
+// Enabling the server without any key source is rejected — an unauthenticated
+// remote front door is never allowed (ADR-0008).
+func buildServer(filename string, line int, rs rawServer) (core.ServerConfig, error) {
+	sc := core.ServerConfig{
+		Enabled:            rs.Enabled,
+		Listen:             strings.TrimSpace(rs.Listen),
+		AuthorizedKeysFile: strings.TrimSpace(rs.AuthorizedKeysFile),
+		HostKeyPath:        strings.TrimSpace(rs.HostKeyPath),
+	}
+	for _, k := range rs.AuthorizedKeys {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		sc.AuthorizedKeys = append(sc.AuthorizedKeys, core.AuthorizedKey{Line: strings.TrimSpace(k)})
+	}
+	for _, k := range rs.Keys {
+		if strings.TrimSpace(k.Key) == "" {
+			return core.ServerConfig{}, newError(filename, line, "[[server.key]]: missing required key \"key\"")
+		}
+		sc.AuthorizedKeys = append(sc.AuthorizedKeys, core.AuthorizedKey{
+			Line:     strings.TrimSpace(k.Key),
+			ReadOnly: k.ReadOnly,
+		})
+	}
+	if sc.Enabled && len(sc.AuthorizedKeys) == 0 && sc.AuthorizedKeysFile == "" {
+		return core.ServerConfig{}, newError(filename, line,
+			"[server]: enabled = true requires authorized_keys or authorized_keys_file (ADR-0008: no unauthenticated remote access)")
+	}
+	return sc, nil
 }
 
 // syntaxError converts a BurntSushi decode error into a location-carrying

@@ -51,7 +51,13 @@ type Options struct {
 	Version     string
 	SkipConfirm bool               // --yes-style: skip confirm dialogs.
 	Renderer    *lipgloss.Renderer // optional; nil uses the default.
-	dial        dialer             // injectable; nil uses realDial.
+	// ReadOnly forces every attach opened by this Model to be a read-only
+	// attach (protocol.AttachRO): the daemon streams output but drops this
+	// client's input. It exists so a read-only remote SSH session — or a local
+	// invocation that only wants to watch — can never drive a harness's
+	// terminal. Governing: ADR-0008 (read-only attach), SPEC-0002.
+	ReadOnly bool
+	dial     dialer // injectable; nil uses realDial.
 }
 
 // paletteState is the command-palette overlay state (SPEC-0001 REQ "Command
