@@ -123,17 +123,51 @@ func New(opts Options) (*Server, error) {
 	// with a per-session renderer so colorprofile degrades to the remote
 	// client's actual terminal (ADR-0004/0008). A read-only key opens attaches
 	// as protocol.AttachRO via tui.Options.ReadOnly.
-	teaHandler := func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
-		ro, _ := sess.Context().Value(roContextKey).(bool)
-		renderer := bm.MakeRenderer(sess)
-		m := tui.New(tui.Options{
-			Socket:     opts.Socket,
-			ConfigPath: opts.ConfigPath,
-			Version:    opts.Version,
-			Renderer:   renderer,
-			ReadOnly:   ro,
-		})
-		return m, []tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseCellMotion()}
+	//
+	// This mirrors wish's bubbletea middleware (window-resize bridge + quit on
+	// session end) but adds one CRITICAL step it lacks: after Program.Run
+	// returns it calls Model.Close(). Bubble Tea returns on QuitMsg without
+	// delivering it to Update, so the Model cannot clean up from inside its own
+	// loop; without this call every remote session would leak its two daemon
+	// socket connections and its read-loop goroutine for the life of the
+	// (long-lived) daemon. Close runs strictly after Run so it never races the
+	// Update loop's access to the connection fields.
+	teaMiddleware := func(next ssh.Handler) ssh.Handler {
+		return func(sess ssh.Session) {
+			ro, _ := sess.Context().Value(roContextKey).(bool)
+			renderer := bm.MakeRenderer(sess)
+			m := tui.New(tui.Options{
+				Socket:     opts.Socket,
+				ConfigPath: opts.ConfigPath,
+				Version:    opts.Version,
+				Renderer:   renderer,
+				ReadOnly:   ro,
+			})
+			popts := append([]tea.ProgramOption{
+				tea.WithAltScreen(), tea.WithMouseCellMotion(),
+			}, bm.MakeOptions(sess)...)
+			p := tea.NewProgram(m, popts...)
+
+			_, winCh, _ := sess.Pty()
+			ctx, cancel := context.WithCancel(sess.Context())
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						p.Quit()
+						return
+					case w := <-winCh:
+						p.Send(tea.WindowSizeMsg{Width: w.Width, Height: w.Height})
+					}
+				}
+			}()
+
+			_, _ = p.Run()
+			p.Kill()
+			cancel()
+			m.Close()
+			next(sess)
+		}
 	}
 
 	srv, err := wish.NewServer(
@@ -141,8 +175,8 @@ func New(opts Options) (*Server, error) {
 		wish.WithHostKeyPath(hostKey),
 		wish.WithPublicKeyAuth(authHandler),
 		wish.WithMiddleware(
-			// Innermost first: build the program, then require an active PTY.
-			bm.Middleware(teaHandler),
+			// Innermost first: host the TUI program, then require an active PTY.
+			teaMiddleware,
 			activeterm.Middleware(),
 		),
 	)

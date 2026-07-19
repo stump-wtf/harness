@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -43,8 +44,10 @@ func clientKey(t *testing.T) (gossh.Signer, string) {
 }
 
 // bootDaemon starts a real daemon on a private Unix socket (no harnesses) so a
-// remote session has a live protocol endpoint to be a local client of.
-func bootDaemon(t *testing.T) string {
+// remote session has a live protocol endpoint to be a local client of. It
+// returns the socket path and the live *daemon.Server so tests can observe its
+// connection count.
+func bootDaemon(t *testing.T) (string, *daemon.Server) {
 	t.Helper()
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "harnessd.toml")
@@ -84,7 +87,7 @@ func bootDaemon(t *testing.T) string {
 		mgr.Close()
 		_ = os.RemoveAll(sockDir)
 	})
-	return socket
+	return socket, srv
 }
 
 // startServer builds a remote.Server bound to an ephemeral loopback port and
@@ -170,7 +173,7 @@ func TestHostKeyPersistedPerms(t *testing.T) {
 // authorized key gets an SSH+PTY session that hosts the TUI (bytes flow), while
 // an unlisted key is refused at auth.
 func TestSSHAuthorizedLandsInTUI(t *testing.T) {
-	socket := bootDaemon(t)
+	socket, _ := bootDaemon(t)
 	signer, authLine := clientKey(t)
 	strangerSigner, _ := clientKey(t)
 
@@ -237,4 +240,78 @@ func TestSSHAuthorizedLandsInTUI(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for TUI output over SSH")
 	}
+}
+
+// TestRemoteSessionReleasesDaemonConns guards the lifecycle: an SSH session that
+// lands in the TUI opens two daemon connections (control + events/attach); when
+// the session closes, both must be reaped. Bubble Tea returns on QuitMsg without
+// running Update, so the hosting middleware must call Model.Close() after
+// Program.Run — otherwise every remote attach/detach leaks two socket
+// connections and the read-loop goroutine for the life of the daemon.
+func TestRemoteSessionReleasesDaemonConns(t *testing.T) {
+	socket, daemonSrv := bootDaemon(t)
+	signer, authLine := clientKey(t)
+
+	s := startServer(t, Options{
+		Socket:      socket,
+		Version:     "test",
+		HostKeyPath: filepath.Join(t.TempDir(), "hostkey"),
+		Keys:        []core.AuthorizedKey{{Line: authLine}},
+	})
+
+	base := daemonSrv.ConnCount()
+
+	conn, err := gossh.Dial("tcp", s.Addr(), &gossh.ClientConfig{
+		User:            "joe",
+		Auth:            []gossh.AuthMethod{gossh.PublicKeys(signer)},
+		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
+		Timeout:         3 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("authorized dial: %v", err)
+	}
+	sess, err := conn.NewSession()
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err := sess.RequestPty("xterm-256color", 40, 120, gossh.TerminalModes{}); err != nil {
+		t.Fatalf("request pty: %v", err)
+	}
+	if err := sess.Shell(); err != nil {
+		t.Fatalf("shell: %v", err)
+	}
+
+	// Wait until the in-process TUI has dialed the daemon (two connections above
+	// baseline: control + events/attach) so we know the session truly landed.
+	if !waitForConns(daemonSrv, base+2, 5*time.Second) {
+		// Read some output to surface why it never connected, then fail.
+		go func() { io.Copy(io.Discard, stdout) }()
+		t.Fatalf("TUI never opened its daemon connections: ConnCount=%d want %d", daemonSrv.ConnCount(), base+2)
+	}
+
+	// Close the SSH connection: the hosting program must quit AND release the
+	// TUI's daemon connections.
+	_ = sess.Close()
+	_ = conn.Close()
+
+	if !waitForConns(daemonSrv, base, 5*time.Second) {
+		t.Fatalf("daemon connections leaked after SSH session closed: ConnCount=%d want %d", daemonSrv.ConnCount(), base)
+	}
+}
+
+// waitForConns polls the daemon's live connection count until it equals want or
+// the timeout elapses.
+func waitForConns(s *daemon.Server, want int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if s.ConnCount() == want {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return s.ConnCount() == want
 }
