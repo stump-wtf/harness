@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
+	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
 // TestHarnessFormRoundTrip verifies the SPEC-0001 REQ "Harness Form" write path:
@@ -52,6 +55,85 @@ func TestHarnessFormRoundTrip(t *testing.T) {
 	// The pre-existing harness must survive the append (non-destructive write).
 	if _, ok := cfg.Harnesses["existing"]; !ok {
 		t.Error("append clobbered the existing harness")
+	}
+}
+
+// TestEditPreservesOmittedFields is the regression guard for the SPEC-0001 REQ
+// "Harness Form" scenario "e SHALL pre-fill from the existing harness": editing a
+// harness must NOT drop the keys the daemon's HarnessInfo projection omits
+// (args/workdir/env_file/restart_delay). The edit save path rewrites the whole
+// `[harness.<name>]` table, so a partial pre-fill silently wiped those keys
+// (data loss). editInputsFor loads the full table from the config file
+// (file-is-truth, ADR-0006) to guarantee a lossless round-trip.
+func TestEditPreservesOmittedFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harnessd.toml")
+	original := strings.Join([]string{
+		"[harness.reduit-agent]",
+		`cmd = "crush"`,
+		`args = ["--yolo", "--data-dir", "/tmp/x"]`,
+		`workdir = "~/.local/share/reduit"`,
+		`env_file = "~/.config/vault/secrets.env"`,
+		"restart_delay = 5",
+		`description = "the reduit agent"`,
+		"enabled = true",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the lossy daemon projection the TUI would have on the dashboard:
+	// name/cmd/backend/description/enabled only — no args/workdir/env_file/delay.
+	sel := protocol.HarnessInfo{
+		Name:        "reduit-agent",
+		Cmd:         "crush",
+		Description: "the reduit agent",
+		Enabled:     true,
+	}
+	fi := editInputsFor(path, sel)
+	if fi.args != "--yolo --data-dir /tmp/x" {
+		t.Errorf("args not pre-filled from file: %q", fi.args)
+	}
+	if fi.workdir != "~/.local/share/reduit" {
+		t.Errorf("workdir not pre-filled: %q", fi.workdir)
+	}
+	if fi.envFile != "~/.config/vault/secrets.env" {
+		t.Errorf("env_file not pre-filled: %q", fi.envFile)
+	}
+	if fi.delay != "5" {
+		t.Errorf("restart_delay not pre-filled: %q", fi.delay)
+	}
+
+	// Now drive the full edit-save path (change only the description) and confirm
+	// the omitted keys survive into the reparsed config.
+	form := fi.toForm()
+	form.Description = "edited description"
+	body := []byte(removeHarnessTOML(original, form.Name))
+	body = AppendHarness(body, form)
+
+	cfg, err := config.Parse(body, "harnessd.toml")
+	if err != nil {
+		t.Fatalf("edited config did not parse: %v\n%s", err, body)
+	}
+	h, ok := cfg.Harnesses["reduit-agent"]
+	if !ok {
+		t.Fatalf("harness lost after edit; got %v", cfg.HarnessOrder)
+	}
+	if len(h.Args) != 3 || h.Args[0] != "--yolo" {
+		t.Errorf("args wiped by edit: %v", h.Args)
+	}
+	if h.Workdir != "~/.local/share/reduit" {
+		t.Errorf("workdir wiped by edit: %q", h.Workdir)
+	}
+	if h.EnvFile != "~/.config/vault/secrets.env" {
+		t.Errorf("env_file wiped by edit: %q", h.EnvFile)
+	}
+	if h.RestartDelay.Seconds() != 5 {
+		t.Errorf("restart_delay wiped by edit: %v", h.RestartDelay)
+	}
+	if h.Description != "edited description" {
+		t.Errorf("description edit did not take: %q", h.Description)
 	}
 }
 

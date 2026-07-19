@@ -12,8 +12,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
 // HarnessForm is the editable harness schema behind the n/e Huh form. It is the
@@ -100,6 +103,46 @@ func AppendHarness(existing []byte, f HarnessForm) []byte {
 	}
 	out += f.TOML()
 	return []byte(out)
+}
+
+// editInputsFor builds the `e` (edit) form pre-fill for an existing harness.
+//
+// The daemon's HarnessInfo projection (protocol) carries only name/cmd/backend/
+// description/enabled — it OMITS args/workdir/env_file/restart_delay. Pre-filling
+// from HarnessInfo alone and then rewriting the harness's `[harness.<name>]`
+// table on save (overlays.go saveHarnessCmd) silently dropped every omitted key,
+// wiping config the user never touched. ADR-0006 makes the file the source of
+// truth, so we load the harness's full table from the config file and pre-fill
+// the whole schema, guaranteeing a lossless edit round-trip. The HarnessInfo
+// subset is the fallback when the file can't be read or lacks the table (e.g. a
+// harness the daemon knows but that isn't in the file yet).
+func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
+	fi := formInputs{
+		name:        sel.Name,
+		cmd:         sel.Cmd,
+		backend:     orDefault(sel.Backend, string(core.BackendNative)),
+		description: sel.Description,
+		enabled:     sel.Enabled,
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return fi
+	}
+	h, ok := cfg.Harnesses[sel.Name]
+	if !ok {
+		return fi
+	}
+	fi.cmd = h.Cmd
+	fi.args = strings.Join(h.Args, " ")
+	fi.workdir = h.Workdir
+	fi.envFile = h.EnvFile
+	if h.RestartDelay > 0 {
+		fi.delay = strconv.Itoa(int(h.RestartDelay / time.Second))
+	}
+	fi.backend = orDefault(string(h.Backend), string(core.BackendNative))
+	fi.description = h.Description
+	fi.enabled = h.Enabled
+	return fi
 }
 
 // toForm converts the Huh string-bound inputs into a typed HarnessForm, parsing

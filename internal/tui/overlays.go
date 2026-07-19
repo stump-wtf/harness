@@ -228,13 +228,10 @@ func (m *Model) openForm(editing bool) (tea.Model, tea.Cmd) {
 	m.fInputs = formInputs{backend: string(core.BackendNative)}
 	if editing {
 		if sel, ok := m.selectedHarness(); ok {
-			m.fInputs = formInputs{
-				name:        sel.Name,
-				cmd:         sel.Cmd,
-				backend:     orDefault(sel.Backend, string(core.BackendNative)),
-				description: sel.Description,
-				enabled:     sel.Enabled,
-			}
+			// Pre-fill the WHOLE schema from the config file (file-is-truth,
+			// ADR-0006) so the edit round-trip never drops args/workdir/env_file/
+			// restart_delay, which HarnessInfo omits (see editInputsFor).
+			m.fInputs = editInputsFor(m.opts.ConfigPath, sel)
 		}
 	}
 	m.form = buildHarnessForm(&m.fInputs)
