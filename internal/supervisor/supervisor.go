@@ -35,6 +35,8 @@ const (
 	cmdApplyConfig
 	cmdRestore
 	cmdShutdown
+	cmdResize
+	cmdWriteInput
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -51,6 +53,9 @@ type command struct {
 	kind    cmdKind
 	cfg     *core.Harness
 	restore *restoreData
+	input   []byte // cmdWriteInput payload (attach keystrokes → PTY)
+	cols    int    // cmdResize
+	rows    int    // cmdResize
 	done    chan struct{}
 }
 
@@ -178,6 +183,16 @@ func (s *Supervisor) Restart() { s.send(command{kind: cmdRestart}) }
 // "Config Change Application"); if not running it takes effect immediately.
 func (s *Supervisor) ApplyConfig(h core.Harness) { s.send(command{kind: cmdApplyConfig, cfg: &h}) }
 
+// Resize resizes the harness's live PTY to cols×rows (ADR-0003 native backend).
+// A no-op when the harness is not running. Blocks until the loop processes it.
+func (s *Supervisor) Resize(cols, rows int) { s.send(command{kind: cmdResize, cols: cols, rows: rows}) }
+
+// WriteInput delivers attach keystrokes to the harness's live PTY (SPEC-0002
+// REQ "Attach Session"). A no-op when the harness is not running; read-only
+// filtering happens in the attach layer, so bytes that reach here are always
+// intended for the PTY. Blocks until the loop processes it.
+func (s *Supervisor) WriteInput(p []byte) { s.send(command{kind: cmdWriteInput, input: p}) }
+
 // Shutdown stops the harness if running and terminates the actor loop. After
 // Shutdown the Supervisor must not be used.
 func (s *Supervisor) Shutdown() {
@@ -257,6 +272,22 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.lastExitCode = r.lastExitCode
 		s.lastExitAt = r.lastExitAt
 		s.publishSnapshot()
+	case cmdResize:
+		// Governing: ADR-0003 (native backend owns PTY resize; the attach layer
+		// applies the smallest-attached-wins policy and asks the supervisor to
+		// resize the authoritative PTY). Best-effort: a resize with no live
+		// process is a no-op.
+		if s.hasProcess() {
+			_ = s.proc.pty.Resize(c.cols, c.rows)
+		}
+	case cmdWriteInput:
+		// Governing: SPEC-0002 REQ "Attach Session" (read-write attach delivers
+		// keystrokes to the PTY; read-only is filtered upstream in the attach
+		// layer so those bytes never reach here). Best-effort: input with no
+		// live process is dropped.
+		if s.hasProcess() {
+			_, _ = s.proc.pty.Write(c.input)
+		}
 	case cmdShutdown:
 		s.cancelRestartTimer()
 		if s.hasProcess() {
