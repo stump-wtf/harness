@@ -173,6 +173,15 @@ func (s *Server) unregisterConn(c *conn) {
 	s.connMu.Unlock()
 }
 
+// ConnCount reports the number of live client connections. It lets callers and
+// tests observe that connections are reaped when a client disconnects (e.g. a
+// remote SSH session closing must not leak its two daemon connections).
+func (s *Server) ConnCount() int {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	return len(s.conns)
+}
+
 // --- event relay ----------------------------------------------------------
 
 // relayLoop reads the Manager's lifecycle event stream and broadcasts each as a

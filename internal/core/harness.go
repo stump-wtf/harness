@@ -66,6 +66,41 @@ type Profile struct {
 	Autostart bool
 }
 
+// AuthorizedKey is one entry of the remote SSH allowlist: an OpenSSH
+// public-key line plus whether that key attaches read-only. Governing: ADR-0008
+// (SSH public-key auth; optional per-key read-only scoping), SPEC-0002.
+type AuthorizedKey struct {
+	// Line is the raw `authorized_keys` line (type base64 [comment]) as written
+	// in config or the keys file. It is parsed by the SSH server, not here.
+	Line string
+	// ReadOnly marks a key that may only open read-only attaches — enforced by
+	// the remote session opening the TUI in read-only mode (ADR-0008).
+	ReadOnly bool
+}
+
+// ServerConfig is the optional Wish SSH remote-access front door (ADR-0004,
+// ADR-0008). It is off unless Enabled is set; enabling it is a deliberate
+// config step (bind address + an authorized-keys allowlist). Secrets never live
+// here — only public keys and paths (ADR-0008).
+type ServerConfig struct {
+	// Enabled turns the Wish SSH server on. Off by default (ADR-0008: remote is
+	// opt-in).
+	Enabled bool
+	// Listen is the SSH bind address, host:port. Empty means the daemon's
+	// loopback default (ADR-0008: bind narrowly by default).
+	Listen string
+	// AuthorizedKeys is the inline allowlist of SSH public keys permitted to
+	// attach. Only listed keys may connect — there are no unauthenticated
+	// sessions (ADR-0008).
+	AuthorizedKeys []AuthorizedKey
+	// AuthorizedKeysFile is an optional path to an OpenSSH `authorized_keys`
+	// file whose entries are merged with AuthorizedKeys.
+	AuthorizedKeysFile string
+	// HostKeyPath overrides the persisted host-key location; empty uses the
+	// default under $XDG_STATE_HOME/harnessd (ADR-0008).
+	HostKeyPath string
+}
+
 // Config is a fully parsed, validated harnessd.toml: the harness registry and
 // the profiles, each preserving file order for stable rendering.
 type Config struct {
@@ -77,6 +112,8 @@ type Config struct {
 	HarnessOrder []string
 	// ProfileOrder is profile names in the order they appear in the file.
 	ProfileOrder []string
+	// Server is the optional [server] remote-access configuration (ADR-0004).
+	Server ServerConfig
 }
 
 // OrderedHarnesses returns the harnesses in file order.

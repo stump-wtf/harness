@@ -12,6 +12,7 @@ package tui
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -51,7 +52,13 @@ type Options struct {
 	Version     string
 	SkipConfirm bool               // --yes-style: skip confirm dialogs.
 	Renderer    *lipgloss.Renderer // optional; nil uses the default.
-	dial        dialer             // injectable; nil uses realDial.
+	// ReadOnly forces every attach opened by this Model to be a read-only
+	// attach (protocol.AttachRO): the daemon streams output but drops this
+	// client's input. It exists so a read-only remote SSH session — or a local
+	// invocation that only wants to watch — can never drive a harness's
+	// terminal. Governing: ADR-0008 (read-only attach), SPEC-0002.
+	ReadOnly bool
+	dial     dialer // injectable; nil uses realDial.
 }
 
 // paletteState is the command-palette overlay state (SPEC-0001 REQ "Command
@@ -128,7 +135,8 @@ type Model struct {
 	fInputs formInputs
 	editing bool // form is editing (e) vs new (n)
 
-	quitting bool
+	quitting  bool
+	closeOnce sync.Once
 }
 
 // New builds a Model from options.
@@ -231,4 +239,30 @@ func (m *Model) stopReadLoop() {
 		close(m.done)
 		m.done = nil
 	}
+}
+
+// Close releases the model's two daemon connections and unblocks its read-loop
+// goroutine. Bubble Tea returns on QuitMsg WITHOUT delivering it to Update (see
+// tea.eventLoop), so a Model can never clean up from inside its own loop. A host
+// that ends the program out-of-band — notably a remote SSH session closing,
+// where the daemon is long-lived and every attach/detach would otherwise leak
+// two socket connections plus the read-loop goroutine — MUST call Close after
+// Program.Run returns. It is safe to call exactly once; call it only after the
+// Bubble Tea program has stopped so it never races Update's access to these
+// fields. The read-loop goroutine holds the *protocol.Conn directly (not these
+// fields), so closing the connections here safely unblocks its ReadFrame, and
+// closing done unblocks any pending channel emit.
+func (m *Model) Close() {
+	m.closeOnce.Do(func() {
+		if m.done != nil {
+			close(m.done)
+			m.done = nil
+		}
+		if m.attach != nil {
+			_ = m.attach.Close()
+		}
+		if m.ctrl != nil {
+			_ = m.ctrl.Close()
+		}
+	})
 }

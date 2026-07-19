@@ -257,7 +257,13 @@ func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 			closeCmd = func() tea.Msg { _ = m.attach.AttachClose(prev); return nil }
 		}
 	}
+	// A read-only Model (e.g. a read-only remote SSH session, ADR-0008) opens
+	// every attach as AttachRO so the daemon drops this client's keystrokes;
+	// otherwise the local default is the interactive read-write attach.
 	mode := protocol.AttachRW
+	if m.opts.ReadOnly {
+		mode = protocol.AttachRO
+	}
 	m.att = newAttachState(info.Name, mode, sid, cols, rows)
 	if direction != 0 {
 		m.att.impulseHop(direction)
