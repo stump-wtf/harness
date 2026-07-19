@@ -42,6 +42,12 @@ func (s *Server) handleConn(raw net.Conn) {
 		closed:   make(chan struct{}),
 		sessions: make(map[uint32]*attach.Session),
 	}
+	// Register before serving so a concurrent Close can reach this socket; if the
+	// server is already shutting down, close immediately and bail.
+	if !s.registerConn(c) {
+		_ = raw.Close()
+		return
+	}
 	defer c.teardown()
 
 	if !c.handshake() {
@@ -277,5 +283,6 @@ func (c *conn) teardown() {
 	if c.sub != nil {
 		c.srv.unsubscribe(c.sub)
 	}
+	c.srv.unregisterConn(c)
 	_ = c.pc.Close()
 }

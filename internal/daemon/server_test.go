@@ -325,6 +325,31 @@ func TestReloadKeepsLastGood(t *testing.T) {
 	}
 }
 
+// TestCloseWithConnectedClient guards graceful shutdown: Server.Close must not
+// hang when a client is still connected. Connection reader goroutines block in
+// ReadFrame on the raw socket, which a listener/`done` close does not interrupt;
+// Close must close each live socket so its loop returns and wg.Wait completes
+// (otherwise the daemon hangs on SIGTERM and never flushes state via mgr.Close).
+func TestCloseWithConnectedClient(t *testing.T) {
+	td := newTestDaemon(t, sleeperTOML)
+	// An idle subscribed client (a TUI/attach would sit like this) plus a plain
+	// control client — both stay connected across the shutdown.
+	_ = td.dial(t, []string{"events"})
+	_ = td.dial(t, nil)
+	time.Sleep(50 * time.Millisecond)
+
+	done := make(chan struct{})
+	go func() {
+		td.srv.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Server.Close hung with clients connected")
+	}
+}
+
 // TestDaemonInfo is SPEC-0002 REQ "Control Operations" (daemon_info).
 func TestDaemonInfo(t *testing.T) {
 	td := newTestDaemon(t, sleeperTOML)

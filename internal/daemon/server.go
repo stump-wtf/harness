@@ -43,6 +43,14 @@ type Server struct {
 
 	subMu sync.Mutex
 	subs  map[chan protocol.EventMsg]struct{}
+
+	// connMu guards the set of live client connections and the closing flag.
+	// Close() closes each raw socket to unblock its ReadFrame loop; without this
+	// a blocked reader never returns and wg.Wait() hangs at shutdown (a
+	// listener/`done` close does not interrupt an accepted connection's read).
+	connMu  sync.Mutex
+	conns   map[*conn]struct{}
+	closing bool
 }
 
 // Options configure a Server.
@@ -65,6 +73,7 @@ func NewServer(opts Options) *Server {
 		started:    time.Now(),
 		done:       make(chan struct{}),
 		subs:       make(map[chan protocol.EventMsg]struct{}),
+		conns:      make(map[*conn]struct{}),
 	}
 }
 
@@ -121,8 +130,12 @@ func (s *Server) Serve() {
 	}
 }
 
-// Close stops accepting, tears down the listener + socket file, and waits for
-// in-flight connection goroutines to finish.
+// Close stops accepting, tears down the listener + socket file, closes every
+// live client connection (so its blocked ReadFrame loop returns), and waits for
+// in-flight connection goroutines to finish. Without closing the client sockets
+// the reader loops would block forever and wg.Wait() would hang, so a clean
+// daemon shutdown (and the mgr.Close state flush after it) never happens while a
+// TUI/attach/CLI client is connected.
 func (s *Server) Close() {
 	s.once.Do(func() {
 		close(s.done)
@@ -130,8 +143,34 @@ func (s *Server) Close() {
 			_ = s.ln.Close()
 		}
 		_ = os.Remove(s.socketPath)
+		s.connMu.Lock()
+		s.closing = true
+		for c := range s.conns {
+			_ = c.raw.Close() // unblock this connection's ReadFrame loop
+		}
+		s.connMu.Unlock()
 	})
 	s.wg.Wait()
+}
+
+// registerConn adds c to the live set so Close can reach it. It returns false if
+// the server is already closing, in which case the caller must not serve the
+// connection (it races an in-flight Accept against Close).
+func (s *Server) registerConn(c *conn) bool {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	if s.closing {
+		return false
+	}
+	s.conns[c] = struct{}{}
+	return true
+}
+
+// unregisterConn drops c from the live set (called from teardown).
+func (s *Server) unregisterConn(c *conn) {
+	s.connMu.Lock()
+	delete(s.conns, c)
+	s.connMu.Unlock()
 }
 
 // --- event relay ----------------------------------------------------------
