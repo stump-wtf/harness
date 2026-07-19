@@ -77,7 +77,21 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 	// Table headers in file order give us both ordering and per-table line
 	// numbers for validation errors, deterministically — BurntSushi's map
 	// iteration order is not stable.
+	//
+	// The regex scan cannot distinguish a real "[table]" header from a line that
+	// merely looks like one inside a multi-line string value (e.g. a bracketed
+	// line in a `description`). Cross-check every scanned header against the
+	// decoder's authoritative key set so those false positives are dropped —
+	// a bracketed line inside a string is never a defined key.
 	headers := scanTables(data)
+	defined := definedPaths(md)
+	realHeaders := headers[:0:0]
+	for _, h := range headers {
+		if defined[strings.Join(h.parts, ".")] {
+			realHeaders = append(realHeaders, h)
+		}
+	}
+	headers = realHeaders
 
 	// Decode the [harness.*] and [profile.*] namespaces lazily.
 	var harnessNS, profileNS map[string]toml.Primitive
@@ -227,6 +241,18 @@ func syntaxError(filename string, err error) error {
 		return newError(filename, pe.Position.Line, "%s", msg)
 	}
 	return newError(filename, 0, "%s", err.Error())
+}
+
+// definedPaths returns the set of every key path the decoder actually parsed,
+// dotted (e.g. "harness.foo"). Real table headers appear here; text that only
+// looks like a header inside a string value does not — this is what lets Parse
+// reject false headers from the source scan.
+func definedPaths(md toml.MetaData) map[string]bool {
+	m := make(map[string]bool)
+	for _, k := range md.Keys() {
+		m[strings.Join([]string(k), ".")] = true
+	}
+	return m
 }
 
 // tableHeader is a parsed TOML table header and the line it sits on.

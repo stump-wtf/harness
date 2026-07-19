@@ -105,6 +105,27 @@ func TestBareEqualsNamespaced(t *testing.T) {
 	}
 }
 
+// TestMultilineStringWithBracketLine guards the source-scan against mistaking a
+// bracketed line inside a multi-line string value for a real table header. The
+// decoder's key set is authoritative; a [line] inside a string is not a table.
+func TestMultilineStringWithBracketLine(t *testing.T) {
+	src := "[harness.foo]\ncmd = \"echo\"\ndescription = \"\"\"\n[not a table]\nstill the description\n\"\"\"\n"
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("valid TOML with bracketed line in a string was rejected: %v", err)
+	}
+	h, ok := cfg.Harnesses["foo"]
+	if !ok {
+		t.Fatalf("foo harness missing; order = %v", cfg.HarnessOrder)
+	}
+	if !strings.Contains(h.Description, "[not a table]") {
+		t.Errorf("description lost its bracketed line: %q", h.Description)
+	}
+	if got := cfg.HarnessOrder; !reflect.DeepEqual(got, []string{"foo"}) {
+		t.Errorf("HarnessOrder = %v, want [foo] (no phantom table)", got)
+	}
+}
+
 // TestValidationErrors is table-driven over every validation rule, asserting
 // both that parsing fails and that the error carries the offending line
 // (SPEC-0001 reload banner needs the location).
