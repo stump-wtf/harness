@@ -1,0 +1,21 @@
+# harnessd config — one [<name>] table per harness. Copy to
+# ~/.config/harnessd/harnessd.toml and adjust. harnessd knows nothing about what
+# runs inside a harness — it's just a command + args + workdir.
+
+# A headless Crush attached to a Signal channel (this machine's Signal arbiter).
+[crush-signal-channel]
+cmd = "crush"
+args = ["--yolo", "--data-dir", "{workdir}", "--channels", "server:signal"]
+workdir = "~/.local/share/crush-signal-channel"   # holds crush.json / .crush state
+env_file = "~/.config/vault/secrets-static.env"   # sourced before launch
+restart_delay = 5
+
+# A headless Claude Code session you drive from your phone via Remote Control
+# (claude.ai / the Claude mobile app) — NOT wired to any chat channel. Claude
+# Code needs a one-time interactive login first (`claude` / `claude auth login`);
+# it persists under ~/.claude, so you authenticate once on first boot and
+# harnessd just supervises the process.
+# [claude]
+# cmd = "claude"
+# args = ["--remote-control", "--dangerously-skip-permissions"]
+# workdir = "~/src"
