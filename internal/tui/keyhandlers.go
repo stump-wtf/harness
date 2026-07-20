@@ -33,7 +33,7 @@ func (m *Model) onDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.conn == startNoDaemon {
 		switch {
 		case key.Matches(msg, m.keys.Start):
-			m.status = "starting harnessd…"
+			m.status = "starting daemon…"
 			return m, startDaemonCmd(m.opts, m.connectCmd())
 		case key.Matches(msg, m.keys.Quit):
 			m.quitting = true

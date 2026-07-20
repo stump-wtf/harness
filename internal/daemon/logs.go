@@ -1,7 +1,7 @@
 package daemon
 
 // Governing: ADR-0007 (the daemon tees raw PTY output to a rotating per-harness
-// log under $XDG_STATE_HOME/harnessd/logs/<name>.log; `harness logs <name>`
+// log under $XDG_STATE_HOME/harness/logs/<name>.log; `harness logs <name>`
 // reads it for live and dead harnesses alike). SPEC-0002 REQ "Control
 // Operations" ("logs"). This reads the active log file's tail; rotated backups
 // are intentionally out of scope for the tail view.

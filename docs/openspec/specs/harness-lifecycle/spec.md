@@ -114,7 +114,7 @@ apply."
 
 #### Scenario: Edit while running
 
-- **WHEN** `harnessd.toml` changes a running harness's definition and is
+- **WHEN** `harness.toml` changes a running harness's definition and is
   reloaded
 - **THEN** the running process is untouched and the change takes effect on the
   next restart

@@ -49,12 +49,12 @@ type Options struct {
 	Listen string
 	// Socket is the daemon's control/data Unix socket each session dials.
 	Socket string
-	// ConfigPath is the harnessd.toml path (for the TUI's config-aware views).
+	// ConfigPath is the harness.toml path (for the TUI's config-aware views).
 	ConfigPath string
 	// Version is the daemon version, surfaced in the TUI handshake.
 	Version string
 	// HostKeyPath is the persisted SSH host key. Empty uses
-	// DefaultHostKeyPath() under $XDG_STATE_HOME/harnessd (ADR-0008).
+	// DefaultHostKeyPath() under $XDG_STATE_HOME/harness (ADR-0008).
 	HostKeyPath string
 	// Keys and KeysFile are the public-key allowlist sources (ADR-0008).
 	Keys     []core.AuthorizedKey
@@ -62,7 +62,7 @@ type Options struct {
 }
 
 // DefaultHostKeyPath returns the persisted host-key location,
-// $XDG_STATE_HOME/harnessd/ssh_host_ed25519_key (ADR-0008). Reusing
+// $XDG_STATE_HOME/harness/ssh_host_ed25519_key (ADR-0008). Reusing
 // supervisor.StateHome keeps every persisted artifact under one 0700 dir.
 func DefaultHostKeyPath() string {
 	return filepath.Join(supervisor.StateHome(), "ssh_host_ed25519_key")

@@ -2,7 +2,7 @@ package supervisor
 
 // Governing: ADR-0007 (State & scrollback ownership) — "the daemon tees raw
 // PTY output to a rotating log file per harness under
-// $XDG_STATE_HOME/harnessd/logs/<name>.log (size/age rotation)"; SPEC-0003 REQ
+// $XDG_STATE_HOME/harness/logs/<name>.log (size/age rotation)"; SPEC-0003 REQ
 // "Lifecycle Events" observability. This backs `harness logs <name>` for live
 // and dead harnesses alike, independent of the in-memory ring (ADR-0003).
 
@@ -23,7 +23,7 @@ const rotatedStampLayout = "20060102T150405.000"
 // LogConfig tunes per-harness log rotation. Zero values fall back to defaults
 // in newRotatingLog.
 type LogConfig struct {
-	// Dir is the directory logs live in (…/harnessd/logs).
+	// Dir is the directory logs live in (…/harness/logs).
 	Dir string
 	// MaxBytes rotates the active file once it would exceed this size.
 	MaxBytes int64

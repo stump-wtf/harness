@@ -1,7 +1,7 @@
 package supervisor
 
 // Governing: ADR-0006 (config is the source of truth; the daemon hot-reloads
-// harnessd.toml, and a parse error keeps the last-good config and surfaces the
+// harness.toml, and a parse error keeps the last-good config and surfaces the
 // error rather than crashing); SPEC-0003 REQ "Config Change Application".
 
 import (

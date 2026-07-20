@@ -50,7 +50,7 @@ func clientKey(t *testing.T) (gossh.Signer, string) {
 func bootDaemon(t *testing.T) (string, *daemon.Server) {
 	t.Helper()
 	tmp := t.TempDir()
-	configPath := filepath.Join(tmp, "harnessd.toml")
+	configPath := filepath.Join(tmp, "harness.toml")
 	if err := os.WriteFile(configPath, []byte("# empty\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

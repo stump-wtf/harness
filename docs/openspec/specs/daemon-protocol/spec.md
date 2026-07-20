@@ -10,7 +10,7 @@ requires: [SPEC-0003]
 ## Overview
 
 One framed, length-prefixed message protocol over the local Unix socket
-(`$XDG_RUNTIME_DIR/harnessd.sock`) carrying two kinds of traffic multiplexed on
+(`$XDG_RUNTIME_DIR/harness.sock`) carrying two kinds of traffic multiplexed on
 a single connection: **control** (structured request/response plus a
 state-change subscription) and **attach** (opaque terminal byte streams).
 Remote clients never speak a separate wire protocol — the Wish/SSH session runs

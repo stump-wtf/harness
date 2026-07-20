@@ -1,4 +1,4 @@
-// Package config parses harnessd.toml into the core domain types.
+// Package config parses harness.toml into the core domain types.
 //
 // Governing: ADR-0006 (TOML stays; [harness.*] tables with bare-[name]
 // backward compatibility, [profile.*] tables; file is the source of truth) and
@@ -61,17 +61,17 @@ type rawAuthzKeyTOML struct {
 }
 
 // DefaultPath returns the conventional config location,
-// $XDG_CONFIG_HOME/harnessd/harnessd.toml (falling back to ~/.config).
+// $XDG_CONFIG_HOME/harness/harness.toml (falling back to ~/.config).
 func DefaultPath() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return "harnessd.toml"
+			return "harness.toml"
 		}
 		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(base, "harnessd", "harnessd.toml")
+	return filepath.Join(base, "harness", "harness.toml")
 }
 
 // Load reads and parses the config file at path.

@@ -87,9 +87,8 @@ systemctl --user daemon-reload
 systemctl --user enable --now harness.service
 ```
 
-On **macOS**, use the equivalent launchd LaunchAgent
-(`rocks.stump.harnessd.plist`) with `ProgramArguments` set to
-`<path>/harness daemon`.
+On **macOS**, use the equivalent launchd LaunchAgent (`dev.harness.daemon.plist`)
+with `ProgramArguments` set to `<path>/harness daemon`.
 
 ## Design artifacts
 

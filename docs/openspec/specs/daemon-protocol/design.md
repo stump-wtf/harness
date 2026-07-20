@@ -53,7 +53,7 @@ slow client's smoothness — never the harness's or anyone else's (ADR-0007).
 ```mermaid
 sequenceDiagram
     participant C as Client (TUI/CLI)
-    participant D as harnessd
+    participant D as daemon
     participant H as Harness PTY
     C->>D: HELLO {proto, wants: control+events}
     D->>C: HELLO {proto, capabilities}

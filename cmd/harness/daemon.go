@@ -37,7 +37,7 @@ import (
 // after the `daemon` subcommand token.
 func runDaemon(args []string) {
 	fs := flag.NewFlagSet("harness daemon", flag.ExitOnError)
-	configPath := fs.String("config", config.DefaultPath(), "path to harnessd.toml")
+	configPath := fs.String("config", config.DefaultPath(), "path to harness.toml")
 	socketPath := fs.String("socket", protocol.DefaultSocketPath(), "control/data plane socket path")
 	ringLines := fs.Int("scrollback", attach.DefaultRingLines, "per-harness scrollback ring depth (lines)")
 	sshEnable := fs.Bool("ssh", false, "enable the remote Wish SSH server (ADR-0004; overrides [server] enabled)")

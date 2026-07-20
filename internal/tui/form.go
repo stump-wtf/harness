@@ -2,7 +2,7 @@ package tui
 
 // Governing: SPEC-0001 REQ "Harness Form" — n/e open a Huh form over the harness
 // schema (cmd/args/workdir/env_file/restart_delay/backend/description/profile
-// membership) that writes back to harnessd.toml (ADR-0006: file is truth); e
+// membership) that writes back to harness.toml (ADR-0006: file is truth); e
 // pre-fills from the existing harness; then the daemon reloads and the harness
 // appears on the dashboard. This file owns the schema<->TOML serialization; the
 // Huh widget wiring lives in overlays.go.
@@ -93,7 +93,7 @@ func (f HarnessForm) TOML() string {
 	return b.String()
 }
 
-// AppendHarness appends a new harness table to an existing harnessd.toml body,
+// AppendHarness appends a new harness table to an existing harness.toml body,
 // separated by a blank line. The daemon then reloads (ADR-0006). This is the
 // write path for the `n` form.
 func AppendHarness(existing []byte, f HarnessForm) []byte {

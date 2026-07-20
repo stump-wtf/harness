@@ -138,8 +138,8 @@ func doSwitchProfile(ctrl Controller, name string, startStopped bool, harnesses 
 	}
 }
 
-// writeConfigAndReload writes the new harnessd.toml body then reloads the daemon
-// (SPEC-0001 REQ "Harness Form": the harness lands in harnessd.toml, the daemon
+// writeConfigAndReload writes the new harness.toml body then reloads the daemon
+// (SPEC-0001 REQ "Harness Form": the harness lands in harness.toml, the daemon
 // reloads, and it appears on the dashboard).
 func writeConfigAndReload(ctrl Controller, path string, body []byte) tea.Cmd {
 	return func() tea.Msg {

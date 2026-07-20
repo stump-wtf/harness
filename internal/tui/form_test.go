@@ -13,7 +13,7 @@ import (
 // TestHarnessFormRoundTrip verifies the SPEC-0001 REQ "Harness Form" write path:
 // a completed form serializes to TOML that config.Parse (the daemon's parser,
 // ADR-0006) accepts, yielding an equivalent harness — so "the new harness lands
-// in harnessd.toml, the daemon reloads, and it appears on the dashboard".
+// in harness.toml, the daemon reloads, and it appears on the dashboard".
 func TestHarnessFormRoundTrip(t *testing.T) {
 	f := HarnessForm{
 		Name:         "reduit-agent",
@@ -31,7 +31,7 @@ func TestHarnessFormRoundTrip(t *testing.T) {
 	}
 
 	body := AppendHarness([]byte("[harness.existing]\ncmd = \"true\"\n"), f)
-	cfg, err := config.Parse(body, "harnessd.toml")
+	cfg, err := config.Parse(body, "harness.toml")
 	if err != nil {
 		t.Fatalf("config.Parse rejected form TOML: %v\n---\n%s", err, body)
 	}
@@ -67,7 +67,7 @@ func TestHarnessFormRoundTrip(t *testing.T) {
 // (file-is-truth, ADR-0006) to guarantee a lossless round-trip.
 func TestEditPreservesOmittedFields(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "harnessd.toml")
+	path := filepath.Join(dir, "harness.toml")
 	original := strings.Join([]string{
 		"[harness.reduit-agent]",
 		`cmd = "crush"`,
@@ -112,7 +112,7 @@ func TestEditPreservesOmittedFields(t *testing.T) {
 	body := []byte(removeHarnessTOML(original, form.Name))
 	body = AppendHarness(body, form)
 
-	cfg, err := config.Parse(body, "harnessd.toml")
+	cfg, err := config.Parse(body, "harness.toml")
 	if err != nil {
 		t.Fatalf("edited config did not parse: %v\n%s", err, body)
 	}
@@ -173,7 +173,7 @@ func TestRemoveHarnessTOML(t *testing.T) {
 	if strings.Contains(out, "harness.drop") || strings.Contains(out, "gone") {
 		t.Fatalf("drop table survived:\n%s", out)
 	}
-	cfg, err := config.Parse([]byte(out), "harnessd.toml")
+	cfg, err := config.Parse([]byte(out), "harness.toml")
 	if err != nil {
 		t.Fatalf("post-delete config invalid: %v\n%s", err, out)
 	}

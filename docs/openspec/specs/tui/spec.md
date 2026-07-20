@@ -124,14 +124,14 @@ harnesses outside the profile keep running (ADR-0006).
 
 `n` (new) and `e` (edit) SHALL open a Huh form over the harness schema
 (`cmd`/`args`/`workdir`/`env_file`/`restart_delay`/`backend`/`description`/
-profile membership) that writes back to `harnessd.toml` (ADR-0006 — file is
+profile membership) that writes back to `harness.toml` (ADR-0006 — file is
 truth). `e` SHALL pre-fill from the existing harness. An "edit raw TOML"
 escape hatch SHALL open `$EDITOR`.
 
 #### Scenario: Create without leaving the TUI
 
 - **WHEN** the user completes the `n` form
-- **THEN** the new harness lands in `harnessd.toml`, the daemon reloads, and
+- **THEN** the new harness lands in `harness.toml`, the daemon reloads, and
   the harness appears on the dashboard
 
 ### Requirement: Confirmation Guards

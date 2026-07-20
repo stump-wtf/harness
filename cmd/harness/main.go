@@ -22,7 +22,7 @@ import (
 func main() {
 	gfs := flag.NewFlagSet("harness", flag.ExitOnError)
 	socket := gfs.String("socket", protocol.DefaultSocketPath(), "daemon socket path")
-	configPath := gfs.String("config", config.DefaultPath(), "harnessd.toml path (TUI harness form writes here)")
+	configPath := gfs.String("config", config.DefaultPath(), "harness.toml path (TUI harness form writes here)")
 	jsonOut := gfs.Bool("json", false, "machine-readable JSON output")
 	showVersion := gfs.Bool("version", false, "print version and exit")
 	gfs.Usage = usage
@@ -204,11 +204,11 @@ commands:
   daemon               run the supervision daemon (ADR-0005 ExecStart)
 
 flags:
-  --socket PATH        daemon socket (default $XDG_RUNTIME_DIR/harnessd.sock)
+  --socket PATH        daemon socket (default $XDG_RUNTIME_DIR/harness.sock)
   --json               machine-readable output
 
 daemon flags (see "harness daemon -h"):
-  --config PATH        path to harnessd.toml
+  --config PATH        path to harness.toml
   --socket PATH        control/data plane socket path
   --scrollback N       per-harness scrollback ring depth (lines)
   --ssh                enable the remote Wish SSH server

@@ -122,7 +122,7 @@ func TestNoDaemonState(t *testing.T) {
 	if m.conn != startNoDaemon {
 		t.Fatalf("conn = %v, want startNoDaemon", m.conn)
 	}
-	if !containsStr(m.viewNoDaemon(), "start harnessd") {
+	if !containsStr(m.viewNoDaemon(), "start the daemon") {
 		t.Error("no-daemon view should offer to start the daemon")
 	}
 }
@@ -259,7 +259,7 @@ func TestReadOnlyIgnoresInput(t *testing.T) {
 // reload_failed result raises the non-fatal banner (last-good config kept).
 func TestConfigParseBanner(t *testing.T) {
 	m := New(Options{})
-	m.Update(reloadResultMsg{err: &protocol.ErrorMsg{Code: protocol.ErrReload, Message: "harnessd.toml:12: bad"}})
+	m.Update(reloadResultMsg{err: &protocol.ErrorMsg{Code: protocol.ErrReload, Message: "harness.toml:12: bad"}})
 	if m.banner == "" || !containsStr(m.banner, ":12:") {
 		t.Fatalf("banner = %q, want a last-good parse-location banner", m.banner)
 	}
