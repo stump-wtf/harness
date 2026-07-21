@@ -8,10 +8,39 @@ package tui
 // ADR-0007 (scrollback), ADR-0008 (read-only attach).
 
 import (
+	"regexp"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/harmonica"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+)
+
+// ansiSeq matches CSI/OSC/SGR and other ANSI escape sequences so the
+// scrollback view can strip them from raw PTY output. The live view parses
+// them through an x/vt emulator; the frozen scrollback view is plain text,
+// so unstripped escapes leak as junk into the cockpit (bug: "junk when
+// scrolling"). Stripping at entry time also lets search match visible text
+// rather than the escape noise.
+//
+// The CSI branch accepts the optional private-mode intermediates (`?`, `<`,
+// `=`, `>`) — e.g. \x1b[?25l (hide cursor), \x1b[?1049h (alt screen) —
+// without it those leak into scrollback (PR #23 nit). This is still a
+// best-effort strip; a vt emulator is the complete answer, but for the
+// frozen text view this covers the sequences agent CLIs commonly emit.
+var ansiSeq = regexp.MustCompile(
+	// CSI with optional private-mode intermediates and numeric params.
+	`\x1b\[[0-9;?<=>]*[a-zA-Z]` +
+		// OSC (operating system command): ends on BEL or ST (ESC \).
+		`|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)` +
+		// Character set designation: ( B, ) 0, etc.
+		`|\x1b[()][AB012]` +
+		// Single-shift / keypad modes.
+		`|\x1b[=>]` +
+		// Two-byte ESC sequences (ESC + single char, e.g. ESC 7 save cursor).
+		`|\x1b[78DEMc]` +
+		// DCS and similar long-form sequences terminated by ST.
+		`|\x1bP[^\x1b]*\x1b\\`,
 )
 
 // attachSubstate is the mode within Attached: driving the live PTY, or frozen in
@@ -100,10 +129,17 @@ func (a *attachState) animate() bool {
 
 // enterScrollback freezes the current screen into a scrollback view over the
 // supplied daemon-owned lines (ADR-0007). Falls back to the live screen's lines
-// when no separate scrollback is available.
+// when no separate scrollback is available. Raw ANSI escapes are stripped at
+// entry so the frozen view renders as plain text (the live view uses an x/vt
+// emulator to parse them; the scrollback view doesn't) and search matches
+// visible text, not escape noise.
 func (a *attachState) enterScrollback(lines []string, height int) {
+	cleaned := make([]string, len(lines))
+	for i, ln := range lines {
+		cleaned[i] = ansiSeq.ReplaceAllString(ln, "")
+	}
 	a.substate = substateScrollback
-	a.scroll = newScrollback(lines, height)
+	a.scroll = newScrollback(cleaned, height)
 	a.searchOn = false
 }
 

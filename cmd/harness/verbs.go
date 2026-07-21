@@ -10,9 +10,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"text/tabwriter"
+	"syscall"
 	"time"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -26,6 +27,8 @@ func printJSON(v any) error {
 }
 
 // stateGlyph returns the SPEC-0003 status glyph for a state string.
+// Deprecated: prefer stateGlyphOnly (which colors it). Kept for the
+// lifecycle verb output.
 func stateGlyph(state string) string { return core.State(state).Glyph() }
 
 func cmdList(c *client.Client, o verbOpts) error {
@@ -36,13 +39,18 @@ func cmdList(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(hs)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "  NAME\tSTATE\tENABLED\t↻\tPID\tDESCRIPTION")
+	t := NewTable(os.Stdout, "NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
 	for _, h := range hs {
-		fmt.Fprintf(w, "%s %s\t%s\t%s\t%d\t%s\t%s\n",
-			stateGlyph(h.State), h.Name, h.State, yesno(h.Enabled), h.RestartCount, pid(h.PID), h.Description)
+		t.Row(
+			h.Name,
+			t.stateCell(h.State),
+			t.enabledCell(h.Enabled),
+			fmt.Sprintf("%d", h.RestartCount),
+			t.pidCell(h.PID),
+			h.Description,
+		)
 	}
-	return w.Flush()
+	return t.Flush()
 }
 
 func cmdDescribe(c *client.Client, o verbOpts) error {
@@ -53,25 +61,25 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(h)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintf(w, "name\t%s %s\n", stateGlyph(h.State), h.Name)
-	fmt.Fprintf(w, "state\t%s\n", h.State)
-	fmt.Fprintf(w, "enabled\t%s\n", yesno(h.Enabled))
-	fmt.Fprintf(w, "cmd\t%s\n", h.Cmd)
-	fmt.Fprintf(w, "backend\t%s\n", h.Backend)
-	fmt.Fprintf(w, "restarts\t%d\n", h.RestartCount)
-	fmt.Fprintf(w, "last_exit\t%d\n", h.LastExitCode)
-	fmt.Fprintf(w, "flapping\t%s\n", yesno(h.Flapping))
+	t := NewTable(os.Stdout, "FIELD", "VALUE")
+	t.Row(t.accentBold("name"), fmt.Sprintf("%s %s", t.stateGlyphOnly(h.State), h.Name))
+	t.Row("state", t.stateCell(h.State))
+	t.Row("enabled", t.enabledCell(h.Enabled))
+	t.Row("cmd", t.faintPlain(h.Cmd))
+	t.Row("backend", t.faintPlain(h.Backend))
+	t.Row("restarts", fmt.Sprintf("%d", h.RestartCount))
+	t.Row("last_exit", fmt.Sprintf("%d", h.LastExitCode))
+	t.Row("flapping", t.flappingCell(h.Flapping))
 	if h.ConfigChanged {
-		fmt.Fprintf(w, "config\tchanged — restart to apply\n")
+		t.Row("config", t.amberBold("changed — restart to apply"))
 	}
 	if h.PID > 0 {
-		fmt.Fprintf(w, "pid\t%d\n", h.PID)
+		t.Row("pid", fmt.Sprintf("%d", h.PID))
 	}
 	if h.Description != "" {
-		fmt.Fprintf(w, "description\t%s\n", h.Description)
+		t.Row("description", t.dimItalic(h.Description))
 	}
-	return w.Flush()
+	return t.Flush()
 }
 
 func cmdLogs(c *client.Client, o verbOpts) error {
@@ -132,16 +140,16 @@ func cmdProfiles(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(ps)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "  NAME\tAUTOSTART\tHARNESSES\tDESCRIPTION")
+	t := NewTable(os.Stdout, "NAME", "AUTOSTART", "HARNESSES", "DESCRIPTION")
 	for _, p := range ps {
-		marker := " "
+		name := p.Name
 		if p.Active {
-			marker = "*"
+			name = t.accentBold("* " + p.Name)
 		}
-		fmt.Fprintf(w, "%s %s\t%s\t%v\t%s\n", marker, p.Name, yesno(p.Autostart), p.Harnesses, p.Description)
+		autostart := t.enabledCell(p.Autostart)
+		t.Row(name, autostart, fmt.Sprintf("%v", p.Harnesses), t.dimItalic(p.Description))
 	}
-	return w.Flush()
+	return t.Flush()
 }
 
 func cmdUseProfile(c *client.Client, o verbOpts) error {
@@ -176,39 +184,87 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(di)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintf(w, "version\t%s\n", di.Version)
-	fmt.Fprintf(w, "proto\t%s\n", di.ProtoVersion)
-	fmt.Fprintf(w, "pid\t%d\n", di.PID)
-	fmt.Fprintf(w, "uptime\t%ds\n", di.UptimeSeconds)
-	fmt.Fprintf(w, "socket\t%s\n", di.Socket)
-	fmt.Fprintf(w, "harnesses\t%d\n", di.Harnesses)
+	t := NewTable(os.Stdout, "FIELD", "VALUE")
+	t.Row("version", t.accentBold(di.Version))
+	t.Row("proto", t.faintPlain(di.ProtoVersion))
+	t.Row("pid", fmt.Sprintf("%d", di.PID))
+	t.Row("uptime", fmt.Sprintf("%ds", di.UptimeSeconds))
+	t.Row("socket", t.faintPlain(di.Socket))
+	t.Row("harnesses", fmt.Sprintf("%d", di.Harnesses))
 	if di.ActiveProfile != "" {
-		fmt.Fprintf(w, "profile\t%s\n", di.ActiveProfile)
+		t.Row("profile", t.accentBold(di.ActiveProfile))
 	}
-	return w.Flush()
+	return t.Flush()
 }
 
-// cmdAttach streams a harness terminal in cooked mode: live output → stdout,
-// stdin → the PTY (dropped server-side for --ro). It is a minimal demonstration
-// of the data plane; the styled, raw-mode attach lives in the TUI (later
-// package). Ctrl-C ends it.
+// cmdStopDaemon asks the running daemon to shut down by sending SIGTERM to
+// its PID (fetched via daemon-info). This is the counterpart to
+// `harness daemon --detach`: the pair gives you stop-daemon → daemon --detach
+// as a clean restart cycle. The daemon's own signal handler does the graceful
+// shutdown (close socket, stop harnesses, flush state).
+func cmdStopDaemon(o verbOpts) error {
+	c, err := client.Dial(o.socket, buildinfo.Version, nil)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	di, err := c.DaemonInfo()
+	if err != nil {
+		return err
+	}
+	if di.PID <= 0 {
+		return fmt.Errorf("daemon reported PID %d — cannot stop", di.PID)
+	}
+	p, err := os.FindProcess(di.PID)
+	if err != nil {
+		return fmt.Errorf("find daemon process %d: %w", di.PID, err)
+	}
+	if err := p.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("signal daemon %d: %w", di.PID, err)
+	}
+	fmt.Fprintf(os.Stderr, "harness: daemon (pid %d) stopping\n", di.PID)
+	return nil
+}
+
+// cmdAttach streams a harness terminal: live output → stdout, stdin → the
+// PTY (dropped server-side for --ro). Puts the local terminal in raw mode so
+// keystrokes pass through faithfully (Ctrl-C, arrows, etc. go to the harness,
+// not the local shell), and watches for the detach chord Ctrl-\ to cleanly
+// close the session and restore the terminal. The TUI's attached mode
+// (internal/tui/attached.go) is the richer surface with scrollback/hop/etc;
+// this is the scriptable one-shot.
 func cmdAttach(c *client.Client, o verbOpts) error {
 	const sid = 1
 	mode := protocol.AttachRW
 	if o.ro {
 		mode = protocol.AttachRO
 	}
-	if err := c.AttachOpen(sid, o.name, 80, 24, mode); err != nil {
+	if err := c.AttachOpen(sid, o.name, termWidth(), termHeight(), mode); err != nil {
 		return err
 	}
-	// stdin → PTY (skip for read-only).
+
+	// Raw mode so keystrokes (including Ctrl-C) pass through to the harness
+	// untouched. Restore on return so a crash or detach doesn't leave the
+	// user's terminal broken.
+	prev, err := makeRaw(os.Stdin)
+	if err == nil {
+		defer restoreTerm(os.Stdin, prev)
+	}
+	done := make(chan struct{})
+
+	// stdin → PTY (skip for read-only). Watch for the detach chord: Ctrl-\
+	// (0x1c) cleanly closes the attach session and exits.
 	if !o.ro {
 		go func() {
+			defer close(done)
 			buf := make([]byte, 4096)
 			for {
 				n, err := os.Stdin.Read(buf)
 				if n > 0 {
+					if hasDetachChord(buf[:n]) {
+						_ = c.AttachClose(sid)
+						return
+					}
 					_ = c.AttachInput(sid, buf[:n])
 				}
 				if err != nil {
@@ -216,10 +272,18 @@ func cmdAttach(c *client.Client, o verbOpts) error {
 				}
 			}
 		}()
+	} else {
+		defer close(done)
 	}
+
 	// Live frames → stdout.
 	pc := c.Conn()
 	for {
+		select {
+		case <-done:
+			return nil
+		default:
+		}
 		f, err := pc.ReadFrame()
 		if err != nil {
 			if err == io.EOF {
@@ -241,6 +305,18 @@ func cmdAttach(c *client.Client, o verbOpts) error {
 	}
 }
 
+// hasDetachChord reports whether the read buffer contains the detach byte
+// (Ctrl-\ = 0x1c, also known as FS / File Separator). We scan the whole
+// buffer because the byte may arrive co-encoded with other keystrokes.
+func hasDetachChord(b []byte) bool {
+	for _, c := range b {
+		if c == 0x1c { // Ctrl-\
+			return true
+		}
+	}
+	return false
+}
+
 // errorFrom parses an ERROR frame payload.
 func errorFrom(payload []byte) error {
 	e := &protocol.ErrorMsg{}
@@ -248,18 +324,4 @@ func errorFrom(payload []byte) error {
 		return fmt.Errorf("daemon error (unparseable): %v", err)
 	}
 	return e
-}
-
-func yesno(b bool) string {
-	if b {
-		return "yes"
-	}
-	return "no"
-}
-
-func pid(p int) string {
-	if p <= 0 {
-		return "-"
-	}
-	return fmt.Sprintf("%d", p)
 }

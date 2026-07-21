@@ -9,12 +9,14 @@ require (
 	github.com/charmbracelet/harmonica v0.2.0
 	github.com/charmbracelet/huh v0.6.0
 	github.com/charmbracelet/lipgloss v1.0.0
+	github.com/charmbracelet/log v0.4.0
 	github.com/charmbracelet/ssh v0.0.0-20250128164007-98fd5ae11894
 	github.com/charmbracelet/wish v1.4.6
 	github.com/charmbracelet/x/vt v0.0.0-20250303101426-b1f1ddc4d49e
 	github.com/charmbracelet/x/xpty v0.1.2
 	github.com/muesli/termenv v0.15.3-0.20240618155329-98d742f6907a
 	golang.org/x/crypto v0.32.0
+	golang.org/x/term v0.28.0
 )
 
 require (
@@ -24,7 +26,6 @@ require (
 	github.com/catppuccin/go v0.2.0 // indirect
 	github.com/charmbracelet/colorprofile v0.2.0 // indirect
 	github.com/charmbracelet/keygen v0.5.1 // indirect
-	github.com/charmbracelet/log v0.4.0 // indirect
 	github.com/charmbracelet/x/ansi v0.8.0 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.11 // indirect
 	github.com/charmbracelet/x/conpty v0.1.0 // indirect

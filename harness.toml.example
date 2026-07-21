@@ -1,0 +1,68 @@
+# harness.toml — example configuration.
+#
+# Copy to ~/.config/harness/harness.toml and edit. After editing, re-run
+# `harness doctor` to verify the daemon picks it up. Full field reference:
+# `harness daemon -h`.
+#
+# Default location: $XDG_CONFIG_HOME/harness/harness.toml
+# (falls back to ~/.config/harness/harness.toml).
+
+# Each harness is one supervised process. The new-style [harness.<name>]
+# form is preferred; a bare [name] table is supported for backward
+# compatibility (ADR-0006).
+
+# A simple always-on ticker. enabled = true means the daemon autostarts it
+# on boot (ADR-0005 supervision: it gets restarted if it exits, with
+# escalating backoff under crash-loop conditions).
+[harness.heartbeat]
+cmd = "sh"
+args = ["-c", "while true; do echo $(date); sleep 60; done"]
+description = "prints the time once a minute"
+enabled = true
+
+# An agent CLI you drive from your phone via the remote SSH surface.
+# Disabled by default so it doesn't spawn until you explicitly `harness start`.
+[harness.my-agent]
+cmd = "claude"
+args = ["--remote-control", "--dangerously-skip-permissions"]
+workdir = "~/src/my-project"
+description = "long-running agent in ~/src/my-project"
+enabled = false
+
+# A crash-looping example. The full restart_delay is seconds; the supervisor
+# honours it once a harness exits while still enabled.
+[harness.flaky]
+cmd = "/usr/local/bin/maybe-fails"
+workdir = "/srv/flaky"
+restart_delay = 5
+description = "service that sometimes falls over"
+enabled = false
+
+# Profiles (ADR-0006): named groups of harnesses that switch together via
+# `harness use-profile <name>`. Only one profile is active at a time; the
+# active profile is what `harness list` flags with *.
+
+[profile.default]
+description = "everyday set — just the heartbeat"
+harnesses = ["heartbeat"]
+autostart = true
+
+[profile.full]
+description = "all agents running"
+harnesses = ["heartbeat", "my-agent"]
+autostart = true
+
+# Optional remote-access SSH front door (ADR-0004/ADR-0008). Off by default;
+# flip enabled = true to expose the cockpit TUI over SSH. Only public keys
+# listed here (or in authorized_keys_file) can connect — there is no
+# password auth path.
+#
+# [server]
+# enabled = false
+# listen = "0.0.0.0:23234"
+# authorized_keys_file = "~/.ssh/harness_authorized_keys"
+#
+# Per-key read-only scoping (ADR-0008): attach but don't type.
+#   [[server.key]]
+#   key = "ssh-ed25519 AAAA…"
+#   read_only = true

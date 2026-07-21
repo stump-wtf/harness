@@ -15,6 +15,7 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
+	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -27,6 +28,7 @@ func main() {
 	showVersion := gfs.Bool("version", false, "print version and exit")
 	gfs.Usage = usage
 	_ = gfs.Parse(os.Args[1:])
+	cliui.SetJSON(*jsonOut)
 
 	if *showVersion {
 		fmt.Printf("harness %s\n", buildinfo.Version)
@@ -38,19 +40,47 @@ func main() {
 	verb := gfs.Arg(0)
 	if verb == "" {
 		if err := runTUI(*socket, *configPath); err != nil {
-			fmt.Fprintf(os.Stderr, "harness: %v\n", err)
-			os.Exit(1)
+			os.Exit(cliui.Fatal(err))
 		}
 		return
 	}
 
-	// `harness daemon` runs the long-lived supervision daemon in-process. It is
-	// the ADR-0005 systemd ExecStart (`harness daemon`) and replaces the
-	// historical standalone `harnessd` binary. It owns its own flag set (its
-	// flags do not overlap with the client verbs'), so we hand it the remaining
-	// args and exit on its terms.
+	// `harness daemon` is a subcommand group (mirrors systemctl: daemon run,
+	// daemon stop, daemon status). Bare `harness daemon` with no sub is
+	// equivalent to `harness daemon run` — the ADR-0005 systemd ExecStart
+	// form, kept for backward compatibility.
 	if verb == "daemon" {
-		runDaemon(gfs.Args()[1:])
+		// Parse the daemon subcommand (start/stop/status/help). Args after
+		// the verb are either the subcommand token + its args, or flags the
+		// caller passed before the subcommand. Guard the slice — bare
+		// `harness daemon` (no sub) is allowed and means `start`.
+		rest := gfs.Args()[1:] // drop the "daemon" token
+		var sub string
+		var daemonArgs []string
+		if len(rest) > 0 {
+			sub = rest[0]
+			if len(rest) > 1 {
+				daemonArgs = rest[1:]
+			}
+		}
+		switch sub {
+		case "", "run", "start":
+			runDaemon(daemonArgs)
+		case "stop":
+			opts := verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut}
+			os.Exit(cliui.Fatal(cmdStopDaemon(opts)))
+		case "status":
+			opts := verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut}
+			if err := withClient(opts, nil, cmdDaemonInfo); err != nil {
+				os.Exit(cliui.Fatal(err))
+			}
+		case "-h", "--help", "help":
+			daemonUsage()
+		default:
+			os.Exit(cliui.FatalMsg("unknown command",
+				fmt.Sprintf("unknown daemon subcommand %q (start, stop, status)", sub),
+				"try `harness daemon --help`"))
+		}
 		return
 	}
 
@@ -68,11 +98,17 @@ func main() {
 	// first non-flag, so we loop: parse, take one positional, parse the rest —
 	// this makes `harness logs ticker --lines 3` behave like the flags-first form.
 	name := parseInterleaved(vfs, rest)
-	opts := verbOpts{socket: *socket, json: *vJSON, lines: *lines, follow: *follow, ro: *ro, name: name}
+	opts := verbOpts{socket: *socket, configPath: *configPath, json: *vJSON, lines: *lines, follow: *follow, ro: *ro, name: name}
+
+	// `doctor` owns its own reporting (tabular, no styled error box) and its
+	// own exit code; bypass the generic run() → cliui.Fatal path.
+	if verb == "doctor" {
+		opts := verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut}
+		os.Exit(runDoctor(opts))
+	}
 
 	if err := run(verb, opts); err != nil {
-		fmt.Fprintf(os.Stderr, "harness: %v\n", err)
-		os.Exit(1)
+		os.Exit(cliui.Fatal(err))
 	}
 }
 
@@ -97,12 +133,13 @@ func parseInterleaved(fs *flag.FlagSet, args []string) string {
 
 // verbOpts carries the resolved flags/positionals for a verb.
 type verbOpts struct {
-	socket string
-	json   bool
-	lines  int
-	follow bool
-	ro     bool
-	name   string
+	socket     string
+	configPath string
+	json       bool
+	lines      int
+	follow     bool
+	ro         bool
+	name       string
 }
 
 // run dispatches one verb. Every verb dials the daemon fresh (thin client,
@@ -128,8 +165,9 @@ func run(verb string, o verbOpts) error {
 	case "attach":
 		return withClient(o, requireName(o), cmdAttach)
 	default:
-		usage()
-		return fmt.Errorf("unknown command %q", verb)
+		// Don't dump full usage() here — the styled error from cliui.Fatal
+		// is the single calm message; the hint points at the help flag.
+		return fmt.Errorf("unknown command %q (run `harness -h` for the list)", verb)
 	}
 }
 
@@ -187,7 +225,7 @@ func usage() {
 
 usage:
   harness [--socket PATH] [--json] <command> [args]
-  harness daemon [daemon-flags]            run the supervision daemon
+  harness daemon <subcommand> [daemon-flags]
 
 commands:
   list                 list configured harnesses and their state (default)
@@ -200,18 +238,50 @@ commands:
   use-profile NAME     activate a profile
   reload               re-read the daemon config
   daemon-info          show daemon status
+  doctor               run health checks (config, daemon, harnesses)
   attach NAME [--ro]   attach to a harness's terminal
-  daemon               run the supervision daemon (ADR-0005 ExecStart)
+
+daemon subcommands (see "harness daemon --help"):
+  daemon start         run the supervision daemon (ADR-0005 ExecStart; alias: run)
+  daemon stop          gracefully stop the running daemon
+  daemon status        alias for daemon-info
 
 flags:
   --socket PATH        daemon socket (default $XDG_RUNTIME_DIR/harness.sock)
   --json               machine-readable output
+`)
+}
 
-daemon flags (see "harness daemon -h"):
+// daemonUsage prints the help for the `harness daemon` subcommand group.
+// Routed when the user runs `harness daemon --help|-h|help` or an unknown
+// subcommand.
+func daemonUsage() {
+	fmt.Fprint(os.Stderr, `harness daemon — supervise long-running harnesses
+
+usage:
+  harness daemon <subcommand> [flags]
+
+subcommands:
+  start                run the supervision daemon in the foreground
+                       (alias: run; bare "harness daemon" defaults to start)
+  stop                 gracefully stop the running daemon (SIGTERM)
+  status               show daemon status (alias: daemon-info)
+
+start/run flags:
   --config PATH        path to harness.toml
   --socket PATH        control/data plane socket path
   --scrollback N       per-harness scrollback ring depth (lines)
+  --log-level LEVEL    debug, info (default), warn, error
+  --log-file PATH      append logs to this file instead of stderr
+  --detach             fork into the background; redirect stdio to --log-file
+                       (default: $XDG_STATE_HOME/harness/harness-daemon.log)
   --ssh                enable the remote Wish SSH server
-  --ssh-listen HOST:PORT   SSH bind address (overrides [server] listen)
+  --ssh-listen H:P     SSH bind address (overrides [server] listen)
+  --version            print version and exit
+
+examples:
+  harness daemon start --detach       run in the background
+  harness daemon stop                 stop the running daemon
+  harness daemon status               check if the daemon is up
 `)
 }
