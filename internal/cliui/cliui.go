@@ -161,7 +161,7 @@ func (p *Printer) Report(level Level, title, msg, hint string) {
 	if title == "" {
 		title = level.String()
 	}
-	if p.opts.JSON || !IsTTY(os.Stderr) {
+	if p.opts.JSON || !p.outIsTTY() {
 		fmt.Fprintf(p.out, "harness %s: %s\n", title, msg)
 		return
 	}
@@ -215,7 +215,7 @@ func Report(level Level, title, msg, hint string) {
 func (p *Printer) renderStyled(level Level, title, msg, hint string) {
 	th := theme.Default()
 	pal := th.Palette
-	width := blockWidth()
+	width := p.blockWidth()
 
 	header := lipgloss.NewStyle().
 		Foreground(level.Color(pal)).
@@ -267,74 +267,109 @@ const (
 )
 
 // blockWidth returns the target content width for the styled box, applying
-// the 65%-of-terminal policy with floor/ceiling clamps.
-func blockWidth() int {
-	if w, _, err := term.GetSize(int(os.Stderr.Fd())); err == nil && w > 0 {
-		target := int(float64(w) * widthRatio)
-		if target < minBlockWidth {
-			return minBlockWidth
+// the 65%-of-terminal policy with floor/ceiling clamps. It keys off the
+// Printer's actual output writer (not always stderr): a Printer built with
+// Out: os.Stdout reads stdout's width, which is the right answer when the
+// caller has wired the Printer to a non-default stream.
+func (p *Printer) blockWidth() int {
+	if f, ok := p.out.(*os.File); ok {
+		if w, _, err := term.GetSize(int(f.Fd())); err == nil && w > 0 {
+			target := int(float64(w) * widthRatio)
+			if target < minBlockWidth {
+				return minBlockWidth
+			}
+			if target > maxBlockWidth {
+				return maxBlockWidth
+			}
+			return target
 		}
-		if target > maxBlockWidth {
-			return maxBlockWidth
-		}
-		return target
 	}
 	return maxBlockWidth
 }
 
-// wordWrap breaks s into lines no longer than width, splitting on spaces.
-// Long words are broken at the width boundary rather than overflowing. This
-// keeps the box tidy for verbose error messages (e.g. full file paths in a
-// "no such file" error) without pulling in a wrapping dependency.
+// outIsTTY reports whether the Printer's output writer is a terminal. This
+// replaces the old hard-coded `IsTTY(os.Stderr)` check, which made the wrong
+// decision whenever a Printer was built with a non-stderr Out (e.g. tests
+// writing to a buffer, or a future caller writing reports to a file). A
+// non-*os.File writer is never a TTY.
+func (p *Printer) outIsTTY() bool {
+	if f, ok := p.out.(*os.File); ok {
+		return IsTTY(f)
+	}
+	return false
+}
+
+// WriterIsTTY reports whether w is an *os.File attached to a terminal.
+// Exported so other CLI surfaces (cmd/harness's table renderer, which writes
+// to either stdout or stderr depending on the verb) can make the same
+// per-writer styling decision Report makes internally, instead of always
+// consulting stderr.
+func WriterIsTTY(w io.Writer) bool {
+	if f, ok := w.(*os.File); ok {
+		return IsTTY(f)
+	}
+	return false
+}
+
+// wordWrap breaks s into lines no longer than width visible runes, splitting
+// on spaces. Long words are broken at the width boundary rather than
+// overflowing. This keeps the box tidy for verbose error messages (e.g. full
+// file paths in a "no such file" error) without pulling in a wrapping
+// dependency.
+//
+// Width math counts runes, not bytes, so non-ASCII text (paths with accented
+// letters, CJK) wraps at the right column instead of mid-rune (PR #23 nit).
+// This is approximate for combining/wide glyphs — those need display-width
+// math (unicode/vpt, lipgloss.Width) which is overkill for a styled error
+// block; rune-count is correct for the common cases and never corrupts a
+// multibyte sequence.
 func wordWrap(s string, width int) string {
 	if width < 1 {
 		return s
 	}
 	var (
 		out   strings.Builder
-		line  strings.Builder
-		word  strings.Builder
+		line  []rune
+		word  []rune
 		flush = func() {
-			if line.Len() > 0 {
-				out.WriteString(line.String())
+			if len(line) > 0 {
+				out.WriteString(string(line))
 				out.WriteByte('\n')
-				line.Reset()
+				line = line[:0]
 			}
 		}
 	)
 	for _, r := range s {
 		switch r {
 		case ' ', '\t':
-			if line.Len()+1+word.Len() > width && line.Len() > 0 {
+			if len(line)+1+len(word) > width && len(line) > 0 {
 				flush()
-			} else if line.Len() > 0 {
-				line.WriteByte(' ')
+			} else if len(line) > 0 {
+				line = append(line, ' ')
 			}
-			line.WriteString(word.String())
-			word.Reset()
+			line = append(line, word...)
+			word = word[:0]
 		case '\n':
-			line.WriteString(word.String())
-			word.Reset()
+			line = append(line, word...)
+			word = word[:0]
 			flush()
 		default:
-			word.WriteRune(r)
+			word = append(word, r)
 			// Hard-break a word longer than the entire width.
-			if word.Len() > width && line.Len() == 0 {
-				line.WriteString(word.String()[:width])
-				rest := word.String()[width:]
-				word.Reset()
-				word.WriteString(rest)
+			if len(word) > width && len(line) == 0 {
+				line = append(line, word[:width]...)
+				word = word[width:]
 				flush()
 			}
 		}
 	}
-	if word.Len() > 0 {
-		if line.Len()+1+word.Len() > width && line.Len() > 0 {
+	if len(word) > 0 {
+		if len(line)+1+len(word) > width && len(line) > 0 {
 			flush()
-		} else if line.Len() > 0 {
-			line.WriteByte(' ')
+		} else if len(line) > 0 {
+			line = append(line, ' ')
 		}
-		line.WriteString(word.String())
+		line = append(line, word...)
 	}
 	flush()
 	// Trim the trailing newline so lipgloss doesn't render an empty line.
@@ -399,13 +434,20 @@ func isDaemonDown(err error) bool {
 	return false
 }
 
-// isPermissionDenied sniffs for EACCES/EPERM on the socket path.
+// isPermissionDenied sniffs for EACCES/EPERM on the socket path. The typed
+// check uses errors.Is so it matches syscall.EACCES as well as the wrapped
+// os.ErrPermission sentinel (PR #23 nit: the old `pathErr.Err == os.ErrPermission`
+// direct compare missed EACCES on Linux).
 func isPermissionDenied(err error) bool {
 	if err == nil {
 		return false
 	}
 	var pathErr *os.PathError
-	if errors.As(err, &pathErr) && pathErr.Err == os.ErrPermission {
+	if errors.As(err, &pathErr) && errors.Is(pathErr.Err, os.ErrPermission) {
+		return true
+	}
+	// Some dial errors wrap syscall.EACCES directly without a PathError.
+	if errors.Is(err, os.ErrPermission) {
 		return true
 	}
 	msg := strings.ToLower(err.Error())

@@ -191,7 +191,7 @@ func startRemote(sc core.ServerConfig, forceOn bool, listenOverride, socket, con
 func configureDaemonLogger(level, logFile string) {
 	var w io.Writer = os.Stderr
 	if logFile != "" {
-		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		f, err := openLogFile(logFile)
 		if err != nil {
 			// Fall back to stderr — we can't do much else this early.
 			log.Warn("could not open log file, falling back to stderr", "path", logFile, "err", err)

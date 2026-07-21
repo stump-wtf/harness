@@ -31,10 +31,36 @@ import (
 // tableWidth is the column budget every CLI table shares. It matches the
 // styled error/warn/info/success box width so a `list` next to a `doctor`
 // report reads as a consistent surface.
+//
+// Note: this is the sum of *cell content* widths. Flush joins cells with
+// colSep ("  ", 2 cells) between each pair, so the actual rendered row width
+// is tableWidth + colSep*(n-1). Separator rules use renderedWidth(headers)
+// for that reason (PR #23 nit).
 const tableWidth = 80
 
-// useColor reports whether stderr is a TTY and we're not in --json mode.
-func useColor() bool { return !cliui.JSON() && cliui.IsTTY(os.Stderr) }
+// colSep is the visible-space separator inserted between cells on a row.
+const colSep = "  "
+
+// renderedWidth returns the actual visible width of a rendered row:
+// the sum of column widths plus the separators between them. Separator rules
+// are drawn to this width so they span the whole row, not just the cell
+// content budget (PR #23 nit: separator under-spanned data rows).
+func renderedWidth(nCols int) int {
+	if nCols <= 1 {
+		return tableWidth
+	}
+	return tableWidth + (len(colSep) * (nCols - 1))
+}
+
+// useColorFor reports whether w is a terminal we should style for and we're
+// not in --json mode. Tables write to either stdout (list/describe/profiles/
+// daemon-info) or stderr (doctor); styling must key off the *actual*
+// destination so `harness list | cat` doesn't leak ANSI into the pipe (stdout
+// is now a pipe, not a TTY, even though stderr still is) and `harness list
+// 2>/dev/null` keeps color on a real terminal. See M2 in PR #23 review.
+func useColorFor(w io.Writer) bool {
+	return !cliui.JSON() && cliui.WriterIsTTY(w)
+}
 
 // palette is the shared design palette, looked up once.
 func palette() theme.Palette { return theme.Default().Palette }
@@ -42,11 +68,12 @@ func palette() theme.Palette { return theme.Default().Palette }
 // Table is a tabular renderer with bold headers, separator rules, and
 // ANSI-aware column alignment. The zero value is not usable; use NewTable.
 type Table struct {
-	w       io.Writer
-	colored bool
-	pal     theme.Palette
-	widths  []int      // visible width per column
-	rows    []tableRow // queued rows
+	w          io.Writer
+	colored    bool
+	pal        theme.Palette
+	widths     []int      // visible width per column
+	truncators []bool     // truncate-with-ellipsis (true) vs wrap (false) per column
+	rows       []tableRow // queued rows
 }
 
 // tableRow is one queued output row. fullWidth rows span the entire
@@ -61,32 +88,40 @@ type tableRow struct {
 // and the visible width budget for each column. Call Row any number of times,
 // then Flush.
 func NewTable(w io.Writer, headers ...string) *Table {
-	colored := useColor()
+	colored := useColorFor(w)
 	pal := palette()
+	widths, trunc := defaultColumnWidths(headers)
 	t := &Table{
-		w:       w,
-		colored: colored,
-		pal:     pal,
-		widths:  defaultColumnWidths(headers),
+		w:          w,
+		colored:    colored,
+		pal:        pal,
+		widths:     widths,
+		truncators: trunc,
 	}
 	// Bold + pad each header cell to its column width.
 	styled := make([]string, len(headers))
 	for i, h := range headers {
-		styled[i] = t.wrapCell(t.bold(h), t.widths[i])
+		styled[i] = t.wrapCell(t.bold(h), t.widths[i], true) // headers never wrap
 	}
 	t.rows = append(t.rows, tableRow{cells: styled})
+	// Header rule directly under the header row, so the table reads as a
+	// header + body block (rounded separator rules per the file docstring).
+	t.Separator()
 	return t
 }
 
-// defaultColumnWidths picks per-column widths that fit tableWidth. Short
-// known columns (NAME/STATE/ENABLED/RESTARTS/PID/FIELD/CHECK/STATUS/
-// AUTOSTART) get fixed budgets; everything else (typically DESCRIPTION,
-// DETAIL, VALUE) absorbs the remainder so long text has room instead of
-// wrapping every few characters.
-func defaultColumnWidths(headers []string) []int {
+// defaultColumnWidths picks per-column widths that fit tableWidth, and reports
+// which columns should truncate (vs wrap) on overflow. Short known columns
+// (NAME/STATE/ENABLED/RESTARTS/PID/FIELD/CHECK/STATUS/AUTOSTART) get fixed
+// budgets and truncate-with-ellipsis — they hold structured identifiers and a
+// wrapped NAME like "crush-signal-\nchannel" would corrupt the row layout
+// (lipgloss.Width-based wrapping gets joined line-wise with the next column).
+// Everything else (typically DESCRIPTION, DETAIL, VALUE) absorbs the remainder
+// and wraps on overflow, since long prose is the common case there.
+func defaultColumnWidths(headers []string) (widths []int, truncate []bool) {
 	n := len(headers)
 	if n == 0 {
-		return nil
+		return nil, nil
 	}
 	// Fixed budgets for known short columns. Values are visible-cell counts.
 	fixed := map[string]int{
@@ -100,11 +135,13 @@ func defaultColumnWidths(headers []string) []int {
 		"STATUS":    10,
 		"AUTOSTART": 10,
 	}
-	widths := make([]int, n)
+	widths = make([]int, n)
+	truncate = make([]bool, n)
 	used := 0
 	for i, h := range headers {
 		if w, ok := fixed[strings.ToUpper(strings.TrimSpace(h))]; ok {
 			widths[i] = w
+			truncate[i] = true
 			used += w
 		}
 	}
@@ -135,16 +172,22 @@ func defaultColumnWidths(headers []string) []int {
 		}
 		widths[n-1] = tableWidth - base*(n-1)
 	}
-	return widths
+	return widths, truncate
 }
 
 // Separator queues a horizontal rule across the table width.
+// Separator queues a horizontal rule sized to the table's rendered row
+// width (cell budget + inter-cell separators), so it spans the whole row
+// rather than under-spanning (PR #23 nit).
 func (t *Table) Separator() {
-	t.rows = append(t.rows, tableRow{separator: true, cells: []string{strings.Repeat("─", tableWidth)}})
+	w := renderedWidth(len(t.widths))
+	t.rows = append(t.rows, tableRow{separator: true, cells: []string{strings.Repeat("─", w)}})
 }
 
-// Row queues one data row. Cells that overflow their column width wrap onto
-// continuation lines indented to the column's left edge (not column 0).
+// Row queues one data row. Cells that overflow their column width either
+// truncate with an ellipsis (fixed/structured columns: NAME, STATE, …) or wrap
+// onto continuation lines indented to the column's left edge (long-text
+// columns: DESCRIPTION, DETAIL, VALUE).
 func (t *Table) Row(cells ...string) {
 	padded := make([]string, len(t.widths))
 	for i := range t.widths {
@@ -152,17 +195,20 @@ func (t *Table) Row(cells ...string) {
 		if i < len(cells) {
 			c = cells[i]
 		}
-		padded[i] = t.wrapCell(c, t.widths[i])
+		trunc := i < len(t.truncators) && t.truncators[i]
+		padded[i] = t.wrapCell(c, t.widths[i], trunc)
 	}
 	t.rows = append(t.rows, tableRow{cells: padded})
 }
 
 // RowFull queues one row whose content spans the full table width (useful
 // for summary/tally rows). label is left-aligned in the first column; value
-// spans the remainder. Pass empty label for a full-width single cell.
+// spans the remainder. Pass empty label for a full-width single cell. Both
+// cells wrap on overflow (RowFull is used for prose/tally, not structured
+// identifiers).
 func (t *Table) RowFull(label, value string) {
 	if label == "" {
-		t.rows = append(t.rows, tableRow{fullWidth: true, cells: []string{t.wrapCell(value, tableWidth)}})
+		t.rows = append(t.rows, tableRow{fullWidth: true, cells: []string{t.wrapCell(value, tableWidth, false)}})
 		return
 	}
 	labelW := 0
@@ -171,23 +217,46 @@ func (t *Table) RowFull(label, value string) {
 	}
 	valW := tableWidth - labelW
 	t.rows = append(t.rows, tableRow{fullWidth: true, cells: []string{
-		t.wrapCell(label, labelW),
-		t.wrapCell(value, valW),
+		t.wrapCell(label, labelW, false),
+		t.wrapCell(value, valW, false),
 	}})
 }
 
-// colSep is the visible-space separator inserted between cells on a row.
-const colSep = "  "
-
-// wrapCell wraps c to width visible cells per line. Returns the wrapped
-// lines joined by "\n"; the caller (Flush) handles per-line column assembly
-// so continuation lines align under the column's left edge.
-func (t *Table) wrapCell(c string, width int) string {
+// wrapCell renders c into width visible columns. When truncate is true, an
+// over-long cell is cut to width-1 cells and suffixed with "…"; when false,
+// the cell wraps onto continuation lines joined by "\n" (the caller, Flush,
+// re-indents continuation lines under the column's left edge).
+func (t *Table) wrapCell(c string, width int, truncate bool) string {
 	if lipgloss.Width(c) <= width {
 		// Pad short content to width so it aligns in the row.
 		return lipgloss.NewStyle().Width(width).Render(c)
 	}
+	if truncate {
+		return lipgloss.NewStyle().Width(width).Render(truncateCell(c, width))
+	}
 	return strings.Join(wrapWords(c, width), "\n")
+}
+
+// truncateCell returns the longest prefix of c whose visible width is <=
+// width-1, followed by "…". ANSI escapes in c are preserved (they don't
+// count toward visible width). Widths <= 1 just return the ellipsis.
+func truncateCell(c string, width int) string {
+	if width <= 1 {
+		if width == 1 {
+			return "…"
+		}
+		return c
+	}
+	target := width - 1
+	var b strings.Builder
+	for _, r := range c {
+		next := b.String() + string(r)
+		if lipgloss.Width(next) > target {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String() + "…"
 }
 
 // wrapWords splits s into lines no wider than width visible cells, breaking
@@ -322,30 +391,31 @@ func (t *Table) bold(s string) string {
 
 // --- cell helpers (not methods; usable inline in Row calls) ----------------
 
+// --- cell helpers (methods on Table so they consult t.colored, which is ---
+// --- keyed off the table's actual writer — see useColorFor, PR #23 M2). ---
+
 // stateCell renders "● running" in the state's palette color (paired glyph +
 // label per SPEC-0001). The glyph always accompanies the color so a mono
 // terminal that drops the color still fully conveys the state.
-func stateCell(state string) string {
+func (t *Table) stateCell(state string) string {
 	s := core.State(state)
 	glyph := stateGlyphFor(s)
 	label := string(s)
-	if !useColor() {
+	if !t.colored {
 		return fmt.Sprintf("%s %s", glyph, label)
 	}
-	pal := palette()
-	return lipgloss.NewStyle().Foreground(stateColor(s, pal)).Bold(true).
+	return lipgloss.NewStyle().Foreground(stateColor(s, t.pal)).Bold(true).
 		Render(fmt.Sprintf("%s %s", glyph, label))
 }
 
 // stateGlyphOnly renders just the colored glyph for leading-column use.
-func stateGlyphOnly(state string) string {
+func (t *Table) stateGlyphOnly(state string) string {
 	s := core.State(state)
 	glyph := stateGlyphFor(s)
-	if !useColor() {
+	if !t.colored {
 		return glyph
 	}
-	pal := palette()
-	return lipgloss.NewStyle().Foreground(stateColor(s, pal)).Render(glyph)
+	return lipgloss.NewStyle().Foreground(stateColor(s, t.pal)).Render(glyph)
 }
 
 // stateGlyphFor returns the SPEC-0003 glyph, falling back to "·" for an
@@ -358,27 +428,27 @@ func stateGlyphFor(s core.State) string {
 }
 
 // enabledCell renders "yes" in mint when enabled, "no" in dim when not.
-func enabledCell(on bool) string {
+func (t *Table) enabledCell(on bool) string {
 	if on {
-		return mintBold("yes")
+		return t.mintBold("yes")
 	}
-	return dimPlain("no")
+	return t.dimPlain("no")
 }
 
 // flappingCell renders the flapping flag with a warning glyph when true.
-func flappingCell(on bool) string {
+func (t *Table) flappingCell(on bool) string {
 	if on {
-		return amberBold("⚠ flapping")
+		return t.amberBold("⚠ flapping")
 	}
-	return dimPlain("no")
+	return t.dimPlain("no")
 }
 
 // pidCell renders "-" in dim when pid <= 0, else the number in faint.
-func pidCell(p int) string {
+func (t *Table) pidCell(p int) string {
 	if p <= 0 {
-		return dimPlain("-")
+		return t.dimPlain("-")
 	}
-	return faintPlain(fmt.Sprintf("%d", p))
+	return t.faintPlain(fmt.Sprintf("%d", p))
 }
 
 // yesno returns "yes" or "no" — the plain-text form used by callers that
@@ -390,48 +460,48 @@ func yesno(b bool) string {
 	return "no"
 }
 
-// --- low-level styled primitives -------------------------------------------
+// --- low-level styled primitives (methods on Table; consult t.colored) -----
 
-func mintBold(s string) string {
-	if !useColor() {
+func (t *Table) mintBold(s string) string {
+	if !t.colored {
 		return s
 	}
-	return lipgloss.NewStyle().Foreground(palette().Mint).Bold(true).Render(s)
+	return lipgloss.NewStyle().Foreground(t.pal.Mint).Bold(true).Render(s)
 }
 
-func dimPlain(s string) string {
-	if !useColor() {
+func (t *Table) dimPlain(s string) string {
+	if !t.colored {
 		return s
 	}
-	return lipgloss.NewStyle().Foreground(palette().Dim).Render(s)
+	return lipgloss.NewStyle().Foreground(t.pal.Dim).Render(s)
 }
 
-func faintPlain(s string) string {
-	if !useColor() {
+func (t *Table) faintPlain(s string) string {
+	if !t.colored {
 		return s
 	}
-	return lipgloss.NewStyle().Foreground(palette().Faint).Render(s)
+	return lipgloss.NewStyle().Foreground(t.pal.Faint).Render(s)
 }
 
-func amberBold(s string) string {
-	if !useColor() {
+func (t *Table) amberBold(s string) string {
+	if !t.colored {
 		return s
 	}
-	return lipgloss.NewStyle().Foreground(palette().Amber).Bold(true).Render(s)
+	return lipgloss.NewStyle().Foreground(t.pal.Amber).Bold(true).Render(s)
 }
 
-func accentBold(s string) string {
-	if !useColor() {
+func (t *Table) accentBold(s string) string {
+	if !t.colored {
 		return s
 	}
-	return lipgloss.NewStyle().Foreground(palette().Accent).Bold(true).Render(s)
+	return lipgloss.NewStyle().Foreground(t.pal.Accent).Bold(true).Render(s)
 }
 
-func dimItalic(s string) string {
-	if !useColor() {
+func (t *Table) dimItalic(s string) string {
+	if !t.colored {
 		return s
 	}
-	return lipgloss.NewStyle().Foreground(palette().Dim).Italic(true).Render(s)
+	return lipgloss.NewStyle().Foreground(t.pal.Dim).Italic(true).Render(s)
 }
 
 // stateColor maps a core.State to its palette color (running→mint,

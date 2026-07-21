@@ -90,6 +90,51 @@ func TestPrintDoctorTableRendersAllRows(t *testing.T) {
 	}
 }
 
+// TestPrintDoctorTableHintAlignsUnderDetail pins the column-alignment fix
+// for hint rows. Hints are continuation rows of the DETAIL column: they must
+// be indented to the DETAIL column's left edge (after CHECK + STATUS +
+// separators), not start at column 0. DETAIL offset = CHECK(12) + colSep(2)
+// + STATUS(10) + colSep(2) = 26 in the shared table renderer.
+func TestPrintDoctorTableHintAlignsUnderDetail(t *testing.T) {
+	t.Parallel()
+	rows := []check{
+		{name: "daemon", level: cliui.LevelError, detail: "unreachable",
+			hint: "start it with: harness daemon"},
+	}
+	var buf bytes.Buffer
+	printDoctorTable(&buf, rows)
+	out := buf.String()
+
+	// Find the hint line and assert it is indented to the DETAIL column.
+	const detailOffset = 26 // CHECK(12) + sep(2) + STATUS(10) + sep(2)
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "→ start it with") {
+			continue
+		}
+		if strings.HasPrefix(line, "→") {
+			t.Errorf("hint line starts at column 0 (must align under DETAIL):\n%s", out)
+		}
+		// The arrow must land at exactly detailOffset. Everything before it
+		// must be spaces.
+		arrow := strings.Index(line, "→")
+		if arrow != detailOffset {
+			t.Errorf("hint arrow at column %d, want %d (DETAIL edge):\n%s", arrow, detailOffset, out)
+		}
+		// Sanity: the same offset as the detail cell on the row above.
+		for _, other := range strings.Split(out, "\n") {
+			if strings.Contains(other, "unreachable") {
+				detailCell := strings.Index(other, "unreachable")
+				if detailCell != detailOffset {
+					t.Errorf("detail cell at %d, expected %d:\n%s", detailCell, detailOffset, out)
+				}
+				break
+			}
+		}
+		return
+	}
+	t.Errorf("hint line not found in:\n%s", out)
+}
+
 func TestPrintDoctorTablePlainWhenNotColored(t *testing.T) {
 	t.Parallel()
 	// When useColor is false (no TTY / JSON), the output must not contain
@@ -133,11 +178,6 @@ func TestEmitDoctorJSONShape(t *testing.T) {
 	}
 	if res.Summary.Passed != 2 || res.Summary.Warned != 1 || res.Summary.Failed != 1 {
 		t.Errorf("summary = %+v", res.Summary)
-	}
-	// ExitCode has json:"-" so it won't appear in the wire format; derive it
-	// from Summary.Failed instead.
-	if res.Summary.Failed > 0 && (res.Summary.Failed) != 1 {
-		t.Errorf("expected 1 failed row, got %d", res.Summary.Failed)
 	}
 }
 

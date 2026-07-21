@@ -307,7 +307,8 @@ func TestRenderStyledOmitsHintWhenEmpty(t *testing.T) {
 
 func TestBlockWidthClamped(t *testing.T) {
 	t.Parallel()
-	w := blockWidth()
+	p := NewPrinter(Options{})
+	w := p.blockWidth()
 	if w < minBlockWidth || w > maxBlockWidth {
 		t.Errorf("blockWidth() = %d, want in [%d, %d]", w, minBlockWidth, maxBlockWidth)
 	}

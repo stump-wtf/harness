@@ -40,12 +40,11 @@ type check struct {
 // doctorResult is the JSON shape emitted when --json is set. One object per
 // check plus an aggregate summary. Scripts can consume this with jq.
 type doctorResult struct {
-	Config   checkResult   `json:"config"`
-	Daemon   *checkResult  `json:"daemon,omitempty"`
-	Version  *checkResult  `json:"version,omitempty"`
-	Harness  *checkResult  `json:"harness,omitempty"`
-	Summary  summaryResult `json:"summary"`
-	ExitCode int           `json:"-"`
+	Config  checkResult   `json:"config"`
+	Daemon  *checkResult  `json:"daemon,omitempty"`
+	Version *checkResult  `json:"version,omitempty"`
+	Harness *checkResult  `json:"harness,omitempty"`
+	Summary summaryResult `json:"summary"`
 }
 
 type checkResult struct {
@@ -107,12 +106,22 @@ func runDoctor(o verbOpts) int {
 	// Governing: ADR-0002 (thin client dials the Unix socket); ADR-0004.
 	c, daemonErr := client.Dial(o.socket, buildinfo.Version, nil)
 	if daemonErr != nil {
-		rows = append(rows, check{
-			name:   "daemon",
-			level:  cliui.LevelError,
-			detail: fmt.Sprintf("unreachable at %s", o.socket),
-			hint:   "start it with: harness daemon",
-		})
+		// Distinguish "nothing at the socket" from "a daemon is there but
+		// rejected our handshake (proto version mismatch)". Both fail Dial,
+		// but the hint differs: the first wants `harness daemon`, the second
+		// wants a daemon restart (PR #23 nit).
+		row := check{
+			name:  "daemon",
+			level: cliui.LevelError,
+		}
+		if strings.Contains(daemonErr.Error(), "incompatible") {
+			row.detail = fmt.Sprintf("proto mismatch at %s (%v)", o.socket, daemonErr)
+			row.hint = "restart the daemon to pick up the new binary"
+		} else {
+			row.detail = fmt.Sprintf("unreachable at %s", o.socket)
+			row.hint = "start it with: harness daemon"
+		}
+		rows = append(rows, row)
 		// No point continuing: every later check needs the daemon.
 		emitDoctor(os.Stdout, os.Stderr, rows)
 		return 1
@@ -260,10 +269,6 @@ func emitDoctorJSON(w io.Writer, rows []check) {
 		}
 	}
 	res.Summary = summaryResult{Passed: pass, Warned: warn, Failed: fail}
-	res.ExitCode = 0
-	if fail > 0 {
-		res.ExitCode = 1
-	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(res)
@@ -288,19 +293,20 @@ func printDoctorTable(w io.Writer, rows []check) {
 	}
 
 	t := NewTable(w, "CHECK", "STATUS", "DETAIL")
-	colored := useColor()
-	pal := palette()
 	for _, r := range rows {
 		status := r.level.String()
-		if colored {
+		if t.colored {
 			status = lipgloss.NewStyle().
-				Foreground(r.level.Color(pal)).
+				Foreground(r.level.Color(t.pal)).
 				Bold(true).
 				Render(fmt.Sprintf("%s %s", r.level.Glyph(), status))
 		}
 		t.Row(r.name, status, r.detail)
 		if r.hint != "" {
-			t.RowFull("", dimItalic("→ "+r.hint))
+			// Hint is a continuation of the DETAIL column: leave CHECK and
+			// STATUS empty so the arrow lands exactly under DETAIL (and
+			// wraps under DETAIL if it overflows), not at column 0.
+			t.Row("", "", t.dimItalic("→ "+r.hint))
 		}
 	}
 
@@ -314,9 +320,9 @@ func printDoctorTable(w io.Writer, rows []check) {
 		summaryLevel = cliui.LevelWarn
 	}
 	tally := fmt.Sprintf("%d passed · %d warning(s) · %d failed", pass, warn, fail)
-	if colored {
+	if t.colored {
 		tally = lipgloss.NewStyle().
-			Foreground(summaryLevel.Color(pal)).
+			Foreground(summaryLevel.Color(t.pal)).
 			Bold(true).
 			Render(tally)
 	}

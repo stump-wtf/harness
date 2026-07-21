@@ -22,7 +22,26 @@ import (
 // so unstripped escapes leak as junk into the cockpit (bug: "junk when
 // scrolling"). Stripping at entry time also lets search match visible text
 // rather than the escape noise.
-var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][AB012]|\x1b[=>]`)
+//
+// The CSI branch accepts the optional private-mode intermediates (`?`, `<`,
+// `=`, `>`) — e.g. \x1b[?25l (hide cursor), \x1b[?1049h (alt screen) —
+// without it those leak into scrollback (PR #23 nit). This is still a
+// best-effort strip; a vt emulator is the complete answer, but for the
+// frozen text view this covers the sequences agent CLIs commonly emit.
+var ansiSeq = regexp.MustCompile(
+	// CSI with optional private-mode intermediates and numeric params.
+	`\x1b\[[0-9;?<=>]*[a-zA-Z]` +
+		// OSC (operating system command): ends on BEL or ST (ESC \).
+		`|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)` +
+		// Character set designation: ( B, ) 0, etc.
+		`|\x1b[()][AB012]` +
+		// Single-shift / keypad modes.
+		`|\x1b[=>]` +
+		// Two-byte ESC sequences (ESC + single char, e.g. ESC 7 save cursor).
+		`|\x1b[78DEMc]` +
+		// DCS and similar long-form sequences terminated by ST.
+		`|\x1bP[^\x1b]*\x1b\\`,
+)
 
 // attachSubstate is the mode within Attached: driving the live PTY, or frozen in
 // scrollback.

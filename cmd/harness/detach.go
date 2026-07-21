@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -48,8 +49,11 @@ func detachDaemon(args []string) error {
 
 	// Open the logfile the child will inherit. We pass the *fd* via
 	// ExtraFiles so the child's charmbracelet/log can write to it via the
-	// --log-file path we already added to argv.
-	lf, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	// --log-file path we already added to argv. Create the parent directory
+	// first — on a clean box $XDG_STATE_HOME/harness/ doesn't exist yet, so
+	// an open here would fail with "no such file or directory" on first run
+	// (PR #23 M3).
+	lf, err := openLogFile(logFile)
 	if err != nil {
 		return fmt.Errorf("detach: open log file %s: %w", logFile, err)
 	}
@@ -67,6 +71,12 @@ func detachDaemon(args []string) error {
 	cmd.Stderr = lf
 	cmd.ExtraFiles = []*os.File{rdyW} // child sees this as fd 3
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Explicit marker so the child knows fd 3 is the readiness pipe *we* set
+	// up, not some unrelated fd a wrapping supervisor happened to leave open
+	// (systemd socket activation's LISTEN_FDS, a log pipe, etc.). Without
+	// this, signalDetached would write stray bytes to any inherited fd 3
+	// whenever `harness daemon` is started without --detach (PR #23 M4).
+	cmd.Env = append(os.Environ(), detachReadyEnv+"=1")
 
 	if err := cmd.Start(); err != nil {
 		lf.Close()
@@ -162,11 +172,36 @@ func defaultLogPath() string {
 	return base + "/harness/" + defaultDetachLog
 }
 
+// openLogFile creates the parent directory (mode 0o700) and opens path for
+// appending (create if absent, mode 0o600). Shared by --detach (which opens
+// the log in the parent before forking) and the in-daemon logger setup; both
+// need the parent dir to exist on a clean box, where $XDG_STATE_HOME/harness/
+// hasn't been created yet (PR #23 M3).
+func openLogFile(path string) (*os.File, error) {
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("create log dir %s: %w", dir, err)
+		}
+	}
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+}
+
+// detachReadyEnv is the environment marker detachDaemon sets on the child so
+// signalDetached knows fd 3 is the readiness pipe (and not some unrelated
+// inherited fd — see PR #23 M4).
+const detachReadyEnv = "HARNESS_DETACH_READY_FD"
+
 // signalDetached writes one byte to the fd-3 readiness pipe that detachDaemon
-// set up, if any. When not running detached, fd 3 is not a pipe and the write
-// is silently ignored (best-effort: we don't care about the error). The byte
-// is 'o' on readiness, 'e' on fatal error.
+// set up, but only when the process was launched via --detach (detected via
+// the HARNESS_DETACH_READY_FD env marker the parent sets). Without that
+// marker, fd 3 is whatever the launcher happened to leave open (a wrapping
+// supervisor, a log pipe, systemd socket-activation's LISTEN_FDS) and writing
+// stray bytes there is unsafe. The byte is 'o' on readiness, 'e' on fatal
+// error.
 func signalDetached(b byte) {
+	if os.Getenv(detachReadyEnv) == "" {
+		return
+	}
 	f := os.NewFile(3, "ready")
 	if f != nil {
 		_, _ = f.Write([]byte{b})

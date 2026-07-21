@@ -43,10 +43,10 @@ func cmdList(c *client.Client, o verbOpts) error {
 	for _, h := range hs {
 		t.Row(
 			h.Name,
-			stateCell(h.State),
-			enabledCell(h.Enabled),
+			t.stateCell(h.State),
+			t.enabledCell(h.Enabled),
 			fmt.Sprintf("%d", h.RestartCount),
-			pidCell(h.PID),
+			t.pidCell(h.PID),
 			h.Description,
 		)
 	}
@@ -62,22 +62,22 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 		return printJSON(h)
 	}
 	t := NewTable(os.Stdout, "FIELD", "VALUE")
-	t.Row(accentBold("name"), fmt.Sprintf("%s %s", stateGlyphOnly(h.State), h.Name))
-	t.Row("state", stateCell(h.State))
-	t.Row("enabled", enabledCell(h.Enabled))
-	t.Row("cmd", faintPlain(h.Cmd))
-	t.Row("backend", faintPlain(h.Backend))
+	t.Row(t.accentBold("name"), fmt.Sprintf("%s %s", t.stateGlyphOnly(h.State), h.Name))
+	t.Row("state", t.stateCell(h.State))
+	t.Row("enabled", t.enabledCell(h.Enabled))
+	t.Row("cmd", t.faintPlain(h.Cmd))
+	t.Row("backend", t.faintPlain(h.Backend))
 	t.Row("restarts", fmt.Sprintf("%d", h.RestartCount))
 	t.Row("last_exit", fmt.Sprintf("%d", h.LastExitCode))
-	t.Row("flapping", flappingCell(h.Flapping))
+	t.Row("flapping", t.flappingCell(h.Flapping))
 	if h.ConfigChanged {
-		t.Row("config", amberBold("changed — restart to apply"))
+		t.Row("config", t.amberBold("changed — restart to apply"))
 	}
 	if h.PID > 0 {
 		t.Row("pid", fmt.Sprintf("%d", h.PID))
 	}
 	if h.Description != "" {
-		t.Row("description", dimItalic(h.Description))
+		t.Row("description", t.dimItalic(h.Description))
 	}
 	return t.Flush()
 }
@@ -144,10 +144,10 @@ func cmdProfiles(c *client.Client, o verbOpts) error {
 	for _, p := range ps {
 		name := p.Name
 		if p.Active {
-			name = accentBold("* " + p.Name)
+			name = t.accentBold("* " + p.Name)
 		}
-		autostart := enabledCell(p.Autostart)
-		t.Row(name, autostart, fmt.Sprintf("%v", p.Harnesses), dimItalic(p.Description))
+		autostart := t.enabledCell(p.Autostart)
+		t.Row(name, autostart, fmt.Sprintf("%v", p.Harnesses), t.dimItalic(p.Description))
 	}
 	return t.Flush()
 }
@@ -185,14 +185,14 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 		return printJSON(di)
 	}
 	t := NewTable(os.Stdout, "FIELD", "VALUE")
-	t.Row("version", accentBold(di.Version))
-	t.Row("proto", faintPlain(di.ProtoVersion))
+	t.Row("version", t.accentBold(di.Version))
+	t.Row("proto", t.faintPlain(di.ProtoVersion))
 	t.Row("pid", fmt.Sprintf("%d", di.PID))
 	t.Row("uptime", fmt.Sprintf("%ds", di.UptimeSeconds))
-	t.Row("socket", faintPlain(di.Socket))
+	t.Row("socket", t.faintPlain(di.Socket))
 	t.Row("harnesses", fmt.Sprintf("%d", di.Harnesses))
 	if di.ActiveProfile != "" {
-		t.Row("profile", accentBold(di.ActiveProfile))
+		t.Row("profile", t.accentBold(di.ActiveProfile))
 	}
 	return t.Flush()
 }
