@@ -37,7 +37,7 @@ func cmdList(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(hs)
 	}
-	t := NewTable(os.Stdout, "NAME", "STATE", "ENABLED", "↻", "PID", "DESCRIPTION")
+	t := NewTable(os.Stdout, "NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
 	for _, h := range hs {
 		t.Row(
 			h.Name,
@@ -195,26 +195,45 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 	return t.Flush()
 }
 
-// cmdAttach streams a harness terminal in cooked mode: live output → stdout,
-// stdin → the PTY (dropped server-side for --ro). It is a minimal demonstration
-// of the data plane; the styled, raw-mode attach lives in the TUI (later
-// package). Ctrl-C ends it.
+// cmdAttach streams a harness terminal: live output → stdout, stdin → the
+// PTY (dropped server-side for --ro). Puts the local terminal in raw mode so
+// keystrokes pass through faithfully (Ctrl-C, arrows, etc. go to the harness,
+// not the local shell), and watches for the detach chord Ctrl-\ to cleanly
+// close the session and restore the terminal. The TUI's attached mode
+// (internal/tui/attached.go) is the richer surface with scrollback/hop/etc;
+// this is the scriptable one-shot.
 func cmdAttach(c *client.Client, o verbOpts) error {
 	const sid = 1
 	mode := protocol.AttachRW
 	if o.ro {
 		mode = protocol.AttachRO
 	}
-	if err := c.AttachOpen(sid, o.name, 80, 24, mode); err != nil {
+	if err := c.AttachOpen(sid, o.name, termWidth(), termHeight(), mode); err != nil {
 		return err
 	}
-	// stdin → PTY (skip for read-only).
+
+	// Raw mode so keystrokes (including Ctrl-C) pass through to the harness
+	// untouched. Restore on return so a crash or detach doesn't leave the
+	// user's terminal broken.
+	prev, err := makeRaw(os.Stdin)
+	if err == nil {
+		defer restoreTerm(os.Stdin, prev)
+	}
+	done := make(chan struct{})
+
+	// stdin → PTY (skip for read-only). Watch for the detach chord: Ctrl-\
+	// (0x1c) cleanly closes the attach session and exits.
 	if !o.ro {
 		go func() {
+			defer close(done)
 			buf := make([]byte, 4096)
 			for {
 				n, err := os.Stdin.Read(buf)
 				if n > 0 {
+					if hasDetachChord(buf[:n]) {
+						_ = c.AttachClose(sid)
+						return
+					}
 					_ = c.AttachInput(sid, buf[:n])
 				}
 				if err != nil {
@@ -222,10 +241,18 @@ func cmdAttach(c *client.Client, o verbOpts) error {
 				}
 			}
 		}()
+	} else {
+		defer close(done)
 	}
+
 	// Live frames → stdout.
 	pc := c.Conn()
 	for {
+		select {
+		case <-done:
+			return nil
+		default:
+		}
 		f, err := pc.ReadFrame()
 		if err != nil {
 			if err == io.EOF {
@@ -245,6 +272,18 @@ func cmdAttach(c *client.Client, o verbOpts) error {
 			return errorFrom(f.Payload)
 		}
 	}
+}
+
+// hasDetachChord reports whether the read buffer contains the detach byte
+// (Ctrl-\ = 0x1c, also known as FS / File Separator). We scan the whole
+// buffer because the byte may arrive co-encoded with other keystrokes.
+func hasDetachChord(b []byte) bool {
+	for _, c := range b {
+		if c == 0x1c { // Ctrl-\
+			return true
+		}
+	}
+	return false
 }
 
 // errorFrom parses an ERROR frame payload.

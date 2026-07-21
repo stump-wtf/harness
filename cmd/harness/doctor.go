@@ -300,7 +300,7 @@ func printDoctorTable(w io.Writer, rows []check) {
 		}
 		t.Row(r.name, status, r.detail)
 		if r.hint != "" {
-			t.Row("", "", dimItalic("→ "+r.hint))
+			t.RowFull("", dimItalic("→ "+r.hint))
 		}
 	}
 
@@ -320,6 +320,6 @@ func printDoctorTable(w io.Writer, rows []check) {
 			Bold(true).
 			Render(tally)
 	}
-	t.Row("summary", "", tally)
+	t.RowFull("summary", tally)
 	_ = t.Flush()
 }
