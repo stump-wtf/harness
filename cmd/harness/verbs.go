@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"syscall"
 	"time"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -193,6 +195,35 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 		t.Row("profile", accentBold(di.ActiveProfile))
 	}
 	return t.Flush()
+}
+
+// cmdStopDaemon asks the running daemon to shut down by sending SIGTERM to
+// its PID (fetched via daemon-info). This is the counterpart to
+// `harness daemon --detach`: the pair gives you stop-daemon → daemon --detach
+// as a clean restart cycle. The daemon's own signal handler does the graceful
+// shutdown (close socket, stop harnesses, flush state).
+func cmdStopDaemon(o verbOpts) error {
+	c, err := client.Dial(o.socket, buildinfo.Version, nil)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	di, err := c.DaemonInfo()
+	if err != nil {
+		return err
+	}
+	if di.PID <= 0 {
+		return fmt.Errorf("daemon reported PID %d — cannot stop", di.PID)
+	}
+	p, err := os.FindProcess(di.PID)
+	if err != nil {
+		return fmt.Errorf("find daemon process %d: %w", di.PID, err)
+	}
+	if err := p.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("signal daemon %d: %w", di.PID, err)
+	}
+	fmt.Fprintf(os.Stderr, "harness: daemon (pid %d) stopping\n", di.PID)
+	return nil
 }
 
 // cmdAttach streams a harness terminal: live output → stdout, stdin → the

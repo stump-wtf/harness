@@ -18,6 +18,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
@@ -44,8 +45,16 @@ type Table struct {
 	w       io.Writer
 	colored bool
 	pal     theme.Palette
-	widths  []int // visible width per column
-	rows    [][]string
+	widths  []int      // visible width per column
+	rows    []tableRow // queued rows
+}
+
+// tableRow is one queued output row. fullWidth rows span the entire
+// tableWidth (single cell); normal rows have one cell per column.
+type tableRow struct {
+	fullWidth bool
+	separator bool
+	cells     []string
 }
 
 // NewTable starts a table written to w. headers also fixes the column count
@@ -63,9 +72,9 @@ func NewTable(w io.Writer, headers ...string) *Table {
 	// Bold + pad each header cell to its column width.
 	styled := make([]string, len(headers))
 	for i, h := range headers {
-		styled[i] = t.padCell(t.bold(h), t.widths[i])
+		styled[i] = t.wrapCell(t.bold(h), t.widths[i])
 	}
-	t.rows = append(t.rows, styled)
+	t.rows = append(t.rows, tableRow{cells: styled})
 	return t
 }
 
@@ -131,11 +140,11 @@ func defaultColumnWidths(headers []string) []int {
 
 // Separator queues a horizontal rule across the table width.
 func (t *Table) Separator() {
-	t.rows = append(t.rows, []string{strings.Repeat("─", tableWidth)})
+	t.rows = append(t.rows, tableRow{separator: true, cells: []string{strings.Repeat("─", tableWidth)}})
 }
 
-// Row queues one data row. Each cell is padded to its column's visible width
-// via lipgloss.Width, so ANSI-styled cells align correctly.
+// Row queues one data row. Cells that overflow their column width wrap onto
+// continuation lines indented to the column's left edge (not column 0).
 func (t *Table) Row(cells ...string) {
 	padded := make([]string, len(t.widths))
 	for i := range t.widths {
@@ -143,9 +152,9 @@ func (t *Table) Row(cells ...string) {
 		if i < len(cells) {
 			c = cells[i]
 		}
-		padded[i] = t.padCell(c, t.widths[i])
+		padded[i] = t.wrapCell(c, t.widths[i])
 	}
-	t.rows = append(t.rows, padded)
+	t.rows = append(t.rows, tableRow{cells: padded})
 }
 
 // RowFull queues one row whose content spans the full table width (useful
@@ -153,40 +162,154 @@ func (t *Table) Row(cells ...string) {
 // spans the remainder. Pass empty label for a full-width single cell.
 func (t *Table) RowFull(label, value string) {
 	if label == "" {
-		t.rows = append(t.rows, []string{value})
+		t.rows = append(t.rows, tableRow{fullWidth: true, cells: []string{t.wrapCell(value, tableWidth)}})
 		return
 	}
-	// Reserve label's column, then give the value the rest.
-	labelW := t.widths[0]
+	labelW := 0
+	if len(t.widths) > 0 {
+		labelW = t.widths[0]
+	}
 	valW := tableWidth - labelW
-	t.rows = append(t.rows, []string{
-		t.padCell(label, labelW),
-		t.padCell(value, valW),
-	})
+	t.rows = append(t.rows, tableRow{fullWidth: true, cells: []string{
+		t.wrapCell(label, labelW),
+		t.wrapCell(value, valW),
+	}})
 }
 
-// Flush renders all queued rows to the writer. Each row is either a separator
-// (single cell) or padded cells joined with "  ".
+// colSep is the visible-space separator inserted between cells on a row.
+const colSep = "  "
+
+// wrapCell wraps c to width visible cells per line. Returns the wrapped
+// lines joined by "\n"; the caller (Flush) handles per-line column assembly
+// so continuation lines align under the column's left edge.
+func (t *Table) wrapCell(c string, width int) string {
+	if lipgloss.Width(c) <= width {
+		// Pad short content to width so it aligns in the row.
+		return lipgloss.NewStyle().Width(width).Render(c)
+	}
+	return strings.Join(wrapWords(c, width), "\n")
+}
+
+// wrapWords splits s into lines no wider than width visible cells, breaking
+// on spaces. ANSI escapes are preserved (they don't count toward visible
+// width). A single word longer than width is hard-broken at the boundary.
+func wrapWords(s string, width int) []string {
+	if width < 1 {
+		return []string{s}
+	}
+	var (
+		out  []string
+		line strings.Builder
+	)
+	fields := strings.Fields(s)
+	for _, word := range fields {
+		// Hard-break an over-long word.
+		for lipgloss.Width(word) > width {
+			if line.Len() > 0 {
+				out = append(out, line.String())
+				line.Reset()
+			}
+			// Trim word to width visible cells. We don't have a clean
+			// ANSI-aware truncator here, so byte-trim and accept that a
+			// multi-byte glyph at the cut is unlikely (Latin-1 paths).
+			cut := truncateVisible(word, width)
+			out = append(out, cut)
+			word = word[len(cut):]
+		}
+		if line.Len() == 0 {
+			line.WriteString(word)
+			continue
+		}
+		// " " + word would overflow; start a new line.
+		if lipgloss.Width(line.String())+1+lipgloss.Width(word) > width {
+			out = append(out, line.String())
+			line.Reset()
+			line.WriteString(word)
+		} else {
+			line.WriteByte(' ')
+			line.WriteString(word)
+		}
+	}
+	if line.Len() > 0 {
+		out = append(out, line.String())
+	}
+	if len(out) == 0 {
+		return []string{""}
+	}
+	return out
+}
+
+// truncateVisible returns the longest prefix of s whose visible width is
+// <= width. Used by wrapWords for hard-breaking over-long words.
+func truncateVisible(s string, width int) string {
+	var b strings.Builder
+	for _, r := range s {
+		b.WriteRune(r)
+		if lipgloss.Width(b.String()) > width {
+			// Back up one rune.
+			cur := b.String()
+			_, sz := utf8.DecodeLastRuneInString(cur)
+			return cur[:len(cur)-sz]
+		}
+	}
+	return b.String()
+}
+
+// Flush renders all queued rows to the writer. Separator rows are a single
+// horizontal rule. fullWidth rows are rendered as label+value (or just value).
+// Normal rows have each cell padded to its column width via lipgloss.Width,
+// and when a cell wraps to multiple lines, the row is expanded so
+// continuation text aligns under its own column's left edge.
 func (t *Table) Flush() error {
 	var b strings.Builder
 	for _, row := range t.rows {
-		if len(row) == 1 && strings.HasPrefix(row[0], "─") {
-			b.WriteString(row[0])
+		if row.separator {
+			b.WriteString(row.cells[0])
 			b.WriteByte('\n')
 			continue
 		}
-		b.WriteString(strings.Join(row, "  "))
-		b.WriteByte('\n')
+		if row.fullWidth {
+			// Full-width row: cells are [value] or [label, value], already
+			// wrapped to their widths. Join label+value with colSep.
+			for ln, line := range strings.Split(strings.Join(row.cells, colSep), "\n") {
+				if ln > 0 {
+					b.WriteByte('\n')
+				}
+				b.WriteString(line)
+			}
+			b.WriteByte('\n')
+			continue
+		}
+		// Normal multi-column row. Split each cell into wrapped lines and
+		// emit maxLines output lines so continuation text aligns.
+		cellLines := make([][]string, len(row.cells))
+		maxLines := 1
+		for i, cell := range row.cells {
+			lines := strings.Split(cell, "\n")
+			cellLines[i] = lines
+			if len(lines) > maxLines {
+				maxLines = len(lines)
+			}
+		}
+		for ln := 0; ln < maxLines; ln++ {
+			parts := make([]string, len(row.cells))
+			for i := range row.cells {
+				w := tableWidth
+				if i < len(t.widths) {
+					w = t.widths[i]
+				}
+				if ln < len(cellLines[i]) {
+					parts[i] = lipgloss.NewStyle().Width(w).Render(cellLines[i][ln])
+				} else {
+					parts[i] = strings.Repeat(" ", w)
+				}
+			}
+			b.WriteString(strings.Join(parts, colSep))
+			b.WriteByte('\n')
+		}
 	}
 	_, err := io.WriteString(t.w, b.String())
 	return err
-}
-
-// padCell pads s with trailing spaces to exactly width visible cells.
-// lipgloss.Width measures the *visible* width (ignoring ANSI escapes), so
-// this works on both styled and plain strings.
-func (t *Table) padCell(s string, width int) string {
-	return lipgloss.NewStyle().Width(width).Render(s)
 }
 
 // bold renders s bold in the foreground color when coloring is on.

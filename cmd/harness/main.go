@@ -45,13 +45,29 @@ func main() {
 		return
 	}
 
-	// `harness daemon` runs the long-lived supervision daemon in-process. It is
-	// the ADR-0005 systemd ExecStart (`harness daemon`) and replaces the
-	// historical standalone `harnessd` binary. It owns its own flag set (its
-	// flags do not overlap with the client verbs'), so we hand it the remaining
-	// args and exit on its terms.
+	// `harness daemon` is a subcommand group (mirrors systemctl: daemon run,
+	// daemon stop, daemon status). Bare `harness daemon` with no sub is
+	// equivalent to `harness daemon run` — the ADR-0005 systemd ExecStart
+	// form, kept for backward compatibility.
 	if verb == "daemon" {
-		runDaemon(gfs.Args()[1:])
+		sub := gfs.Arg(1)
+		daemonArgs := gfs.Args()[2:]
+		switch sub {
+		case "", "run", "start":
+			runDaemon(daemonArgs)
+		case "stop":
+			opts := verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut}
+			os.Exit(cliui.Fatal(cmdStopDaemon(opts)))
+		case "status":
+			opts := verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut, name: sub}
+			if err := withClient(opts, nil, cmdDaemonInfo); err != nil {
+				os.Exit(cliui.Fatal(err))
+			}
+		default:
+			os.Exit(cliui.FatalMsg("unknown command",
+				fmt.Sprintf("unknown daemon subcommand %q (start, stop, status)", sub),
+				"try `harness daemon -h`"))
+		}
 		return
 	}
 
@@ -211,7 +227,9 @@ commands:
   daemon-info          show daemon status
   doctor               run health checks (config, daemon, harnesses)
   attach NAME [--ro]   attach to a harness's terminal
-  daemon               run the supervision daemon (ADR-0005 ExecStart)
+  daemon start        run the supervision daemon (ADR-0005 ExecStart; alias: run)
+  daemon stop         gracefully stop the running daemon
+  daemon status       alias for daemon-info
 
 flags:
   --socket PATH        daemon socket (default $XDG_RUNTIME_DIR/harness.sock)
