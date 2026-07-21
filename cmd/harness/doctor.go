@@ -24,8 +24,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
-	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
+	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
@@ -33,10 +33,10 @@ import (
 
 // check is one row in the doctor table.
 type check struct {
-	name   string       // "config", "daemon", …
-	level  cliui.Level  // pass/warn/fail
-	detail string       // human-readable status ("2 harnesses", "v1.2.3", …)
-	hint   string       // actionable fix when level != Success; "" otherwise
+	name   string      // "config", "daemon", …
+	level  cliui.Level // pass/warn/fail
+	detail string      // human-readable status ("2 harnesses", "v1.2.3", …)
+	hint   string      // actionable fix when level != Success; "" otherwise
 }
 
 // doctorResult is the JSON shape emitted when --json is set. One object per

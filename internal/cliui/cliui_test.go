@@ -126,11 +126,11 @@ func TestClassifyGenericPassesThrough(t *testing.T) {
 func TestCleanMessageStripsPrefixes(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
-		"harness: something broke":         "something broke",
-		"harness daemon: listen failed":    "listen failed",
-		"client: dial unix /tmp/x: noent":  "dial unix /tmp/x: noent",
-		"  harness: spaced ":               "spaced",
-		"no prefix":                        "no prefix",
+		"harness: something broke":        "something broke",
+		"harness daemon: listen failed":   "listen failed",
+		"client: dial unix /tmp/x: noent": "dial unix /tmp/x: noent",
+		"  harness: spaced ":              "spaced",
+		"no prefix":                       "no prefix",
 	}
 	for in, want := range cases {
 		if got := cleanMessage(in); got != want {
