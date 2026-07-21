@@ -50,8 +50,19 @@ func main() {
 	// equivalent to `harness daemon run` — the ADR-0005 systemd ExecStart
 	// form, kept for backward compatibility.
 	if verb == "daemon" {
-		sub := gfs.Arg(1)
-		daemonArgs := gfs.Args()[2:]
+		// Parse the daemon subcommand (start/stop/status/help). Args after
+		// the verb are either the subcommand token + its args, or flags the
+		// caller passed before the subcommand. Guard the slice — bare
+		// `harness daemon` (no sub) is allowed and means `start`.
+		rest := gfs.Args()[1:] // drop the "daemon" token
+		var sub string
+		var daemonArgs []string
+		if len(rest) > 0 {
+			sub = rest[0]
+			if len(rest) > 1 {
+				daemonArgs = rest[1:]
+			}
+		}
 		switch sub {
 		case "", "run", "start":
 			runDaemon(daemonArgs)
@@ -59,14 +70,16 @@ func main() {
 			opts := verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut}
 			os.Exit(cliui.Fatal(cmdStopDaemon(opts)))
 		case "status":
-			opts := verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut, name: sub}
+			opts := verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut}
 			if err := withClient(opts, nil, cmdDaemonInfo); err != nil {
 				os.Exit(cliui.Fatal(err))
 			}
+		case "-h", "--help", "help":
+			daemonUsage()
 		default:
 			os.Exit(cliui.FatalMsg("unknown command",
 				fmt.Sprintf("unknown daemon subcommand %q (start, stop, status)", sub),
-				"try `harness daemon -h`"))
+				"try `harness daemon --help`"))
 		}
 		return
 	}
@@ -212,7 +225,7 @@ func usage() {
 
 usage:
   harness [--socket PATH] [--json] <command> [args]
-  harness daemon [daemon-flags]            run the supervision daemon
+  harness daemon <subcommand> [daemon-flags]
 
 commands:
   list                 list configured harnesses and their state (default)
@@ -227,19 +240,48 @@ commands:
   daemon-info          show daemon status
   doctor               run health checks (config, daemon, harnesses)
   attach NAME [--ro]   attach to a harness's terminal
-  daemon start        run the supervision daemon (ADR-0005 ExecStart; alias: run)
-  daemon stop         gracefully stop the running daemon
-  daemon status       alias for daemon-info
+
+daemon subcommands (see "harness daemon --help"):
+  daemon start         run the supervision daemon (ADR-0005 ExecStart; alias: run)
+  daemon stop          gracefully stop the running daemon
+  daemon status        alias for daemon-info
 
 flags:
   --socket PATH        daemon socket (default $XDG_RUNTIME_DIR/harness.sock)
   --json               machine-readable output
+`)
+}
 
-daemon flags (see "harness daemon -h"):
+// daemonUsage prints the help for the `harness daemon` subcommand group.
+// Routed when the user runs `harness daemon --help|-h|help` or an unknown
+// subcommand.
+func daemonUsage() {
+	fmt.Fprint(os.Stderr, `harness daemon — supervise long-running harnesses
+
+usage:
+  harness daemon <subcommand> [flags]
+
+subcommands:
+  start                run the supervision daemon in the foreground
+                       (alias: run; bare "harness daemon" defaults to start)
+  stop                 gracefully stop the running daemon (SIGTERM)
+  status               show daemon status (alias: daemon-info)
+
+start/run flags:
   --config PATH        path to harness.toml
   --socket PATH        control/data plane socket path
   --scrollback N       per-harness scrollback ring depth (lines)
+  --log-level LEVEL    debug, info (default), warn, error
+  --log-file PATH      append logs to this file instead of stderr
+  --detach             fork into the background; redirect stdio to --log-file
+                       (default: $XDG_STATE_HOME/harness/harness-daemon.log)
   --ssh                enable the remote Wish SSH server
-  --ssh-listen HOST:PORT   SSH bind address (overrides [server] listen)
+  --ssh-listen H:P     SSH bind address (overrides [server] listen)
+  --version            print version and exit
+
+examples:
+  harness daemon start --detach       run in the background
+  harness daemon stop                 stop the running daemon
+  harness daemon status               check if the daemon is up
 `)
 }
