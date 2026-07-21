@@ -1,0 +1,27 @@
+# Secret scan via the shared stumpcloud/gitleaks-action. Comment-only
+# (publish: false) — no Garage HTML report, so no PAGES_* creds needed.
+name: Secret scan (gitleaks)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: https://gitea.stump.rocks/stumpcloud/gitleaks-action@v1
+        with:
+          gitea-token: ${{ github.token }}
+          publish: "false"
