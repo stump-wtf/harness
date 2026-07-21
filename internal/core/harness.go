@@ -97,11 +97,11 @@ type ServerConfig struct {
 	// file whose entries are merged with AuthorizedKeys.
 	AuthorizedKeysFile string
 	// HostKeyPath overrides the persisted host-key location; empty uses the
-	// default under $XDG_STATE_HOME/harnessd (ADR-0008).
+	// default under $XDG_STATE_HOME/harness (ADR-0008).
 	HostKeyPath string
 }
 
-// Config is a fully parsed, validated harnessd.toml: the harness registry and
+// Config is a fully parsed, validated harness.toml: the harness registry and
 // the profiles, each preserving file order for stable rendering.
 type Config struct {
 	// Harnesses is every harness keyed by name.

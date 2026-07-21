@@ -22,7 +22,7 @@ import (
 func main() {
 	gfs := flag.NewFlagSet("harness", flag.ExitOnError)
 	socket := gfs.String("socket", protocol.DefaultSocketPath(), "daemon socket path")
-	configPath := gfs.String("config", config.DefaultPath(), "harnessd.toml path (TUI harness form writes here)")
+	configPath := gfs.String("config", config.DefaultPath(), "harness.toml path (TUI harness form writes here)")
 	jsonOut := gfs.Bool("json", false, "machine-readable JSON output")
 	showVersion := gfs.Bool("version", false, "print version and exit")
 	gfs.Usage = usage
@@ -41,6 +41,16 @@ func main() {
 			fmt.Fprintf(os.Stderr, "harness: %v\n", err)
 			os.Exit(1)
 		}
+		return
+	}
+
+	// `harness daemon` runs the long-lived supervision daemon in-process. It is
+	// the ADR-0005 systemd ExecStart (`harness daemon`) and replaces the
+	// historical standalone `harnessd` binary. It owns its own flag set (its
+	// flags do not overlap with the client verbs'), so we hand it the remaining
+	// args and exit on its terms.
+	if verb == "daemon" {
+		runDaemon(gfs.Args()[1:])
 		return
 	}
 
@@ -177,6 +187,7 @@ func usage() {
 
 usage:
   harness [--socket PATH] [--json] <command> [args]
+  harness daemon [daemon-flags]            run the supervision daemon
 
 commands:
   list                 list configured harnesses and their state (default)
@@ -190,9 +201,17 @@ commands:
   reload               re-read the daemon config
   daemon-info          show daemon status
   attach NAME [--ro]   attach to a harness's terminal
+  daemon               run the supervision daemon (ADR-0005 ExecStart)
 
 flags:
-  --socket PATH        daemon socket (default $XDG_RUNTIME_DIR/harnessd.sock)
+  --socket PATH        daemon socket (default $XDG_RUNTIME_DIR/harness.sock)
   --json               machine-readable output
+
+daemon flags (see "harness daemon -h"):
+  --config PATH        path to harness.toml
+  --socket PATH        control/data plane socket path
+  --scrollback N       per-harness scrollback ring depth (lines)
+  --ssh                enable the remote Wish SSH server
+  --ssh-listen HOST:PORT   SSH bind address (overrides [server] listen)
 `)
 }

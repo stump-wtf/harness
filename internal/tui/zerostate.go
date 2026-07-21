@@ -100,5 +100,5 @@ func emptyStateText(profile string) string {
 
 // noDaemonText is the inline no-daemon offer.
 func noDaemonText(socket string) string {
-	return "No daemon at " + socket + ".\nPress s to start harnessd here, or q to quit."
+	return "No daemon at " + socket + ".\nPress s to start the daemon here, or q to quit."
 }

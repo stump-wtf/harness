@@ -46,7 +46,7 @@ in [`x/*`](https://github.com/charmbracelet/x).
 
 | Lib | Role here | Tier |
 |-----|-----------|------|
-| [**fang**](https://github.com/charmbracelet/fang) | Cobra starter kit: styled help/usage, styled errors, auto `--version`, `man` generation, shell completions. Wrap the root command → a polished `harness`/`harnessd` CLI for free. | ★ |
+| [**fang**](https://github.com/charmbracelet/fang) | Cobra starter kit: styled help/usage, styled errors, auto `--version`, `man` generation, shell completions. Wrap the root command → a polished `harness` CLI for free. | ★ |
 | [**log**](https://github.com/charmbracelet/log) | Structured, colorful daemon logging. | ★ |
 | [**huh**](https://github.com/charmbracelet/huh) | Forms for create/edit-harness (writes back to TOML, ADR-0006); can also drive an interactive `harness init`. | ★ |
 | [**gum**](https://github.com/charmbracelet/gum) | Not linked in, but ▷ inspiration for our palette/confirm affordances; users could script around `harness` with it. | ▷ |
@@ -56,7 +56,7 @@ in [`x/*`](https://github.com/charmbracelet/x).
 | Lib | Role here | Tier |
 |-----|-----------|------|
 | [**wish**](https://github.com/charmbracelet/wish) | SSH server that serves our Bubble Tea TUI per session (PTY+resize wired). The entire remote-attach story. | ★ (remote) |
-| [**wishlist**](https://github.com/charmbracelet/wishlist) | "The SSH directory" — a menu of SSH endpoints. **Directly enables the multi-host story:** one launcher listing every machine's `harnessd`, hop across boxes. Answers "hop into harnesses *anywhere*." | ◑ |
+| [**wishlist**](https://github.com/charmbracelet/wishlist) | "The SSH directory" — a menu of SSH endpoints. **Directly enables the multi-host story:** one launcher listing every machine's `harness daemon`, hop across boxes. Answers "hop into harnesses *anywhere*." | ◑ |
 | [**keygen**](https://github.com/charmbracelet/keygen) | Generate the daemon's Ed25519 **host key** on first run (ADR-0008 host-key verification). | ◑ |
 | [**melt**](https://github.com/charmbracelet/melt) | Back up/restore that host key as seed words — so a re-provisioned host keeps its identity and clients don't trip host-key-changed warnings. | ○ |
 | [**promwish**](https://github.com/charmbracelet/promwish) | Prometheus middleware for Wish → daemon metrics (attach counts, sessions) for Joe's monitoring. | ○ |

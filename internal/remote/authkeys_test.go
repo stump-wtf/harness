@@ -76,7 +76,7 @@ func TestParseAuthorizedKeysBlobReadOnlyAnnotation(t *testing.T) {
 
 	// Build a file body: one plain entry, one prefixed with the read-only
 	// option, plus a comment and a blank line to exercise skipping.
-	blob := "# harnessd authorized_keys\n" +
+	blob := "# harness authorized_keys\n" +
 		rwLine + "\n" +
 		"\n" +
 		"read-only " + roLine + "\n"

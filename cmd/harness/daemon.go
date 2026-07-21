@@ -1,5 +1,5 @@
-// Command harnessd is the long-lived supervision daemon.
-//
+package main
+
 // Governing: ADR-0002 (one long-lived daemon owns all harness state; clients
 // are thin) and ADR-0005 (init supervises only the daemon; the daemon
 // supervises harnesses). SPEC-0002 (it serves the framed control+attach
@@ -8,7 +8,10 @@
 // exposing Start/Stop/Restart/Snapshots + Events over the control plane and one
 // x/vt emulator + scrollback ring per harness (fed via the Manager ExtraOut
 // hook) over the attach data plane.
-package main
+//
+// The daemon is exposed as `harness daemon` (see main.go dispatch). ADR-0005
+// specifies the systemd ExecStart as `harness daemon`; the historical
+// standalone `harnessd` binary is retired in favour of the single-binary form.
 
 import (
 	"context"
@@ -29,24 +32,27 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
 )
 
-func main() {
-	fs := flag.NewFlagSet("harnessd", flag.ExitOnError)
-	configPath := fs.String("config", config.DefaultPath(), "path to harnessd.toml")
+// runDaemon is the entry point for `harness daemon`. It owns its own flag set
+// (the daemon's flags don't overlap with the client verbs') and parses args
+// after the `daemon` subcommand token.
+func runDaemon(args []string) {
+	fs := flag.NewFlagSet("harness daemon", flag.ExitOnError)
+	configPath := fs.String("config", config.DefaultPath(), "path to harness.toml")
 	socketPath := fs.String("socket", protocol.DefaultSocketPath(), "control/data plane socket path")
 	ringLines := fs.Int("scrollback", attach.DefaultRingLines, "per-harness scrollback ring depth (lines)")
 	sshEnable := fs.Bool("ssh", false, "enable the remote Wish SSH server (ADR-0004; overrides [server] enabled)")
 	sshListen := fs.String("ssh-listen", "", "SSH bind address host:port (overrides [server] listen)")
 	showVersion := fs.Bool("version", false, "print version and exit")
-	_ = fs.Parse(os.Args[1:])
+	_ = fs.Parse(args)
 
 	if *showVersion {
-		fmt.Printf("harnessd %s\n", buildinfo.Version)
+		fmt.Printf("harness daemon %s\n", buildinfo.Version)
 		return
 	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "harnessd: %v\n", err)
+		fmt.Fprintf(os.Stderr, "harness daemon: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -64,7 +70,7 @@ func main() {
 	// Mandated boot order (ADR-0005): restore intent from state.json, then
 	// autostart the intended running set, then serve clients.
 	if err := mgr.Restore(); err != nil {
-		fmt.Fprintf(os.Stderr, "harnessd: restore state: %v (continuing with config defaults)\n", err)
+		fmt.Fprintf(os.Stderr, "harness daemon: restore state: %v (continuing with config defaults)\n", err)
 	}
 	mgr.Autostart()
 
@@ -76,12 +82,12 @@ func main() {
 		Version:    buildinfo.Version,
 	})
 	if err := srv.Listen(); err != nil {
-		fmt.Fprintf(os.Stderr, "harnessd: listen %s: %v\n", *socketPath, err)
+		fmt.Fprintf(os.Stderr, "harness daemon: listen %s: %v\n", *socketPath, err)
 		mgr.Close()
 		os.Exit(1)
 	}
 
-	fmt.Printf("harnessd %s — serving %s (config %s, %d harnesses)\n",
+	fmt.Printf("harness daemon %s — serving %s (config %s, %d harnesses)\n",
 		buildinfo.Version, srv.SocketPath(), *configPath, len(cfg.Harnesses))
 
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
@@ -98,7 +104,7 @@ func main() {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 
-	fmt.Fprintln(os.Stderr, "harnessd: shutting down")
+	fmt.Fprintln(os.Stderr, "harness daemon: shutting down")
 	if remoteSrv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = remoteSrv.Shutdown(ctx)
@@ -131,13 +137,13 @@ func startRemote(sc core.ServerConfig, forceOn bool, listenOverride, socket, con
 		KeysFile:    sc.AuthorizedKeysFile,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "harnessd: remote SSH disabled: %v\n", err)
+		fmt.Fprintf(os.Stderr, "harness daemon: remote SSH disabled: %v\n", err)
 		return nil
 	}
-	fmt.Printf("harnessd: remote SSH server listening on %s\n", rs.Addr())
+	fmt.Printf("harness daemon: remote SSH server listening on %s\n", rs.Addr())
 	go func() {
 		if err := rs.Serve(); err != nil {
-			fmt.Fprintf(os.Stderr, "harnessd: remote SSH server: %v\n", err)
+			fmt.Fprintf(os.Stderr, "harness daemon: remote SSH server: %v\n", err)
 		}
 	}()
 	return rs

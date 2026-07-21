@@ -42,7 +42,7 @@ func confirmPrompt(a Action, target string) string {
 	case ActionRestart:
 		return "Restart " + target + "?"
 	case ActionDelete:
-		return "Delete " + target + " from harnessd.toml?"
+		return "Delete " + target + " from harness.toml?"
 	default:
 		return string(a) + " " + target + "?"
 	}

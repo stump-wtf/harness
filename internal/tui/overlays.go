@@ -240,7 +240,7 @@ func (m *Model) openForm(editing bool) (tea.Model, tea.Cmd) {
 }
 
 // updateForm routes a message to the Huh form and, on completion, writes the
-// harness to harnessd.toml and reloads the daemon (SPEC-0001 scenario "Create
+// harness to harness.toml and reloads the daemon (SPEC-0001 scenario "Create
 // without leaving the TUI").
 func (m *Model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.form == nil {

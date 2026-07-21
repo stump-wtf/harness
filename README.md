@@ -10,21 +10,85 @@ successor to [`zsh-harnessd`](https://github.com/stump-wtf/zsh-harnessd), which
 proved the idea as a zsh + tmux + systemd plugin.
 
 A **harness** is any long-running command you want kept alive and
-re-attachable. `harnessd` (the daemon) supervises a set of harnesses, each in
-its own PTY with daemon-owned scrollback. `harness` (the client) is a
-keyboard-driven dashboard: see every harness and its state, hop into any one as
-a live terminal, switch between **profiles** (named configurations of
-harnesses), start/stop/edit — locally over a Unix socket, or remotely over SSH
-via [Wish](https://github.com/charmbracelet/wish).
+re-attachable. The `harness` binary is a single Go binary with two faces:
+**`harness daemon`** (the supervisor, run as a user service) owns all harness
+state — each in its own PTY with daemon-owned scrollback — while **`harness`**
+(the client, run interactively) is a keyboard-driven dashboard: see every
+harness and its state, hop into any one as a live terminal, switch between
+**profiles** (named configurations of harnesses), start/stop/edit — locally
+over a Unix socket, or remotely over SSH via
+[Wish](https://github.com/charmbracelet/wish).
 
 Think `tmux` + `systemctl` + a purpose-built agent-ops dashboard, as a single
 Go binary — with tmux demoted from foundation to optional escape hatch.
 
 ## Status
 
-**Design phase.** No code yet — the architecture and UX are specified and the
-backlog is being planned from the specs. The daemon knows nothing about what
-runs inside a harness; that stays a feature.
+**Design phase.** The architecture and UX are specified and the backlog is
+being planned from the specs. The daemon knows nothing about what runs inside a
+harness; that stays a feature.
+
+## Install
+
+### From source
+
+Requires Go 1.22+.
+
+```sh
+git clone https://gitea.stump.rocks/stump.wtf/harness.git
+cd harness
+go install ./cmd/harness
+```
+
+The `harness` binary is installed to your `$(go env GOPATH)/bin` (usually
+`~/go/bin` — make sure it's on your `$PATH`).
+
+### Build without installing
+
+```sh
+go build -o harness ./cmd/harness
+./harness --version
+```
+
+### Run it
+
+The single binary serves both roles:
+
+```sh
+harness daemon              # start the supervisor (long-lived)
+harness                     # open the TUI dashboard against a running daemon
+harness list                # one-shot: list harnesses and states
+harness attach foo          # one-shot: attach to harness "foo"
+harness --help              # full command reference
+```
+
+### Running the daemon as a user service
+
+The daemon is meant to be kept alive by your init system (ADR-0005). A
+**systemd** `--user` unit:
+
+```ini
+# ~/.config/systemd/user/harness.service
+[Unit]
+Description=Harness agent supervisor
+
+[Service]
+ExecStart=%h/go/bin/harness daemon
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Then:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now harness.service
+```
+
+On **macOS**, use the equivalent launchd LaunchAgent (`dev.harness.daemon.plist`)
+with `ProgramArguments` set to `<path>/harness daemon`.
 
 ## Design artifacts
 
@@ -49,9 +113,11 @@ runs inside a harness; that stays a feature.
 
 ## Naming
 
-- **`harnessd`** — the daemon
 - **`harness`** — the CLI/TUI client (`harness` with no args opens the TUI;
   `harness list`, `harness attach foo`, etc. mirror the daemon RPC for scripts)
+- **`harness daemon`** — the long-lived supervisor subcommand (run as a user
+  service). The historical standalone `harnessd` binary is retired — one binary,
+  two roles.
 
 ## Development
 

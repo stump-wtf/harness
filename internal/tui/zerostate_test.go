@@ -37,7 +37,7 @@ func TestClassifyDialErr(t *testing.T) {
 // reload_failed error becomes the non-fatal last-good banner carrying the parse
 // location; a non-reload error yields no banner.
 func TestReloadBanner(t *testing.T) {
-	em := &protocol.ErrorMsg{Code: protocol.ErrReload, Message: "harnessd.toml:12: unexpected token"}
+	em := &protocol.ErrorMsg{Code: protocol.ErrReload, Message: "harness.toml:12: unexpected token"}
 	got := reloadBanner(em)
 	if !strings.Contains(got, "last-good") || !strings.Contains(got, ":12:") {
 		t.Fatalf("reloadBanner = %q, want last-good + parse location", got)

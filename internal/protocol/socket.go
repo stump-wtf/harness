@@ -1,8 +1,8 @@
 package protocol
 
 // Governing: ADR-0004 (local transport is the Unix domain socket at
-// $XDG_RUNTIME_DIR/harnessd.sock); ADR-0008 (socket mode 0600, or a 0700 dir
-// fallback under $XDG_STATE_HOME/harnessd/ on systems without a per-user
+// $XDG_RUNTIME_DIR/harness.sock); ADR-0008 (socket mode 0600, or a 0700 dir
+// fallback under $XDG_STATE_HOME/harness/ on systems without a per-user
 // runtime dir — filesystem permissions are the local access control).
 
 import (
@@ -18,29 +18,29 @@ const SocketMode = 0o600
 const fallbackDirMode = 0o700
 
 // DefaultSocketPath returns the conventional socket location. It prefers
-// $XDG_RUNTIME_DIR/harnessd.sock (ADR-0004); when that env var is unset it
-// falls back to $XDG_STATE_HOME/harnessd/harnessd.sock (ADR-0008), matching the
+// $XDG_RUNTIME_DIR/harness.sock (ADR-0004); when that env var is unset it
+// falls back to $XDG_STATE_HOME/harness/harness.sock (ADR-0008), matching the
 // state-home the supervisor already uses.
 func DefaultSocketPath() string {
 	if rt := os.Getenv("XDG_RUNTIME_DIR"); rt != "" {
-		return filepath.Join(rt, "harnessd.sock")
+		return filepath.Join(rt, "harness.sock")
 	}
-	return filepath.Join(stateHome(), "harnessd.sock")
+	return filepath.Join(stateHome(), "harness.sock")
 }
 
 // stateHome mirrors supervisor.StateHome without importing it (avoids a
-// dependency cycle for a one-liner): $XDG_STATE_HOME/harnessd, falling back to
-// ~/.local/state/harnessd.
+// dependency cycle for a one-liner): $XDG_STATE_HOME/harness, falling back to
+// ~/.local/state/harness.
 func stateHome() string {
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return filepath.Join(".", "harnessd")
+			return filepath.Join(".", "harness")
 		}
 		base = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(base, "harnessd")
+	return filepath.Join(base, "harness")
 }
 
 // EnsureSocketDir creates the parent directory for path if needed. When path is

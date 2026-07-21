@@ -33,7 +33,7 @@ func TestConfirmPrompt(t *testing.T) {
 	if !strings.Contains(confirmPrompt(ActionStop, "crush"), "crush") {
 		t.Error("stop prompt should name the target")
 	}
-	if !strings.Contains(confirmPrompt(ActionDelete, "crush"), "harnessd.toml") {
+	if !strings.Contains(confirmPrompt(ActionDelete, "crush"), "harness.toml") {
 		t.Error("delete prompt should mention the config file")
 	}
 }

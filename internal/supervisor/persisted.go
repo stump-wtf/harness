@@ -1,7 +1,7 @@
 package supervisor
 
 // Governing: ADR-0007 (State & scrollback ownership) — runtime state is a small
-// JSON file at $XDG_STATE_HOME/harnessd/state.json holding enabled/disabled per
+// JSON file at $XDG_STATE_HOME/harness/state.json holding enabled/disabled per
 // harness, last exit code + restart count + flapping status, and timestamps;
 // written on transitions (debounced), read on daemon start to restore the
 // world (ADR-0005). Config is NOT duplicated here — the TOML is its source of
@@ -42,23 +42,23 @@ type persistedHarness struct {
 	LastStarted  *time.Time `json:"last_started,omitempty"`
 }
 
-// StateHome returns $XDG_STATE_HOME/harnessd (falling back to ~/.local/state).
+// StateHome returns $XDG_STATE_HOME/harness (falling back to ~/.local/state).
 func StateHome() string {
 	base := os.Getenv("XDG_STATE_HOME")
 	if base == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return filepath.Join(".", "harnessd")
+			return filepath.Join(".", "harness")
 		}
 		base = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(base, "harnessd")
+	return filepath.Join(base, "harness")
 }
 
-// DefaultStatePath is $XDG_STATE_HOME/harnessd/state.json.
+// DefaultStatePath is $XDG_STATE_HOME/harness/state.json.
 func DefaultStatePath() string { return filepath.Join(StateHome(), "state.json") }
 
-// DefaultLogDir is $XDG_STATE_HOME/harnessd/logs.
+// DefaultLogDir is $XDG_STATE_HOME/harness/logs.
 func DefaultLogDir() string { return filepath.Join(StateHome(), "logs") }
 
 // loadState reads and parses state.json. A missing file yields an empty (not

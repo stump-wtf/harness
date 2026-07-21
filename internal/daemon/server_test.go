@@ -36,7 +36,7 @@ type testDaemon struct {
 func newTestDaemon(t *testing.T, tomlBody string) *testDaemon {
 	t.Helper()
 	tmp := t.TempDir()
-	configPath := filepath.Join(tmp, "harnessd.toml")
+	configPath := filepath.Join(tmp, "harness.toml")
 	if err := os.WriteFile(configPath, []byte(tomlBody), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

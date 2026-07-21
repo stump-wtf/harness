@@ -45,7 +45,7 @@ read_only = true
 			body: `
 [server]
 enabled = true
-authorized_keys_file = "/etc/harnessd/authorized_keys"
+authorized_keys_file = "/etc/harness/authorized_keys"
 `,
 		},
 		{
@@ -96,7 +96,7 @@ func TestServerValues(t *testing.T) {
 [server]
 enabled = true
 listen = "0.0.0.0:2222"
-host_key = "/var/lib/harnessd/hostkey"
+host_key = "/var/lib/harness/hostkey"
 authorized_keys = ["` + rwKey + `"]
 
 [[server.key]]
@@ -114,7 +114,7 @@ read_only = true
 	if sc.Listen != "0.0.0.0:2222" {
 		t.Fatalf("Listen = %q", sc.Listen)
 	}
-	if sc.HostKeyPath != "/var/lib/harnessd/hostkey" {
+	if sc.HostKeyPath != "/var/lib/harness/hostkey" {
 		t.Fatalf("HostKeyPath = %q", sc.HostKeyPath)
 	}
 	if len(sc.AuthorizedKeys) != 2 {

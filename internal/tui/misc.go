@@ -75,12 +75,13 @@ func splitLines(text string) []string {
 	return lines
 }
 
-// startDaemonCmd launches harnessd in the background for the no-daemon inline
-// offer (SPEC-0001 scenario "Daemon not running"), then runs `then` (a redial).
+// startDaemonCmd launches `harness daemon` in the background for the no-daemon
+// inline offer (SPEC-0001 scenario "Daemon not running"), then runs `then` (a
+// redial).
 func startDaemonCmd(opts Options, then tea.Cmd) tea.Cmd {
 	return tea.Sequence(
 		func() tea.Msg {
-			cmd := exec.Command("harnessd", "--socket", opts.Socket, "--config", opts.ConfigPath)
+			cmd := exec.Command("harness", "daemon", "--socket", opts.Socket, "--config", opts.ConfigPath)
 			cmd.Stdout, cmd.Stderr = nil, nil
 			_ = cmd.Start()
 			time.Sleep(600 * time.Millisecond) // give it a moment to bind the socket
@@ -90,7 +91,7 @@ func startDaemonCmd(opts Options, then tea.Cmd) tea.Cmd {
 	)
 }
 
-// deleteHarnessCmd removes a harness table from harnessd.toml and reloads the
+// deleteHarnessCmd removes a harness table from harness.toml and reloads the
 // daemon (ADR-0006). If the file can't be read it surfaces the error via the
 // reload result.
 func (m *Model) deleteHarnessCmd(name string) tea.Cmd {
@@ -114,7 +115,7 @@ func (m *Model) deleteHarnessCmd(name string) tea.Cmd {
 var tableHeaderRe = regexp.MustCompile(`^\s*\[`)
 
 // removeHarnessTOML drops the [harness.<name>] (or bare [<name>]) table and its
-// body from a harnessd.toml source, up to the next table header or EOF. It is a
+// body from a harness.toml source, up to the next table header or EOF. It is a
 // line-oriented edit that preserves the rest of the file (ADR-0006).
 func removeHarnessTOML(body, name string) string {
 	lines := strings.Split(body, "\n")

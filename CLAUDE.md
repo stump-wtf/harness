@@ -7,7 +7,7 @@ CLIs, REPLs, watchers). Successor to `zsh-harnessd`. See `README.md`.
 - Origin of truth: https://gitea.stump.rocks/stump.wtf/harness (Gitea). GitHub
   (https://github.com/stump-wtf/harness) is a read-only push mirror — issues,
   PRs, and pushes go to Gitea.
-- The daemon (`harnessd`) is deliberately agnostic about what runs inside a
+- The daemon (`harness daemon`) is deliberately agnostic about what runs inside a
   harness. Keep it that way; agent-awareness bolts on later as a detector.
 - Visual direction lives in `docs/design/` — calm ops cockpit, state legibility
   over decoration, the "hop" between harnesses is the signature interaction.

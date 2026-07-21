@@ -1,7 +1,7 @@
 package supervisor
 
 // Governing tests: ADR-0007 (tee raw PTY output to a rotating per-harness log
-// under $XDG_STATE_HOME/harnessd/logs/<name>.log, size/age rotation).
+// under $XDG_STATE_HOME/harness/logs/<name>.log, size/age rotation).
 
 import (
 	"os"
