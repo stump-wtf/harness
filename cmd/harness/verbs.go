@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"text/tabwriter"
 	"time"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
@@ -26,6 +25,8 @@ func printJSON(v any) error {
 }
 
 // stateGlyph returns the SPEC-0003 status glyph for a state string.
+// Deprecated: prefer stateGlyphOnly (which colors it). Kept for the
+// lifecycle verb output.
 func stateGlyph(state string) string { return core.State(state).Glyph() }
 
 func cmdList(c *client.Client, o verbOpts) error {
@@ -36,13 +37,18 @@ func cmdList(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(hs)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "  NAME\tSTATE\tENABLED\t↻\tPID\tDESCRIPTION")
+	t := NewTable(os.Stdout, "NAME", "STATE", "ENABLED", "↻", "PID", "DESCRIPTION")
 	for _, h := range hs {
-		fmt.Fprintf(w, "%s %s\t%s\t%s\t%d\t%s\t%s\n",
-			stateGlyph(h.State), h.Name, h.State, yesno(h.Enabled), h.RestartCount, pid(h.PID), h.Description)
+		t.Row(
+			h.Name,
+			stateCell(h.State),
+			enabledCell(h.Enabled),
+			fmt.Sprintf("%d", h.RestartCount),
+			pidCell(h.PID),
+			h.Description,
+		)
 	}
-	return w.Flush()
+	return t.Flush()
 }
 
 func cmdDescribe(c *client.Client, o verbOpts) error {
@@ -53,25 +59,25 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(h)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintf(w, "name\t%s %s\n", stateGlyph(h.State), h.Name)
-	fmt.Fprintf(w, "state\t%s\n", h.State)
-	fmt.Fprintf(w, "enabled\t%s\n", yesno(h.Enabled))
-	fmt.Fprintf(w, "cmd\t%s\n", h.Cmd)
-	fmt.Fprintf(w, "backend\t%s\n", h.Backend)
-	fmt.Fprintf(w, "restarts\t%d\n", h.RestartCount)
-	fmt.Fprintf(w, "last_exit\t%d\n", h.LastExitCode)
-	fmt.Fprintf(w, "flapping\t%s\n", yesno(h.Flapping))
+	t := NewTable(os.Stdout, "FIELD", "VALUE")
+	t.Row(accentBold("name"), fmt.Sprintf("%s %s", stateGlyphOnly(h.State), h.Name))
+	t.Row("state", stateCell(h.State))
+	t.Row("enabled", enabledCell(h.Enabled))
+	t.Row("cmd", faintPlain(h.Cmd))
+	t.Row("backend", faintPlain(h.Backend))
+	t.Row("restarts", fmt.Sprintf("%d", h.RestartCount))
+	t.Row("last_exit", fmt.Sprintf("%d", h.LastExitCode))
+	t.Row("flapping", flappingCell(h.Flapping))
 	if h.ConfigChanged {
-		fmt.Fprintf(w, "config\tchanged — restart to apply\n")
+		t.Row("config", amberBold("changed — restart to apply"))
 	}
 	if h.PID > 0 {
-		fmt.Fprintf(w, "pid\t%d\n", h.PID)
+		t.Row("pid", fmt.Sprintf("%d", h.PID))
 	}
 	if h.Description != "" {
-		fmt.Fprintf(w, "description\t%s\n", h.Description)
+		t.Row("description", dimItalic(h.Description))
 	}
-	return w.Flush()
+	return t.Flush()
 }
 
 func cmdLogs(c *client.Client, o verbOpts) error {
@@ -132,16 +138,16 @@ func cmdProfiles(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(ps)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "  NAME\tAUTOSTART\tHARNESSES\tDESCRIPTION")
+	t := NewTable(os.Stdout, "NAME", "AUTOSTART", "HARNESSES", "DESCRIPTION")
 	for _, p := range ps {
-		marker := " "
+		name := p.Name
 		if p.Active {
-			marker = "*"
+			name = accentBold("* " + p.Name)
 		}
-		fmt.Fprintf(w, "%s %s\t%s\t%v\t%s\n", marker, p.Name, yesno(p.Autostart), p.Harnesses, p.Description)
+		autostart := enabledCell(p.Autostart)
+		t.Row(name, autostart, fmt.Sprintf("%v", p.Harnesses), dimItalic(p.Description))
 	}
-	return w.Flush()
+	return t.Flush()
 }
 
 func cmdUseProfile(c *client.Client, o verbOpts) error {
@@ -176,17 +182,17 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(di)
 	}
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintf(w, "version\t%s\n", di.Version)
-	fmt.Fprintf(w, "proto\t%s\n", di.ProtoVersion)
-	fmt.Fprintf(w, "pid\t%d\n", di.PID)
-	fmt.Fprintf(w, "uptime\t%ds\n", di.UptimeSeconds)
-	fmt.Fprintf(w, "socket\t%s\n", di.Socket)
-	fmt.Fprintf(w, "harnesses\t%d\n", di.Harnesses)
+	t := NewTable(os.Stdout, "FIELD", "VALUE")
+	t.Row("version", accentBold(di.Version))
+	t.Row("proto", faintPlain(di.ProtoVersion))
+	t.Row("pid", fmt.Sprintf("%d", di.PID))
+	t.Row("uptime", fmt.Sprintf("%ds", di.UptimeSeconds))
+	t.Row("socket", faintPlain(di.Socket))
+	t.Row("harnesses", fmt.Sprintf("%d", di.Harnesses))
 	if di.ActiveProfile != "" {
-		fmt.Fprintf(w, "profile\t%s\n", di.ActiveProfile)
+		t.Row("profile", accentBold(di.ActiveProfile))
 	}
-	return w.Flush()
+	return t.Flush()
 }
 
 // cmdAttach streams a harness terminal in cooked mode: live output → stdout,
@@ -248,18 +254,4 @@ func errorFrom(payload []byte) error {
 		return fmt.Errorf("daemon error (unparseable): %v", err)
 	}
 	return e
-}
-
-func yesno(b bool) string {
-	if b {
-		return "yes"
-	}
-	return "no"
-}
-
-func pid(p int) string {
-	if p <= 0 {
-		return "-"
-	}
-	return fmt.Sprintf("%d", p)
 }

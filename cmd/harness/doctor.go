@@ -19,7 +19,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"text/tabwriter"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -28,7 +27,6 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 )
 
 // check is one row in the doctor table.
@@ -271,10 +269,11 @@ func emitDoctorJSON(w io.Writer, rows []check) {
 	_ = enc.Encode(res)
 }
 
-// printDoctorTable writes the rows plus a summary tally as a single table.
-// In a TTY the status column is colored (paired with the glyph so a mono
-// terminal still reads it); when not a TTY or --json is set, it degrades to
-// plain "PASS/WARN/FAIL" tokens so the table stays script-parseable.
+// printDoctorTable writes the rows plus a summary tally as a single table
+// using the shared Table renderer. In a TTY the status column is colored
+// (paired with the glyph so a mono terminal still reads it); when not a TTY
+// or --json is set, it degrades to plain "ok/warn/error" tokens so the table
+// stays script-parseable.
 func printDoctorTable(w io.Writer, rows []check) {
 	var pass, warn, fail int
 	for _, r := range rows {
@@ -288,42 +287,25 @@ func printDoctorTable(w io.Writer, rows []check) {
 		}
 	}
 
-	useColor := !cliui.JSON() && cliui.IsTTY(os.Stderr)
-	th := theme.Default()
-	pal := th.Palette
-
-	// Bold header + separator line under it. The separator width matches the
-	// tabwriter's natural table width so it reads as a single horizontal rule.
-	separator := strings.Repeat("─", maxBlockWidth())
-	header := fmt.Sprintf("  %s\t%s\t%s", bold(useColor, pal, "CHECK"), bold(useColor, pal, "STATUS"), bold(useColor, pal, "DETAIL"))
-
-	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, header)
-	fmt.Fprintln(tw, separator)
-
+	t := NewTable(w, "CHECK", "STATUS", "DETAIL")
+	colored := useColor()
+	pal := palette()
 	for _, r := range rows {
 		status := r.level.String()
-		if useColor {
+		if colored {
 			status = lipgloss.NewStyle().
 				Foreground(r.level.Color(pal)).
 				Bold(true).
 				Render(fmt.Sprintf("%s %s", r.level.Glyph(), status))
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\n", r.name, status, r.detail)
+		t.Row(r.name, status, r.detail)
 		if r.hint != "" {
-			hint := "→ " + r.hint
-			if useColor {
-				hint = lipgloss.NewStyle().
-					Foreground(pal.Dim).
-					Italic(true).
-					Render(hint)
-			}
-			fmt.Fprintf(tw, "  \t\t%s\n", hint)
+			t.Row("", "", dimItalic("→ "+r.hint))
 		}
 	}
 
 	// Separator above the summary row, then the colored tally.
-	fmt.Fprintln(tw, separator)
+	t.Separator()
 	summaryLevel := cliui.LevelSuccess
 	switch {
 	case fail > 0:
@@ -332,25 +314,12 @@ func printDoctorTable(w io.Writer, rows []check) {
 		summaryLevel = cliui.LevelWarn
 	}
 	tally := fmt.Sprintf("%d passed · %d warning(s) · %d failed", pass, warn, fail)
-	if useColor {
+	if colored {
 		tally = lipgloss.NewStyle().
 			Foreground(summaryLevel.Color(pal)).
 			Bold(true).
 			Render(tally)
 	}
-	fmt.Fprintf(tw, "  %s\t\t%s\n", "summary", tally)
-	_ = tw.Flush()
+	t.Row("summary", "", tally)
+	_ = t.Flush()
 }
-
-// bold returns s rendered bold when colorize is set, else plain s.
-func bold(colorize bool, p theme.Palette, s string) string {
-	if !colorize {
-		return s
-	}
-	return lipgloss.NewStyle().Foreground(p.Fg).Bold(true).Render(s)
-}
-
-// maxBlockWidth mirrors cliui.maxBlockWidth (unexported) so the separator
-// rule matches the styled-box width budget. Kept here because doctor owns
-// the table layout, not cliui.
-func maxBlockWidth() int { return 80 }
