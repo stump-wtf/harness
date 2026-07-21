@@ -15,6 +15,7 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
+	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -27,6 +28,7 @@ func main() {
 	showVersion := gfs.Bool("version", false, "print version and exit")
 	gfs.Usage = usage
 	_ = gfs.Parse(os.Args[1:])
+	cliui.SetJSON(*jsonOut)
 
 	if *showVersion {
 		fmt.Printf("harness %s\n", buildinfo.Version)
@@ -38,8 +40,7 @@ func main() {
 	verb := gfs.Arg(0)
 	if verb == "" {
 		if err := runTUI(*socket, *configPath); err != nil {
-			fmt.Fprintf(os.Stderr, "harness: %v\n", err)
-			os.Exit(1)
+			os.Exit(cliui.Fatal(err))
 		}
 		return
 	}
@@ -68,11 +69,17 @@ func main() {
 	// first non-flag, so we loop: parse, take one positional, parse the rest —
 	// this makes `harness logs ticker --lines 3` behave like the flags-first form.
 	name := parseInterleaved(vfs, rest)
-	opts := verbOpts{socket: *socket, json: *vJSON, lines: *lines, follow: *follow, ro: *ro, name: name}
+	opts := verbOpts{socket: *socket, configPath: *configPath, json: *vJSON, lines: *lines, follow: *follow, ro: *ro, name: name}
+
+	// `doctor` owns its own reporting (tabular, no styled error box) and its
+	// own exit code; bypass the generic run() → cliui.Fatal path.
+	if verb == "doctor" {
+		opts := verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut}
+		os.Exit(runDoctor(opts))
+	}
 
 	if err := run(verb, opts); err != nil {
-		fmt.Fprintf(os.Stderr, "harness: %v\n", err)
-		os.Exit(1)
+		os.Exit(cliui.Fatal(err))
 	}
 }
 
@@ -97,12 +104,13 @@ func parseInterleaved(fs *flag.FlagSet, args []string) string {
 
 // verbOpts carries the resolved flags/positionals for a verb.
 type verbOpts struct {
-	socket string
-	json   bool
-	lines  int
-	follow bool
-	ro     bool
-	name   string
+	socket     string
+	configPath string
+	json       bool
+	lines      int
+	follow     bool
+	ro         bool
+	name       string
 }
 
 // run dispatches one verb. Every verb dials the daemon fresh (thin client,
@@ -128,8 +136,9 @@ func run(verb string, o verbOpts) error {
 	case "attach":
 		return withClient(o, requireName(o), cmdAttach)
 	default:
-		usage()
-		return fmt.Errorf("unknown command %q", verb)
+		// Don't dump full usage() here — the styled error from cliui.Fatal
+		// is the single calm message; the hint points at the help flag.
+		return fmt.Errorf("unknown command %q (run `harness -h` for the list)", verb)
 	}
 }
 
@@ -200,6 +209,7 @@ commands:
   use-profile NAME     activate a profile
   reload               re-read the daemon config
   daemon-info          show daemon status
+  doctor               run health checks (config, daemon, harnesses)
   attach NAME [--ro]   attach to a harness's terminal
   daemon               run the supervision daemon (ADR-0005 ExecStart)
 

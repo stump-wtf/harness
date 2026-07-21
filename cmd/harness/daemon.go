@@ -24,6 +24,7 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/attach"
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
+	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/daemon"
@@ -52,8 +53,7 @@ func runDaemon(args []string) {
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "harness daemon: %v\n", err)
-		os.Exit(1)
+		os.Exit(cliui.Fatal(err))
 	}
 
 	// The attach data plane: one Mux (x/vt emulator + scrollback ring) per

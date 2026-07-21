@@ -15,6 +15,7 @@ require (
 	github.com/charmbracelet/x/xpty v0.1.2
 	github.com/muesli/termenv v0.15.3-0.20240618155329-98d742f6907a
 	golang.org/x/crypto v0.32.0
+	golang.org/x/term v0.28.0
 )
 
 require (
