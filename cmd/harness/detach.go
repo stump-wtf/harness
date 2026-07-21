@@ -33,8 +33,11 @@ func detachDaemon(args []string) error {
 	}
 
 	// Build the child argv: drop --detach, force --log-file if absent, keep
-	// everything else the caller passed.
+	// everything else the caller passed. We must re-prepend the `daemon` verb
+	// token because runDaemon received args *after* `daemon` was peeled off
+	// by main.go's dispatch.
 	childArgs := stripDetach(args)
+	childArgs = append([]string{"daemon"}, childArgs...)
 	logFile := findFlag(args, "--log-file")
 	if logFile == "" {
 		logFile = defaultLogPath()
