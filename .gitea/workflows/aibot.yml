@@ -1,0 +1,58 @@
+# AI code review on every PR push (Crush + Z.ai GLM), plus the on-demand
+# author-self-reference modes (review / address / merge). Secrets/vars come from
+# the stump.wtf org (AIBOT_ZAI_*, AIBOT_BOT_LOGIN). To enable auto-merge on a
+# clean review, set org/repo var AIBOT_AUTOMERGE=1 and secret AIBOT_MERGE_TOKEN.
+name: aibot
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  aibot:
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'pull_request'
+        && github.event.pull_request.draft == false)
+      ||
+      (github.event_name == 'issue_comment'
+        && github.event.issue.pull_request != null
+        && github.event.comment.user.login == github.event.issue.user.login)
+      ||
+      (github.event_name == 'pull_request_review_comment'
+        && github.event.sender.login == github.event.pull_request.user.login)
+      ||
+      (github.event_name == 'pull_request_review'
+        && github.event.sender.login == github.event.pull_request.user.login)
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.head_ref }}
+          fetch-depth: 0
+
+      - name: AI bot
+        uses: https://gitea.stump.rocks/stumpcloud/gitea-aibot-action@main
+        env:
+          AIBOT_HARNESS: ${{ vars.AIBOT_HARNESS || 'crush' }}
+          AIBOT_MODEL:   ${{ vars.AIBOT_MODEL   || 'zaicoding/glm-4.7' }}
+          AIBOT_ZAI_BASE_URL:  ${{ secrets.AIBOT_ZAI_BASE_URL }}
+          AIBOT_ZAI_API_TOKEN: ${{ secrets.AIBOT_ZAI_API_TOKEN }}
+          AIBOT_GITEA_HOST:  ${{ github.server_url }}
+          AIBOT_GITEA_TOKEN: ${{ github.token }}
+          AIBOT_BOT_LOGIN:   ${{ vars.AIBOT_BOT_LOGIN }}
+          # Auto-merge on a clean (APPROVED) review — inert until both are set:
+          AIBOT_AUTOMERGE:     ${{ vars.AIBOT_AUTOMERGE }}
+          AIBOT_MERGE_TOKEN:   ${{ secrets.AIBOT_MERGE_TOKEN }}
+          AIBOT_MERGE_STRATEGY: ${{ vars.AIBOT_MERGE_STRATEGY }}
