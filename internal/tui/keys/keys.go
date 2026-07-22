@@ -52,6 +52,7 @@ type KeyMap struct {
 	// Attached-mode verbs (lifecycle on the currently-attached harness).
 	AttStart   key.Binding // s — start the attached harness if stopped.
 	AttRestart key.Binding // r — restart the attached harness.
+	AttHelp    key.Binding // ^b ? — open the keymap overlay from attached mode.
 
 	// Scrollback substate.
 	PageUp   key.Binding
@@ -102,6 +103,10 @@ func Default() KeyMap {
 		// by harness.
 		AttStart:   key.NewBinding(key.WithKeys("ctrl+b s"), key.WithHelp("^b s", "start")),
 		AttRestart: key.NewBinding(key.WithKeys("ctrl+b r"), key.WithHelp("^b r", "restart")),
+		// AttHelp opens the keymap overlay from attached mode. It's behind the
+		// prefix (like every other attached intercept) so a bare `?` still
+		// reaches the embedded agent — many agent TUIs treat `?` as input.
+		AttHelp: key.NewBinding(key.WithKeys("ctrl+b ?"), key.WithHelp("^b ?", "help")),
 
 		PageUp:   key.NewBinding(key.WithKeys("pgup"), key.WithHelp("PgUp", "page up")),
 		PageDown: key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("PgDn", "page down")),
@@ -130,7 +135,7 @@ func (k KeyMap) ShortHelp() []key.Binding {
 // / "prev" / "next" / "scrollback" / "start" are discoverable without
 // opening full help.
 func (k KeyMap) AttachedShortHelp() []key.Binding {
-	return []key.Binding{k.AttStart, k.AttRestart, k.HopPrev, k.HopNext, k.Scrollback, k.Detach, k.Help}
+	return []key.Binding{k.AttStart, k.AttRestart, k.HopPrev, k.HopNext, k.Scrollback, k.Detach, k.AttHelp}
 }
 
 // FullHelp implements help.KeyMap — the `?` expanded grid. It returns EVERY
@@ -141,7 +146,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Top, k.Bot},
 		{k.Attach, k.Start, k.Stop, k.Restart, k.Edit, k.New, k.Delete},
 		{k.Profile, k.ShowAll, k.Logs, k.Search, k.Palette, k.Help, k.Quit},
-		{k.Detach, k.Scrollback, k.HopPrev, k.HopNext, k.AttStart, k.AttRestart},
+		{k.Detach, k.Scrollback, k.HopPrev, k.HopNext, k.AttStart, k.AttRestart, k.AttHelp},
 		{k.PageUp, k.PageDown, k.Live, k.Confirm, k.Back},
 	}
 }

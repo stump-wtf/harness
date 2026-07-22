@@ -430,3 +430,39 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// TestPrefixChordHelp verifies Ctrl-b ? opens the keymap overlay from attached
+// mode (and that a bare `?` is instead forwarded to the PTY, not intercepted).
+func TestPrefixChordHelp(t *testing.T) {
+	fc := &fakeController{harnesses: sampleHarnesses()}
+	fa := &fakeAttach{}
+	m := New(Options{})
+	m.ctrl, m.attach = fc, fa
+	m.harnesses = fc.harnesses
+	m.mode = modeAttached
+	m.att = newAttachState("crush-signal", protocol.AttachRW, 1, 80, 24)
+
+	// Bare `?` must reach the agent, not open help.
+	_, cmd := m.onKey(runeKey("?"))
+	drain(cmd)
+	if m.overlay == overlayHelp {
+		t.Fatal("bare ? must not open help in attached mode")
+	}
+	if len(fa.inputs) != 1 || string(fa.inputs[0]) != "?" {
+		t.Fatalf("bare ? should be forwarded to the PTY, inputs=%v", fa.inputs)
+	}
+
+	// Ctrl-b ? opens the keymap overlay.
+	m.onKey(specialKey(tea.KeyCtrlB))
+	if !m.att.prefixArmed {
+		t.Fatal("Ctrl-b should arm the prefix")
+	}
+	m.onKey(runeKey("?"))
+	if m.overlay != overlayHelp {
+		t.Fatalf("Ctrl-b ? should open the keymap overlay, overlay=%v", m.overlay)
+	}
+	// The ? that opened help must not have leaked to the PTY.
+	if len(fa.inputs) != 1 {
+		t.Fatalf("prefixed ? must not be forwarded to the PTY, inputs=%v", fa.inputs)
+	}
+}

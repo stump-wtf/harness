@@ -179,15 +179,6 @@ func (t *Theme) LogoChip() string {
 	return t.style().Foreground(t.Palette.Accent).Bold(true).Render("h◈")
 }
 
-// StatusBar is the 1-line bottom bar in attached mode: a subtle background
-// span across the full terminal width. Kept distinct from Ribbon (the
-// hop-flash style) so the bar reads as chrome, not a flashing signal.
-func (t *Theme) StatusBar() lipgloss.Style {
-	return t.style().
-		Foreground(t.Palette.Fg).
-		Background(t.Palette.Border)
-}
-
 // Banner is the non-fatal config-parse banner (last-good config, ADR-0006).
 func (t *Theme) Banner() lipgloss.Style {
 	return t.style().Foreground(t.Palette.Coral).Bold(true)

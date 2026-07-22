@@ -246,6 +246,11 @@ func (m *Model) dispatchPrefixKey(msg tea.KeyMsg) tea.Cmd {
 	case "[":
 		m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
 		return nil
+	case "?":
+		// Open the keymap overlay (the same grid as the dashboard's `?`). A
+		// bare `?` still reaches the agent; only the prefixed chord opens help.
+		m.overlay = overlayHelp
+		return nil
 	}
 	// Unknown prefix command — cancel silently (tmux behavior).
 	return nil
