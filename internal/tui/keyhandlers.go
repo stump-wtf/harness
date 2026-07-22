@@ -45,7 +45,7 @@ func (m *Model) onAttachedMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case tea.MouseWheelUp:
 		if m.att.substate == substateInteractive {
 			// Scroll up from live → enter scrollback at the bottom.
-			m.att.enterScrollback(m.peekLines(), m.att.view.rows)
+			m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
 			return m, nil
 		}
 		// Already in scrollback: scroll up.
@@ -211,7 +211,7 @@ func (m *Model) onAttachedKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// PgUp enters scrollback without the prefix.
 	if key.Matches(msg, m.keys.Scrollback) {
-		m.att.enterScrollback(m.peekLines(), m.att.view.rows)
+		m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
 		return m, nil
 	}
 
@@ -244,7 +244,7 @@ func (m *Model) dispatchPrefixKey(msg tea.KeyMsg) tea.Cmd {
 	case "l":
 		return m.hopTo(1)
 	case "[":
-		m.att.enterScrollback(m.peekLines(), m.att.view.rows)
+		m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
 		return nil
 	}
 	// Unknown prefix command — cancel silently (tmux behavior).

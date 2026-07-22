@@ -91,7 +91,7 @@ func main() {
 	lines := vfs.Int("lines", 200, "logs: number of trailing lines")
 	follow := vfs.Bool("follow", false, "logs: stream new output")
 	ro := vfs.Bool("ro", false, "attach: read-only (ignore keystrokes)")
-	all := vfs.Bool("all", false, "start/restart: apply to every harness (name is ignored)")
+	all := vfs.Bool("all", false, "start/stop/restart: apply to every harness (name is ignored)")
 	rest := gfs.Args()
 	if len(rest) > 0 {
 		rest = rest[1:]

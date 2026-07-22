@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -282,17 +283,37 @@ func (m *Model) viewStatusBar() string {
 		prefixHint = " " + m.theme.Header().Render("^b")
 	}
 	left := logo + " " + ident + stateText + badge + prefixHint
+	lw := lipgloss.Width(left)
 
-	// Right: compact attached-mode help (hop / scrollback / detach / ?).
-	right := m.theme.Faint().Render("  ") + m.help.ShortHelpView(m.keys.AttachedShortHelp())
+	// Right: compact attached-mode help (hop / scrollback / detach / ?). Budget
+	// it to whatever space remains after the identity segment so the Bubbles
+	// help view self-truncates (with its "…" ellipsis) instead of overflowing.
+	// This is the crux of the full-window fix: an unbudgeted bar renders wider
+	// than the terminal on a narrow window, wraps to a second physical row, and
+	// that extra row scrolls the alt-screen — shoving the embedded terminal up
+	// so it no longer fills the window. A width-bounded bar keeps the output at
+	// exactly m.h lines of m.w columns. We copy m.help (a value) so setting
+	// Width here doesn't leak into the dashboard's full-width footer help.
+	avail := m.w - lw - 2 // reserve the 2-space lead-in the help gets below
+	if avail < 0 {
+		avail = 0
+	}
+	hp := m.help
+	hp.Width = avail
+	right := m.theme.Faint().Render("  ") + hp.ShortHelpView(m.keys.AttachedShortHelp())
+	rw := lipgloss.Width(right)
 
 	// Pad the left segment so the right help hugs the right edge and the bar
 	// spans the full terminal width (a true status bar, not inline text).
-	gap := m.w - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
+	gap := m.w - lw - rw
+	if gap < 0 {
+		gap = 0
 	}
-	return left + strings.Repeat(" ", gap) + right
+	bar := left + strings.Repeat(" ", gap) + right
+	// Final hard clamp: on a pathologically narrow terminal the identity
+	// segment alone can exceed m.w. Truncate (ANSI-aware) so the bar is never
+	// wider than the window and can't wrap.
+	return ansi.Truncate(bar, m.w, "")
 }
 
 // viewScrollback renders the frozen scrollback view with the search line

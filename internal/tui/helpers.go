@@ -76,6 +76,22 @@ func (m *Model) attachViewport() (int, int) {
 	return cols, rows
 }
 
+// scrollbackHeight is the number of scrollback content rows that fit in the
+// attached viewport. It's one less than the terminal body (view.rows) because
+// viewScrollback renders its own 1-line status footer, and viewAttached appends
+// the global status bar below that — so the content must leave a row for each to
+// keep the total at exactly m.h lines (no overflow-and-scroll). Clamped to ≥1.
+func (m *Model) scrollbackHeight() int {
+	if m.att == nil {
+		return 1
+	}
+	h := m.att.view.rows - 1
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
 // bodyHeight is the dashboard body height between header and footer.
 func (m *Model) bodyHeight() int {
 	h := m.h - headerRows - footerRows
