@@ -68,6 +68,15 @@ func (m *Model) View() string {
 // --- dashboard ------------------------------------------------------------
 
 // viewDashboard renders the split cockpit (SPEC-0001 REQ "Dashboard").
+// paneInner converts a pane's target OUTER width (the column budget it occupies
+// on the dashboard row) into the content width to hand lipgloss: the rounded
+// Box border occupies one column on each side, so the content must be 2 narrower
+// or the rendered pane overflows its budget (and, summed across both panes,
+// pushes the dashboard past the terminal edge and wraps).
+func paneInner(w int) int {
+	return maxInt(1, w-2)
+}
+
 func (m *Model) viewDashboard() string {
 	header := m.viewHeader()
 	footer := m.viewFooter()
@@ -135,7 +144,7 @@ func (m *Model) viewList(w, h int) string {
 	if len(v) == 0 {
 		empty := emptyStateText(profileName(m.profiles, m.showAll))
 		lines = append(lines, m.theme.Faint().Render(empty))
-		return m.theme.Box().Width(w).Height(h).Render(strings.Join(lines, "\n"))
+		return m.theme.Box().Width(paneInner(w)).Height(h).Render(strings.Join(lines, "\n"))
 	}
 
 	for i, hnfo := range v {
@@ -144,7 +153,7 @@ func (m *Model) viewList(w, h int) string {
 			lines = append(lines, "   "+m.theme.StateStyle(core.StateDegraded).Render(flappingDetail(hnfo)))
 		}
 	}
-	return m.theme.Box().Width(w).Height(h).Render(strings.Join(lines, "\n"))
+	return m.theme.Box().Width(paneInner(w)).Height(h).Render(strings.Join(lines, "\n"))
 }
 
 // renderRow renders one harness row. The colored glyph leads; name, state label,
@@ -186,7 +195,7 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool, w int) string {
 func (m *Model) viewPeek(w, h int) string {
 	sel, ok := m.selectedHarness()
 	if !ok {
-		return m.theme.Box().Width(w).Height(h).Render(m.theme.Faint().Render("no selection"))
+		return m.theme.Box().Width(paneInner(w)).Height(h).Render(m.theme.Faint().Render("no selection"))
 	}
 	head := m.theme.Header().Render(sel.Name) + " " +
 		m.theme.Faint().Render("live preview · read-only")
@@ -216,7 +225,7 @@ func (m *Model) viewPeek(w, h int) string {
 	}
 
 	content := head + "\n\n" + strings.Join(tailLines, "\n") + "\n" + strings.Join(summary, "\n")
-	return m.theme.Box().Width(w).Height(h).Render(content)
+	return m.theme.Box().Width(paneInner(w)).Height(h).Render(content)
 }
 
 // viewFooter is the key bar (SPEC-0001: `?` expands to full help).
@@ -405,7 +414,20 @@ func (m *Model) viewNoDaemon() string {
 // overlayBox renders a titled bordered box (the Lip Gloss signature).
 func (m *Model) overlayBox(title, body string) string {
 	inner := m.theme.Header().Render(title) + "\n\n" + body
-	return m.theme.Box().Padding(0, 1).Render(inner)
+	style := m.theme.Box().Padding(0, 1)
+	// Never let an overlay exceed the terminal width: a box wider than m.w
+	// wraps its right edge to a second physical row and scrolls everything. If
+	// the natural content is too wide, constrain the content width (border 2 +
+	// padding 2 = 4) so lipgloss wraps inside the box; a final MaxWidth clamps
+	// against any rounding. Only when the width is known (m.w > 0) — before the
+	// first WindowSizeMsg it's 0, and clamping to that would erase the overlay.
+	if m.w > 0 {
+		if maxW := m.w - 4; maxW > 0 && lipgloss.Width(inner) > maxW {
+			style = style.Width(maxW)
+		}
+		style = style.MaxWidth(m.w)
+	}
+	return style.Render(inner)
 }
 
 // --- small helpers --------------------------------------------------------

@@ -101,6 +101,12 @@ func (m *Model) bodyHeight() int {
 	if m.status != "" {
 		h--
 	}
+	// The search overlay renders an extra input line below the panes in place
+	// of the status line (viewDashboard), so reserve a row for it or the
+	// dashboard runs one line past the viewport and scrolls.
+	if m.overlay == overlaySearch && m.status == "" {
+		h--
+	}
 	if h < 1 {
 		h = 1
 	}
