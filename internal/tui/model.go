@@ -11,13 +11,16 @@
 package tui
 
 import (
+	"os"
 	"strings"
 	"sync"
 
 	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/term"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/keys"
@@ -58,7 +61,13 @@ type Options struct {
 	// invocation that only wants to watch — can never drive a harness's
 	// terminal. Governing: ADR-0008 (read-only attach), SPEC-0002.
 	ReadOnly bool
-	dial     dialer // injectable; nil uses realDial.
+	// AttachOnly, when set, makes `harness attach <name>` skip the dashboard
+	// and boot straight into an attached session for the named harness.
+	// Detach quits the program (there's no dashboard to return to). This lets
+	// the CLI one-shot verb reuse the TUI's embedded terminal + status bar +
+	// detach chords instead of the raw stdout pipe.
+	AttachOnly string
+	dial       dialer // injectable; nil uses realDial.
 }
 
 // paletteState is the command-palette overlay state (SPEC-0001 REQ "Command
@@ -95,11 +104,17 @@ type formInputs struct {
 
 // Model is the root Bubble Tea model.
 type Model struct {
-	opts  Options
-	theme *theme.Theme
-	keys  keys.KeyMap
-	help  help.Model
-	w, h  int
+	opts    Options
+	theme   *theme.Theme
+	keys    keys.KeyMap
+	help    help.Model
+	spinner spinner.Model
+	w, h    int
+
+	// attachOnlyPending is set when opts.AttachOnly is non-empty; onConnected
+	// consumes it to auto-attach to the named harness instead of landing on
+	// the dashboard. Used by `harness attach <name>`.
+	attachOnlyPending string
 
 	// connection (two conns: control + events/attach — see readloop.go).
 	ctrl    Controller
@@ -156,19 +171,45 @@ func New(opts Options) *Model {
 	si.CharLimit = 64
 
 	hp := help.New()
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = th.Faint()
 	return &Model{
-		opts:   opts,
-		theme:  th,
-		keys:   keys.Default(),
-		help:   hp,
-		pal:    paletteState{input: pi},
-		search: si,
+		opts:              opts,
+		theme:             th,
+		keys:              keys.Default(),
+		help:              hp,
+		spinner:           sp,
+		pal:               paletteState{input: pi},
+		search:            si,
+		attachOnlyPending: opts.AttachOnly,
 	}
 }
 
 // Init dials the daemon and starts the periodic tick.
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.connectCmd(), tick())
+	return tea.Batch(m.connectCmd(), tick(), probeSizeCmd())
+}
+
+// probeSizeCmd is a fallback for environments where Bubble Tea doesn't detect
+// stdout as a TTY and thus never sends a WindowSizeMsg (some IDE terminals,
+// nested ptys, etc.). It queries stdout's pty size directly and synthesizes a
+// WindowSizeMsg. If Bubble Tea already sent one, the real one wins (it arrives
+// first); this only fires if m.w is still 0.
+type probeSizeMsg struct{ w, h int }
+
+func probeSizeCmd() tea.Cmd {
+	return func() tea.Msg {
+		// Query stdout's pty size directly. Bubble Tea's own checkResize
+		// does the same thing, but only when it detects stdout as a TTY
+		// (sets ttyOutput). In some environments that detection fails, and
+		// no WindowSizeMsg is ever sent — this fallback covers that.
+		w, h, err := term.GetSize(os.Stdout.Fd())
+		if err != nil || w <= 0 || h <= 0 {
+			return probeSizeMsg{0, 0}
+		}
+		return probeSizeMsg{w, h}
+	}
 }
 
 // connectedMsg is the result of dialing both connections.

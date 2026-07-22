@@ -15,6 +15,51 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
+// onMouse handles mouse events. In attached mode, mouse-wheel up enters
+// scrollback (so scrolling "just works" when you scroll the terminal region);
+// in scrollback, wheel up/down navigates. Mouse events on the status bar are
+// ignored — it's a display surface, not interactive. On the dashboard, wheel
+// scrolls the list.
+func (m *Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.mode == modeAttached && m.att != nil {
+		return m.onAttachedMouse(msg)
+	}
+	// Dashboard: wheel scrolls the harness list.
+	if m.mode == modeDashboard {
+		switch msg.Type { //nolint:exhaustive
+		case tea.MouseWheelUp:
+			m.moveSel(-1)
+			return m, m.peekCmd()
+		case tea.MouseWheelDown:
+			m.moveSel(1)
+			return m, m.peekCmd()
+		}
+	}
+	return m, nil
+}
+
+// onAttachedMouse handles mouse events while in attached mode. Wheel-up in
+// the interactive substate enters scrollback; wheel in scrollback navigates.
+func (m *Model) onAttachedMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type { //nolint:exhaustive
+	case tea.MouseWheelUp:
+		if m.att.substate == substateInteractive {
+			// Scroll up from live → enter scrollback at the bottom.
+			m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
+			return m, nil
+		}
+		// Already in scrollback: scroll up.
+		m.att.scroll.scrollBy(-1)
+		return m, nil
+	case tea.MouseWheelDown:
+		if m.att.substate == substateScrollback {
+			m.att.scroll.scrollBy(1)
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
 // onKey is the top-level keystroke router.
 func (m *Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.overlay != overlayNone {
@@ -132,6 +177,14 @@ func (m *Model) performAction(a Action, name string) tea.Cmd {
 // --- attached mode -------------------------------------------------------
 
 // onAttachedKey handles keys while attached.
+//
+// All harness intercepts use a prefix model (like tmux): press Ctrl-b (the
+// prefix), then the command key. Bubbles' key.Matches does NOT support
+// sequential-key chords — "ctrl+b d" in a Binding is matched against a single
+// KeyMsg's .String(), but Ctrl-b and d arrive as two separate KeyMsgs — so we
+// implement the prefix state machine ourselves: Ctrl-b arms prefixArmed, the
+// next key is intercepted as a harness command. Every other keystroke goes
+// straight to the PTY. This means bare s/r/[/]/etc. always reach the agent.
 func (m *Model) onAttachedKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.att == nil {
 		m.mode = modeDashboard
@@ -141,30 +194,27 @@ func (m *Model) onAttachedKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onScrollbackKey(msg)
 	}
 
-	// Interactive substate. Intercept the chords; forward everything else to the
-	// PTY (unless read-only).
-	switch {
-	case key.Matches(msg, m.keys.Detach):
-		return m, m.detach()
-	case msg.Type == tea.KeyEscape:
-		if m.att.pendingEsc {
-			m.att.pendingEsc = false
-			return m, m.detach()
-		}
-		m.att.pendingEsc = true
-		return m, nil
-	case key.Matches(msg, m.keys.HopPrev):
-		return m, m.hopTo(-1)
-	case key.Matches(msg, m.keys.HopNext):
-		return m, m.hopTo(1)
-	case key.Matches(msg, m.keys.Scrollback):
-		m.att.enterScrollback(m.peekLines(), m.att.view.rows)
-		return m, nil
-	case key.Matches(msg, m.keys.Palette):
-		return m.openPalette()
+	// If the prefix is armed, intercept the next key as a harness command.
+	// PgUp is a special case: it enters scrollback without the prefix (it's a
+	// dedicated key with no agent-TUI collision risk).
+	if m.att.prefixArmed {
+		m.att.prefixArmed = false
+		return m, m.dispatchPrefixKey(msg)
 	}
 
-	m.att.pendingEsc = false
+	// Ctrl-b arms the prefix (only in read-write mode — read-only viewers
+	// don't need intercepts, their keys are dropped anyway).
+	if !m.att.readOnly() && msg.Type == tea.KeyCtrlB {
+		m.att.prefixArmed = true
+		return m, nil
+	}
+
+	// PgUp enters scrollback without the prefix.
+	if key.Matches(msg, m.keys.Scrollback) {
+		m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
+		return m, nil
+	}
+
 	// Forward to the PTY (read-write only; a read-only attach ignores input,
 	// SPEC-0001 REQ "Attached Mode" + ADR-0008).
 	if !m.att.readOnly() && m.attach != nil {
@@ -175,6 +225,35 @@ func (m *Model) onAttachedKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// dispatchPrefixKey handles the keystroke that follows the Ctrl-b prefix. It
+// resolves the command key to an action, or cancels (no-op) if the key isn't
+// a known chord — in which case the user mistyped and we don't forward the
+// stray key to the PTY (tmux behavior: unknown prefix command = cancel).
+func (m *Model) dispatchPrefixKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "d":
+		return m.detach()
+	case "s":
+		return m.performAction(ActionStart, m.att.name)
+	case "r":
+		return m.performAction(ActionRestart, m.att.name)
+	case "h":
+		return m.hopTo(-1)
+	case "l":
+		return m.hopTo(1)
+	case "[":
+		m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
+		return nil
+	case "?":
+		// Open the keymap overlay (the same grid as the dashboard's `?`). A
+		// bare `?` still reaches the agent; only the prefixed chord opens help.
+		m.overlay = overlayHelp
+		return nil
+	}
+	// Unknown prefix command — cancel silently (tmux behavior).
+	return nil
 }
 
 // onScrollbackKey handles the frozen scrollback substate (SPEC-0001 REQ
@@ -282,7 +361,9 @@ func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 }
 
 // detach closes the attach session and returns to the Dashboard; the harness
-// keeps running (SPEC-0001 scenario "Detach returns home").
+// keeps running (SPEC-0001 scenario "Detach returns home"). In attach-only
+// mode (the `harness attach <name>` CLI verb) there's no dashboard to return
+// to, so detach quits the program.
 func (m *Model) detach() tea.Cmd {
 	var cmd tea.Cmd
 	if m.att != nil && m.attach != nil {
@@ -290,6 +371,11 @@ func (m *Model) detach() tea.Cmd {
 		cmd = func() tea.Msg { _ = m.attach.AttachClose(sid); return nil }
 	}
 	m.att = nil
+	if m.opts.AttachOnly != "" {
+		// Attach-only mode: detach = quit. Tear down cleanly.
+		m.quitting = true
+		return tea.Batch(cmd, tea.Quit)
+	}
 	m.mode = modeDashboard
 	return cmd
 }

@@ -6,6 +6,9 @@ package tui
 // overlay first, then the primary mode.
 
 import (
+	"fmt"
+
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -23,6 +26,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.attach != nil {
 				_ = m.attach.AttachResize(m.att.sessionID, cols, rows)
 			}
+		}
+		// Attach-only mode: if we deferred the auto-attach because the window
+		// size wasn't known yet (m.w was 0 when onRefresh ran), retry now that
+		// we have real dimensions. Without this, the daemon opens the attach
+		// at the 80×24 fallback and the embedded terminal renders too narrow
+		// until a later resize corrects it.
+		if m.attachOnlyPending != "" && m.w > 0 && m.h > 0 && m.ctrl != nil {
+			name := m.attachOnlyPending
+			m.attachOnlyPending = ""
+			if h := m.harnessByName(name); h != nil {
+				return m, m.attachTo(*h, 0)
+			}
+			m.conn, m.connErr = startOtherErr, fmt.Errorf("no such harness: %s", name)
 		}
 		return m, nil
 
@@ -66,8 +82,44 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m.onTick()
 
+	case spinner.TickMsg:
+		// Keep the spinner spinning while any visible harness (or the
+		// currently-attached one) is in a transient state. The View renders
+		// the spinner frame in place of the static state glyph for those
+		// rows, so the row reads as "alive" rather than frozen.
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		if !m.spinnerActive() {
+			// Nothing left to animate — let the spinner rest until the next
+			// transient state appears (avoids a perpetual ~120ms tick).
+			return m, nil
+		}
+		return m, cmd
 	case tea.KeyMsg:
 		return m.onKey(msg)
+
+	case tea.MouseMsg:
+		return m.onMouse(msg)
+
+	case probeSizeMsg:
+		// Fallback size detection: if Bubble Tea's own checkResize never
+		// fired (stdout not detected as a TTY), use our direct probe. Only
+		// apply if m.w is still 0 so we don't override a real WindowSizeMsg.
+		if m.w == 0 && msg.w > 0 && msg.h > 0 {
+			m.w, m.h = msg.w, msg.h
+			m.help.Width = msg.w
+			// Same deferred-attach logic as WindowSizeMsg: if we were waiting
+			// for a size before opening the attach, do it now.
+			if m.attachOnlyPending != "" && m.ctrl != nil {
+				name := m.attachOnlyPending
+				m.attachOnlyPending = ""
+				if h := m.harnessByName(name); h != nil {
+					return m, m.attachTo(*h, 0)
+				}
+				m.conn, m.connErr = startOtherErr, fmt.Errorf("no such harness: %s", name)
+			}
+		}
+		return m, nil
 	}
 
 	// Route to the Huh form when it's open.
@@ -87,7 +139,12 @@ func (m *Model) onConnected(msg connectedMsg) (tea.Model, tea.Cmd) {
 	m.ctrl, m.attach = msg.ctrl, msg.attach
 	m.conn = startOK
 	m.reconn = false
-	return m, tea.Batch(fetchState(m.ctrl), m.startReadLoop())
+	cmds := []tea.Cmd{fetchState(m.ctrl), m.startReadLoop()}
+	// `harness attach <name>`: once we're connected and have a controller,
+	// auto-attach to the named harness. We need the fresh state first to
+	// resolve the HarnessInfo, so piggyback on refreshMsg's handling below by
+	// setting the pending flag — onRefresh consumes it.
+	return m, tea.Batch(cmds...)
 }
 
 // onRefresh installs a fresh snapshot, keeping the selection pinned to the same
@@ -110,7 +167,22 @@ func (m *Model) onRefresh(msg refreshMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.clampSel()
-	return m, m.peekCmd()
+	cmds := []tea.Cmd{m.peekCmd(), m.maybeStartSpinner()}
+	// `harness attach <name>`: first successful refresh after connect — find
+	// the named harness and auto-attach. But ONLY if we already know the
+	// window size (m.w > 0); otherwise the attach opens at the 80×24 fallback
+	// and renders too narrow. If m.w is still 0, leave the pending flag set —
+	// the WindowSizeMsg handler picks it up.
+	if m.attachOnlyPending != "" && m.w > 0 && m.h > 0 {
+		name := m.attachOnlyPending
+		m.attachOnlyPending = ""
+		if h := m.harnessByName(name); h != nil {
+			cmds = append(cmds, m.attachTo(*h, 0))
+		} else {
+			m.conn, m.connErr = startOtherErr, fmt.Errorf("no such harness: %s", name)
+		}
+	}
+	return m, tea.Batch(cmds...)
 }
 
 // onOpResult reports the outcome of a lifecycle action and refreshes.

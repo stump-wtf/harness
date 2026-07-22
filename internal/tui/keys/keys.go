@@ -44,11 +44,15 @@ type KeyMap struct {
 	Back    key.Binding // Esc — always works to unwind an overlay/attach.
 
 	// Attached mode.
-	Detach     key.Binding // rebindable tmux-style chord (default Ctrl-b d).
-	DetachEsc  key.Binding // Esc-Esc double-tap detach.
+	Detach     key.Binding // tmux-style chord (Ctrl-b d) — primary, always reliable.
 	Scrollback key.Binding // Ctrl-b [ / PgUp.
 	HopPrev    key.Binding // [
 	HopNext    key.Binding // ]
+
+	// Attached-mode verbs (lifecycle on the currently-attached harness).
+	AttStart   key.Binding // s — start the attached harness if stopped.
+	AttRestart key.Binding // r — restart the attached harness.
+	AttHelp    key.Binding // ^b ? — open the keymap overlay from attached mode.
 
 	// Scrollback substate.
 	PageUp   key.Binding
@@ -85,10 +89,24 @@ func Default() KeyMap {
 		Back:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 
 		Detach:     key.NewBinding(key.WithKeys("ctrl+b d"), key.WithHelp("^b d", "detach")),
-		DetachEsc:  key.NewBinding(key.WithKeys("esc esc"), key.WithHelp("esc esc", "detach")),
 		Scrollback: key.NewBinding(key.WithKeys("ctrl+b [", "pgup"), key.WithHelp("^b [", "scrollback")),
-		HopPrev:    key.NewBinding(key.WithKeys("["), key.WithHelp("[", "prev harness")),
-		HopNext:    key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next harness")),
+		// HopPrev/HopNext use the Ctrl-b prefix (shared with detach/scrollback)
+		// rather than bare [ / ]: bare brackets collide with macOS browser/
+		// terminal tab-switching (Cmd+Shift+[ / ]) and with agent TUIs that
+		// treat [ and ] as regular input. ^b h / ^b l follow vim's prev/next
+		// buffer convention (h=left, l=right) and stay off every common chord.
+		HopPrev: key.NewBinding(key.WithKeys("ctrl+b h"), key.WithHelp("^b h", "prev harness")),
+		HopNext: key.NewBinding(key.WithKeys("ctrl+b l"), key.WithHelp("^b l", "next harness")),
+
+		// AttStart/AttRestart are behind the prefix so bare s/r reach the
+		// embedded agent (Claude Code, Crush, etc.) instead of being eaten
+		// by harness.
+		AttStart:   key.NewBinding(key.WithKeys("ctrl+b s"), key.WithHelp("^b s", "start")),
+		AttRestart: key.NewBinding(key.WithKeys("ctrl+b r"), key.WithHelp("^b r", "restart")),
+		// AttHelp opens the keymap overlay from attached mode. It's behind the
+		// prefix (like every other attached intercept) so a bare `?` still
+		// reaches the embedded agent — many agent TUIs treat `?` as input.
+		AttHelp: key.NewBinding(key.WithKeys("ctrl+b ?"), key.WithHelp("^b ?", "help")),
 
 		PageUp:   key.NewBinding(key.WithKeys("pgup"), key.WithHelp("PgUp", "page up")),
 		PageDown: key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("PgDn", "page down")),
@@ -110,6 +128,16 @@ func (k KeyMap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Attach, k.Start, k.Stop, k.Restart, k.Edit, k.New, k.Profile, k.Search, k.Help}
 }
 
+// AttachedShortHelp returns the compact key bar shown in attached mode's
+// bottom status bar: just the bindings that matter while driving a live
+// harness (SPEC-0001 REQ "Attached Mode" / "Harness Hop"). It's a subset of
+// the registry so the bar stays one line and the bindings that read "detach"
+// / "prev" / "next" / "scrollback" / "start" are discoverable without
+// opening full help.
+func (k KeyMap) AttachedShortHelp() []key.Binding {
+	return []key.Binding{k.AttStart, k.AttRestart, k.HopPrev, k.HopNext, k.Scrollback, k.Detach, k.AttHelp}
+}
+
 // FullHelp implements help.KeyMap — the `?` expanded grid. It returns EVERY
 // binding in the registry so the help view is exhaustive by construction: add a
 // binding to KeyMap and it appears in help automatically (SPEC-0001).
@@ -118,7 +146,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.Top, k.Bot},
 		{k.Attach, k.Start, k.Stop, k.Restart, k.Edit, k.New, k.Delete},
 		{k.Profile, k.ShowAll, k.Logs, k.Search, k.Palette, k.Help, k.Quit},
-		{k.Detach, k.DetachEsc, k.Scrollback, k.HopPrev, k.HopNext},
+		{k.Detach, k.Scrollback, k.HopPrev, k.HopNext, k.AttStart, k.AttRestart, k.AttHelp},
 		{k.PageUp, k.PageDown, k.Live, k.Confirm, k.Back},
 	}
 }

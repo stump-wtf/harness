@@ -237,3 +237,117 @@ func TestBackpressureCoalesce(t *testing.T) {
 		t.Fatalf("slow client never received a snapshot repaint; got %d frames", len(frames))
 	}
 }
+
+// resizeRecorder captures the onResize callback the Mux fires to drive the real
+// PTY (smallest-attached-wins, ADR-0003). It's the seam a real terminal sees.
+type resizeRecorder struct {
+	mu    sync.Mutex
+	calls [][2]int
+}
+
+func (r *resizeRecorder) onResize(cols, rows int) {
+	r.mu.Lock()
+	r.calls = append(r.calls, [2]int{cols, rows})
+	r.mu.Unlock()
+}
+
+func (r *resizeRecorder) snapshot() [][2]int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([][2]int, len(r.calls))
+	copy(out, r.calls)
+	return out
+}
+
+func noopWrite([]byte) error { return nil }
+
+// TestResizeDrivesPTYOnlyOnChange verifies the resize seam actually reaching the
+// PTY: onResize fires exactly when the authoritative (smallest-attached) size
+// changes, and stays silent otherwise — so a real terminal isn't churned with
+// redundant SIGWINCHes and the PTY tracks the smallest viewport (ADR-0003).
+func TestResizeDrivesPTYOnlyOnChange(t *testing.T) {
+	rec := &resizeRecorder{}
+	m := newMux("h", 100, rec.onResize, nil) // starts at the 80x24 default
+
+	// Attaching at exactly the current size changes nothing → no onResize.
+	a := m.Attach(1, protocol.AttachRW, 80, 24, noopWrite)
+	if got := rec.snapshot(); len(got) != 0 {
+		t.Fatalf("attach at default size fired onResize %v, want none", got)
+	}
+
+	// Growing the only client resizes the PTY.
+	m.Resize(a, 100, 40)
+	if got := rec.snapshot(); len(got) != 1 || got[0] != [2]int{100, 40} {
+		t.Fatalf("after grow: onResize=%v, want [[100 40]]", got)
+	}
+
+	// A bigger second client doesn't shrink the min → no onResize.
+	m.Attach(2, protocol.AttachRW, 120, 50, noopWrite)
+	if got := rec.snapshot(); len(got) != 1 {
+		t.Fatalf("bigger client fired onResize %v, want unchanged", got)
+	}
+
+	// Re-applying the same size is a no-op.
+	m.Resize(a, 100, 40)
+	if got := rec.snapshot(); len(got) != 1 {
+		t.Fatalf("no-op resize fired onResize %v, want unchanged", got)
+	}
+
+	// A smaller third client wins each dimension → onResize.
+	c := m.Attach(3, protocol.AttachRW, 90, 30, noopWrite)
+	if got := rec.snapshot(); len(got) != 2 || got[1] != [2]int{90, 30} {
+		t.Fatalf("smaller client: onResize=%v, want last [90 30]", got)
+	}
+
+	// Detaching the smallest grows the PTY back to the next-smallest.
+	m.Detach(c)
+	if got := rec.snapshot(); len(got) != 3 || got[2] != [2]int{100, 40} {
+		t.Fatalf("after detach: onResize=%v, want last [100 40]", got)
+	}
+}
+
+// TestResizeRetainsSizeWithNoSessions: when the last client detaches the mux
+// keeps the last authoritative size and does NOT fire a shrink-to-zero onResize
+// — the harness process keeps its window until someone attaches again
+// (applyResizeLocked: "with no sessions the last size is retained").
+func TestResizeRetainsSizeWithNoSessions(t *testing.T) {
+	rec := &resizeRecorder{}
+	m := newMux("h", 100, rec.onResize, nil)
+
+	a := m.Attach(1, protocol.AttachRW, 90, 30, noopWrite)
+	if got := rec.snapshot(); len(got) != 1 || got[0] != [2]int{90, 30} {
+		t.Fatalf("attach onResize=%v, want [[90 30]]", got)
+	}
+	m.Detach(a)
+	if c, r := m.Size(); c != 90 || r != 30 {
+		t.Fatalf("size after full detach = %dx%d, want 90x30 (retained)", c, r)
+	}
+	if got := rec.snapshot(); len(got) != 1 {
+		t.Fatalf("full detach fired onResize %v, want none after the attach", got)
+	}
+}
+
+// TestResizeIgnoresInvalidViewport: a session reporting a non-positive size
+// (cols/rows <= 0, e.g. a client before its first WindowSizeMsg) is skipped by
+// the smallest-attached-wins reducer, so it can't collapse the PTY to zero and
+// blank every other viewer.
+func TestResizeIgnoresInvalidViewport(t *testing.T) {
+	rec := &resizeRecorder{}
+	m := newMux("h", 100, rec.onResize, nil)
+
+	m.Attach(1, protocol.AttachRW, 100, 40, noopWrite)
+	base := rec.snapshot()
+	if len(base) != 1 || base[0] != [2]int{100, 40} {
+		t.Fatalf("first attach onResize=%v, want [[100 40]]", base)
+	}
+
+	// A zero-size and a negative-size client must not drive the min down.
+	m.Attach(2, protocol.AttachRW, 0, 0, noopWrite)
+	m.Attach(3, protocol.AttachRW, -5, 24, noopWrite)
+	if c, r := m.Size(); c != 100 || r != 40 {
+		t.Fatalf("size = %dx%d, want 100x40 (invalid sizes ignored)", c, r)
+	}
+	if got := rec.snapshot(); len(got) != 1 {
+		t.Fatalf("invalid-size clients fired onResize %v, want unchanged", got)
+	}
+}

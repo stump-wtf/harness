@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -27,6 +28,12 @@ func (m *Model) View() string {
 		return m.viewNoDaemon()
 	case startOtherErr:
 		return m.theme.Banner().Render("harness: "+errString(m.connErr)) + "\n"
+	}
+	// Attach-only mode (`harness attach <name>`): while we're still connecting
+	// or waiting for the first state refresh to resolve the named harness,
+	// show a minimal "connecting" surface instead of flashing the dashboard.
+	if m.opts.AttachOnly != "" && m.att == nil && !m.reconn {
+		return m.overlayBox("Attaching…", fmt.Sprintf("Opening a session to %s…", m.opts.AttachOnly))
 	}
 	if m.reconn {
 		return m.overlayBox("Reconnecting…", "The daemon connection dropped — your harnesses keep running.\nRetrying…")
@@ -61,6 +68,15 @@ func (m *Model) View() string {
 // --- dashboard ------------------------------------------------------------
 
 // viewDashboard renders the split cockpit (SPEC-0001 REQ "Dashboard").
+// paneInner converts a pane's target OUTER width (the column budget it occupies
+// on the dashboard row) into the content width to hand lipgloss: the rounded
+// Box border occupies one column on each side, so the content must be 2 narrower
+// or the rendered pane overflows its budget (and, summed across both panes,
+// pushes the dashboard past the terminal edge and wraps).
+func paneInner(w int) int {
+	return maxInt(1, w-2)
+}
+
 func (m *Model) viewDashboard() string {
 	header := m.viewHeader()
 	footer := m.viewFooter()
@@ -128,7 +144,7 @@ func (m *Model) viewList(w, h int) string {
 	if len(v) == 0 {
 		empty := emptyStateText(profileName(m.profiles, m.showAll))
 		lines = append(lines, m.theme.Faint().Render(empty))
-		return m.theme.Box().Width(w).Height(h).Render(strings.Join(lines, "\n"))
+		return m.theme.Box().Width(paneInner(w)).Height(h).Render(strings.Join(lines, "\n"))
 	}
 
 	for i, hnfo := range v {
@@ -137,7 +153,7 @@ func (m *Model) viewList(w, h int) string {
 			lines = append(lines, "   "+m.theme.StateStyle(core.StateDegraded).Render(flappingDetail(hnfo)))
 		}
 	}
-	return m.theme.Box().Width(w).Height(h).Render(strings.Join(lines, "\n"))
+	return m.theme.Box().Width(paneInner(w)).Height(h).Render(strings.Join(lines, "\n"))
 }
 
 // renderRow renders one harness row. The colored glyph leads; name, state label,
@@ -145,7 +161,16 @@ func (m *Model) viewList(w, h int) string {
 // mono terminal is fully legible (SPEC-0001 REQ "State Presentation").
 func (m *Model) renderRow(h protocol.HarnessInfo, selected bool, w int) string {
 	st := core.State(h.State)
-	glyph := m.theme.RenderGlyph(st)
+	// Transient states get the live spinner frame in place of the static
+	// glyph so the row reads as "alive" while the harness is booting/
+	// bouncing (SPEC-0001 REQ "State Presentation": cyan + spinner).
+	var glyph string
+	switch st {
+	case core.StateStarting, core.StateRestarting, core.StateStopping:
+		glyph = m.spinner.View()
+	default:
+		glyph = m.theme.RenderGlyph(st)
+	}
 	name := h.Name
 	state := string(h.State)
 	rest := restartMarker(h.RestartCount)
@@ -170,7 +195,7 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool, w int) string {
 func (m *Model) viewPeek(w, h int) string {
 	sel, ok := m.selectedHarness()
 	if !ok {
-		return m.theme.Box().Width(w).Height(h).Render(m.theme.Faint().Render("no selection"))
+		return m.theme.Box().Width(paneInner(w)).Height(h).Render(m.theme.Faint().Render("no selection"))
 	}
 	head := m.theme.Header().Render(sel.Name) + " " +
 		m.theme.Faint().Render("live preview · read-only")
@@ -200,7 +225,7 @@ func (m *Model) viewPeek(w, h int) string {
 	}
 
 	content := head + "\n\n" + strings.Join(tailLines, "\n") + "\n" + strings.Join(summary, "\n")
-	return m.theme.Box().Width(w).Height(h).Render(content)
+	return m.theme.Box().Width(paneInner(w)).Height(h).Render(content)
 }
 
 // viewFooter is the key bar (SPEC-0001: `?` expands to full help).
@@ -210,46 +235,94 @@ func (m *Model) viewFooter() string {
 
 // --- attached -------------------------------------------------------------
 
-// viewAttached renders the embedded terminal with the thin status ribbon
-// (SPEC-0001 REQ "Attached Mode" / "Scrollback Substate").
+// viewAttached renders the embedded terminal filling the window with a
+// 1-line status bar held back at the bottom (SPEC-0001 REQ "Attached Mode":
+// full-attention live terminal; the bar carries identity + key bindings).
+//
+// Layout: the terminal body is rendered first (sized to m.h-1 rows via
+// attachViewport), then the status bar is appended below. Total output is
+// exactly m.h lines so Bubble Tea doesn't scroll.
 func (m *Model) viewAttached() string {
 	if m.att == nil {
 		return m.viewDashboard()
 	}
-	ribbon := m.viewRibbon()
 	var body string
 	if m.att.substate == substateScrollback {
 		body = m.viewScrollback()
 	} else {
 		body = m.att.view.render()
 	}
-	return ribbon + "\n" + body
+	bar := m.viewStatusBar()
+	return body + "\n" + bar
 }
 
-// viewRibbon renders the thin status ribbon (harness · state · detach hint · hop
-// affordance), flashing briefly after a hop (SPEC-0001 REQ "Harness Hop").
-func (m *Model) viewRibbon() string {
+// viewStatusBar renders the 1-line bottom bar: logo chip · harness identity +
+// state · read-only badge on the left; the compact attached keymap (hop,
+// scrollback, detach, help) on the right. Built on the Bubbles help registry
+// so the bindings never drift from the `?` full-help view (SPEC-0001 REQ
+// "Keybinding Registry").
+func (m *Model) viewStatusBar() string {
+	// Left: logo chip + "attached: <name> <state>" [+ ro badge].
+	logo := m.theme.LogoChip()
 	v := m.visible()
 	pos := selectByName(v, m.att.name)
 	posText := ""
 	if pos >= 0 {
-		posText = fmt.Sprintf(" · %d/%d", pos+1, len(v))
+		posText = fmt.Sprintf(" · %d of %d", pos+1, len(v))
 	}
-	state := ""
+	stateText := ""
 	if h := m.harnessByName(m.att.name); h != nil {
-		state = " " + m.theme.RenderState(core.State(h.State))
+		stateText = " " + m.theme.RenderState(core.State(h.State))
 	}
+	// The hop flash reverses the identity segment briefly.
+	identStyle := m.theme.Ribbon()
+	if m.att.flash > 0 {
+		identStyle = identStyle.Reverse(true)
+	}
+	ident := identStyle.Render(fmt.Sprintf(" attached: %s%s ", m.att.name, posText))
 	badge := ""
 	if m.att.readOnly() {
-		badge = "  " + m.theme.ReadOnlyBadge()
+		badge = " " + m.theme.ReadOnlyBadge()
 	}
-	style := m.theme.Ribbon()
-	if m.att.flash > 0 {
-		style = style.Reverse(true) // the ribbon-flash on hop
+	// Visual feedback when the Ctrl-b prefix is armed: a highlighted "^b"
+	// prompt tells the user the next key will be a harness command (not
+	// forwarded to the agent).
+	prefixHint := ""
+	if m.att.prefixArmed {
+		prefixHint = " " + m.theme.Header().Render("^b")
 	}
-	left := style.Render(fmt.Sprintf(" attached: %s%s ", m.att.name, posText))
-	hint := m.theme.Faint().Render("  [ prev · next ]  ·  ^b [ scrollback  ·  esc esc detach")
-	return left + state + badge + hint
+	left := logo + " " + ident + stateText + badge + prefixHint
+	lw := lipgloss.Width(left)
+
+	// Right: compact attached-mode help (hop / scrollback / detach / ?). Budget
+	// it to whatever space remains after the identity segment so the Bubbles
+	// help view self-truncates (with its "…" ellipsis) instead of overflowing.
+	// This is the crux of the full-window fix: an unbudgeted bar renders wider
+	// than the terminal on a narrow window, wraps to a second physical row, and
+	// that extra row scrolls the alt-screen — shoving the embedded terminal up
+	// so it no longer fills the window. A width-bounded bar keeps the output at
+	// exactly m.h lines of m.w columns. We copy m.help (a value) so setting
+	// Width here doesn't leak into the dashboard's full-width footer help.
+	avail := m.w - lw - 2 // reserve the 2-space lead-in the help gets below
+	if avail < 0 {
+		avail = 0
+	}
+	hp := m.help
+	hp.Width = avail
+	right := m.theme.Faint().Render("  ") + hp.ShortHelpView(m.keys.AttachedShortHelp())
+	rw := lipgloss.Width(right)
+
+	// Pad the left segment so the right help hugs the right edge and the bar
+	// spans the full terminal width (a true status bar, not inline text).
+	gap := m.w - lw - rw
+	if gap < 0 {
+		gap = 0
+	}
+	bar := left + strings.Repeat(" ", gap) + right
+	// Final hard clamp: on a pathologically narrow terminal the identity
+	// segment alone can exceed m.w. Truncate (ANSI-aware) so the bar is never
+	// wider than the window and can't wrap.
+	return ansi.Truncate(bar, m.w, "")
 }
 
 // viewScrollback renders the frozen scrollback view with the search line
@@ -341,7 +414,20 @@ func (m *Model) viewNoDaemon() string {
 // overlayBox renders a titled bordered box (the Lip Gloss signature).
 func (m *Model) overlayBox(title, body string) string {
 	inner := m.theme.Header().Render(title) + "\n\n" + body
-	return m.theme.Box().Padding(0, 1).Render(inner)
+	style := m.theme.Box().Padding(0, 1)
+	// Never let an overlay exceed the terminal width: a box wider than m.w
+	// wraps its right edge to a second physical row and scrolls everything. If
+	// the natural content is too wide, constrain the content width (border 2 +
+	// padding 2 = 4) so lipgloss wraps inside the box; a final MaxWidth clamps
+	// against any rounding. Only when the width is known (m.w > 0) — before the
+	// first WindowSizeMsg it's 0, and clamping to that would erase the overlay.
+	if m.w > 0 {
+		if maxW := m.w - 4; maxW > 0 && lipgloss.Width(inner) > maxW {
+			style = style.Width(maxW)
+		}
+		style = style.MaxWidth(m.w)
+	}
+	return style.Render(inner)
 }
 
 // --- small helpers --------------------------------------------------------
