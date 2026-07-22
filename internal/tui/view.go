@@ -28,6 +28,12 @@ func (m *Model) View() string {
 	case startOtherErr:
 		return m.theme.Banner().Render("harness: "+errString(m.connErr)) + "\n"
 	}
+	// Attach-only mode (`harness attach <name>`): while we're still connecting
+	// or waiting for the first state refresh to resolve the named harness,
+	// show a minimal "connecting" surface instead of flashing the dashboard.
+	if m.opts.AttachOnly != "" && m.att == nil && !m.reconn {
+		return m.overlayBox("Attaching…", fmt.Sprintf("Opening a session to %s…", m.opts.AttachOnly))
+	}
 	if m.reconn {
 		return m.overlayBox("Reconnecting…", "The daemon connection dropped — your harnesses keep running.\nRetrying…")
 	}
@@ -145,7 +151,16 @@ func (m *Model) viewList(w, h int) string {
 // mono terminal is fully legible (SPEC-0001 REQ "State Presentation").
 func (m *Model) renderRow(h protocol.HarnessInfo, selected bool, w int) string {
 	st := core.State(h.State)
-	glyph := m.theme.RenderGlyph(st)
+	// Transient states get the live spinner frame in place of the static
+	// glyph so the row reads as "alive" while the harness is booting/
+	// bouncing (SPEC-0001 REQ "State Presentation": cyan + spinner).
+	var glyph string
+	switch st {
+	case core.StateStarting, core.StateRestarting, core.StateStopping:
+		glyph = m.spinner.View()
+	default:
+		glyph = m.theme.RenderGlyph(st)
+	}
 	name := h.Name
 	state := string(h.State)
 	rest := restartMarker(h.RestartCount)
@@ -210,46 +225,74 @@ func (m *Model) viewFooter() string {
 
 // --- attached -------------------------------------------------------------
 
-// viewAttached renders the embedded terminal with the thin status ribbon
-// (SPEC-0001 REQ "Attached Mode" / "Scrollback Substate").
+// viewAttached renders the embedded terminal filling the window with a
+// 1-line status bar held back at the bottom (SPEC-0001 REQ "Attached Mode":
+// full-attention live terminal; the bar carries identity + key bindings).
+//
+// Layout: the terminal body is rendered first (sized to m.h-1 rows via
+// attachViewport), then the status bar is appended below. Total output is
+// exactly m.h lines so Bubble Tea doesn't scroll.
 func (m *Model) viewAttached() string {
 	if m.att == nil {
 		return m.viewDashboard()
 	}
-	ribbon := m.viewRibbon()
 	var body string
 	if m.att.substate == substateScrollback {
 		body = m.viewScrollback()
 	} else {
 		body = m.att.view.render()
 	}
-	return ribbon + "\n" + body
+	bar := m.viewStatusBar()
+	return body + "\n" + bar
 }
 
-// viewRibbon renders the thin status ribbon (harness · state · detach hint · hop
-// affordance), flashing briefly after a hop (SPEC-0001 REQ "Harness Hop").
-func (m *Model) viewRibbon() string {
+// viewStatusBar renders the 1-line bottom bar: logo chip · harness identity +
+// state · read-only badge on the left; the compact attached keymap (hop,
+// scrollback, detach, help) on the right. Built on the Bubbles help registry
+// so the bindings never drift from the `?` full-help view (SPEC-0001 REQ
+// "Keybinding Registry").
+func (m *Model) viewStatusBar() string {
+	// Left: logo chip + "attached: <name> <state>" [+ ro badge].
+	logo := m.theme.LogoChip()
 	v := m.visible()
 	pos := selectByName(v, m.att.name)
 	posText := ""
 	if pos >= 0 {
-		posText = fmt.Sprintf(" · %d/%d", pos+1, len(v))
+		posText = fmt.Sprintf(" · %d of %d", pos+1, len(v))
 	}
-	state := ""
+	stateText := ""
 	if h := m.harnessByName(m.att.name); h != nil {
-		state = " " + m.theme.RenderState(core.State(h.State))
+		stateText = " " + m.theme.RenderState(core.State(h.State))
 	}
+	// The hop flash reverses the identity segment briefly.
+	identStyle := m.theme.Ribbon()
+	if m.att.flash > 0 {
+		identStyle = identStyle.Reverse(true)
+	}
+	ident := identStyle.Render(fmt.Sprintf(" attached: %s%s ", m.att.name, posText))
 	badge := ""
 	if m.att.readOnly() {
-		badge = "  " + m.theme.ReadOnlyBadge()
+		badge = " " + m.theme.ReadOnlyBadge()
 	}
-	style := m.theme.Ribbon()
-	if m.att.flash > 0 {
-		style = style.Reverse(true) // the ribbon-flash on hop
+	// Visual feedback when the Ctrl-b prefix is armed: a highlighted "^b"
+	// prompt tells the user the next key will be a harness command (not
+	// forwarded to the agent).
+	prefixHint := ""
+	if m.att.prefixArmed {
+		prefixHint = " " + m.theme.Header().Render("^b")
 	}
-	left := style.Render(fmt.Sprintf(" attached: %s%s ", m.att.name, posText))
-	hint := m.theme.Faint().Render("  [ prev · next ]  ·  ^b [ scrollback  ·  esc esc detach")
-	return left + state + badge + hint
+	left := logo + " " + ident + stateText + badge + prefixHint
+
+	// Right: compact attached-mode help (hop / scrollback / detach / ?).
+	right := m.theme.Faint().Render("  ") + m.help.ShortHelpView(m.keys.AttachedShortHelp())
+
+	// Pad the left segment so the right help hugs the right edge and the bar
+	// spans the full terminal width (a true status bar, not inline text).
+	gap := m.w - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
 }
 
 // viewScrollback renders the frozen scrollback view with the search line

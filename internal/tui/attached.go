@@ -78,9 +78,15 @@ type attachState struct {
 	slideVel float64
 	flash    int
 
-	// pendingEsc arms the Esc-Esc detach: the first Esc sets it, a second Esc
-	// detaches (SPEC-0001 REQ "Attached Mode": Esc-Esc returns to Dashboard).
-	pendingEsc bool
+	// prefixArmed is set when the user has pressed the harness prefix
+	// (Ctrl-b). The next keystroke is intercepted as a harness command
+	// (detach / hop / start / etc.) rather than forwarded to the PTY. Any
+	// key that doesn't match a known chord disarms the prefix and — for
+	// non-printable keys — is dropped; for a regular printable key we'd
+	// ideally forward it, but the common case (user mistyped the chord) is
+	// better served by a clean cancel than a phantom letter reaching the
+	// agent. This is exactly how tmux handles its prefix.
+	prefixArmed bool
 }
 
 // newAttachState builds attach state for a harness at the given viewport size.

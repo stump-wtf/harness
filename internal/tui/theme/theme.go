@@ -88,7 +88,9 @@ func (t *Theme) style() lipgloss.Style { return t.renderer.NewStyle() }
 
 // stateColor maps a lifecycle state to its palette color per SPEC-0001 REQ
 // "State Presentation": running green(mint), degraded amber, the transient trio
-// cyan, stopped dim, failed red(coral).
+// cyan, stopped pink (warm/red-family so it draws the eye like the other
+// active states — the ○ glyph still distinguishes it from failed's ✖),
+// failed red(coral).
 func (t *Theme) stateColor(s core.State) lipgloss.AdaptiveColor {
 	switch s {
 	case core.StateRunning:
@@ -98,7 +100,7 @@ func (t *Theme) stateColor(s core.State) lipgloss.AdaptiveColor {
 	case core.StateStarting, core.StateRestarting, core.StateStopping:
 		return t.Palette.Cyan
 	case core.StateStopped:
-		return t.Palette.Dim
+		return t.Palette.Pink
 	case core.StateFailed:
 		return t.Palette.Coral
 	default:
@@ -168,6 +170,22 @@ func (t *Theme) Box() lipgloss.Style {
 // Ribbon is the attached-mode status ribbon.
 func (t *Theme) Ribbon() lipgloss.Style {
 	return t.style().Foreground(t.Palette.Fg).Background(t.Palette.Accent).Bold(true)
+}
+
+// LogoChip renders the small brand mark that leads the attached-mode status
+// bar: "h◈" in the accent color on the void/paper background. Compact and
+// color-paired with text so it still reads as "harness" in mono.
+func (t *Theme) LogoChip() string {
+	return t.style().Foreground(t.Palette.Accent).Bold(true).Render("h◈")
+}
+
+// StatusBar is the 1-line bottom bar in attached mode: a subtle background
+// span across the full terminal width. Kept distinct from Ribbon (the
+// hop-flash style) so the bar reads as chrome, not a flashing signal.
+func (t *Theme) StatusBar() lipgloss.Style {
+	return t.style().
+		Foreground(t.Palette.Fg).
+		Background(t.Palette.Border)
 }
 
 // Banner is the non-fatal config-parse banner (last-good config, ADR-0006).

@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
@@ -90,6 +91,7 @@ func main() {
 	lines := vfs.Int("lines", 200, "logs: number of trailing lines")
 	follow := vfs.Bool("follow", false, "logs: stream new output")
 	ro := vfs.Bool("ro", false, "attach: read-only (ignore keystrokes)")
+	all := vfs.Bool("all", false, "start/restart: apply to every harness (name is ignored)")
 	rest := gfs.Args()
 	if len(rest) > 0 {
 		rest = rest[1:]
@@ -98,7 +100,7 @@ func main() {
 	// first non-flag, so we loop: parse, take one positional, parse the rest —
 	// this makes `harness logs ticker --lines 3` behave like the flags-first form.
 	name := parseInterleaved(vfs, rest)
-	opts := verbOpts{socket: *socket, configPath: *configPath, json: *vJSON, lines: *lines, follow: *follow, ro: *ro, name: name}
+	opts := verbOpts{socket: *socket, configPath: *configPath, json: *vJSON, lines: *lines, follow: *follow, ro: *ro, all: *all, name: name}
 
 	// `doctor` owns its own reporting (tabular, no styled error box) and its
 	// own exit code; bypass the generic run() → cliui.Fatal path.
@@ -139,6 +141,7 @@ type verbOpts struct {
 	lines      int
 	follow     bool
 	ro         bool
+	all        bool // start/restart --all: apply to every harness
 	name       string
 }
 
@@ -151,7 +154,13 @@ func run(verb string, o verbOpts) error {
 	case "describe":
 		return withClient(o, requireName(o), cmdDescribe)
 	case "start", "stop", "restart":
-		return withClient(o, requireName(o), lifecycle(verb))
+		// `--all` replaces the required name with "every harness the daemon
+		// knows about"; without it, a name is still required.
+		pre := requireName(o)
+		if o.all {
+			pre = nil
+		}
+		return withClient(o, pre, lifecycle(verb))
 	case "logs":
 		return withClient(o, requireName(o), cmdLogs)
 	case "profiles":
@@ -163,7 +172,12 @@ func run(verb string, o verbOpts) error {
 	case "daemon-info":
 		return withClient(o, nil, cmdDaemonInfo)
 	case "attach":
-		return withClient(o, requireName(o), cmdAttach)
+		// Attach launches its own Bubble Tea program (alt-screen) and manages
+		// its own daemon connection, so it doesn't go through withClient.
+		if err := requireName(o); err != nil {
+			return err
+		}
+		return cmdAttach(o)
 	default:
 		// Don't dump full usage() here — the styled error from cliui.Fatal
 		// is the single calm message; the hint points at the help flag.
@@ -194,9 +208,14 @@ func withClient(o verbOpts, preErr error, fn func(*client.Client, verbOpts) erro
 	return fn(c, o)
 }
 
-// lifecycle wraps start/stop/restart into one handler.
+// lifecycle wraps start/stop/restart into one handler. When o.all is set it
+// resolves the verb against every harness the daemon knows (in the order the
+// daemon returns them); otherwise it applies to the single named harness.
 func lifecycle(verb string) func(*client.Client, verbOpts) error {
 	return func(c *client.Client, o verbOpts) error {
+		if o.all {
+			return lifecycleAll(c, o, verb)
+		}
 		var (
 			info protocol.HarnessInfo
 			err  error
@@ -218,6 +237,54 @@ func lifecycle(verb string) func(*client.Client, verbOpts) error {
 		fmt.Printf("%s %s → %s\n", stateGlyph(info.State), info.Name, info.State)
 		return nil
 	}
+}
+
+// lifecycleAll applies verb to every harness. A failure on one harness does
+// not abort the rest — we collect per-harness errors and surface them at the
+// end so `start --all` brings up as many harnesses as possible rather than
+// stopping at the first one that's wedged. JSON output is an array of the
+// per-harness HarnessInfo results.
+func lifecycleAll(c *client.Client, o verbOpts, verb string) error {
+	hs, err := c.List()
+	if err != nil {
+		return fmt.Errorf("--all: list harnesses: %w", err)
+	}
+	if len(hs) == 0 {
+		return fmt.Errorf("--all: no harnesses configured")
+	}
+	var (
+		results []protocol.HarnessInfo
+		errs    []string
+	)
+	for _, h := range hs {
+		var (
+			info protocol.HarnessInfo
+			e    error
+		)
+		switch verb {
+		case "start":
+			info, e = c.Start(h.Name)
+		case "stop":
+			info, e = c.Stop(h.Name)
+		case "restart":
+			info, e = c.Restart(h.Name)
+		}
+		if e != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", h.Name, e))
+			continue
+		}
+		results = append(results, info)
+		if !o.json {
+			fmt.Printf("%s %s → %s\n", stateGlyph(info.State), info.Name, info.State)
+		}
+	}
+	if o.json {
+		_ = printJSON(results)
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%d failed:\n  %s", len(errs), strings.Join(errs, "\n  "))
+	}
+	return nil
 }
 
 func usage() {

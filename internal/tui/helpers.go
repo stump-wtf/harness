@@ -4,7 +4,13 @@ package tui
 // cockpit). Kept in one place so the sizing math is consistent across the
 // dashboard and attached views.
 
-import "strings"
+import (
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+)
 
 const (
 	// peekLines is how many trailing log lines the peek pane tails.
@@ -18,6 +24,43 @@ const (
 	footerRows = 2
 	ribbonRows = 1
 )
+
+// spinnerActive reports whether any visible harness (or the currently-
+// attached one) is in a transient state (starting / restarting / stopping).
+// The spinner ticks while true so those rows animate; false lets it rest so
+// we're not burning a ~120ms tick on a still screen.
+func (m *Model) spinnerActive() bool {
+	isTransient := func(s string) bool {
+		switch core.State(s) {
+		case core.StateStarting, core.StateRestarting, core.StateStopping:
+			return true
+		}
+		return false
+	}
+	if m.att != nil {
+		if h := m.harnessByName(m.att.name); h != nil && isTransient(h.State) {
+			return true
+		}
+	}
+	for _, h := range m.visible() {
+		if isTransient(h.State) {
+			return true
+		}
+	}
+	return false
+}
+
+// maybeStartSpinner returns the spinner tick command when the spinner should
+// be running (a transient harness just appeared) and nil otherwise. Called
+// after every state change (refresh / event / lifecycle op) so the spinner
+// spins up the moment a harness enters starting/restarting/stopping and
+// winds down once it settles.
+func (m *Model) maybeStartSpinner() tea.Cmd {
+	if m.spinnerActive() {
+		return m.spinner.Tick
+	}
+	return nil
+}
 
 // attachViewport returns the cols/rows available to the embedded terminal after
 // subtracting the ribbon chrome.

@@ -77,8 +77,10 @@ func TestDefaultVerbKeys(t *testing.T) {
 		{"help", "?", km.Help},
 		{"palette-ctrlk", "ctrl+k", km.Palette},
 		{"palette-colon", ":", km.Palette},
-		{"hop-next", "]", km.HopNext},
-		{"hop-prev", "[", km.HopPrev},
+		{"hop-next", "ctrl+b l", km.HopNext},
+		{"hop-prev", "ctrl+b h", km.HopPrev},
+		{"att-start", "ctrl+b s", km.AttStart},
+		{"att-restart", "ctrl+b r", km.AttRestart},
 	}
 	for _, c := range cases {
 		if !hasKey(c.b, c.k) {

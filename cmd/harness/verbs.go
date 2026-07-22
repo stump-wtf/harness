@@ -8,15 +8,16 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"syscall"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/tui"
 )
 
 // printJSON writes v as indented JSON.
@@ -226,102 +227,23 @@ func cmdStopDaemon(o verbOpts) error {
 	return nil
 }
 
-// cmdAttach streams a harness terminal: live output → stdout, stdin → the
-// PTY (dropped server-side for --ro). Puts the local terminal in raw mode so
-// keystrokes pass through faithfully (Ctrl-C, arrows, etc. go to the harness,
-// not the local shell), and watches for the detach chord Ctrl-\ to cleanly
-// close the session and restore the terminal. The TUI's attached mode
-// (internal/tui/attached.go) is the richer surface with scrollback/hop/etc;
-// this is the scriptable one-shot.
-func cmdAttach(c *client.Client, o verbOpts) error {
-	const sid = 1
-	mode := protocol.AttachRW
-	if o.ro {
-		mode = protocol.AttachRO
-	}
-	if err := c.AttachOpen(sid, o.name, termWidth(), termHeight(), mode); err != nil {
-		return err
-	}
-
-	// Raw mode so keystrokes (including Ctrl-C) pass through to the harness
-	// untouched. Restore on return so a crash or detach doesn't leave the
-	// user's terminal broken.
-	prev, err := makeRaw(os.Stdin)
-	if err == nil {
-		defer restoreTerm(os.Stdin, prev)
-	}
-	done := make(chan struct{})
-
-	// stdin → PTY (skip for read-only). Watch for the detach chord: Ctrl-\
-	// (0x1c) cleanly closes the attach session and exits.
-	if !o.ro {
-		go func() {
-			defer close(done)
-			buf := make([]byte, 4096)
-			for {
-				n, err := os.Stdin.Read(buf)
-				if n > 0 {
-					if hasDetachChord(buf[:n]) {
-						_ = c.AttachClose(sid)
-						return
-					}
-					_ = c.AttachInput(sid, buf[:n])
-				}
-				if err != nil {
-					return
-				}
-			}
-		}()
-	} else {
-		defer close(done)
-	}
-
-	// Live frames → stdout.
-	pc := c.Conn()
-	for {
-		select {
-		case <-done:
-			return nil
-		default:
-		}
-		f, err := pc.ReadFrame()
-		if err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
-		}
-		switch f.Type {
-		case protocol.TypeAttachData:
-			_, rest, derr := protocol.DecodeAttach(f.Payload)
-			if derr == nil {
-				_, _ = os.Stdout.Write(rest)
-			}
-		case protocol.TypePing:
-			_ = pc.WriteFrame(protocol.TypePong, nil)
-		case protocol.TypeError:
-			return errorFrom(f.Payload)
-		}
-	}
-}
-
-// hasDetachChord reports whether the read buffer contains the detach byte
-// (Ctrl-\ = 0x1c, also known as FS / File Separator). We scan the whole
-// buffer because the byte may arrive co-encoded with other keystrokes.
-func hasDetachChord(b []byte) bool {
-	for _, c := range b {
-		if c == 0x1c { // Ctrl-\
-			return true
-		}
-	}
-	return false
-}
-
-// errorFrom parses an ERROR frame payload.
-func errorFrom(payload []byte) error {
-	e := &protocol.ErrorMsg{}
-	if err := json.Unmarshal(payload, e); err != nil {
-		return fmt.Errorf("daemon error (unparseable): %v", err)
-	}
-	return e
+// cmdAttach launches the embedded-terminal surface for a harness. It reuses
+// the cockpit TUI's attached mode (internal/tui) via its AttachOnly option,
+// so the CLI one-shot gets the same full-window x/vt terminal, 1-line status
+// bar, Bubbles-help key bindings, and tmux-style detach chords as the
+// dashboard — no separate raw-pipe code path to drift from the TUI's
+// behavior. Governing: SPEC-0001 REQ "Attached Mode", ADR-0003 (embedded
+// terminal).
+func cmdAttach(o verbOpts) error {
+	m := tui.New(tui.Options{
+		Socket:      o.socket,
+		ConfigPath:  o.configPath,
+		Version:     buildinfo.Version,
+		ReadOnly:    o.ro,
+		AttachOnly:  o.name,
+		SkipConfirm: true,
+	})
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	_, err := p.Run()
+	return err
 }

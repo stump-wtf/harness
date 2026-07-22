@@ -28,28 +28,54 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 )
 
-// tableWidth is the column budget every CLI table shares. It matches the
-// styled error/warn/info/success box width so a `list` next to a `doctor`
-// report reads as a consistent surface.
-//
-// Note: this is the sum of *cell content* widths. Flush joins cells with
-// colSep ("  ", 2 cells) between each pair, so the actual rendered row width
-// is tableWidth + colSep*(n-1). Separator rules use renderedWidth(headers)
-// for that reason (PR #23 nit).
-const tableWidth = 80
+// Table sizing. The table targets tableWidthRatio of the terminal window
+// (clamped to [minTableWidth, maxTableWidth]) so it fills more of a wide
+// terminal instead of hugging the left 80 columns. When the writer isn't a
+// TTY (piped, test buffer) we fall back to defaultTableWidth — the
+// historical constant that also matches the styled error/warn/info/success
+// box width so a `list` next to a `doctor` report reads as one surface.
+const (
+	defaultTableWidth = 80
+	tableWidthRatio   = 0.8
+	minTableWidth     = 60
+	maxTableWidth     = 160
+)
 
 // colSep is the visible-space separator inserted between cells on a row.
 const colSep = "  "
 
-// renderedWidth returns the actual visible width of a rendered row:
-// the sum of column widths plus the separators between them. Separator rules
-// are drawn to this width so they span the whole row, not just the cell
-// content budget (PR #23 nit: separator under-spanned data rows).
-func renderedWidth(nCols int) int {
-	if nCols <= 1 {
-		return tableWidth
+// resolveTableWidth returns the column budget for a table writing to w.
+// When w is a terminal, the budget is 80% of its column count, clamped to
+// [minTableWidth, maxTableWidth]; otherwise (pipe, file, test buffer) it's
+// defaultTableWidth. This is the same shape of policy cliui.blockWidth
+// applies to the styled error box, kept separate because tables can grow
+// wider than the error box.
+func resolveTableWidth(w io.Writer) int {
+	if f, ok := w.(*os.File); ok {
+		if tw, _, err := term.GetSize(int(f.Fd())); err == nil && tw > 0 {
+			target := int(float64(tw) * tableWidthRatio)
+			if target < minTableWidth {
+				return minTableWidth
+			}
+			if target > maxTableWidth {
+				return maxTableWidth
+			}
+			return target
+		}
 	}
-	return tableWidth + (len(colSep) * (nCols - 1))
+	return defaultTableWidth
+}
+
+// renderedWidth returns the actual visible width of a rendered row for a
+// table of nCols columns and cell-content budget budget: the cell budget
+// plus the separators between cells. Separator rules are drawn to this
+// width so they span the whole row (PR #23 nit: separator under-spanned
+// data rows).
+func renderedWidth(budget, nCols int) int {
+	if nCols <= 1 {
+		return budget
+	}
+	return budget + (len(colSep) * (nCols - 1))
 }
 
 // useColorFor reports whether w is a terminal we should style for and we're
@@ -71,13 +97,15 @@ type Table struct {
 	w          io.Writer
 	colored    bool
 	pal        theme.Palette
+	width      int        // cell-content budget for this table (resolved from writer's TTY size)
 	widths     []int      // visible width per column
 	truncators []bool     // truncate-with-ellipsis (true) vs wrap (false) per column
 	rows       []tableRow // queued rows
 }
 
 // tableRow is one queued output row. fullWidth rows span the entire
-// tableWidth (single cell); normal rows have one cell per column.
+// table cell-content budget (t.width, single cell); normal rows have one
+// cell per column.
 type tableRow struct {
 	fullWidth bool
 	separator bool
@@ -85,16 +113,20 @@ type tableRow struct {
 }
 
 // NewTable starts a table written to w. headers also fixes the column count
-// and the visible width budget for each column. Call Row any number of times,
-// then Flush.
+// and the visible width budget for each column. The cell-content budget is
+// resolved from w's terminal size (~80% of the window, clamped) or falls
+// back to defaultTableWidth when w isn't a TTY. Call Row any number of
+// times, then Flush.
 func NewTable(w io.Writer, headers ...string) *Table {
 	colored := useColorFor(w)
 	pal := palette()
-	widths, trunc := defaultColumnWidths(headers)
+	budget := resolveTableWidth(w)
+	widths, trunc := defaultColumnWidths(headers, budget)
 	t := &Table{
 		w:          w,
 		colored:    colored,
 		pal:        pal,
+		width:      budget,
 		widths:     widths,
 		truncators: trunc,
 	}
@@ -110,15 +142,16 @@ func NewTable(w io.Writer, headers ...string) *Table {
 	return t
 }
 
-// defaultColumnWidths picks per-column widths that fit tableWidth, and reports
-// which columns should truncate (vs wrap) on overflow. Short known columns
-// (NAME/STATE/ENABLED/RESTARTS/PID/FIELD/CHECK/STATUS/AUTOSTART) get fixed
-// budgets and truncate-with-ellipsis — they hold structured identifiers and a
-// wrapped NAME like "crush-signal-\nchannel" would corrupt the row layout
-// (lipgloss.Width-based wrapping gets joined line-wise with the next column).
-// Everything else (typically DESCRIPTION, DETAIL, VALUE) absorbs the remainder
-// and wraps on overflow, since long prose is the common case there.
-func defaultColumnWidths(headers []string) (widths []int, truncate []bool) {
+// defaultColumnWidths picks per-column widths that fit budget (the table's
+// cell-content budget), and reports which columns should truncate (vs wrap)
+// on overflow. Short known columns (NAME/STATE/ENABLED/RESTARTS/PID/FIELD/
+// CHECK/STATUS/AUTOSTART) get fixed budgets and truncate-with-ellipsis —
+// they hold structured identifiers and a wrapped NAME like
+// "crush-signal-\nchannel" would corrupt the row layout (lipgloss.Width-
+// based wrapping gets joined line-wise with the next column). Everything
+// else (typically DESCRIPTION, DETAIL, VALUE) absorbs the remainder and
+// wraps on overflow, since long prose is the common case there.
+func defaultColumnWidths(headers []string, budget int) (widths []int, truncate []bool) {
 	n := len(headers)
 	if n == 0 {
 		return nil, nil
@@ -147,7 +180,7 @@ func defaultColumnWidths(headers []string) (widths []int, truncate []bool) {
 	}
 	// Distribute the remainder evenly across the non-fixed (long-text)
 	// columns. If every column was fixed, they're already set.
-	rest := tableWidth - used
+	rest := budget - used
 	flexCols := 0
 	for i := range widths {
 		if widths[i] == 0 {
@@ -166,21 +199,20 @@ func defaultColumnWidths(headers []string) (widths []int, truncate []bool) {
 	}
 	// Fallback: if all columns were "flex" (unknown headers), use even split.
 	if used == 0 {
-		base := tableWidth / n
+		base := budget / n
 		for i := range widths {
 			widths[i] = base
 		}
-		widths[n-1] = tableWidth - base*(n-1)
+		widths[n-1] = budget - base*(n-1)
 	}
 	return widths, truncate
 }
 
-// Separator queues a horizontal rule across the table width.
 // Separator queues a horizontal rule sized to the table's rendered row
 // width (cell budget + inter-cell separators), so it spans the whole row
 // rather than under-spanning (PR #23 nit).
 func (t *Table) Separator() {
-	w := renderedWidth(len(t.widths))
+	w := renderedWidth(t.width, len(t.widths))
 	t.rows = append(t.rows, tableRow{separator: true, cells: []string{strings.Repeat("─", w)}})
 }
 
@@ -208,14 +240,14 @@ func (t *Table) Row(cells ...string) {
 // identifiers).
 func (t *Table) RowFull(label, value string) {
 	if label == "" {
-		t.rows = append(t.rows, tableRow{fullWidth: true, cells: []string{t.wrapCell(value, tableWidth, false)}})
+		t.rows = append(t.rows, tableRow{fullWidth: true, cells: []string{t.wrapCell(value, t.width, false)}})
 		return
 	}
 	labelW := 0
 	if len(t.widths) > 0 {
 		labelW = t.widths[0]
 	}
-	valW := tableWidth - labelW
+	valW := t.width - labelW
 	t.rows = append(t.rows, tableRow{fullWidth: true, cells: []string{
 		t.wrapCell(label, labelW, false),
 		t.wrapCell(value, valW, false),
@@ -363,7 +395,7 @@ func (t *Table) Flush() error {
 		for ln := 0; ln < maxLines; ln++ {
 			parts := make([]string, len(row.cells))
 			for i := range row.cells {
-				w := tableWidth
+				w := t.width
 				if i < len(t.widths) {
 					w = t.widths[i]
 				}
@@ -505,7 +537,10 @@ func (t *Table) dimItalic(s string) string {
 }
 
 // stateColor maps a core.State to its palette color (running→mint,
-// degraded→amber, transient→cyan, stopped→dim, failed→coral). Mirrors
+// degraded→amber, transient→cyan, stopped→pink, failed→coral). Stopped is
+// pink (a warm/red-family hue) rather than dim so a stopped harness draws
+// the eye to its state at a glance, like running/degraded/failed do; the
+// glyph (○ vs ✖) still distinguishes it from failed. Mirrors
 // theme.stateColor so the CLI and TUI never diverge.
 func stateColor(s core.State, pal theme.Palette) lipgloss.AdaptiveColor {
 	switch s {
@@ -516,41 +551,10 @@ func stateColor(s core.State, pal theme.Palette) lipgloss.AdaptiveColor {
 	case core.StateStarting, core.StateRestarting, core.StateStopping:
 		return pal.Cyan
 	case core.StateStopped:
-		return pal.Dim
+		return pal.Pink
 	case core.StateFailed:
 		return pal.Coral
 	default:
 		return pal.Fg
 	}
-}
-
-// --- terminal helpers for the CLI attach verb ------------------------------
-
-// termWidth returns the visible column count of stdout, or 80 if unknown.
-func termWidth() int {
-	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
-		return w
-	}
-	return 80
-}
-
-// termHeight returns the visible row count of stdout, or 24 if unknown.
-func termHeight() int {
-	if _, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil && h > 0 {
-		return h
-	}
-	return 24
-}
-
-// makeRaw puts f (typically os.Stdin) into raw mode so keystrokes pass
-// through to the harness untouched. Returns the previous state so it can be
-// restored. If raw mode isn't supported (no TTY), returns an error and the
-// caller falls back to cooked mode.
-func makeRaw(f *os.File) (*term.State, error) {
-	return term.MakeRaw(int(f.Fd()))
-}
-
-// restoreTerm restores f to the previously-captured state.
-func restoreTerm(f *os.File, state *term.State) {
-	_ = term.Restore(int(f.Fd()), state)
 }
