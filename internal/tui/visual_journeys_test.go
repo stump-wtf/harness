@@ -12,13 +12,8 @@ import (
 
 // journey builds a Model already driven into one visual state, ready to render.
 type journey struct {
-	name string
-	// minRows, when >0, is the shortest terminal this screen is expected to
-	// fit in. Below it, only the width invariant is checked (not height). Used
-	// for the new-harness form, which is intrinsically ~34 rows tall and does
-	// not yet reflow/scroll on short terminals (tracked as a follow-up).
-	minRows int
-	build   func(w, h int) *Model
+	name  string
+	build func(w, h int) *Model
 }
 
 // baseModel is a connected dashboard model with sample harnesses + profiles.
@@ -113,9 +108,7 @@ func journeys() []journey {
 			m.confirm = confirmState{action: ActionDelete, target: "crush-signal", prompt: confirmPrompt(ActionDelete, "crush-signal")}
 			return m
 		}},
-		// The Huh new-harness form is intrinsically ~34 rows; it doesn't yet
-		// reflow to short terminals, so only assert its height where it fits.
-		{name: "new-form", minRows: 36, build: func(w, h int) *Model {
+		{name: "new-form", build: func(w, h int) *Model {
 			m := baseModel(w, h)
 			m.openForm(false)
 			return m
@@ -163,16 +156,37 @@ func TestVisualJourneysFit(t *testing.T) {
 				}
 			}
 
-			// Height: skip for screens that legitimately don't fit this size
-			// (documented via minRows).
-			if j.minRows > 0 && h < j.minRows {
-				continue
-			}
+			// Height: every screen must fit — including the new-harness form,
+			// which scrolls within its overlay on short terminals (issue #25).
 			if len(lines) > h {
 				t.Errorf("%s %dx%d: %d rows exceed terminal height %d", j.name, w, h, len(lines), h)
 			}
 			if cy := emulate(view, w, h).CursorPosition().Y; cy >= h {
 				t.Errorf("%s %dx%d: content scrolled below the grid (cursor row %d)", j.name, w, h, cy)
+			}
+		}
+	}
+}
+
+// TestNewFormFitsShortTerminals is the direct guard for issue #25: the Huh
+// new-harness form is intrinsically ~34 rows, but bounded to the overlay
+// viewport it must fit (and scroll internally) at any terminal size — never
+// overflow and scroll the whole screen. Covers editing (pre-filled) too.
+func TestNewFormFitsShortTerminals(t *testing.T) {
+	for _, editing := range []bool{false, true} {
+		for _, s := range [][2]int{{120, 40}, {100, 30}, {80, 24}, {90, 20}, {70, 16}} {
+			w, h := s[0], s[1]
+			m := baseModel(w, h)
+			m.openForm(editing)
+			view := m.View()
+			lines := strings.Split(view, "\n")
+			if len(lines) > h {
+				t.Errorf("editing=%v %dx%d: form overlay %d rows exceed height %d", editing, w, h, len(lines), h)
+			}
+			for i, ln := range lines {
+				if lw := lipgloss.Width(ln); lw > w {
+					t.Errorf("editing=%v %dx%d: row %d width %d exceeds width %d", editing, w, h, i, lw, w)
+				}
 			}
 		}
 	}
