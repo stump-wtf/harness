@@ -236,7 +236,35 @@ func (m *Model) openForm(editing bool) (tea.Model, tea.Cmd) {
 	}
 	m.form = buildHarnessForm(&m.fInputs)
 	m.overlay = overlayForm
-	return m, m.form.Init()
+	// Init first, then bound the form to the space inside the overlay so it
+	// scrolls (huh's group viewport) instead of overflowing a short terminal
+	// (issue #25). Init sets width/height from f.width/f.height (both 0 → no-op),
+	// so sizing after it sticks.
+	return m, tea.Batch(m.form.Init(), m.sizeForm())
+}
+
+// formOverlaySize is the width/height available to the Huh form INSIDE the
+// overlay box: the terminal minus the box chrome. overlayBox draws a rounded
+// border (1 col/row each side) with horizontal padding of 1, and prepends a
+// title line + blank line — so width loses 4. Height loses one more: a bounded
+// huh group renders one row beyond the height it's given (its scroll line), so
+// reserve 5 rows to keep the whole overlay within the terminal. Clamped to ≥1.
+func (m *Model) formOverlaySize() (w, h int) {
+	return maxInt(1, m.w-4), maxInt(1, m.h-5)
+}
+
+// sizeForm feeds the Huh form a WindowSizeMsg carrying the in-overlay viewport
+// so it bounds itself to the terminal (huh caps a group to msg.Height and
+// scrolls when its content is taller). No-op when no form is open or the size
+// isn't known yet. Returns the form's resulting command.
+func (m *Model) sizeForm() tea.Cmd {
+	if m.form == nil || m.w == 0 || m.h == 0 {
+		return nil
+	}
+	w, h := m.formOverlaySize()
+	fm, cmd := m.form.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	m.form = fm
+	return cmd
 }
 
 // updateForm routes a message to the Huh form and, on completion, writes the

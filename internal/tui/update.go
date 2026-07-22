@@ -20,6 +20,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.help.Width = msg.Width
+		if m.overlay == overlayForm {
+			// Keep the Huh form bounded to the (resized) overlay viewport so it
+			// scrolls rather than overflowing a short terminal (issue #25).
+			return m, m.sizeForm()
+		}
 		if m.att != nil {
 			cols, rows := m.attachViewport()
 			m.att.view.resize(cols, rows)
