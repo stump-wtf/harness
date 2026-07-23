@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -67,7 +68,7 @@ type Project struct {
 	Root string
 	// ConfigPath is the absolute path to the project harness.toml.
 	ConfigPath string
-	// Harnesses is the parsed config (only Harnesses and HarnessOrder are
+	// Config is the parsed config (only Harnesses and HarnessOrder are
 	// populated; Profiles and Server are always zero because they are rejected
 	// at parse time).
 	Config *core.Config
@@ -171,16 +172,12 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 		if len(h.parts) >= 1 && h.parts[0] == "profile" {
 			return nil, forbiddenTableErr(filename, full, h.line)
 		}
-		// Also reject bare [profile] namespace parent.
-		if len(h.parts) == 1 && h.parts[0] == "profile" {
-			return nil, forbiddenTableErr(filename, "profile", h.line)
-		}
 	}
 
 	// Reuse the harness-namespace decode for [harness.*] and bare [name] tables.
-	// We use a modified Parse that only accepts harness tables and skips
-	// [server]/[profile.*]. Rather than modify Parse() (which the global
-	// config path depends on), we do a focused decode here.
+	// We do a focused decode here that only accepts harness tables and rejects
+	// [server]/[profile.*] (already validated above). This avoids modifying
+	// Parse() which the global config path depends on.
 	cfg := &core.Config{
 		Harnesses: map[string]core.Harness{},
 		Profiles:  map[string]core.Profile{},
