@@ -89,6 +89,32 @@ func (c *Client) Reload() ([]protocol.HarnessInfo, error) {
 	return out, json.Unmarshal(resp.Data, &out)
 }
 
+// ProjectUp registers (or reconciles) a project's harnesses under the
+// <project>/<name> namespace and starts newly-added ones, returning their
+// fresh states. Governing: ADR-0009 (project-scoped compose), SPEC-0004 REQ
+// "Project Control Operations". Failures come back as *protocol.ErrorMsg with
+// code project_collision / invalid_project.
+func (c *Client) ProjectUp(project string, harnesses []protocol.ProjectHarness) (protocol.ProjectUpData, error) {
+	resp, err := c.call(protocol.ControlReq{Op: protocol.OpProjectUp, Name: project, Harnesses: harnesses})
+	if err != nil {
+		return protocol.ProjectUpData{}, err
+	}
+	var out protocol.ProjectUpData
+	return out, json.Unmarshal(resp.Data, &out)
+}
+
+// ProjectDown stops and deregisters every harness of the named project
+// (SPEC-0004 REQ "Tear Down"); an unknown project comes back as a
+// *protocol.ErrorMsg with code unknown_project.
+func (c *Client) ProjectDown(project string) (protocol.ProjectDownData, error) {
+	resp, err := c.call(protocol.ControlReq{Op: protocol.OpProjectDown, Name: project})
+	if err != nil {
+		return protocol.ProjectDownData{}, err
+	}
+	var out protocol.ProjectDownData
+	return out, json.Unmarshal(resp.Data, &out)
+}
+
 // DaemonInfo returns daemon metadata.
 func (c *Client) DaemonInfo() (protocol.DaemonInfo, error) {
 	resp, err := c.call(protocol.ControlReq{Op: protocol.OpDaemonInfo})

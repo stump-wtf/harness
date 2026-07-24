@@ -55,6 +55,14 @@ type Manager struct {
 	order         []string
 	activeProfile string
 
+	// projects tracks every registered (ephemeral) project by name, and
+	// provenance maps a registered harness's full name to its owning project
+	// ("" / absent = global config) so `down`/`ps` scope correctly and a global
+	// reload never touches project harnesses. Governing: ADR-0009
+	// (project-scoped compose), SPEC-0004 REQ "Project Naming And Namespacing".
+	projects   map[string]*projectRecord
+	provenance map[string]string
+
 	dirty  chan struct{}
 	closed chan struct{}
 	wg     sync.WaitGroup
@@ -83,6 +91,8 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 		extraOutFor: opts.ExtraOutFor,
 		cfg:         cfg,
 		supervisors: make(map[string]*Supervisor),
+		projects:    make(map[string]*projectRecord),
+		provenance:  make(map[string]string),
 		dirty:       make(chan struct{}, 1),
 		closed:      make(chan struct{}),
 	}
@@ -292,15 +302,20 @@ func (m *Manager) Snapshots() []Snapshot {
 // Reload applies a new parsed config (ADR-0006 hot reload). Definition changes
 // to a running harness are staged (apply on next restart, SPEC-0003 REQ "Config
 // Change Application"); new harnesses are added (stopped); removed harnesses are
-// stopped and dropped.
+// stopped and dropped. Project-registered harnesses are untouched: the global
+// config is not their definition source, so a global reload never removes or
+// re-defines them (ADR-0009; SPEC-0004 REQ "Project Naming And Namespacing").
 func (m *Manager) Reload(newCfg *core.Config) {
 	m.mu.Lock()
 	old := m.supervisors
 	m.cfg = newCfg
-	// Stop + drop removed harnesses.
+	// Stop + drop removed harnesses (global provenance only).
 	var removed []*Supervisor
 	newOrder := make([]string, 0, len(newCfg.HarnessOrder))
 	for name := range old {
+		if m.provenance[name] != "" {
+			continue // project-owned; global reload never touches it
+		}
 		if _, ok := newCfg.Harnesses[name]; !ok {
 			removed = append(removed, old[name])
 			delete(old, name)
@@ -326,6 +341,13 @@ func (m *Manager) Reload(newCfg *core.Config) {
 	}
 	for _, h := range toAdd {
 		m.addSupervisorLocked(h)
+	}
+	// Keep project harnesses in the render order, after the globals, preserving
+	// their existing relative order (ADR-0009: registration order).
+	for _, name := range m.order {
+		if m.provenance[name] != "" {
+			newOrder = append(newOrder, name)
+		}
 	}
 	m.order = newOrder
 	m.mu.Unlock()
@@ -363,6 +385,9 @@ func (m *Manager) Close() {
 }
 
 // Save writes the current runtime state to state.json immediately (ADR-0007).
+// Project-registered harnesses are excluded: they are ephemeral, live-and-die
+// with project_up/project_down, and are not restored across a daemon restart
+// (ADR-0009 non-goal; SPEC-0004).
 func (m *Manager) Save() error {
 	ps := persistedState{
 		Version:       stateSchemaVersion,
@@ -371,6 +396,9 @@ func (m *Manager) Save() error {
 	}
 	for _, s := range m.snapshotSupervisors() {
 		snap := s.Snapshot()
+		if m.ProjectOf(snap.Name) != "" {
+			continue // ephemeral project harness (ADR-0009)
+		}
 		ph := persistedHarness{
 			Enabled:      snap.Enabled,
 			State:        snap.State,

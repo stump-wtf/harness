@@ -17,7 +17,9 @@ import (
 // MINOR is informational (additive changes only).
 const (
 	ProtoMajor = 1
-	ProtoMinor = 0
+	// ProtoMinor 1 added the project compose ops (project_up/project_down,
+	// SPEC-0004) — additive only.
+	ProtoMinor = 1
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -64,18 +66,44 @@ const (
 	OpUseProfile Op = "use_profile"
 	OpReload     Op = "reload"
 	OpDaemonInfo Op = "daemon_info"
+
+	// Project compose ops. Governing: ADR-0009 (project-scoped compose),
+	// SPEC-0004 REQ "Project Control Operations". project_up registers and
+	// starts (or reconciles) a project's harnesses under the <project>/<name>
+	// namespace; project_down stops and deregisters them.
+	OpProjectUp   Op = "project_up"
+	OpProjectDown Op = "project_down"
 )
 
 // ControlReq is a control-plane request. ID correlates the response; Name
-// targets a harness (start/stop/restart/describe/logs); Profile targets
-// use_profile; Lines/Follow tune logs.
+// targets a harness (start/stop/restart/describe/logs) or names the project
+// (project_up/project_down); Profile targets use_profile; Lines/Follow tune
+// logs; Harnesses carries the project definitions for project_up.
 type ControlReq struct {
-	ID      uint64 `json:"id"`
-	Op      Op     `json:"op"`
-	Name    string `json:"name,omitempty"`
-	Profile string `json:"profile,omitempty"`
-	Lines   int    `json:"lines,omitempty"`
-	Follow  bool   `json:"follow,omitempty"`
+	ID        uint64           `json:"id"`
+	Op        Op               `json:"op"`
+	Name      string           `json:"name,omitempty"`
+	Profile   string           `json:"profile,omitempty"`
+	Lines     int              `json:"lines,omitempty"`
+	Follow    bool             `json:"follow,omitempty"`
+	Harnesses []ProjectHarness `json:"harnesses,omitempty"`
+}
+
+// ProjectHarness is one project-local harness definition carried by a
+// project_up request. Fields mirror the [harness.*] schema (SPEC-0004 REQ
+// "Project File Schema"); Name is the project-local name — the daemon
+// namespaces it to <project>/<name> at registration (SPEC-0004 REQ "Project
+// Naming And Namespacing"). Governing: ADR-0009 (project-scoped compose).
+type ProjectHarness struct {
+	Name           string   `json:"name"`
+	Cmd            string   `json:"cmd"`
+	Args           []string `json:"args,omitempty"`
+	Workdir        string   `json:"workdir,omitempty"`
+	EnvFile        string   `json:"env_file,omitempty"`
+	RestartDelayMs int64    `json:"restart_delay_ms,omitempty"`
+	Backend        string   `json:"backend,omitempty"`
+	Description    string   `json:"description,omitempty"`
+	TmuxSocket     string   `json:"tmux_socket,omitempty"`
 }
 
 // ControlResp is a successful control-plane response. Data holds the op-specific
@@ -102,6 +130,11 @@ type HarnessInfo struct {
 	Cmd           string `json:"cmd,omitempty"`
 	Backend       string `json:"backend,omitempty"`
 	Description   string `json:"description,omitempty"`
+	// Project is the harness's provenance: the owning project's name for a
+	// project-registered harness (its Name is then "<project>/<local>"), empty
+	// for a global-config harness. Lets `down`/`ps` scope correctly (SPEC-0004
+	// REQ "Project Naming And Namespacing"; ADR-0009).
+	Project string `json:"project,omitempty"`
 }
 
 // ProfileInfo is one profile for the profiles op.
@@ -117,6 +150,22 @@ type ProfileInfo struct {
 type LogsData struct {
 	Name string `json:"name"`
 	Text string `json:"text"`
+}
+
+// ProjectUpData is the project_up response payload: the project's harnesses
+// (fully-qualified names) and their fresh states, so the CLI can print its
+// one-shot status table (SPEC-0004 REQ "Bring Up"). Governing: ADR-0009.
+type ProjectUpData struct {
+	Project   string        `json:"project"`
+	Harnesses []HarnessInfo `json:"harnesses"`
+}
+
+// ProjectDownData is the project_down response payload: the fully-qualified
+// harness names that were stopped and deregistered (SPEC-0004 REQ "Tear
+// Down"). Governing: ADR-0009.
+type ProjectDownData struct {
+	Project string   `json:"project"`
+	Removed []string `json:"removed"`
 }
 
 // DaemonInfo is the daemon_info response payload.
@@ -157,6 +206,20 @@ const (
 	ErrReload ErrCode = "reload_failed"
 	// ErrNoSession: an attach frame referenced an unknown session id.
 	ErrNoSession ErrCode = "no_session"
+
+	// Project compose errors (SPEC-0004 REQ "Project Control Operations";
+	// ADR-0009).
+
+	// ErrProjectCollision: project_up named a project that would shadow an
+	// existing bare global harness name; nothing was registered (SPEC-0004 REQ
+	// "Project Naming And Namespacing").
+	ErrProjectCollision ErrCode = "project_collision"
+	// ErrUnknownProject: project_down named a project the daemon has no record
+	// of; no state changed.
+	ErrUnknownProject ErrCode = "unknown_project"
+	// ErrInvalidProject: project_up carried an invalid project name or harness
+	// definition; nothing was registered.
+	ErrInvalidProject ErrCode = "invalid_project"
 )
 
 // ErrorMsg is a structured error frame body. ID echoes the request it answers

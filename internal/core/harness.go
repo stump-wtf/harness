@@ -53,6 +53,14 @@ type Harness struct {
 	TmuxSocket string
 }
 
+// QualifiedName returns the daemon-wide name a project-local harness registers
+// under: `<project>/<harness>` (e.g. "reduit/agent"). Bare global harness names
+// stay un-prefixed. Governing: ADR-0009 (project-scoped compose), SPEC-0004 REQ
+// "Project Naming And Namespacing".
+func QualifiedName(project, harness string) string {
+	return project + "/" + harness
+}
+
 // Profile is a named set of harnesses you "hop into" (ADR-0006). It is a view
 // plus an autostart set; membership is by harness name reference.
 type Profile struct {

@@ -66,7 +66,11 @@ func newRotatingLog(name string, cfg LogConfig) (*rotatingLog, error) {
 		cfg.MaxBackups = defaultMaxBackups
 	}
 	rl := &rotatingLog{name: name, cfg: cfg}
-	if err := os.MkdirAll(cfg.Dir, 0o755); err != nil {
+	// Create the log file's own parent, not just cfg.Dir: a project harness's
+	// name is namespaced ("reduit/agent"), so its log lives one level down at
+	// <dir>/reduit/agent.log (ADR-0009; SPEC-0004 REQ "Project Naming And
+	// Namespacing").
+	if err := os.MkdirAll(filepath.Dir(rl.path()), 0o755); err != nil {
 		return nil, fmt.Errorf("supervisor: create log dir: %w", err)
 	}
 	if err := rl.open(); err != nil {

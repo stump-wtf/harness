@@ -1,0 +1,104 @@
+package daemon
+
+// Governing: SPEC-0004 REQ "Project Control Operations" (project_up registers
+// + starts a project's harnesses under the <project>/<name> namespace and is
+// reconcile-idempotent; project_down stops + deregisters them; both fail with
+// structured ERROR frames carrying a machine code + human message) and REQ
+// "Error Handling Standards" (errors wrapped at the layer boundary, sentinel
+// mapping, structured key-value logging, no silent swallowing). ADR-0009
+// (project-scoped compose commands); ADR-0002 (ops mirror the CLI verbs).
+
+import (
+	"errors"
+	"time"
+
+	"github.com/charmbracelet/log"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/config"
+	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
+)
+
+// opProjectUp registers (or reconciles) req.Name's harnesses under the project
+// namespace and starts the newly-added ones, replying with the project's fresh
+// states so the CLI can print its status table (SPEC-0004 REQ "Bring Up"). Any
+// failure — name collision, invalid definition — is validated up front by the
+// Manager and leaves no partially-registered project behind.
+func (c *conn) opProjectUp(req protocol.ControlReq) {
+	defs := make([]core.Harness, 0, len(req.Harnesses))
+	for _, ph := range req.Harnesses {
+		defs = append(defs, harnessFromWire(ph))
+	}
+	if err := c.srv.mgr.ProjectUp(req.Name, defs); err != nil {
+		log.Warn("project up failed", "project", req.Name, "harnesses", len(defs), "err", err)
+		c.writeProjectError(req, err)
+		return
+	}
+	log.Info("project up", "project", req.Name, "harnesses", len(defs))
+	// The registered set changed; nudge subscribed TUIs to refresh their list
+	// (same signal a global config reload uses).
+	c.srv.broadcast(protocol.EventMsg{Kind: protocol.EvConfigReload})
+
+	names, _ := c.srv.mgr.ProjectHarnesses(req.Name)
+	infos := make([]protocol.HarnessInfo, 0, len(names))
+	for _, n := range names {
+		if snap, ok := c.srv.mgr.Snapshot(n); ok {
+			infos = append(infos, c.infoFor(snap))
+		}
+	}
+	c.respond(req, protocol.ProjectUpData{Project: req.Name, Harnesses: infos})
+}
+
+// opProjectDown stops and deregisters every harness of req.Name's project; the
+// daemon retains no record afterward (SPEC-0004 REQ "Tear Down"). An unknown
+// project is a structured ERROR with no state change.
+func (c *conn) opProjectDown(req protocol.ControlReq) {
+	removed, err := c.srv.mgr.ProjectDown(req.Name)
+	if err != nil {
+		log.Warn("project down failed", "project", req.Name, "err", err)
+		c.writeProjectError(req, err)
+		return
+	}
+	log.Info("project down", "project", req.Name, "removed", len(removed))
+	c.srv.broadcast(protocol.EventMsg{Kind: protocol.EvConfigReload})
+	c.respond(req, protocol.ProjectDownData{Project: req.Name, Removed: removed})
+}
+
+// writeProjectError maps the supervisor/config sentinels onto the SPEC-0004
+// wire codes and writes the structured ERROR frame (machine code + human
+// message the CLI can surface verbatim).
+func (c *conn) writeProjectError(req protocol.ControlReq, err error) {
+	code := protocol.ErrInternal
+	switch {
+	case errors.Is(err, config.ErrProjectNameCollision):
+		code = protocol.ErrProjectCollision
+	case errors.Is(err, config.ErrUnknownProject):
+		code = protocol.ErrUnknownProject
+	case errors.Is(err, supervisor.ErrInvalidProjectDef):
+		code = protocol.ErrInvalidProject
+	}
+	_ = c.pc.WriteError(req.ID, code, "%s", err.Error())
+}
+
+// harnessFromWire converts a wire ProjectHarness (project-local name) into the
+// core domain type; the Manager namespaces the name at registration. An empty
+// backend defaults to native (ADR-0003), matching the config parser; anything
+// else is validated by Manager.ProjectUp.
+func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
+	backend := core.Backend(ph.Backend)
+	if ph.Backend == "" {
+		backend = core.BackendNative
+	}
+	return core.Harness{
+		Name:         ph.Name,
+		Cmd:          ph.Cmd,
+		Args:         ph.Args,
+		Workdir:      ph.Workdir,
+		EnvFile:      ph.EnvFile,
+		RestartDelay: time.Duration(ph.RestartDelayMs) * time.Millisecond,
+		Backend:      backend,
+		Description:  ph.Description,
+		TmuxSocket:   ph.TmuxSocket,
+	}
+}

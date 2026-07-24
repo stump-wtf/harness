@@ -43,6 +43,10 @@ func (c *conn) handleControl(payload []byte) {
 		c.opReload(req)
 	case protocol.OpDaemonInfo:
 		c.respond(req, c.opDaemonInfo())
+	case protocol.OpProjectUp:
+		c.opProjectUp(req)
+	case protocol.OpProjectDown:
+		c.opProjectDown(req)
 	default:
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownOp, "unknown op %q", req.Op)
 	}
@@ -72,11 +76,15 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		ConfigChanged: snap.ConfigChanged,
 		PID:           snap.PID,
 	}
-	if h, ok := c.srv.mgr.Config().Harnesses[snap.Name]; ok {
+	// HarnessDef resolves global and project-registered definitions alike;
+	// Project carries provenance so clients can scope ps/down (SPEC-0004 REQ
+	// "Project Naming And Namespacing"; ADR-0009).
+	if h, ok := c.srv.mgr.HarnessDef(snap.Name); ok {
 		info.Cmd = h.Cmd
 		info.Backend = string(h.Backend)
 		info.Description = h.Description
 	}
+	info.Project = c.srv.mgr.ProjectOf(snap.Name)
 	return info
 }
 
