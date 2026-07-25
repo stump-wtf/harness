@@ -1,0 +1,85 @@
+---
+# The single end-to-end pipeline. One run, one dependency graph:
+#
+#   secret scan → lint → test → build → ai review
+#                                          │  (merge to main only)
+#                                    Gitea Pages
+#
+# Replaces three workflows that raced with no ordering between them
+# (aibot.yml, gitleaks.yaml, ci.yaml). Stage bodies live in stump.wtf/ci; this
+# file is just the graph.
+#
+# Ordering that matters:
+#   * Secrets first — a leaked credential must not wait behind a compile.
+#   * AI review LAST, behind the build. As its own workflow it fired the moment
+#     a PR opened and spent tokens reviewing code not yet shown to compile or
+#     pass tests.
+#   * Publishing is fenced to a push on main via the `main-only` gate, so a PR
+#     (including from a fork) can build the docs site but never deploy it.
+name: pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ${{ gitea.workflow }}-${{ gitea.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---- 1. secret scan ------------------------------------------------------
+  secrets:
+    uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/gitleaks.yaml@main
+    secrets: inherit
+
+  # ---- 2-4. lint + test + build -------------------------------------------
+  build:
+    needs: [secrets]
+    uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/go-service.yaml@main
+    with:
+      # `make check` is fmt + vet + test + race — the same four the old
+      # ci.yaml ran as separate steps, now driven through the Makefile so the
+      # local and CI gates cannot drift.
+      lint_cmd: make check
+      build_cmd: make build
+      # `make check` includes `race`, and -race REQUIRES cgo. The shared
+      # workflow defaults CGO_ENABLED=0 so pure-Go modules prove they stay
+      # cgo-free; inheriting that default would break the race target.
+      cgo_enabled: "1"
+    secrets: inherit
+
+  # ---- 5. ai review (PRs only, and only once the build is green) ----------
+  review:
+    needs: [build]
+    if: ${{ github.event_name == 'pull_request' }}
+    uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/aibot.yaml@main
+    secrets: inherit
+
+  # ---- 6. merge-to-main gate ----------------------------------------------
+  # One explicit gate rather than the same `if:` repeated on each release
+  # stage, so the fence is stated once and cannot drift.
+  main-only:
+    needs: [build]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate
+        run: echo "on main with a green build — releasing" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---- 7. Gitea Pages ------------------------------------------------------
+  # NEW: this repo has a Docusaurus docs-site/ but has never published it.
+  # Wired here because the pipeline is meant to be end-to-end; if you would
+  # rather it stay unpublished, delete this job — nothing else depends on it.
+  pages:
+    needs: [main-only]
+    uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/static-site.yaml@main
+    with:
+      working_directory: docs-site
+      source_dir: docs-site/build
+    secrets: inherit
