@@ -1,7 +1,9 @@
-# harness — Gitea CI (PRIMARY host). Go correctness gate: gofmt, vet, build,
-# test, and the race detector. Mirrors switchboard's ci.yaml shape. Foundation
-# story #5: static analysis (go vet), formatting enforcement (gofmt), and a
-# test runner with race detection, on every PR.
+---
+# The Go correctness gate, now calling the shared pipeline in stump.wtf/ci
+# instead of carrying its own copy. Same checks as before — gofmt, vet, build,
+# test, and the race detector — but the steps live in one place, so a fix to
+# the pipeline reaches every repo at once rather than needing a copy-paste
+# sweep (which is how the aibot fork-checkout bug survived in two repos).
 name: ci
 
 on:
@@ -18,31 +20,21 @@ concurrency:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: gofmt
-        run: |
-          # Exclude vendor/: third-party sources are not ours to reformat.
-          # go vet/build/test already ignore vendor in module mode.
-          unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '^vendor/'))
-          if [ -n "$unformatted" ]; then echo "unformatted:"; echo "$unformatted"; exit 1; fi
-      - name: go vet
-        run: go vet ./...
-      - name: build
-        run: go build ./...
-      - name: test
-        run: go test ./...
-      - name: test (race)
-        # Foundation is pure (config parser + state machine), but the daemon,
-        # supervisor, and protocol/attach packages that land next are built on
-        # goroutines, PTYs, and channels — so the race detector guards the whole
-        # module in CI from the start (SPEC-0002/0003). -race needs cgo, hence a
-        # C compiler on the runner.
-        env:
-          CGO_ENABLED: "1"
-        run: go test -race ./...
+    uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/go-service.yaml@main
+    with:
+      # gofmt excludes vendor/ (third-party sources are not ours to reformat);
+      # go vet/build/test already ignore it in module mode.
+      lint_cmd: |
+        unformatted=$(gofmt -l $(git ls-files '*.go' | grep -v '^vendor/'))
+        if [ -n "$unformatted" ]; then echo "unformatted:"; echo "$unformatted"; exit 1; fi
+        go vet ./...
+        go test ./...
+        go test -race ./...
+      build_cmd: go build ./...
+      # -race REQUIRES cgo. The shared workflow defaults CGO_ENABLED=0 so pure-Go
+      # modules prove they stay cgo-free; this repo must opt back in or the race
+      # job fails to link. The daemon, supervisor, and protocol/attach packages
+      # are built on goroutines, PTYs, and channels (SPEC-0002/0003), so the race
+      # detector guards the whole module.
+      cgo_enabled: "1"
+    secrets: inherit
