@@ -8,8 +8,13 @@ import type * as Preset from '@docusaurus/preset-classic';
 const PROJECT_TITLE = 'Harness';
 const PROJECT_TAGLINE = 'systemctl for your agents — architecture decisions & specifications';
 const GITHUB_URL = 'https://gitea.stump.rocks/stump.wtf/harness';
-const SITE_URL = 'https://stump-wtf.github.io';
-const BASE_URL = '/harness/';
+// Host this build is served from. The same build ships to more than one host —
+// only `url` differs, so CI supplies it via DOCS_URL. Default is GitHub Pages,
+// which is what serves the site today.
+const SITE_URL = process.env.DOCS_URL ?? 'https://stump-wtf.github.io';
+// Path prefix. Both GitHub Pages (/<repo>/) and Garage-backed Gitea Pages
+// (<owner>.pages.stump.rocks/<repo>/) serve under the repo name.
+const BASE_URL = process.env.DOCS_BASE_URL ?? '/harness/';
 // ============================================================
 
 const config: Config = {

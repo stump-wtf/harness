@@ -1,6 +1,6 @@
 # Build the Docusaurus docs site (docs-site/) and publish it to GitHub Pages.
-# Live at: https://stump-wtf.github.io/harness/  (same build as Gitea Pages; only `url` differs,
-# supplied via DOCS_URL — baseUrl is /switchboard/ on both).
+# Live at: https://stump-wtf.github.io/harness/ — baseUrl is /harness/, and the host is
+# supplied via DOCS_URL so the same build can ship to another Pages host unchanged.
 #
 # GitHub Pages deploys via the repo's own token (no external secret). Requires Pages to be enabled
 # for the repo with source = GitHub Actions. Note: GitHub Pages on a PRIVATE repo needs GitHub Pro
