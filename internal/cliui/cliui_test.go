@@ -3,6 +3,7 @@ package cliui
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 )
 
@@ -372,3 +374,47 @@ func mustBoxWidth(t *testing.T, level Level, title, msg, hint string) int {
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
+
+// TestClassifyNoProjectFound: the config.ErrNoProjectFound sentinel renders
+// through the classify/hint channel like every other actionable error
+// (SPEC-0004), with a down-specific hint when the wrap chain names the verb.
+func TestClassifyNoProjectFound(t *testing.T) {
+	t.Parallel()
+	base := fmt.Errorf("%w (searched from /x to /)", config.ErrNoProjectFound)
+
+	level, title, _, hint := classify(fmt.Errorf("harness down: %w", base))
+	if level != LevelError || title != "no project file" {
+		t.Errorf("classify(down) = %v %q, want LevelError %q", level, title, "no project file")
+	}
+	if !strings.Contains(hint, "harness down PROJECT") {
+		t.Errorf("down hint = %q, want the explicit-project escape hatch", hint)
+	}
+
+	_, title, _, hint = classify(fmt.Errorf("harness up: %w", base))
+	if title != "no project file" {
+		t.Errorf("classify(up) title = %q, want %q", title, "no project file")
+	}
+	if strings.Contains(hint, "harness down PROJECT") {
+		t.Errorf("up hint = %q, should not point at the down escape hatch", hint)
+	}
+	if hint == "" {
+		t.Error("up hint empty, want an actionable hint")
+	}
+}
+
+// TestClassifySurvivesVerbContextWrap: SPEC-0004 REQ "Error Handling
+// Standards" wraps errors with verb context at each layer boundary; the
+// classifier must keep matching the underlying shape through the %w chain
+// (daemon-unreachable stays "daemon not running", not a generic error).
+func TestClassifySurvivesVerbContextWrap(t *testing.T) {
+	t.Parallel()
+	_, dialErr := net.Dial("unix", "/tmp/harness-does-not-exist-wrap-test.sock")
+	if dialErr == nil {
+		t.Fatal("expected dial to fail")
+	}
+	wrapped := fmt.Errorf("harness ps: %w", dialErr)
+	_, title, _, _ := classify(wrapped)
+	if title != "daemon not running" {
+		t.Errorf("classify(wrapped dial error) title = %q, want %q", title, "daemon not running")
+	}
+}

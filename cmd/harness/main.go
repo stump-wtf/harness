@@ -151,18 +151,46 @@ func run(verb string, o verbOpts) error {
 	switch verb {
 	case "list":
 		return withClient(o, nil, cmdList)
+	case "ps":
+		// Compose-style listing: project-scoped inside a project, an alias
+		// for `list` outside one (SPEC-0004 REQ "Project-Scoped Verbs";
+		// ADR-0009). ps operates on the discovered scope only — a stray
+		// positional would be silently ignored, so reject it.
+		if err := rejectName(verb, o); err != nil {
+			return err
+		}
+		return cmdPs(o)
+	case "up":
+		// Bring the enclosing project up (SPEC-0004 REQ "Bring Up"). cmdUp
+		// discovers/parses the project file before dialing so a missing
+		// harness.toml never touches the daemon. Unlike `down [PROJECT]`, up
+		// takes no positional — reject one rather than silently bringing up
+		// the discovered project.
+		if err := rejectName(verb, o); err != nil {
+			return err
+		}
+		return cmdUp(o)
+	case "down":
+		// Tear the project down (SPEC-0004 REQ "Tear Down"). NAME is an
+		// optional explicit project (covers a deleted project file).
+		return cmdDown(o)
 	case "describe":
-		return withClient(o, requireName(o), cmdDescribe)
+		// Scoped like every other name-taking verb: a bare NAME inside a
+		// project resolves to <project>/NAME (SPEC-0004).
+		return withClient(o, requireName(o), projectScoped(verb, false, cmdDescribe))
 	case "start", "stop", "restart":
 		// `--all` replaces the required name with "every harness the daemon
-		// knows about"; without it, a name is still required.
+		// knows about"; without it, a name is still required. projectScoped
+		// resolves a bare NAME to <project>/NAME inside a project (SPEC-0004
+		// REQ "Project-Scoped Verbs") and is a no-op outside one; --all keeps
+		// its daemon-wide meaning for these lifecycle verbs only.
 		pre := requireName(o)
 		if o.all {
 			pre = nil
 		}
-		return withClient(o, pre, lifecycle(verb))
+		return withClient(o, pre, projectScoped(verb, true, lifecycle(verb)))
 	case "logs":
-		return withClient(o, requireName(o), cmdLogs)
+		return withClient(o, requireName(o), projectScoped(verb, false, cmdLogs))
 	case "profiles":
 		return withClient(o, nil, cmdProfiles)
 	case "use-profile":
@@ -173,11 +201,14 @@ func run(verb string, o verbOpts) error {
 		return withClient(o, nil, cmdDaemonInfo)
 	case "attach":
 		// Attach launches its own Bubble Tea program (alt-screen) and manages
-		// its own daemon connection, so it doesn't go through withClient.
+		// its own daemon connection, so it doesn't go through withClient. The
+		// bare-name resolution is purely lexical (no daemon round-trip), so
+		// applying it here is safe for the PTY path — only the name string
+		// handed to the TUI changes (SPEC-0004 project scoping).
 		if err := requireName(o); err != nil {
 			return err
 		}
-		return cmdAttach(o)
+		return cmdAttach(scopeVerbName(o, false))
 	default:
 		// Don't dump full usage() here — the styled error from cliui.Fatal
 		// is the single calm message; the hint points at the help flag.
@@ -189,6 +220,16 @@ func run(verb string, o verbOpts) error {
 func requireName(o verbOpts) error {
 	if o.name == "" {
 		return fmt.Errorf("this command requires a harness/profile name")
+	}
+	return nil
+}
+
+// rejectName errors when a no-argument verb (up, ps) was given a positional —
+// silently ignoring it would act on the discovered project while the user
+// believes they targeted something else.
+func rejectName(verb string, o verbOpts) error {
+	if o.name != "" {
+		return fmt.Errorf("harness %s takes no arguments (got %q)", verb, o.name)
 	}
 	return nil
 }
@@ -307,6 +348,18 @@ commands:
   daemon-info          show daemon status
   doctor               run health checks (config, daemon, harnesses)
   attach NAME [--ro]   attach to a harness's terminal
+
+project commands (repo-root harness.toml, discovered by walking up from cwd):
+  up                   register + start the project's harnesses (detached;
+                       takes no arguments)
+  down [PROJECT]       stop + deregister the project's harnesses
+  ps                   list the project's harnesses (alias for list outside
+                       a project; takes no arguments)
+
+  inside a project, a bare NAME to describe/logs/start/stop/restart/attach
+  always resolves to <project>/NAME (a NAME containing "/" is taken as fully
+  qualified); to address a global harness by its bare name, run the verb
+  outside the project directory.
 
 daemon subcommands (see "harness daemon --help"):
   daemon start         run the supervision daemon (ADR-0005 ExecStart; alias: run)

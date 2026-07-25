@@ -28,6 +28,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 )
 
@@ -403,6 +404,10 @@ func classify(err error) (Level, string, string, string) {
 		return LevelError, "no config file",
 			fmt.Sprintf("harness config not found%s.", where(path)),
 			"create one (see `harness daemon -h`) or pass --config PATH"
+	case isNoProject(err):
+		return LevelError, "no project file",
+			cleanMessage(err.Error()),
+			noProjectHint(err)
 	default:
 		return LevelError, "error", cleanMessage(err.Error()), ""
 	}
@@ -480,6 +485,25 @@ func IsMissingConfig(err error) bool {
 
 // isMissingConfig is the private alias kept for classify's switch.
 func isMissingConfig(err error) bool { return IsMissingConfig(err) }
+
+// isNoProject reports whether err is the config.ErrNoProjectFound sentinel —
+// a project verb (up/down/ps) ran outside any project directory. Matched via
+// errors.Is so verb-context wraps (SPEC-0004 REQ "Error Handling Standards")
+// pass through.
+func isNoProject(err error) bool {
+	return errors.Is(err, config.ErrNoProjectFound)
+}
+
+// noProjectHint picks the actionable follow-up for a no-project-file error.
+// `harness down` has an escape hatch (the explicit PROJECT positional, for the
+// "I deleted the project file first" case), so its hint names it; the other
+// project verbs can only be run inside a project.
+func noProjectHint(err error) string {
+	if strings.Contains(err.Error(), "harness down") {
+		return "pass the project explicitly: harness down PROJECT"
+	}
+	return "run this inside a project directory (one with a harness.toml)"
+}
 
 // pathFromError pulls the path out of an *os.PathError if present.
 func pathFromError(err error) string {
