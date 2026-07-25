@@ -15,9 +15,10 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
-// sleeperDef is a project-local wire definition for a long runner.
+// sleeperDef is a project-local wire definition for a long runner, enabled so
+// project_up starts it (SPEC-0004 REQ "Bring Up").
 func sleeperDef(name string) protocol.ProjectHarness {
-	return protocol.ProjectHarness{Name: name, Cmd: "sleep", Args: []string{"60"}}
+	return protocol.ProjectHarness{Name: name, Cmd: "sleep", Args: []string{"60"}, Enabled: true}
 }
 
 // errCodeOf asserts err is a structured *protocol.ErrorMsg and returns its code.
@@ -211,6 +212,120 @@ func TestProjectDownUnknownProjectError(t *testing.T) {
 	}
 	if len(hs) != 1 {
 		t.Errorf("state changed on unknown-project down: %+v", hs)
+	}
+}
+
+// TestProjectUpDisabledHarnessNotStarted: SPEC-0004 REQ "Project File Schema"
+// — the `enabled` field crosses the wire with its global meaning intact: a
+// disabled project harness registers (visible to describe/list) but is not
+// started by project_up.
+func TestProjectUpDisabledHarnessNotStarted(t *testing.T) {
+	td := newTestDaemon(t, sleeperTOML)
+	c := td.dial(t, nil)
+
+	idle := protocol.ProjectHarness{Name: "idle", Cmd: "sleep", Args: []string{"60"}} // enabled=false
+	data, err := c.ProjectUp("reduit", []protocol.ProjectHarness{sleeperDef("agent"), idle})
+	if err != nil {
+		t.Fatalf("ProjectUp: %v", err)
+	}
+	if len(data.Harnesses) != 2 {
+		t.Fatalf("ProjectUpData has %d harnesses, want 2 (disabled one still registers)", len(data.Harnesses))
+	}
+	waitForState(t, c, "reduit/agent", string(core.StateRunning))
+
+	h, err := c.Describe("reduit/idle")
+	if err != nil {
+		t.Fatalf("describe disabled harness: %v", err)
+	}
+	if h.State != string(core.StateStopped) || h.Enabled {
+		t.Errorf("disabled harness state=%s enabled=%v, want stopped/disabled", h.State, h.Enabled)
+	}
+}
+
+// TestDaemonInfoCountsProjectHarnesses: daemon_info reports the registered
+// count (globals + project harnesses), matching what list returns, and drops
+// back after project_down (SPEC-0004; ADR-0009).
+func TestDaemonInfoCountsProjectHarnesses(t *testing.T) {
+	td := newTestDaemon(t, sleeperTOML)
+	c := td.dial(t, nil)
+
+	if _, err := c.ProjectUp("reduit", []protocol.ProjectHarness{sleeperDef("agent"), sleeperDef("reviewer")}); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	di, err := c.DaemonInfo()
+	if err != nil {
+		t.Fatalf("DaemonInfo: %v", err)
+	}
+	if di.Harnesses != 3 {
+		t.Errorf("harnesses = %d after project_up, want 3 (1 global + 2 project)", di.Harnesses)
+	}
+	if _, err := c.ProjectDown("reduit"); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	di, err = c.DaemonInfo()
+	if err != nil {
+		t.Fatalf("DaemonInfo after down: %v", err)
+	}
+	if di.Harnesses != 1 {
+		t.Errorf("harnesses = %d after project_down, want 1", di.Harnesses)
+	}
+}
+
+// TestNoopReUpDoesNotBroadcast: a verbatim no-op re-up (the cron-style
+// `harness up` loop SPEC-0004 encourages) must not push config_reloaded to
+// subscribed clients — only a reconcile that changed something broadcasts.
+func TestNoopReUpDoesNotBroadcast(t *testing.T) {
+	td := newTestDaemon(t, sleeperTOML)
+	ctl := td.dial(t, nil)
+
+	// Disabled harnesses register without starting, so the event stream stays
+	// free of unrelated state-change noise.
+	defs := []protocol.ProjectHarness{{Name: "idle", Cmd: "sleep", Args: []string{"60"}}}
+	if _, err := ctl.ProjectUp("reduit", defs); err != nil {
+		t.Fatalf("first up: %v", err)
+	}
+
+	sub := td.dial(t, []string{"events"})
+	pc := sub.Conn()
+
+	if _, err := ctl.ProjectUp("reduit", defs); err != nil {
+		t.Fatalf("no-op re-up: %v", err)
+	}
+	// No event may arrive for the no-op window (pings excepted).
+	_ = sub.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+	for {
+		f, err := pc.ReadFrame()
+		if err != nil {
+			break // deadline hit: nothing was broadcast
+		}
+		switch f.Type {
+		case protocol.TypePing:
+			_ = pc.WriteFrame(protocol.TypePong, nil)
+		case protocol.TypeEvent:
+			ev := decodeEvent(t, f.Payload)
+			if ev.Kind == protocol.EvConfigReload {
+				t.Fatal("no-op re-up broadcast config_reloaded")
+			}
+		}
+	}
+
+	// The pipe still works: a real change (down) broadcasts.
+	if _, err := ctl.ProjectDown("reduit"); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	_ = sub.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		f, err := pc.ReadFrame()
+		if err != nil {
+			t.Fatalf("no config_reloaded after project_down: %v", err)
+		}
+		if f.Type == protocol.TypePing {
+			_ = pc.WriteFrame(protocol.TypePong, nil)
+			continue
+		}
+		if f.Type == protocol.TypeEvent && decodeEvent(t, f.Payload).Kind == protocol.EvConfigReload {
+			return
+		}
 	}
 }
 

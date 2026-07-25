@@ -11,6 +11,7 @@ package supervisor
 
 import (
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -39,15 +40,23 @@ type ManagerOptions struct {
 	// absence of this Manager-level ExtraOut wiring in the prior package; this
 	// closes it.
 	ExtraOutFor func(name string) io.Writer
+	// DropExtraOut, if set, releases whatever ExtraOutFor allocated for a
+	// harness name once that harness is deregistered (project_down, or a re-up
+	// that removed it). The daemon wires this to the attach Registry so an
+	// up→down→up cycle frees the vt emulator + scrollback ring instead of
+	// leaking it and resurfacing the dead incarnation's screen (SPEC-0004 REQ
+	// "Tear Down"; ADR-0009).
+	DropExtraOut func(name string)
 }
 
 // Manager supervises every harness in a config.
 type Manager struct {
-	policy      Policy
-	statePath   string
-	logCfg      LogConfig
-	bus         *Bus
-	extraOutFor func(name string) io.Writer
+	policy       Policy
+	statePath    string
+	logCfg       LogConfig
+	bus          *Bus
+	extraOutFor  func(name string) io.Writer
+	dropExtraOut func(name string)
 
 	mu            sync.Mutex
 	cfg           *core.Config
@@ -84,17 +93,18 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 	}
 
 	m := &Manager{
-		policy:      policy,
-		statePath:   statePath,
-		logCfg:      logCfg,
-		bus:         NewBus(),
-		extraOutFor: opts.ExtraOutFor,
-		cfg:         cfg,
-		supervisors: make(map[string]*Supervisor),
-		projects:    make(map[string]*projectRecord),
-		provenance:  make(map[string]string),
-		dirty:       make(chan struct{}, 1),
-		closed:      make(chan struct{}),
+		policy:       policy,
+		statePath:    statePath,
+		logCfg:       logCfg,
+		bus:          NewBus(),
+		extraOutFor:  opts.ExtraOutFor,
+		dropExtraOut: opts.DropExtraOut,
+		cfg:          cfg,
+		supervisors:  make(map[string]*Supervisor),
+		projects:     make(map[string]*projectRecord),
+		provenance:   make(map[string]string),
+		dirty:        make(chan struct{}, 1),
+		closed:       make(chan struct{}),
 	}
 	for _, name := range cfg.HarnessOrder {
 		m.addSupervisor(cfg.Harnesses[name])
@@ -108,17 +118,11 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 // Events"). The daemon later relays these over the control socket (SPEC-0002).
 func (m *Manager) Events() (<-chan Event, func()) { return m.bus.Subscribe() }
 
-// addSupervisor constructs and registers a supervisor for h. Caller holds no
-// lock on first build; used under lock during reload.
+// addSupervisor constructs and registers a global-config supervisor for h,
+// appending it to the render order. Only called single-threaded from
+// NewManager.
 func (m *Manager) addSupervisor(h core.Harness) {
-	s := New(h, Options{
-		Policy:   m.policy,
-		Bus:      m.bus,
-		LogCfg:   m.logCfg,
-		ExtraOut: m.extraOut(h.Name),
-		OnChange: m.markDirty,
-	})
-	m.supervisors[h.Name] = s
+	m.addSupervisorLocked(h, false)
 	m.order = append(m.order, h.Name)
 }
 
@@ -328,6 +332,15 @@ func (m *Manager) Reload(newCfg *core.Config) {
 	}
 	var toAdd []core.Harness
 	for _, name := range newCfg.HarnessOrder {
+		// Same provenance guard as the removal loop (defense-in-depth: the
+		// config parser rejects "/" in global names, so this is only reachable
+		// from a hand-built Config): a global definition must never clobber a
+		// project-owned supervisor, nor duplicate its name in the order — the
+		// project-preserve loop below already re-appends it (ADR-0009;
+		// SPEC-0004 REQ "Project Naming And Namespacing").
+		if m.provenance[name] != "" {
+			continue
+		}
 		h := newCfg.Harnesses[name]
 		newOrder = append(newOrder, name)
 		if s, ok := old[name]; ok {
@@ -340,7 +353,7 @@ func (m *Manager) Reload(newCfg *core.Config) {
 		}
 	}
 	for _, h := range toAdd {
-		m.addSupervisorLocked(h)
+		m.addSupervisorLocked(h, false)
 	}
 	// Keep project harnesses in the render order, after the globals, preserving
 	// their existing relative order (ADR-0009: registration order).
@@ -361,15 +374,24 @@ func (m *Manager) Reload(newCfg *core.Config) {
 	m.markDirty()
 }
 
-// addSupervisorLocked adds a supervisor without appending order (Reload rebuilds
-// order). Caller holds m.mu.
-func (m *Manager) addSupervisorLocked(h core.Harness) {
+// addSupervisorLocked adds a supervisor without appending order (callers
+// manage order). ephemeral marks a project-registered harness (ADR-0009): it
+// gets no persistence OnChange hook because project harnesses are never
+// written to state.json — every markDirty a crash-looping project harness
+// fired would just rewrite a byte-identical file. Lifecycle events still flow
+// through the shared Bus regardless. Caller holds m.mu (or is the
+// single-threaded NewManager construction path).
+func (m *Manager) addSupervisorLocked(h core.Harness, ephemeral bool) {
+	onChange := m.markDirty
+	if ephemeral {
+		onChange = nil
+	}
 	s := New(h, Options{
 		Policy:   m.policy,
 		Bus:      m.bus,
 		LogCfg:   m.logCfg,
 		ExtraOut: m.extraOut(h.Name),
-		OnChange: m.markDirty,
+		OnChange: onChange,
 	})
 	m.supervisors[h.Name] = s
 }
@@ -389,16 +411,31 @@ func (m *Manager) Close() {
 // with project_up/project_down, and are not restored across a daemon restart
 // (ADR-0009 non-goal; SPEC-0004).
 func (m *Manager) Save() error {
-	ps := persistedState{
-		Version:       stateSchemaVersion,
-		ActiveProfile: m.activeProfile,
-		Harnesses:     map[string]persistedHarness{},
-	}
-	for _, s := range m.snapshotSupervisors() {
-		snap := s.Snapshot()
-		if m.ProjectOf(snap.Name) != "" {
+	// Everything Save needs — the active profile and the provenance-filtered
+	// supervisor set — is collected under ONE lock hold, so a concurrent
+	// ProjectDown or UseProfile cannot interleave between the snapshot and the
+	// filter and smuggle an ephemeral project harness (or a stale profile)
+	// into state.json.
+	m.mu.Lock()
+	activeProfile := m.activeProfile
+	sups := make([]*Supervisor, 0, len(m.supervisors))
+	for _, name := range m.order {
+		if m.provenance[name] != "" {
 			continue // ephemeral project harness (ADR-0009)
 		}
+		if s, ok := m.supervisors[name]; ok {
+			sups = append(sups, s)
+		}
+	}
+	m.mu.Unlock()
+
+	ps := persistedState{
+		Version:       stateSchemaVersion,
+		ActiveProfile: activeProfile,
+		Harnesses:     map[string]persistedHarness{},
+	}
+	for _, s := range sups {
+		snap := s.Snapshot()
 		ph := persistedHarness{
 			Enabled:      snap.Enabled,
 			State:        snap.State,
@@ -452,6 +489,29 @@ func (m *Manager) get(name string) *Supervisor {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.supervisors[name]
+}
+
+// HarnessCount returns how many harnesses are actually registered — globals
+// plus live project harnesses, the same set Snapshots/list report (SPEC-0004;
+// ADR-0009). The daemon projects it into daemon_info so the count matches
+// what list shows.
+func (m *Manager) HarnessCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.supervisors)
+}
+
+// dropFromOrderLocked rebuilds m.order once without the given names: a single
+// linear filter instead of one scan-and-splice per name. Caller holds m.mu.
+func (m *Manager) dropFromOrderLocked(names []string) {
+	if len(names) == 0 {
+		return
+	}
+	gone := make(map[string]bool, len(names))
+	for _, n := range names {
+		gone[n] = true
+	}
+	m.order = slices.DeleteFunc(m.order, func(n string) bool { return gone[n] })
 }
 
 // snapshotSupervisors returns a stable slice of the current supervisors.

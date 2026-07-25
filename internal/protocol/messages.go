@@ -104,6 +104,11 @@ type ProjectHarness struct {
 	Backend        string   `json:"backend,omitempty"`
 	Description    string   `json:"description,omitempty"`
 	TmuxSocket     string   `json:"tmux_socket,omitempty"`
+	// Enabled mirrors the schema's `enabled`: a disabled harness is registered
+	// (visible to list/ps) but not started by project_up — the same way the
+	// global config's `enabled` gates autostart (SPEC-0004 REQ "Project File
+	// Schema": identical field meanings).
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // ControlResp is a successful control-plane response. Data holds the op-specific

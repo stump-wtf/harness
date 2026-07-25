@@ -8,6 +8,11 @@ package supervisor
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,11 +23,14 @@ import (
 // loopScript is a harness body that stays up until stopped.
 const loopScript = "while true; do sleep 0.02; done"
 
-// projectDefs builds project-local looping harness definitions.
+// projectDefs builds project-local looping harness definitions, enabled so
+// ProjectUp starts them (SPEC-0004 REQ "Bring Up").
 func projectDefs(names ...string) []core.Harness {
 	out := make([]core.Harness, 0, len(names))
 	for _, n := range names {
-		out = append(out, shHarness(n, loopScript, 0))
+		h := shHarness(n, loopScript, 0)
+		h.Enabled = true
+		out = append(out, h)
 	}
 	return out
 }
@@ -36,15 +44,6 @@ func snapshotNames(m *Manager) []string {
 	return out
 }
 
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
 // ---- SPEC-0004 REQ "Project Naming And Namespacing" -----------------------
 
 // TestProjectUpRegistersNamespacedWithProvenance: harnesses register
@@ -52,8 +51,17 @@ func contains(list []string, s string) bool {
 // bare with empty provenance.
 func TestProjectUpRegistersNamespacedWithProvenance(t *testing.T) {
 	m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
-	if err := m.ProjectUp("reduit", projectDefs("agent", "reviewer")); err != nil {
+	res, err := m.ProjectUp("reduit", projectDefs("agent", "reviewer"))
+	if err != nil {
 		t.Fatalf("ProjectUp: %v", err)
+	}
+	// The result carries the registered set, computed under the manager lock,
+	// and flags the first up as a change.
+	if len(res.Names) != 2 || res.Names[0] != "reduit/agent" || res.Names[1] != "reduit/reviewer" {
+		t.Errorf("res.Names = %v, want [reduit/agent reduit/reviewer]", res.Names)
+	}
+	if !res.Changed {
+		t.Error("first up not flagged Changed")
 	}
 
 	for _, full := range []string{"reduit/agent", "reduit/reviewer"} {
@@ -71,9 +79,11 @@ func TestProjectUpRegistersNamespacedWithProvenance(t *testing.T) {
 	if !ok || len(names) != 2 || names[0] != "reduit/agent" || names[1] != "reduit/reviewer" {
 		t.Errorf("ProjectHarnesses = %v ok=%v, want [reduit/agent reduit/reviewer] true", names, ok)
 	}
-	// Definitions are resolvable under the full name (drives describe/list).
-	if h, ok := m.HarnessDef("reduit/agent"); !ok || h.Cmd != "sh" {
-		t.Errorf("HarnessDef(reduit/agent) = %+v ok=%v, want sh definition", h, ok)
+	// Definitions are resolvable under the full name (drives describe/list),
+	// with provenance from the same lock hold.
+	if h, project, ok := m.HarnessRecord("reduit/agent"); !ok || h.Cmd != "sh" || project != "reduit" {
+		t.Errorf("HarnessRecord(reduit/agent) = %+v project=%q ok=%v, want sh definition owned by reduit",
+			h, project, ok)
 	}
 	// ProjectUp starts the new harnesses (SPEC-0004 REQ "Bring Up").
 	waitFor(t, 3*time.Second, "project harnesses running", func() bool {
@@ -87,10 +97,10 @@ func TestProjectUpRegistersNamespacedWithProvenance(t *testing.T) {
 // harness name" — reduit/agent and spotter/agent run concurrently.
 func TestProjectCoexistenceSameLocalName(t *testing.T) {
 	m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
-	if err := m.ProjectUp("reduit", projectDefs("agent")); err != nil {
+	if _, err := m.ProjectUp("reduit", projectDefs("agent")); err != nil {
 		t.Fatalf("ProjectUp reduit: %v", err)
 	}
-	if err := m.ProjectUp("spotter", projectDefs("agent")); err != nil {
+	if _, err := m.ProjectUp("spotter", projectDefs("agent")); err != nil {
 		t.Fatalf("ProjectUp spotter: %v", err)
 	}
 	waitFor(t, 3*time.Second, "both projects' agents running", func() bool {
@@ -109,7 +119,7 @@ func TestProjectUpCollisionWithGlobalName(t *testing.T) {
 	m := newTestManager(t, managerCfg(shHarness("reduit", loopScript, 0)))
 	before := snapshotNames(m)
 
-	err := m.ProjectUp("reduit", projectDefs("agent", "reviewer"))
+	_, err := m.ProjectUp("reduit", projectDefs("agent", "reviewer"))
 	if !errors.Is(err, config.ErrProjectNameCollision) {
 		t.Fatalf("ProjectUp err = %v, want ErrProjectNameCollision", err)
 	}
@@ -126,6 +136,33 @@ func TestProjectUpCollisionWithGlobalName(t *testing.T) {
 	}
 }
 
+// TestProjectUpReconcileSurvivesLaterGlobalCollision: the bare-global-shadow
+// check applies only to a NEW registration — a global harness named like the
+// project that arrives later via reload must not wedge reconcile of the
+// already-registered project (SPEC-0004 REQ "Bring Up": up SHALL be
+// idempotent/reconciling).
+func TestProjectUpReconcileSurvivesLaterGlobalCollision(t *testing.T) {
+	m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
+	if _, err := m.ProjectUp("reduit", projectDefs("agent")); err != nil {
+		t.Fatalf("ProjectUp: %v", err)
+	}
+	// A later global reload introduces [harness.reduit].
+	m.Reload(managerCfg(shHarness("global", loopScript, 0), shHarness("reduit", loopScript, 0)))
+
+	// Reconcile of the live project still works.
+	res, err := m.ProjectUp("reduit", projectDefs("agent", "watcher"))
+	if err != nil {
+		t.Fatalf("re-up after global name collision: %v", err)
+	}
+	if len(res.Names) != 2 {
+		t.Errorf("res.Names = %v, want 2 harnesses", res.Names)
+	}
+	// A FRESH project shadowing a global name still collides.
+	if _, err := m.ProjectUp("global", projectDefs("x")); !errors.Is(err, config.ErrProjectNameCollision) {
+		t.Errorf("fresh colliding project err = %v, want ErrProjectNameCollision", err)
+	}
+}
+
 // TestProjectUpInvalidDefsNoPartialState: table-driven invalid payloads all
 // fail with ErrInvalidProjectDef and register nothing.
 func TestProjectUpInvalidDefsNoPartialState(t *testing.T) {
@@ -136,9 +173,16 @@ func TestProjectUpInvalidDefsNoPartialState(t *testing.T) {
 	}{
 		{"empty project name", "", projectDefs("agent")},
 		{"slash in project name", "redu/it", projectDefs("agent")},
+		// "." and ".." are reserved: registered names derive log paths, so
+		// ".." would escape the log dir and "." would collide with a bare
+		// global harness's log file.
+		{"dot project name", ".", projectDefs("agent")},
+		{"dotdot project name", "..", projectDefs("agent")},
 		{"no harnesses", "reduit", nil},
 		{"empty harness name", "reduit", []core.Harness{shHarness("", loopScript, 0)}},
 		{"slash in harness name", "reduit", []core.Harness{shHarness("a/b", loopScript, 0)}},
+		{"dot harness name", "reduit", []core.Harness{shHarness(".", loopScript, 0)}},
+		{"dotdot harness name", "reduit", []core.Harness{shHarness("..", loopScript, 0)}},
 		{"duplicate harness", "reduit", projectDefs("agent", "agent")},
 		{"missing cmd", "reduit", []core.Harness{{Name: "agent", Backend: core.BackendNative}}},
 		{"invalid backend", "reduit", []core.Harness{{Name: "agent", Cmd: "sh", Backend: "bogus"}}},
@@ -155,7 +199,7 @@ func TestProjectUpInvalidDefsNoPartialState(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
-			err := m.ProjectUp(tc.project, tc.defs)
+			_, err := m.ProjectUp(tc.project, tc.defs)
 			if !errors.Is(err, ErrInvalidProjectDef) {
 				t.Fatalf("ProjectUp err = %v, want ErrInvalidProjectDef", err)
 			}
@@ -176,7 +220,7 @@ func TestProjectUpInvalidDefsNoPartialState(t *testing.T) {
 // process (SPEC-0003 REQ "Config Change Application").
 func TestProjectUpReconciles(t *testing.T) {
 	m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
-	if err := m.ProjectUp("reduit", projectDefs("agent", "reviewer")); err != nil {
+	if _, err := m.ProjectUp("reduit", projectDefs("agent", "reviewer")); err != nil {
 		t.Fatalf("first ProjectUp: %v", err)
 	}
 	waitFor(t, 3*time.Second, "agent running", func() bool {
@@ -187,8 +231,15 @@ func TestProjectUpReconciles(t *testing.T) {
 
 	// Re-up: agent changes (new args), reviewer is gone, watcher is new.
 	changed := shHarness("agent", "while true; do sleep 0.05; done", 0)
-	if err := m.ProjectUp("reduit", []core.Harness{changed, shHarness("watcher", loopScript, 0)}); err != nil {
+	changed.Enabled = true
+	watcher := shHarness("watcher", loopScript, 0)
+	watcher.Enabled = true
+	res, err := m.ProjectUp("reduit", []core.Harness{changed, watcher})
+	if err != nil {
 		t.Fatalf("re-up: %v", err)
+	}
+	if !res.Changed {
+		t.Error("reconcile that added/removed/changed harnesses not flagged Changed")
 	}
 
 	// Removed: reviewer stopped + deregistered.
@@ -219,10 +270,11 @@ func TestProjectUpReconciles(t *testing.T) {
 }
 
 // TestProjectUpIdempotentUnchanged: an identical re-up is a clean no-op — no
-// error, no bounce, no ConfigChanged flag.
+// error, no bounce, no ConfigChanged flag, and Changed=false so the daemon
+// skips its config_reloaded broadcast.
 func TestProjectUpIdempotentUnchanged(t *testing.T) {
 	m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
-	if err := m.ProjectUp("reduit", projectDefs("agent")); err != nil {
+	if _, err := m.ProjectUp("reduit", projectDefs("agent")); err != nil {
 		t.Fatalf("first ProjectUp: %v", err)
 	}
 	waitFor(t, 3*time.Second, "agent running", func() bool {
@@ -231,8 +283,12 @@ func TestProjectUpIdempotentUnchanged(t *testing.T) {
 	})
 	pid := func() int { s, _ := m.Snapshot("reduit/agent"); return s.PID }()
 
-	if err := m.ProjectUp("reduit", projectDefs("agent")); err != nil {
+	res, err := m.ProjectUp("reduit", projectDefs("agent"))
+	if err != nil {
 		t.Fatalf("identical re-up: %v", err)
+	}
+	if res.Changed {
+		t.Error("verbatim no-op re-up flagged Changed (would broadcast for nothing)")
 	}
 	snap, ok := m.Snapshot("reduit/agent")
 	if !ok {
@@ -246,6 +302,34 @@ func TestProjectUpIdempotentUnchanged(t *testing.T) {
 	}
 }
 
+// TestProjectUpDisabledHarnessRegistersWithoutStart: SPEC-0004 REQ "Project
+// File Schema" — `enabled = false` has the identical meaning it has in the
+// global config: the harness registers (visible to list/ps) but is not
+// started by project_up.
+func TestProjectUpDisabledHarnessRegistersWithoutStart(t *testing.T) {
+	m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
+	on := shHarness("agent", loopScript, 0)
+	on.Enabled = true
+	off := shHarness("helper", loopScript, 0) // Enabled false: register only
+	if _, err := m.ProjectUp("reduit", []core.Harness{on, off}); err != nil {
+		t.Fatalf("ProjectUp: %v", err)
+	}
+	waitFor(t, 3*time.Second, "enabled harness running", func() bool {
+		s, _ := m.Snapshot("reduit/agent")
+		return s.State == core.StateRunning
+	})
+	snap, ok := m.Snapshot("reduit/helper")
+	if !ok {
+		t.Fatal("disabled harness not registered")
+	}
+	if snap.State != core.StateStopped || snap.Enabled {
+		t.Errorf("disabled harness state=%s enabled=%v, want stopped/disabled", snap.State, snap.Enabled)
+	}
+	if h, ok := m.HarnessDef("reduit/helper"); !ok || h.Enabled {
+		t.Errorf("HarnessDef(reduit/helper) = %+v ok=%v, want disabled definition", h, ok)
+	}
+}
+
 // ---- SPEC-0004 REQ "Tear Down" ---------------------------------------------
 
 // TestProjectDownStopsAndForgets: down stops every project harness, returns
@@ -253,7 +337,7 @@ func TestProjectUpIdempotentUnchanged(t *testing.T) {
 func TestProjectDownStopsAndForgets(t *testing.T) {
 	m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
 	m.Start("global")
-	if err := m.ProjectUp("reduit", projectDefs("agent", "reviewer")); err != nil {
+	if _, err := m.ProjectUp("reduit", projectDefs("agent", "reviewer")); err != nil {
 		t.Fatalf("ProjectUp: %v", err)
 	}
 	waitFor(t, 3*time.Second, "project running", func() bool {
@@ -265,7 +349,7 @@ func TestProjectDownStopsAndForgets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProjectDown: %v", err)
 	}
-	if len(removed) != 2 || !contains(removed, "reduit/agent") || !contains(removed, "reduit/reviewer") {
+	if len(removed) != 2 || !slices.Contains(removed, "reduit/agent") || !slices.Contains(removed, "reduit/reviewer") {
 		t.Errorf("removed = %v, want both reduit harnesses", removed)
 	}
 	if _, ok := m.Snapshot("reduit/agent"); ok {
@@ -284,6 +368,68 @@ func TestProjectDownStopsAndForgets(t *testing.T) {
 	// A second down now fails: the daemon has no record (SPEC-0004).
 	if _, err := m.ProjectDown("reduit"); !errors.Is(err, config.ErrUnknownProject) {
 		t.Errorf("second down err = %v, want ErrUnknownProject", err)
+	}
+}
+
+// TestProjectDownReleasesLogsAndExtraOut: SPEC-0004 REQ "Tear Down" — after
+// down (and after a re-up drops a harness) the daemon retains no record: the
+// harness's log tree is removed and its ExtraOut resource (the attach Mux) is
+// dropped via the DropExtraOut hook.
+func TestProjectDownReleasesLogsAndExtraOut(t *testing.T) {
+	dir := t.TempDir()
+	logDir := filepath.Join(dir, "logs")
+	var mu sync.Mutex
+	var dropped []string
+	m := NewManager(managerCfg(shHarness("global", loopScript, 0)), ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: filepath.Join(dir, "state.json"),
+		LogDir:    logDir,
+		DropExtraOut: func(name string) {
+			mu.Lock()
+			dropped = append(dropped, name)
+			mu.Unlock()
+		},
+	})
+	t.Cleanup(m.Close)
+
+	if _, err := m.ProjectUp("reduit", projectDefs("agent", "reviewer")); err != nil {
+		t.Fatalf("ProjectUp: %v", err)
+	}
+	waitFor(t, 3*time.Second, "project logs exist", func() bool {
+		_, errA := os.Stat(filepath.Join(logDir, "reduit", "agent.log"))
+		_, errB := os.Stat(filepath.Join(logDir, "reduit", "reviewer.log"))
+		return errA == nil && errB == nil
+	})
+
+	// A re-up that drops reviewer releases its resources but keeps agent's.
+	if _, err := m.ProjectUp("reduit", projectDefs("agent")); err != nil {
+		t.Fatalf("re-up: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(logDir, "reduit", "reviewer.log")); !os.IsNotExist(err) {
+		t.Errorf("removed harness's log survives re-up: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(logDir, "reduit", "agent.log")); err != nil {
+		t.Errorf("continuing harness's log removed by re-up: %v", err)
+	}
+	mu.Lock()
+	droppedNow := append([]string(nil), dropped...)
+	mu.Unlock()
+	if !slices.Contains(droppedNow, "reduit/reviewer") || slices.Contains(droppedNow, "reduit/agent") {
+		t.Errorf("dropped after re-up = %v, want reviewer only", droppedNow)
+	}
+
+	// Down removes the whole project log subtree and drops the rest.
+	if _, err := m.ProjectDown("reduit"); err != nil {
+		t.Fatalf("ProjectDown: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(logDir, "reduit")); !os.IsNotExist(err) {
+		t.Errorf("project log directory survives down: %v", err)
+	}
+	mu.Lock()
+	droppedNow = append(dropped[:0:0], dropped...)
+	mu.Unlock()
+	if !slices.Contains(droppedNow, "reduit/agent") {
+		t.Errorf("dropped after down = %v, want reduit/agent included", droppedNow)
 	}
 }
 
@@ -311,7 +457,7 @@ func TestGlobalReloadPreservesProjectHarnesses(t *testing.T) {
 		shHarness("keep", loopScript, 0),
 		shHarness("drop", loopScript, 0),
 	))
-	if err := m.ProjectUp("reduit", projectDefs("agent")); err != nil {
+	if _, err := m.ProjectUp("reduit", projectDefs("agent")); err != nil {
 		t.Fatalf("ProjectUp: %v", err)
 	}
 	waitFor(t, 3*time.Second, "agent running", func() bool {
@@ -334,7 +480,116 @@ func TestGlobalReloadPreservesProjectHarnesses(t *testing.T) {
 	if m.ProjectOf("reduit/agent") != "reduit" {
 		t.Error("provenance lost across global reload")
 	}
-	if !contains(snapshotNames(m), "reduit/agent") {
+	if !slices.Contains(snapshotNames(m), "reduit/agent") {
 		t.Error("project harness missing from render order after reload")
+	}
+}
+
+// TestReloadIgnoresGlobalNameShadowingProjectHarness: defense-in-depth for the
+// reverse collision — a (hand-built) global config carrying a harness whose
+// name equals a registered project harness's fully-qualified name must not
+// clobber the project supervisor's definition nor duplicate it in the render
+// order (ADR-0009; SPEC-0004 REQ "Project Naming And Namespacing"). The
+// config parser rejects "/" in names, so only an injected Config can carry one.
+func TestReloadIgnoresGlobalNameShadowingProjectHarness(t *testing.T) {
+	m := newTestManager(t, managerCfg(shHarness("keep", loopScript, 0)))
+	if _, err := m.ProjectUp("reduit", projectDefs("agent")); err != nil {
+		t.Fatalf("ProjectUp: %v", err)
+	}
+	waitFor(t, 3*time.Second, "agent running", func() bool {
+		s, _ := m.Snapshot("reduit/agent")
+		return s.State == core.StateRunning
+	})
+
+	shadow := shHarness("reduit/agent", "sleep 60", 0) // different definition
+	m.Reload(managerCfg(shHarness("keep", loopScript, 0), shadow))
+
+	names := snapshotNames(m)
+	count := 0
+	for _, n := range names {
+		if n == "reduit/agent" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("reduit/agent appears %d times in render order %v, want exactly once", count, names)
+	}
+	// The project's definition wins: no staged change from the shadow global.
+	snap, ok := m.Snapshot("reduit/agent")
+	if !ok {
+		t.Fatal("project harness lost after shadowing reload")
+	}
+	if snap.ConfigChanged {
+		t.Error("global shadow definition staged onto the project supervisor")
+	}
+	if h, project, ok := m.HarnessRecord("reduit/agent"); !ok || project != "reduit" || len(h.Args) < 2 || h.Args[1] != loopScript {
+		t.Errorf("HarnessRecord resolved shadow global (h=%+v project=%q ok=%v), want project definition", h, project, ok)
+	}
+}
+
+// ---- ADR-0009: project harnesses never reach state.json --------------------
+
+// TestSaveExcludesProjectHarnessesUnderChurn: Save runs concurrently with
+// project up/down churn and profile switches; state.json must never contain a
+// project harness entry, and the whole dance must stay race-clean under
+// `go test -race`.
+func TestSaveExcludesProjectHarnessesUnderChurn(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	m := NewManager(managerCfg(shHarness("global", loopScript, 0)), ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    filepath.Join(dir, "logs"),
+	})
+	t.Cleanup(m.Close)
+
+	// Disabled defs register/deregister without spawning processes, keeping
+	// the churn loop fast.
+	defs := []core.Harness{shHarness("agent", loopScript, 0)}
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = m.Save()
+			m.UseProfile("default")
+		}
+	}()
+	for i := 0; i < 25; i++ {
+		if _, err := m.ProjectUp("reduit", defs); err != nil {
+			t.Errorf("ProjectUp #%d: %v", i, err)
+			break
+		}
+		if _, err := m.ProjectDown("reduit"); err != nil {
+			t.Errorf("ProjectDown #%d: %v", i, err)
+			break
+		}
+	}
+	close(stop)
+	wg.Wait()
+
+	// A final up + save: the registered project harness must be excluded.
+	if _, err := m.ProjectUp("reduit", defs); err != nil {
+		t.Fatalf("final ProjectUp: %v", err)
+	}
+	if err := m.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read state.json: %v", err)
+	}
+	if strings.Contains(string(data), "reduit/") {
+		t.Errorf("project harness persisted to state.json (ADR-0009):\n%s", data)
+	}
+	if !strings.Contains(string(data), "global") {
+		t.Errorf("global harness missing from state.json:\n%s", data)
 	}
 }

@@ -119,6 +119,86 @@ func TestRotatingLogPruneLeavesSiblingHarnessAlone(t *testing.T) {
 	}
 }
 
+// A namespaced project harness ("reduit/agent") rotates into its project
+// subdirectory; prune must recognize those backups as its own (the name's
+// directory part is stripped by filepath.Base) or they accumulate forever
+// (ADR-0009; SPEC-0004 REQ "Project Naming And Namespacing").
+func TestRotatingLogPrunesNamespacedBackups(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "reduit")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-seed old rotated backups with valid stamps, as past rotations left.
+	for _, stamp := range []string{
+		"20260101T000000.000", "20260102T000000.000", "20260103T000000.000",
+	} {
+		if err := os.WriteFile(filepath.Join(sub, "agent-"+stamp+".log"), []byte("old\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rl, err := newRotatingLog("reduit/agent", LogConfig{Dir: dir, MaxBytes: 16, MaxBackups: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rl.Close()
+	// Force one rotation so pruneBackups runs.
+	for i := 0; i < 2; i++ {
+		if _, err := rl.Write([]byte("0123456789")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	backups, _ := filepath.Glob(filepath.Join(sub, "agent-*.log"))
+	if len(backups) == 0 {
+		t.Fatal("expected a rotated backup for the namespaced harness")
+	}
+	if len(backups) > 1 {
+		t.Fatalf("MaxBackups=1 not enforced for namespaced harness: %d backups %v", len(backups), backups)
+	}
+}
+
+// removeLogArtifacts is the tear-down path for deregistered project harnesses
+// (SPEC-0004 REQ "Tear Down"): active log + backups go, the project directory
+// goes only once empty, and sibling harnesses are untouched.
+func TestRemoveLogArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	rl, err := newRotatingLog("reduit/agent", LogConfig{Dir: dir, MaxBytes: 16, MaxBackups: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ { // force at least one rotation
+		if _, err := rl.Write([]byte("0123456789")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rl.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sibling := filepath.Join(dir, "reduit", "other.log")
+	if err := os.WriteFile(sibling, []byte("sibling\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	removeLogArtifacts(dir, "reduit/agent")
+
+	if leftovers, _ := filepath.Glob(filepath.Join(dir, "reduit", "agent*")); len(leftovers) != 0 {
+		t.Errorf("agent log artifacts survive removal: %v", leftovers)
+	}
+	if _, err := os.Stat(sibling); err != nil {
+		t.Errorf("sibling harness log removed: %v", err)
+	}
+	// Directory kept while the sibling lives in it, dropped once empty.
+	if _, err := os.Stat(filepath.Join(dir, "reduit")); err != nil {
+		t.Fatalf("non-empty project log dir removed: %v", err)
+	}
+	removeLogArtifacts(dir, "reduit/other")
+	if _, err := os.Stat(filepath.Join(dir, "reduit")); !os.IsNotExist(err) {
+		t.Errorf("empty project log dir not removed: %v", err)
+	}
+}
+
 func TestRotatingLogWriteAfterClose(t *testing.T) {
 	dir := t.TempDir()
 	rl, err := newRotatingLog("closed", LogConfig{Dir: dir})

@@ -93,6 +93,9 @@ func runDaemon(args []string) {
 	reg := attach.NewRegistry(*ringLines)
 	mgr := supervisor.NewManager(cfg, supervisor.ManagerOptions{
 		ExtraOutFor: reg.WriterFor,
+		// Deregistered project harnesses release their Mux so ephemeral
+		// projects never leak emulators/scrollback (SPEC-0004 REQ "Tear Down").
+		DropExtraOut: reg.Remove,
 	})
 	reg.SetController(mgr)
 

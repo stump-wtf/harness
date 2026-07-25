@@ -30,19 +30,26 @@ func (c *conn) opProjectUp(req protocol.ControlReq) {
 	for _, ph := range req.Harnesses {
 		defs = append(defs, harnessFromWire(ph))
 	}
-	if err := c.srv.mgr.ProjectUp(req.Name, defs); err != nil {
+	res, err := c.srv.mgr.ProjectUp(req.Name, defs)
+	if err != nil {
 		log.Warn("project up failed", "project", req.Name, "harnesses", len(defs), "err", err)
 		c.writeProjectError(req, err)
 		return
 	}
-	log.Info("project up", "project", req.Name, "harnesses", len(defs))
-	// The registered set changed; nudge subscribed TUIs to refresh their list
-	// (same signal a global config reload uses).
-	c.srv.broadcast(protocol.EventMsg{Kind: protocol.EvConfigReload})
+	log.Info("project up", "project", req.Name, "harnesses", len(res.Names), "changed", res.Changed)
+	if res.Changed {
+		// The registered set changed; nudge subscribed TUIs to refresh their
+		// list (same signal a global config reload uses). A verbatim no-op
+		// re-up broadcasts nothing — a cron-style `harness up` loop must not
+		// trigger refetch storms across every connected client.
+		c.srv.broadcast(protocol.EventMsg{Kind: protocol.EvConfigReload})
+	}
 
-	names, _ := c.srv.mgr.ProjectHarnesses(req.Name)
-	infos := make([]protocol.HarnessInfo, 0, len(names))
-	for _, n := range names {
+	// Build the reply from the names ProjectUp itself registered (computed
+	// under its lock), never from a post-hoc registry query a concurrent
+	// project_down could hollow out into a bogus empty success.
+	infos := make([]protocol.HarnessInfo, 0, len(res.Names))
+	for _, n := range res.Names {
 		if snap, ok := c.srv.mgr.Snapshot(n); ok {
 			infos = append(infos, c.infoFor(snap))
 		}
@@ -99,6 +106,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		RestartDelay: time.Duration(ph.RestartDelayMs) * time.Millisecond,
 		Backend:      backend,
 		Description:  ph.Description,
+		Enabled:      ph.Enabled,
 		TmuxSocket:   ph.TmuxSocket,
 	}
 }

@@ -126,3 +126,23 @@ func TestRegistryNoControllerIsSafe(t *testing.T) {
 	m.Input(s, []byte("x"))
 	// Reaching here without a panic is the assertion.
 }
+
+// TestRegistryRemoveDropsMux: SPEC-0004 REQ "Tear Down" — deregistering a
+// project harness removes its Mux, so an up→down→up cycle gets a fresh
+// emulator/scrollback instead of resurfacing the dead incarnation's screen,
+// and churning project names cannot grow the registry without bound.
+func TestRegistryRemoveDropsMux(t *testing.T) {
+	r := NewRegistry(100)
+	old := r.Mux("reduit/agent")
+	if _, err := old.Write([]byte("stale scrollback\r\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	r.Remove("reduit/agent")
+
+	if fresh := r.Mux("reduit/agent"); fresh == old {
+		t.Fatal("Remove did not drop the Mux; stale scrollback would resurface on re-up")
+	}
+	// Removing an unknown name is a harmless no-op.
+	r.Remove("never-registered")
+}

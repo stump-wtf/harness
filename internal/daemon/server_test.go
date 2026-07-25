@@ -54,9 +54,10 @@ func newTestDaemon(t *testing.T, tomlBody string) *testDaemon {
 
 	reg := attach.NewRegistry(1000)
 	mgr := supervisor.NewManager(cfg, supervisor.ManagerOptions{
-		StatePath:   filepath.Join(tmp, "state.json"),
-		LogDir:      filepath.Join(tmp, "logs"),
-		ExtraOutFor: reg.WriterFor,
+		StatePath:    filepath.Join(tmp, "state.json"),
+		LogDir:       filepath.Join(tmp, "logs"),
+		ExtraOutFor:  reg.WriterFor,
+		DropExtraOut: reg.Remove,
 	})
 	reg.SetController(mgr)
 

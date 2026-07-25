@@ -174,17 +174,52 @@ func (rl *rotatingLog) pruneBackups() {
 // exactly `<name>-<timestamp>.log` — and not a sibling harness that merely
 // shares our name as a prefix.
 func (rl *rotatingLog) isOwnBackup(path string) bool {
+	return isBackupOf(rl.name, path)
+}
+
+// isBackupOf reports whether path is a rotated backup of the named harness.
+// The comparison uses the BASE of the (possibly namespaced) harness name: a
+// project harness "reduit/agent" rotates to <dir>/reduit/agent-<stamp>.log, so
+// after filepath.Base only "agent-<stamp>" remains to match (ADR-0009;
+// SPEC-0004 REQ "Project Naming And Namespacing"). Cross-harness confusion is
+// impossible because callers glob within the name's own directory and the
+// suffix must parse as our exact rotation timestamp.
+func isBackupOf(name, path string) bool {
 	base := filepath.Base(path)
 	mid := strings.TrimSuffix(base, ".log")
 	if mid == base {
 		return false // no .log suffix
 	}
-	stamp := strings.TrimPrefix(mid, rl.name+"-")
+	stamp := strings.TrimPrefix(mid, filepath.Base(name)+"-")
 	if stamp == mid {
 		return false // not `<name>-…`
 	}
 	_, err := time.Parse(rotatedStampLayout, stamp)
 	return err == nil
+}
+
+// removeLogArtifacts deletes a harness's on-disk log tree: the active
+// <dir>/<name>.log, every rotated backup, and — for a namespaced project
+// harness — the project's log subdirectory if it is now empty. The Manager
+// calls this when a project harness is deregistered so ephemeral projects do
+// not leak unreachable log files forever (SPEC-0004 REQ "Tear Down": the
+// daemon retains no record of the project afterward). Best-effort: removal
+// failures are ignored, exactly like pruneBackups.
+func removeLogArtifacts(dir, name string) {
+	active := filepath.Join(dir, name+".log")
+	_ = os.Remove(active)
+	if globbed, err := filepath.Glob(filepath.Join(dir, name+"-*.log")); err == nil {
+		for _, path := range globbed {
+			if isBackupOf(name, path) {
+				_ = os.Remove(path)
+			}
+		}
+	}
+	if filepath.Dir(name) != "." {
+		// Namespaced name: drop the per-project directory when empty (os.Remove
+		// refuses a non-empty directory, which is exactly what we want).
+		_ = os.Remove(filepath.Dir(active))
+	}
 }
 
 // Close closes the active file. Implements io.Closer.
