@@ -8,6 +8,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"syscall"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui"
 )
 
@@ -40,7 +42,14 @@ func cmdList(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(hs)
 	}
-	t := NewTable(os.Stdout, "NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
+	return printHarnessTable(os.Stdout, hs)
+}
+
+// printHarnessTable renders the shared harness status table used by `list`,
+// `ps`, and the `up` one-shot status output (SPEC-0004 REQ "Bring Up"), so
+// every listing surface stays one product.
+func printHarnessTable(w io.Writer, hs []protocol.HarnessInfo) error {
+	t := NewTable(w, "NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
 	for _, h := range hs {
 		t.Row(
 			h.Name,

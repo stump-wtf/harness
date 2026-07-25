@@ -151,18 +151,34 @@ func run(verb string, o verbOpts) error {
 	switch verb {
 	case "list":
 		return withClient(o, nil, cmdList)
+	case "ps":
+		// Compose-style listing: project-scoped inside a project, an alias
+		// for `list` outside one (SPEC-0004 REQ "Project-Scoped Verbs";
+		// ADR-0009).
+		return withClient(o, nil, cmdPs)
+	case "up":
+		// Bring the enclosing project up (SPEC-0004 REQ "Bring Up"). cmdUp
+		// discovers/parses the project file before dialing so a missing
+		// harness.toml never touches the daemon.
+		return cmdUp(o)
+	case "down":
+		// Tear the project down (SPEC-0004 REQ "Tear Down"). NAME is an
+		// optional explicit project (covers a deleted project file).
+		return cmdDown(o)
 	case "describe":
 		return withClient(o, requireName(o), cmdDescribe)
 	case "start", "stop", "restart":
 		// `--all` replaces the required name with "every harness the daemon
-		// knows about"; without it, a name is still required.
+		// knows about"; without it, a name is still required. projectScoped
+		// resolves a bare NAME project-first inside a project (SPEC-0004 REQ
+		// "Project-Scoped Verbs") and is a no-op outside one.
 		pre := requireName(o)
 		if o.all {
 			pre = nil
 		}
-		return withClient(o, pre, lifecycle(verb))
+		return withClient(o, pre, projectScoped(lifecycle(verb)))
 	case "logs":
-		return withClient(o, requireName(o), cmdLogs)
+		return withClient(o, requireName(o), projectScoped(cmdLogs))
 	case "profiles":
 		return withClient(o, nil, cmdProfiles)
 	case "use-profile":
@@ -307,6 +323,16 @@ commands:
   daemon-info          show daemon status
   doctor               run health checks (config, daemon, harnesses)
   attach NAME [--ro]   attach to a harness's terminal
+
+project commands (repo-root harness.toml, discovered by walking up from cwd):
+  up                   register + start the project's harnesses (detached)
+  down [PROJECT]       stop + deregister the project's harnesses
+  ps                   list the project's harnesses (alias for list outside
+                       a project)
+
+  inside a project, a bare NAME to logs/start/stop/restart resolves to
+  <project>/NAME first, then to an exact global harness name; NAMEs
+  containing "/" are always taken as fully qualified.
 
 daemon subcommands (see "harness daemon --help"):
   daemon start         run the supervision daemon (ADR-0005 ExecStart; alias: run)
