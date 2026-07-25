@@ -30,6 +30,16 @@ harness; that stays a feature.
 
 ## Install
 
+### Homebrew (preferred)
+
+```sh
+brew tap stump-wtf/tap
+brew install harness
+```
+
+The formula builds from source, so the binary is compiled locally and never
+picks up macOS's `com.apple.quarantine` attribute — no Gatekeeper prompt.
+
 ### From source
 
 Requires Go 1.22+.
