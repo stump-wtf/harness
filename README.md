@@ -24,9 +24,21 @@ Go binary — with tmux demoted from foundation to optional escape hatch.
 
 ## Status
 
-**Design phase.** The architecture and UX are specified and the backlog is
-being planned from the specs. The daemon knows nothing about what runs inside a
-harness; that stays a feature.
+**Alpha — and self-hosting.**
+[`v0.1.0`](https://gitea.stump.rocks/stump.wtf/harness/releases/tag/v0.1.0) is
+tagged, and Harness now supervises real work daily: this paragraph was written
+from a Claude Code session running inside a harness.
+
+What works today: `harness daemon` supervises each harness in its own PTY with
+daemon-owned scrollback; the TUI dashboard lists, starts, stops, edits and hops
+between them; `attach` gives you the live terminal; profiles switch whole sets
+of harnesses at once; and the one-shot CLI (`list`, `describe`, `logs`,
+`doctor`, …) mirrors the daemon RPC for scripting. The optional SSH front door
+(`[server]`, public-key only) is implemented but off by default.
+
+Expect alpha edges — the TOML schema and the daemon protocol can still change
+before v1. The daemon knows nothing about what runs inside a harness; that
+stays a feature.
 
 ## Install
 
@@ -101,6 +113,10 @@ On **macOS**, use the equivalent launchd LaunchAgent (`dev.harness.daemon.plist`
 with `ProgramArguments` set to `<path>/harness daemon`.
 
 ## Design artifacts
+
+The ADRs and specs below are published as a browsable site at
+**[stump-wtf.github.io/harness](https://stump-wtf.github.io/harness/)**, rebuilt
+on every push to `main`.
 
 - **ADRs** — [`docs/adrs/`](docs/adrs/): eight accepted-direction decisions
   (Go + Charm, daemon/thin-client split, native multiplexer with tmux backend,
