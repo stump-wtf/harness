@@ -74,6 +74,13 @@ func (r *Registry) Mux(name string) *Mux {
 // Mux as an io.Writer so the supervisor tees raw PTY output into it.
 func (r *Registry) WriterFor(name string) io.Writer { return r.Mux(name) }
 
+// SizeFor is the ManagerOptions.SizeFor adapter: it reports the harness's
+// authoritative (smallest-attached-wins) viewport so a freshly spawned PTY is
+// born at the size of whoever is attached, rather than 80×24 (ADR-0003). A
+// harness nobody has ever attached to reports the mux default, which is 80×24 —
+// the historical behaviour.
+func (r *Registry) SizeFor(name string) (int, int) { return r.Mux(name).Size() }
+
 // Remove drops the Mux registered for name, releasing its vt emulator and
 // scrollback ring for collection. The supervisor Manager calls this (via
 // ManagerOptions.DropExtraOut) when a project harness is deregistered, so an
