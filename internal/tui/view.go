@@ -204,7 +204,10 @@ func (m *Model) viewPeek(w, h int) string {
 	if m.peek.name != sel.Name {
 		tail = ""
 	}
-	tailLines := splitLines(tail)
+	// The tail is raw PTY output. Make it inert before it reaches the pane: a
+	// harness that clears the screen or homes the cursor would otherwise do it
+	// to the cockpit drawn around this box, not to its own text.
+	tailLines := inertLines(splitLines(tail))
 	maxLines := h - 8
 	if maxLines < 1 {
 		maxLines = 1
@@ -335,7 +338,11 @@ func (m *Model) viewScrollback() string {
 	}
 	var lines []string
 	for i := sb.top; i < end; i++ {
-		ln := sb.lines[i]
+		// A line wider than the window wraps onto a second physical row, which
+		// scrolls the alt-screen and breaks the "exactly m.h lines" invariant
+		// viewAttached depends on — the same failure the full-window status bar
+		// fix addressed, arriving from the content side instead.
+		ln := ansi.Truncate(sb.lines[i], m.w, "")
 		if i == sb.currentMatchLine() {
 			ln = m.theme.Selected().Render(ln)
 		}

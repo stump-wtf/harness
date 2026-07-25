@@ -1,0 +1,124 @@
+package tui
+
+// Governing: SPEC-0001 REQ "Scrollback Substate" and REQ "Attached Mode" (the
+// attached frame is exactly m.h lines of m.w columns).
+//
+// Scrollback lines come from the daemon's durable log — the harness's RAW PTY
+// byte stream (ADR-0007). For a full-screen harness (crush, an agent CLI) that
+// stream is cursor-addressed repaint traffic: absolute cursor moves, erases,
+// alt-screen toggles, carriage returns. Rendering those bytes verbatim doesn't
+// display them, it EXECUTES them against the user's real terminal — the frame
+// is torn apart and styling is reset out from under the chrome.
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/charmbracelet/lipgloss"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+)
+
+// rawPTYLog is a slice of what a full-screen app's log actually looks like:
+// SGR styling (which must survive) tangled up with cursor addressing, erases,
+// an alt-screen toggle, and a bare CR (which must not).
+const rawPTYLog = "\x1b[?1049h\x1b[2J\x1b[H" +
+	"\x1b[38;5;212mCharm™ HYPERCRUSH\x1b[0m ///////\r\n" +
+	"\x1b[12;1H\x1b[K  \x1b[32mHello!\x1b[0m\r\n" +
+	"\x1b[24;1Htab change focus • / or ctrl+p commands\r\n" +
+	"\x1b[H\x1b[38;5;99mYolo mode!\x1b[0m\r\x1b[2K\r\n"
+
+// scrollbackModel returns an attached model frozen in the scrollback substate
+// over the raw log above — the state a mouse wheel-up drops you into.
+func scrollbackModel(w, h int) *Model {
+	fc := &fakeController{harnesses: sampleHarnesses(), profiles: sampleProfiles()}
+	m := New(Options{})
+	m.ctrl, m.attach = fc, &fakeAttach{}
+	m.conn = startOK
+	m.harnesses = fc.harnesses
+	m.profiles = fc.profiles
+	m.w, m.h = w, h
+	m.help.Width = w
+	m.mode = modeAttached
+	cols, rows := m.attachViewport()
+	m.att = newAttachState(m.harnesses[0].Name, protocol.AttachRW, sessionBase, cols, rows)
+	m.peek = logsMsg{name: m.harnesses[0].Name, text: rawPTYLog}
+	m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
+	return m
+}
+
+// forbidden lists control sequences that must never survive into a rendered
+// frame: each one moves the cursor, wipes the screen, or switches buffers on
+// the user's real terminal.
+var forbidden = []struct{ name, seq string }{
+	{"alt-screen enable", "\x1b[?1049h"},
+	{"erase display", "\x1b[2J"},
+	{"erase line", "\x1b[K"},
+	{"erase line (2K)", "\x1b[2K"},
+	{"cursor home", "\x1b[H"},
+	{"absolute cursor move", "\x1b[12;1H"},
+	{"absolute cursor move", "\x1b[24;1H"},
+	{"carriage return", "\r"},
+}
+
+// TestScrollbackDoesNotEmitControlSequences is the regression: wheel-up into
+// scrollback must render inert text, not replay the harness's repaint traffic.
+func TestScrollbackDoesNotEmitControlSequences(t *testing.T) {
+	for _, dim := range [][2]int{{200, 50}, {176, 25}, {120, 40}, {80, 24}} {
+		w, h := dim[0], dim[1]
+		frame := scrollbackModel(w, h).viewAttached()
+		for _, f := range forbidden {
+			if strings.Contains(frame, f.seq) {
+				t.Errorf("%dx%d: frame contains %s (%q) — it will execute against the user's terminal",
+					w, h, f.name, f.seq)
+			}
+		}
+	}
+}
+
+// TestScrollbackPreservesColor: stripping the dangerous sequences must not take
+// the styling with it — losing color is the other half of the reported bug.
+func TestScrollbackPreservesColor(t *testing.T) {
+	frame := scrollbackModel(120, 40).viewAttached()
+	for _, sgr := range []string{"\x1b[38;5;212m", "\x1b[32m", "\x1b[38;5;99m"} {
+		if !strings.Contains(frame, sgr) {
+			t.Errorf("frame lost SGR %q — scrollback should keep the harness's colors", sgr)
+		}
+	}
+}
+
+// TestScrollbackLinesFitWindow: a line wider than the window wraps in the
+// alt-screen and scrolls the frame, which is what breaks the "exactly m.h lines"
+// invariant the attached view depends on.
+func TestScrollbackLinesFitWindow(t *testing.T) {
+	for _, dim := range [][2]int{{200, 50}, {80, 24}, {40, 20}} {
+		w, h := dim[0], dim[1]
+		lines := strings.Split(scrollbackModel(w, h).viewAttached(), "\n")
+		if len(lines) > h {
+			t.Errorf("%dx%d: %d lines overflow the window", w, h, len(lines))
+		}
+		for i, ln := range lines {
+			if got := lipgloss.Width(ln); got > w {
+				t.Errorf("%dx%d: line %d width = %d, want <= %d", w, h, i, got, w)
+			}
+		}
+	}
+}
+
+// TestDashboardPeekDoesNotEmitControlSequences: the dashboard's live peek pane
+// tails the same raw log, so it carries the identical hazard — a harness that
+// clears the screen would wipe the cockpit around it.
+func TestDashboardPeekDoesNotEmitControlSequences(t *testing.T) {
+	m := baseModel(160, 44)
+	sel, _ := m.selectedHarness()
+	m.peek = logsMsg{name: sel.Name, text: rawPTYLog}
+	frame := m.viewDashboard()
+	for _, f := range forbidden {
+		if f.seq == "\r" {
+			continue // lipgloss joins panes with \n; a bare CR is the only ambiguous one
+		}
+		if strings.Contains(frame, f.seq) {
+			t.Errorf("dashboard peek contains %s (%q)", f.name, f.seq)
+		}
+	}
+}
