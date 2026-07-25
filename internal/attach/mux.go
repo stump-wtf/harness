@@ -40,11 +40,21 @@ type Mux struct {
 	onResize func(cols, rows int)
 	onInput  func(p []byte)
 
-	mu         sync.Mutex
-	term       *vt.Terminal
-	ring       *ring
+	mu       sync.Mutex
+	term     *vt.Terminal
+	ring     *ring
+	sessions map[*Session]struct{}
+
+	// sizeMu guards the authoritative viewport, and only that. It is
+	// deliberately not mu: the supervisor's actor loop reads the size (through
+	// Registry.SizeFor) to born-size a freshly spawned PTY, while onResize is
+	// invoked from *under* mu and blocks until that same actor loop drains the
+	// resize command. Reading the size under mu would close the cycle — a
+	// client resize landing while the harness is (re)starting would wedge the
+	// supervisor and this mux against each other for good, taking the PTY
+	// reader down with them (ADR-0003).
+	sizeMu     sync.Mutex
 	cols, rows int
-	sessions   map[*Session]struct{}
 }
 
 // newMux builds a Mux for a harness. onResize is invoked when the
@@ -160,11 +170,20 @@ func (m *Mux) SessionCount() int {
 	return len(m.sessions)
 }
 
-// Size returns the current authoritative emulator size (for tests).
+// Size returns the current authoritative (smallest-attached-wins) viewport. The
+// supervisor reads it on every spawn to born-size the harness's PTY, so it must
+// stay answerable while the data plane is busy — see sizeMu.
 func (m *Mux) Size() (cols, rows int) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.sizeMu.Lock()
+	defer m.sizeMu.Unlock()
 	return m.cols, m.rows
+}
+
+// setSize publishes a new authoritative viewport.
+func (m *Mux) setSize(cols, rows int) {
+	m.sizeMu.Lock()
+	m.cols, m.rows = cols, rows
+	m.sizeMu.Unlock()
 }
 
 // renderSnapshotLocked renders the current screen. Caller holds mu.
@@ -195,10 +214,10 @@ func (m *Mux) applyResizeLocked() {
 	if first { // no session with a valid size
 		return
 	}
-	if minC == m.cols && minR == m.rows {
+	if curC, curR := m.Size(); minC == curC && minR == curR {
 		return
 	}
-	m.cols, m.rows = minC, minR
+	m.setSize(minC, minR)
 	m.term.Resize(minC, minR)
 	if m.onResize != nil {
 		m.onResize(minC, minR)

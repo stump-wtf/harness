@@ -96,6 +96,9 @@ func runDaemon(args []string) {
 		// Deregistered project harnesses release their Mux so ephemeral
 		// projects never leak emulators/scrollback (SPEC-0004 REQ "Tear Down").
 		DropExtraOut: reg.Remove,
+		// A harness (re)started while a client is attached is spawned into a PTY
+		// the size of that client's viewport, not 80×24 (ADR-0003).
+		SizeFor: reg.SizeFor,
 	})
 	reg.SetController(mgr)
 

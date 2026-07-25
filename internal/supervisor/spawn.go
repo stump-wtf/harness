@@ -20,8 +20,8 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )
 
-// defaultPTYCols/Rows size a freshly spawned PTY before any client attaches
-// (ADR-0003; a real attach resizes it later).
+// defaultPTYCols/Rows size a freshly spawned PTY when no client viewport is
+// known (ADR-0003; a real attach resizes it later).
 const (
 	defaultPTYCols = 80
 	defaultPTYRows = 24
@@ -130,18 +130,33 @@ type process struct {
 	pid int
 }
 
-// spawn launches h under a fresh PTY in its workdir with env_file loaded. The
-// child is placed in its own session (Setsid) so the whole process group can be
-// signalled on graceful stop (SPEC-0003 REQ "Graceful Stop"). The returned
-// process's PTY is the raw byte stream the caller tees to logs.
-func spawn(h core.Harness) (*process, error) {
+// spawn launches h under a fresh PTY of cols×rows in its workdir with env_file
+// loaded. The child is placed in its own session (Setsid) so the whole process
+// group can be signalled on graceful stop (SPEC-0003 REQ "Graceful Stop"). The
+// returned process's PTY is the raw byte stream the caller tees to logs.
+//
+// Governing: ADR-0003 (the native backend owns PTY sizing; the attach layer's
+// smallest-attached-wins viewport is authoritative). The size is passed in
+// rather than fixed at 80×24 because a harness is routinely (re)started while a
+// client is already attached — a restart, a crash-restart, or `^b s` from
+// attached mode. Spawning at 80×24 in that case leaves the child permanently
+// undersized: the mux's recorded size already equals the client viewport, so
+// its resize policy sees no change and never pushes a TIOCSWINSZ, and the app
+// inside renders into an 80×24 box in the corner of a full-size window.
+func spawn(h core.Harness, cols, rows int) (*process, error) {
 	workdir := expandHome(h.Workdir)
 	env, err := buildEnv(h)
 	if err != nil {
 		return nil, err
 	}
 
-	pty, err := xpty.NewPty(defaultPTYCols, defaultPTYRows)
+	if cols < 1 {
+		cols = defaultPTYCols
+	}
+	if rows < 1 {
+		rows = defaultPTYRows
+	}
+	pty, err := xpty.NewPty(cols, rows)
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: allocate pty: %w", err)
 	}
@@ -152,7 +167,16 @@ func spawn(h core.Harness) (*process, error) {
 	// New session → child is a process-group leader (pgid == pid); a graceful
 	// stop can signal the entire group (kill(-pid)) to reap child processes
 	// like a shell's `sleep`.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	//
+	// Setctty additionally makes the PTY the new session's *controlling*
+	// terminal (Ctty 0 = the child's stdin, which xpty points at the slave).
+	// Without it the child has no ctty, and the kernel has nobody to notify:
+	// a TIOCSWINSZ changes the PTY's dimensions but raises no SIGWINCH, so a
+	// full-screen app never learns it should re-lay-out and keeps painting its
+	// old geometry into a correctly-sized window — the same symptom as spawning
+	// at the wrong size, one layer down (ADR-0003). It is also what lets an
+	// attached client's ^C reach the foreground process group as SIGINT.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 
 	if err := pty.Start(cmd); err != nil {
 		_ = pty.Close()

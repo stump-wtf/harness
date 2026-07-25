@@ -351,3 +351,43 @@ func TestResizeIgnoresInvalidViewport(t *testing.T) {
 		t.Fatalf("invalid-size clients fired onResize %v, want unchanged", got)
 	}
 }
+
+// TestSizeReadableDuringResizeCallback guards the deadlock that the born-at-the-
+// right-size spawn path opened up (ADR-0003). onResize is invoked from under mu
+// and blocks until the supervisor's actor loop drains the resize command; that
+// same loop calls back into Size() to born-size a freshly spawned PTY. If Size()
+// took mu, a client resize landing while the harness was (re)starting would wedge
+// the pair permanently — the supervisor stuck on mu, the mux stuck on the loop —
+// and the PTY reader would pile up behind them, so the harness went dark and
+// could not even be stopped. Size() must therefore stay answerable while a
+// resize callback is in flight.
+func TestSizeReadableDuringResizeCallback(t *testing.T) {
+	inCallback := make(chan struct{})
+	release := make(chan struct{})
+	// Stands in for the supervisor actor loop: busy, and not coming back until
+	// it has read the size.
+	m := newMux("h", 100, func(int, int) {
+		close(inCallback)
+		<-release
+	}, nil)
+	defer close(release)
+
+	a := m.Attach(1, protocol.AttachRW, 80, 24, noopWrite)
+	go m.Resize(a, 100, 40)
+	<-inCallback
+
+	read := make(chan [2]int, 1)
+	go func() {
+		c, r := m.Size()
+		read <- [2]int{c, r}
+	}()
+	select {
+	case got := <-read:
+		if got != [2]int{100, 40} {
+			t.Fatalf("Size() during resize callback = %v, want [100 40]", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Size() blocked while a resize callback was in flight: " +
+			"the supervisor reads it from the very loop that callback is waiting on")
+	}
+}

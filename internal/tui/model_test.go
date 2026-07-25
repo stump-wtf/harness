@@ -72,17 +72,33 @@ type fakeAttach struct {
 	opens  []string
 	inputs [][]byte
 	closes []uint32
+	// openSizes/resizes record the viewport the client asks the daemon for: the
+	// size at which each session was opened, and every subsequent resize. The
+	// daemon sizes the harness's real PTY from these, so they are the client
+	// half of "the harness fills the window and follows it" (ADR-0003).
+	openSizes []viewport
+	resizes   []viewport
+}
+
+// viewport is a recorded cols×rows the client reported for a session.
+type viewport struct {
+	sid        uint32
+	cols, rows int
 }
 
 func (f *fakeAttach) AttachOpen(sid uint32, name string, cols, rows int, mode protocol.AttachMode) error {
 	f.opens = append(f.opens, name)
+	f.openSizes = append(f.openSizes, viewport{sid, cols, rows})
 	return nil
 }
 func (f *fakeAttach) AttachInput(sid uint32, data []byte) error {
 	f.inputs = append(f.inputs, append([]byte(nil), data...))
 	return nil
 }
-func (f *fakeAttach) AttachResize(sid uint32, cols, rows int) error { return nil }
+func (f *fakeAttach) AttachResize(sid uint32, cols, rows int) error {
+	f.resizes = append(f.resizes, viewport{sid, cols, rows})
+	return nil
+}
 func (f *fakeAttach) AttachClose(sid uint32) error {
 	f.closes = append(f.closes, sid)
 	return nil

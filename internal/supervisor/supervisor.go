@@ -83,8 +83,9 @@ type Supervisor struct {
 	policy   Policy
 	bus      *Bus
 	logCfg   LogConfig
-	extraOut io.Writer // optional tee target (e.g. the future emulator ring)
-	onChange func()    // called after any observable change (persist hook)
+	extraOut io.Writer         // optional tee target (e.g. the future emulator ring)
+	onChange func()            // called after any observable change (persist hook)
+	initSize func() (int, int) // optional: viewport a freshly spawned PTY is born at
 
 	cmds      chan command
 	exitCh    chan exitResult
@@ -128,6 +129,11 @@ type Options struct {
 	LogCfg   LogConfig
 	ExtraOut io.Writer // optional additional tee target for PTY output
 	OnChange func()    // invoked after observable state changes (for persistence)
+	// InitialSize, if set, reports the viewport a freshly spawned PTY should be
+	// born at — the attach layer's authoritative (smallest-attached-wins) size
+	// for this harness. Without it every (re)start begins at 80×24 and a client
+	// that is already attached at another size never gets corrected (ADR-0003).
+	InitialSize func() (cols, rows int)
 }
 
 // New creates a Supervisor for h and starts its actor loop. The harness begins
@@ -140,6 +146,7 @@ func New(h core.Harness, opts Options) *Supervisor {
 		logCfg:       opts.LogCfg,
 		extraOut:     opts.ExtraOut,
 		onChange:     opts.OnChange,
+		initSize:     opts.InitialSize,
 		cmds:         make(chan command),
 		exitCh:       make(chan exitResult, 1),
 		timerCh:      make(chan struct{}, 1),
@@ -334,7 +341,11 @@ func (s *Supervisor) beginStart() {
 	}
 	s.transition(core.StateStarting)
 
-	proc, err := spawn(s.harness)
+	// Born at the attached viewport, not 80×24: a restart (manual, crash, or
+	// `^b s` from attached mode) must land in a PTY the size of the client
+	// that's watching it (ADR-0003; see spawn's note).
+	cols, rows := s.spawnSize()
+	proc, err := spawn(s.harness, cols, rows)
 	if err != nil {
 		// Treat a spawn failure like an immediate crash.
 		s.onProcessGone(-1, err != nil)
@@ -360,6 +371,19 @@ func (s *Supervisor) beginStart() {
 	// Arm the survival timer: a run that outlives the crash window clears the
 	// flap history (SPEC-0003 REQ "Crash-Loop Detection" recovery).
 	s.armSurvival(gen)
+}
+
+// spawnSize resolves the PTY size a fresh process should start at: the attach
+// layer's authoritative viewport when one is wired, else the 80×24 default.
+func (s *Supervisor) spawnSize() (int, int) {
+	if s.initSize == nil {
+		return defaultPTYCols, defaultPTYRows
+	}
+	cols, rows := s.initSize()
+	if cols < 1 || rows < 1 {
+		return defaultPTYCols, defaultPTYRows
+	}
+	return cols, rows
 }
 
 // readOutput copies the raw PTY stream to the log/tee until the PTY closes.

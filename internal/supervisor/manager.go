@@ -47,6 +47,12 @@ type ManagerOptions struct {
 	// leaking it and resurfacing the dead incarnation's screen (SPEC-0004 REQ
 	// "Tear Down"; ADR-0009).
 	DropExtraOut func(name string)
+	// SizeFor, if set, reports the viewport a harness's freshly spawned PTY
+	// should be born at — the attach layer's authoritative
+	// smallest-attached-wins size for that name. The daemon wires this to the
+	// attach Registry so a harness (re)started while a client is attached comes
+	// up at the client's size instead of 80×24 (ADR-0003).
+	SizeFor func(name string) (cols, rows int)
 }
 
 // Manager supervises every harness in a config.
@@ -57,6 +63,7 @@ type Manager struct {
 	bus          *Bus
 	extraOutFor  func(name string) io.Writer
 	dropExtraOut func(name string)
+	sizeFor      func(name string) (int, int)
 
 	mu            sync.Mutex
 	cfg           *core.Config
@@ -99,6 +106,7 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 		bus:          NewBus(),
 		extraOutFor:  opts.ExtraOutFor,
 		dropExtraOut: opts.DropExtraOut,
+		sizeFor:      opts.SizeFor,
 		cfg:          cfg,
 		supervisors:  make(map[string]*Supervisor),
 		projects:     make(map[string]*projectRecord),
@@ -133,6 +141,17 @@ func (m *Manager) extraOut(name string) io.Writer {
 		return nil
 	}
 	return m.extraOutFor(name)
+}
+
+// initialSizeFor binds the configured SizeFor hook to one harness name, or nil
+// when none is set (the supervisor then falls back to 80×24). It is resolved
+// lazily on every spawn, so the size reflects whoever is attached *now* rather
+// than whoever was attached when the supervisor was constructed.
+func (m *Manager) initialSizeFor(name string) func() (int, int) {
+	if m.sizeFor == nil {
+		return nil
+	}
+	return func() (int, int) { return m.sizeFor(name) }
 }
 
 // markDirty signals the persist loop that state changed (non-blocking).
@@ -387,11 +406,12 @@ func (m *Manager) addSupervisorLocked(h core.Harness, ephemeral bool) {
 		onChange = nil
 	}
 	s := New(h, Options{
-		Policy:   m.policy,
-		Bus:      m.bus,
-		LogCfg:   m.logCfg,
-		ExtraOut: m.extraOut(h.Name),
-		OnChange: onChange,
+		Policy:      m.policy,
+		Bus:         m.bus,
+		LogCfg:      m.logCfg,
+		ExtraOut:    m.extraOut(h.Name),
+		OnChange:    onChange,
+		InitialSize: m.initialSizeFor(h.Name),
 	})
 	m.supervisors[h.Name] = s
 }
