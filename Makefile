@@ -21,7 +21,7 @@ LDFLAGS   := -X $(PKG)/internal/buildinfo.Version=$(VERSION)
 GOFLAGS   := -trimpath -ldflags "$(LDFLAGS)"
 BIN       := harness
 
-.PHONY: all build check fmt vet test race tidy clean run daemon install version
+.PHONY: all build check fmt vet test race tidy clean run daemon install version release-snapshot release-check
 
 # The default "did I break it" loop.
 all: build check
@@ -71,5 +71,15 @@ install: build
 version:
 	@echo $(VERSION)
 
+# Dry-run the release locally: cross-compiles every target in .goreleaser.yaml
+# into dist/ without a tag and without publishing anything. Run this before
+# pushing a v* tag — the release workflow has no other rehearsal.
+release-snapshot:
+	goreleaser release --snapshot --clean
+
+# Validate .goreleaser.yaml without building.
+release-check:
+	goreleaser check
+
 clean:
-	rm -rf bin/
+	rm -rf bin/ dist/

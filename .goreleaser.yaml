@@ -1,0 +1,76 @@
+# GoReleaser — cross-compiled binaries published to Gitea Releases, and (from
+# .gitea/workflows/release.yaml) mirrored into the Gitea generic package
+# registry for stable, predictable download URLs.
+#
+# Gitea (gitea.stump.rocks/stump.wtf/harness) is the origin of truth; GitHub
+# (github.com/stump-wtf/harness) is a push mirror. Push mirrors carry git refs
+# ONLY — a tag travels, its release and attachments do not. So releases exist on
+# Gitea alone unless someone adds a second publish target on purpose.
+#
+# Local dry run (no tag, no upload, artifacts land in dist/):
+#   make release-snapshot
+version: 2
+
+project_name: harness
+
+builds:
+  - id: harness
+    main: ./cmd/harness
+    binary: harness
+    env:
+      - CGO_ENABLED=0
+    # Unix only, and not by omission: the supervisor spawns harnesses under a
+    # PTY with syscall.SysProcAttr{Setsid} and signals process groups with
+    # syscall.Kill (internal/supervisor/spawn.go) — neither exists on Windows,
+    # so a windows target fails to compile rather than shipping something
+    # broken. Revisit only alongside a Windows backend (ADR-0003).
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      # Matches the Makefile's LDFLAGS so a released binary reports its version
+      # the same way a local `make build` does.
+      - -X gitea.stump.rocks/stump.wtf/harness/internal/buildinfo.Version={{ .Version }}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    # harness_0.1.0_darwin_arm64.tar.gz — the generic-registry upload keys off
+    # these names, so keep them stable and boring.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^Merge pull request"
+
+gitea_urls:
+  api: https://gitea.stump.rocks/api/v1
+  download: https://gitea.stump.rocks
+
+release:
+  gitea:
+    owner: stump.wtf
+    name: harness
+  draft: false
+  # A tag like v0.1.0-rc1 publishes as a prerelease on its own.
+  prerelease: auto
+  name_template: "{{ .Tag }}"
