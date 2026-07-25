@@ -83,6 +83,16 @@ type Project struct {
 // Returns ErrNoProjectFound (wrapping the last directory checked) when no
 // project file exists before the user's home or filesystem root.
 func DiscoverProject() (*Project, error) {
+	return DiscoverProjectExcluding("")
+}
+
+// DiscoverProjectExcluding is DiscoverProject with an additional excluded
+// path: the global config file in effect for this invocation (a --config
+// override). Both the conventional DefaultPath() and globalConfig are skipped
+// during the up-walk, so a custom-located global config is never adopted as a
+// project file (SPEC-0004 REQ "Project File Discovery"). An empty globalConfig
+// behaves exactly like DiscoverProject.
+func DiscoverProjectExcluding(globalConfig string) (*Project, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("project discovery: getwd: %w", err)
@@ -94,7 +104,9 @@ func DiscoverProject() (*Project, error) {
 		candidate := filepath.Join(dir, "harness.toml")
 
 		// Skip the global config — it is never a project file (SPEC-0004).
-		if !samePath(candidate, globalPath) {
+		// The active --config path is skipped for the same reason.
+		if !samePath(candidate, globalPath) &&
+			(globalConfig == "" || !samePath(candidate, globalConfig)) {
 			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 				return LoadProject(candidate)
 			}
@@ -262,7 +274,13 @@ func addProjectHarness(cfg *core.Config, filename, name string, line int, rh raw
 			"harness %q: restart_delay must not be negative (got %d)", name, rh.RestartDelay)
 	}
 
-	enabled := false
+	// Project semantics differ from the global config here: an absent
+	// `enabled` key defaults to TRUE, because SPEC-0004 REQ "Bring Up"
+	// requires the first `harness up` to register AND start each harness (the
+	// spec's example project files carry no `enabled` key). An explicit
+	// `enabled = false` is still honored (register without starting). The
+	// global config keeps its opt-in default (config.go addHarness).
+	enabled := true
 	if rh.Enabled != nil {
 		enabled = *rh.Enabled
 	}
@@ -301,6 +319,12 @@ func resolvePath(p, base string) string {
 	}
 	return filepath.Join(base, p)
 }
+
+// SanitizeProjectName is the exported form of the derived-name normalization
+// discovery applies to a directory basename. The CLI uses it so an explicit
+// `harness down My-Cool-Project` can match a project that was registered under
+// its sanitized name (SPEC-0004 REQ "Project Naming And Namespacing").
+func SanitizeProjectName(s string) string { return sanitizeProjectName(s) }
 
 // sanitizeProjectName lowercases, replaces non-alphanumeric runs with hyphens,
 // trims leading/trailing hyphens. E.g. "My-Cool Project!" → "my-cool-project".

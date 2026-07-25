@@ -362,3 +362,92 @@ func TestSentinelErrors_AreDistinct(t *testing.T) {
 		t.Error("ErrProjectNameCollision should not be ErrUnknownProject")
 	}
 }
+
+// ---- Enabled default tests (SPEC-0004 REQ "Bring Up") ---------------------
+
+// TestParseProject_EnabledDefaultsTrue: a project file that omits `enabled`
+// (the spec's own example files carry no such key) must parse Enabled=true so
+// the first `harness up` registers AND starts the harness. This is a project
+// semantic only — the global config keeps its opt-in default.
+func TestParseProject_EnabledDefaultsTrue(t *testing.T) {
+	data := []byte(`
+[harness.agent]
+cmd = "claude"
+`)
+	proj, err := ParseProject(data, "/tmp/repo/harness.toml")
+	if err != nil {
+		t.Fatalf("ParseProject: %v", err)
+	}
+	if !proj.Config.Harnesses["agent"].Enabled {
+		t.Error("Enabled = false for omitted `enabled` key, want true (SPEC-0004 Bring Up starts each harness)")
+	}
+}
+
+// TestParseProject_EnabledExplicitFalse: an explicit `enabled = false` is
+// still honored (register without starting).
+func TestParseProject_EnabledExplicitFalse(t *testing.T) {
+	data := []byte(`
+[harness.agent]
+cmd = "claude"
+enabled = false
+
+[harness.reviewer]
+cmd = "crush"
+enabled = true
+`)
+	proj, err := ParseProject(data, "/tmp/repo/harness.toml")
+	if err != nil {
+		t.Fatalf("ParseProject: %v", err)
+	}
+	if proj.Config.Harnesses["agent"].Enabled {
+		t.Error("agent Enabled = true, want false (explicit enabled = false)")
+	}
+	if !proj.Config.Harnesses["reviewer"].Enabled {
+		t.Error("reviewer Enabled = false, want true (explicit enabled = true)")
+	}
+}
+
+// ---- DiscoverProjectExcluding tests ---------------------------------------
+
+// TestDiscoverProjectExcluding_SkipsActiveConfig: when the CLI runs with
+// --config /custom/harness.toml, discovery must not adopt that file as a
+// project file — same rule as the conventional DefaultPath().
+func TestDiscoverProjectExcluding_SkipsActiveConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Bound the up-walk at tmpDir so a stray /tmp/harness.toml on the machine
+	// can never be adopted (DiscoverProject stops at $HOME).
+	t.Setenv("HOME", tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmpDir, ".config"))
+	dir := filepath.Join(tmpDir, "cfgdir")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	custom := writeProjectFile(t, dir, `
+[harness.agent]
+cmd = "claude"
+`)
+
+	oldWd, _ := os.Getwd()
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without the exclusion the file is adopted as a project.
+	if _, err := DiscoverProject(); err != nil {
+		t.Fatalf("DiscoverProject (no exclusion): %v", err)
+	}
+	// With the exclusion it is skipped and the walk finds nothing.
+	_, err := DiscoverProjectExcluding(custom)
+	if !errors.Is(err, ErrNoProjectFound) {
+		t.Errorf("DiscoverProjectExcluding(%q) = %v, want ErrNoProjectFound", custom, err)
+	}
+}
+
+// TestSanitizeProjectName_Exported: the exported wrapper matches the internal
+// normalization the discovery path applies to directory basenames.
+func TestSanitizeProjectName_Exported(t *testing.T) {
+	if got := SanitizeProjectName("My-Cool Project"); got != "my-cool-project" {
+		t.Errorf("SanitizeProjectName = %q, want %q", got, "my-cool-project")
+	}
+}

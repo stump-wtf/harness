@@ -35,9 +35,20 @@ func printJSON(v any) error {
 func stateGlyph(state string) string { return core.State(state).Glyph() }
 
 func cmdList(c *client.Client, o verbOpts) error {
+	return renderHarnessList(c, o, "")
+}
+
+// renderHarnessList is the single fetch-and-render tail shared by `list` and
+// `ps` (SPEC-0004: ps is a plain alias for list outside a project), with an
+// optional provenance filter for the project-scoped ps path. One code path
+// keeps the two verbs' output contract from silently diverging.
+func renderHarnessList(c *client.Client, o verbOpts, project string) error {
 	hs, err := c.List()
 	if err != nil {
 		return err
+	}
+	if project != "" {
+		hs = filterProjectHarnesses(hs, project)
 	}
 	if o.json {
 		return printJSON(hs)

@@ -1,11 +1,13 @@
 package main
 
 // Governing tests: SPEC-0004 REQ "Bring Up" (`harness up` happy path against
-// a real in-process daemon; no-project-file error before anything is sent;
-// daemon-unreachable is the same dial error every verb produces), REQ "Tear
-// Down" (down via discovery and via an explicit project name; global config
-// byte-identical), and REQ "Project-Scoped Verbs" (ps filtering, bare-name
-// resolution project-first with global fallback). ADR-0009.
+// a real in-process daemon; an omitted `enabled` key defaults to true so the
+// first up actually starts things; no-project-file error before anything is
+// sent; daemon-unreachable is the same dial error every verb produces), REQ
+// "Tear Down" (down via discovery and via an explicit project name; global
+// config byte-identical), and REQ "Project-Scoped Verbs" (ps filtering,
+// purely lexical bare-name resolution to <project>/<name> with no global
+// fallback). ADR-0009.
 
 import (
 	"bytes"
@@ -28,9 +30,25 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
 )
 
-// bootTestDaemon starts an in-process daemon (same pattern as the doctor
-// integration test) with one disabled global harness ("demo") and returns the
-// socket and global-config paths.
+// shortSockDir returns a fresh short /tmp directory for Unix socket paths
+// (socket paths are length-limited to ~108 bytes, and t.TempDir() can exceed
+// that). Per-test dirs also mean no fixed world-predictable socket paths a
+// foreign process could squat on.
+func shortSockDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "hnp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+// bootTestDaemon starts an in-process daemon with one disabled global harness
+// ("demo") and returns the socket and global-config paths. It is the single
+// shared boot helper for every cmd/harness integration test (the doctor
+// integration test uses it too), so daemon/supervisor wiring changes happen
+// in one place.
 func bootTestDaemon(t *testing.T) (socket, configPath string) {
 	t.Helper()
 	tmp := t.TempDir()
@@ -42,13 +60,7 @@ func bootTestDaemon(t *testing.T) (socket, configPath string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Unix socket paths are length-limited (~108 bytes); use a short /tmp dir.
-	sockDir, err := os.MkdirTemp("/tmp", "hnp")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
-	socket = filepath.Join(sockDir, "d.sock")
+	socket = filepath.Join(shortSockDir(t), "d.sock")
 
 	reg := attach.NewRegistry(1000)
 	mgr := supervisor.NewManager(cfg, supervisor.ManagerOptions{
@@ -90,12 +102,39 @@ func chdir(t *testing.T, dir string) {
 	t.Cleanup(func() { _ = os.Chdir(old) })
 }
 
+// isolatedDir returns a nested working directory whose parent is installed as
+// $HOME for the test. DiscoverProject stops its up-walk at the user's home
+// directory, so tests chdir'd here are immune to a stray /tmp/harness.toml
+// (or any other ancestor project file) on the machine.
+func isolatedDir(t *testing.T) string {
+	t.Helper()
+	base := t.TempDir()
+	t.Setenv("HOME", base)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(base, ".config"))
+	dir := filepath.Join(base, "work")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// writeProjectDir writes a harness.toml with the given contents into a fresh
+// isolated directory and returns that directory.
+func writeProjectDir(t *testing.T, toml string) string {
+	t.Helper()
+	dir := isolatedDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "harness.toml"), []byte(toml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 // writeProjectFile writes a project harness.toml with an enabled `agent` and
-// a disabled `helper` under project name "proj", returning the project dir.
+// an explicitly disabled `helper` under project name "proj", returning the
+// project dir.
 func writeProjectFile(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	toml := `[project]
+	return writeProjectDir(t, `[project]
 name = "proj"
 
 [harness.agent]
@@ -106,11 +145,8 @@ enabled = true
 [harness.helper]
 cmd = "sleep"
 args = ["60"]
-`
-	if err := os.WriteFile(filepath.Join(dir, "harness.toml"), []byte(toml), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return dir
+enabled = false
+`)
 }
 
 // dialTest returns a client for direct daemon assertions.
@@ -128,14 +164,29 @@ func dialTest(t *testing.T, socket string) *client.Client {
 // it wrote.
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
+	out, fnErr := captureFile(t, &os.Stdout, fn)
+	return out, fnErr
+}
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns what
+// it wrote (the scoped-verb warning path writes there).
+func captureStderr(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	out, fnErr := captureFile(t, &os.Stderr, fn)
+	return out, fnErr
+}
+
+// captureFile redirects *fp (os.Stdout / os.Stderr) into a pipe around fn.
+func captureFile(t *testing.T, fp **os.File, fn func() error) (string, error) {
+	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := os.Stdout
-	os.Stdout = w
+	old := *fp
+	*fp = w
 	fnErr := fn()
-	os.Stdout = old
+	*fp = old
 	_ = w.Close()
 	var buf bytes.Buffer
 	_, _ = buf.ReadFrom(r)
@@ -145,9 +196,9 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 
 // TestCmdUpDownRoundTrip is the SPEC-0004 "Bring Up" + "Tear Down" happy
 // path: up registers proj/* (Enabled carried over the wire, so the enabled
-// harness starts and the disabled one is registered stopped), prints the
-// one-shot status table, and down stops + deregisters everything while the
-// global config stays byte-identical.
+// harness starts and the explicitly disabled one is registered stopped),
+// prints the one-shot status table, and down stops + deregisters everything
+// while the global config stays byte-identical.
 func TestCmdUpDownRoundTrip(t *testing.T) {
 	socket, configPath := bootTestDaemon(t)
 	before, err := os.ReadFile(configPath)
@@ -190,7 +241,7 @@ func TestCmdUpDownRoundTrip(t *testing.T) {
 		t.Fatal("proj/helper not registered after up")
 	}
 	if helper.Enabled {
-		t.Error("proj/helper Enabled = true, want false (disabled in project file)")
+		t.Error("proj/helper Enabled = true, want false (explicit enabled = false in project file)")
 	}
 	// The enabled harness actually starts (SPEC-0004 REQ "Bring Up").
 	waitForRunning(t, c, "proj/agent")
@@ -225,6 +276,36 @@ func TestCmdUpDownRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCmdUpDefaultEnabled: a project file that omits `enabled` entirely (the
+// spec's own example files) must have its harnesses registered enabled AND
+// started by the first `harness up` (SPEC-0004 REQ "Bring Up": "register ...
+// and start each one").
+func TestCmdUpDefaultEnabled(t *testing.T) {
+	socket, _ := bootTestDaemon(t)
+	chdir(t, writeProjectDir(t, `[project]
+name = "defproj"
+
+[harness.agent]
+cmd = "sleep"
+args = ["60"]
+
+[harness.reviewer]
+cmd = "sleep"
+args = ["60"]
+`))
+	o := verbOpts{socket: socket}
+	if _, err := captureStdout(t, func() error { return cmdUp(o) }); err != nil {
+		t.Fatalf("cmdUp: %v", err)
+	}
+	c := dialTest(t, socket)
+	waitForRunning(t, c, "defproj/agent")
+	waitForRunning(t, c, "defproj/reviewer")
+	// Tear down so the sleeps don't outlive the test daemon shutdown path.
+	if _, err := captureStdout(t, func() error { return cmdDown(o) }); err != nil {
+		t.Fatalf("cmdDown: %v", err)
+	}
+}
+
 // waitForRunning polls until the named harness reports running.
 func waitForRunning(t *testing.T, c *client.Client, name string) {
 	t.Helper()
@@ -239,13 +320,13 @@ func waitForRunning(t *testing.T, c *client.Client, name string) {
 	t.Fatalf("%s never reached running", name)
 }
 
-// TestCmdUpNoProjectFile: no harness.toml anywhere up the walk → the
-// ErrNoProjectFound sentinel, non-zero exit path, and nothing is sent to the
-// daemon (the bogus socket is never dialed — dialing it would fail with a
-// different error shape).
+// TestCmdUpNoProjectFile: no harness.toml anywhere up the (HOME-bounded) walk
+// → the ErrNoProjectFound sentinel, non-zero exit path, and nothing is sent
+// to the daemon (the bogus socket is never dialed — dialing it would fail
+// with a different error shape).
 func TestCmdUpNoProjectFile(t *testing.T) {
-	chdir(t, t.TempDir())
-	err := cmdUp(verbOpts{socket: "/tmp/harness-up-test-no-daemon.sock"})
+	chdir(t, isolatedDir(t))
+	err := cmdUp(verbOpts{socket: filepath.Join(shortSockDir(t), "n.sock")})
 	if err == nil {
 		t.Fatal("cmdUp = nil, want no-project-file error")
 	}
@@ -262,13 +343,30 @@ func TestCmdUpNoProjectFile(t *testing.T) {
 // from the socket dial, which cliui classifies as daemon-not-running).
 func TestCmdUpDaemonUnreachable(t *testing.T) {
 	chdir(t, writeProjectFile(t))
-	err := cmdUp(verbOpts{socket: "/tmp/harness-up-test-no-daemon-2.sock"})
+	err := cmdUp(verbOpts{socket: filepath.Join(shortSockDir(t), "n.sock")})
 	if err == nil {
 		t.Fatal("cmdUp = nil, want dial error")
 	}
 	var opErr *net.OpError
 	if !errors.As(err, &opErr) || opErr.Op != "dial" {
 		t.Errorf("cmdUp error = %v (%T), want the client dial *net.OpError", err, err)
+	}
+}
+
+// TestUpPsRejectStrayArgs: `up` and `ps` operate on the discovered scope only
+// — a positional would be silently swallowed (acting on the wrong target with
+// exit 0), so the dispatcher rejects it before any discovery or dialing.
+// `down [PROJECT]` keeps its documented positional.
+func TestUpPsRejectStrayArgs(t *testing.T) {
+	for _, verb := range []string{"up", "ps"} {
+		err := run(verb, verbOpts{name: "b"})
+		if err == nil {
+			t.Errorf("run(%q) with a positional = nil, want error", verb)
+			continue
+		}
+		if !strings.Contains(err.Error(), "takes no arguments") {
+			t.Errorf("run(%q) error = %q, want 'takes no arguments'", verb, err)
+		}
 	}
 }
 
@@ -283,7 +381,7 @@ func TestCmdDownExplicitProject(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	chdir(t, t.TempDir()) // no project file discoverable
+	chdir(t, isolatedDir(t)) // no project file discoverable
 
 	o := verbOpts{socket: socket, name: "ghost"}
 	if _, err := captureStdout(t, func() error { return cmdDown(o) }); err != nil {
@@ -300,12 +398,43 @@ func TestCmdDownExplicitProject(t *testing.T) {
 	}
 }
 
+// TestCmdDownSanitizesExplicitName: discovery registers a derived project
+// name in sanitized form ("My-Cool-Project" → "my-cool-project"), so the
+// explicit positional applies the same normalization as a fallback — the
+// documented escape hatch must work when the user types the directory-name
+// form (SPEC-0004 REQ "Project Naming And Namespacing").
+func TestCmdDownSanitizesExplicitName(t *testing.T) {
+	socket, _ := bootTestDaemon(t)
+	c := dialTest(t, socket)
+	if _, err := c.ProjectUp("my-cool-project", []protocol.ProjectHarness{
+		{Name: "agent", Cmd: "sleep", Args: []string{"60"}, Enabled: false},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, isolatedDir(t))
+
+	o := verbOpts{socket: socket, name: "My-Cool-Project"}
+	if _, err := captureStdout(t, func() error { return cmdDown(o) }); err != nil {
+		t.Fatalf("cmdDown My-Cool-Project: %v", err)
+	}
+	hs, err := c.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range hs {
+		if h.Project == "my-cool-project" {
+			t.Errorf("harness %q still registered after sanitized-name down", h.Name)
+		}
+	}
+}
+
 // TestCmdDownErrors: no discoverable project and no explicit name → the
-// sentinel plus a hint; an unknown explicit project surfaces the daemon's
-// structured ERROR verbatim (code unknown_project).
+// sentinel (the actionable hint now renders via cliui's classify path); an
+// unknown explicit project surfaces the daemon's structured ERROR verbatim
+// (code unknown_project).
 func TestCmdDownErrors(t *testing.T) {
 	socket, _ := bootTestDaemon(t)
-	chdir(t, t.TempDir())
+	chdir(t, isolatedDir(t))
 
 	err := cmdDown(verbOpts{socket: socket})
 	if !errors.Is(err, config.ErrNoProjectFound) {
@@ -342,9 +471,7 @@ func TestCmdPsProjectScoped(t *testing.T) {
 
 	psJSON := func() []protocol.HarnessInfo {
 		t.Helper()
-		out, err := captureStdout(t, func() error {
-			return withClient(o, nil, cmdPs)
-		})
+		out, err := captureStdout(t, func() error { return cmdPs(o) })
 		if err != nil {
 			t.Fatalf("cmdPs: %v", err)
 		}
@@ -367,7 +494,7 @@ func TestCmdPsProjectScoped(t *testing.T) {
 	}
 
 	// Outside any project: global scope, the demo harness is visible again.
-	chdir(t, t.TempDir())
+	chdir(t, isolatedDir(t))
 	hs = psJSON()
 	names := map[string]bool{}
 	for _, h := range hs {
@@ -378,40 +505,51 @@ func TestCmdPsProjectScoped(t *testing.T) {
 	}
 }
 
-// TestResolveScopedName covers SPEC-0004 bare-name resolution: project-local
-// first, exact global fallback, error naming both candidates otherwise.
-func TestResolveScopedName(t *testing.T) {
-	socket, _ := bootTestDaemon(t)
-	c := dialTest(t, socket)
-	if _, err := c.ProjectUp("proj", []protocol.ProjectHarness{
-		{Name: "agent", Cmd: "sleep", Args: []string{"60"}, Enabled: true},
-	}); err != nil {
-		t.Fatal(err)
+// TestScopeVerbName covers SPEC-0004 bare-name resolution: purely lexical,
+// project-local always (no global fallback, no daemon round-trip), qualified
+// names untouched, --all short-circuit gated to the lifecycle verbs.
+func TestScopeVerbName(t *testing.T) {
+	chdir(t, writeProjectFile(t))
+
+	// Bare name inside a project → <project>/<name>, unconditionally — even
+	// when a global harness of the same name exists (SPEC-0004: no fallback).
+	for _, name := range []string{"agent", "demo", "nope"} {
+		got := scopeVerbName(verbOpts{name: name}, true)
+		if got.name != "proj/"+name {
+			t.Errorf("scopeVerbName(%q) = %q, want %q", name, got.name, "proj/"+name)
+		}
 	}
 
-	got, err := resolveScopedName(c, "proj", "agent")
-	if err != nil || got != "proj/agent" {
-		t.Errorf("resolve agent = %q, %v; want proj/agent (project-local first)", got, err)
+	// Qualified names pass through untouched.
+	got := scopeVerbName(verbOpts{name: "other/agent"}, true)
+	if got.name != "other/agent" {
+		t.Errorf("qualified name rewritten to %q", got.name)
 	}
-	got, err = resolveScopedName(c, "proj", "demo")
-	if err != nil || got != "demo" {
-		t.Errorf("resolve demo = %q, %v; want demo (exact global fallback)", got, err)
+
+	// --all keeps its daemon-wide meaning for the lifecycle verbs only…
+	got = scopeVerbName(verbOpts{name: "agent", all: true}, true)
+	if got.name != "agent" {
+		t.Errorf("lifecycle --all: name = %q, want bare %q", got.name, "agent")
 	}
-	_, err = resolveScopedName(c, "proj", "nope")
-	if err == nil {
-		t.Fatal("resolve nope = nil error, want failure")
+	// …while verbs that ignore --all (logs) resolve exactly like without it.
+	got = scopeVerbName(verbOpts{name: "agent", all: true}, false)
+	if got.name != "proj/agent" {
+		t.Errorf("logs --all: name = %q, want %q", got.name, "proj/agent")
 	}
-	for _, want := range []string{"proj/nope", `"nope"`} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("resolution error %q should mention %s", err, want)
-		}
+
+	// Outside any project: everything passes through.
+	chdir(t, isolatedDir(t))
+	got = scopeVerbName(verbOpts{name: "agent"}, true)
+	if got.name != "agent" {
+		t.Errorf("outside project: name = %q, want %q", got.name, "agent")
 	}
 }
 
 // TestProjectScopedLifecycle: inside a project, `stop agent` resolves to
 // proj/agent, stops it, and leaves it registered (non-destructive —
-// deregistration stays exclusive to down). Fully-qualified and global names
-// pass through the same wrapper untouched.
+// deregistration stays exclusive to down). A bare global name resolves
+// project-local too (no fallback) so it fails with the qualified name in the
+// error; fully-qualified names pass through the same wrapper untouched.
 func TestProjectScopedLifecycle(t *testing.T) {
 	cliui.SetJSON(true)
 	t.Cleanup(func() { cliui.SetJSON(false) })
@@ -428,7 +566,7 @@ func TestProjectScopedLifecycle(t *testing.T) {
 	// Bare local name → proj/agent.
 	stop := verbOpts{socket: socket, json: true, name: "agent"}
 	if _, err := captureStdout(t, func() error {
-		return withClient(stop, nil, projectScoped(lifecycle("stop")))
+		return withClient(stop, nil, projectScoped("stop", true, lifecycle("stop")))
 	}); err != nil {
 		t.Fatalf("scoped stop: %v", err)
 	}
@@ -440,30 +578,157 @@ func TestProjectScopedLifecycle(t *testing.T) {
 		t.Error("stop left proj/agent enabled")
 	}
 
-	// Bare global name falls back to the global harness (demo exists, is
-	// disabled; stop is idempotent so this round-trips fine).
+	// A bare global name inside the project resolves to proj/demo — no global
+	// fallback (SPEC-0004 REQ "Project-Scoped Verbs"). The daemon's error
+	// names the qualified name that was tried, wrapped with verb context.
 	stop.name = "demo"
+	_, err = captureStdout(t, func() error {
+		return withClient(stop, nil, projectScoped("stop", true, lifecycle("stop")))
+	})
+	if err == nil {
+		t.Fatal("bare global name inside a project resolved (want unknown proj/demo error)")
+	}
+	if !strings.Contains(err.Error(), "proj/demo") {
+		t.Errorf("error %q should name the qualified %q it tried", err, "proj/demo")
+	}
+	if !strings.Contains(err.Error(), "harness stop:") {
+		t.Errorf("error %q missing verb context wrap", err)
+	}
+
+	// A NAME containing "/" is fully qualified and passes through the
+	// wrapper untouched.
+	stop.name = "proj/helper"
 	if _, err := captureStdout(t, func() error {
-		return withClient(stop, nil, projectScoped(lifecycle("stop")))
+		return withClient(stop, nil, projectScoped("stop", true, lifecycle("stop")))
 	}); err != nil {
-		t.Fatalf("global fallback stop: %v", err)
+		t.Fatalf("qualified stop: %v", err)
 	}
 
 	// start brings the project harness back without re-running up.
 	start := verbOpts{socket: socket, json: true, name: "agent"}
 	if _, err := captureStdout(t, func() error {
-		return withClient(start, nil, projectScoped(lifecycle("start")))
+		return withClient(start, nil, projectScoped("start", true, lifecycle("start")))
 	}); err != nil {
 		t.Fatalf("scoped start: %v", err)
 	}
 	waitForRunning(t, c, "proj/agent")
 }
 
+// TestProjectScopedDescribe: describe rides the same projectScoped wrapper as
+// the other name-taking verbs, so inside a project a bare NAME describes
+// <project>/NAME (previously it hit the daemon with the unresolved bare name
+// and failed with unknown_harness).
+func TestProjectScopedDescribe(t *testing.T) {
+	cliui.SetJSON(true)
+	t.Cleanup(func() { cliui.SetJSON(false) })
+	socket, _ := bootTestDaemon(t)
+	chdir(t, writeProjectFile(t))
+	o := verbOpts{socket: socket, json: true}
+
+	if _, err := captureStdout(t, func() error { return cmdUp(o) }); err != nil {
+		t.Fatal(err)
+	}
+
+	desc := verbOpts{socket: socket, json: true, name: "helper"}
+	out, err := captureStdout(t, func() error {
+		return withClient(desc, nil, projectScoped("describe", false, cmdDescribe))
+	})
+	if err != nil {
+		t.Fatalf("scoped describe: %v", err)
+	}
+	var h protocol.HarnessInfo
+	if err := json.Unmarshal([]byte(out), &h); err != nil {
+		t.Fatalf("describe output not JSON: %v\n%s", err, out)
+	}
+	if h.Name != "proj/helper" {
+		t.Errorf("describe resolved to %q, want %q", h.Name, "proj/helper")
+	}
+}
+
+// TestScopedVerbMalformedProjectFileWarns: a malformed (or foreign) ancestor
+// harness.toml must not break the reused global verbs — the parse error is
+// surfaced as a one-line stderr warning and the verb proceeds on global
+// scope (SPEC-0004 REQ "Error Handling Standards": surfaced, not swallowed;
+// the warning IS the surfacing).
+func TestScopedVerbMalformedProjectFileWarns(t *testing.T) {
+	cliui.SetJSON(true)
+	t.Cleanup(func() { cliui.SetJSON(false) })
+	socket, _ := bootTestDaemon(t)
+	// A committed global-style config: [server] is forbidden in project files.
+	chdir(t, writeProjectDir(t, `[server]
+listen = ":9"
+
+[harness.demo2]
+cmd = "sleep"
+`))
+
+	stop := verbOpts{socket: socket, json: true, name: "demo"}
+	var stopErr error
+	warn, _ := captureStderr(t, func() error {
+		_, stopErr = captureStdout(t, func() error {
+			return withClient(stop, nil, projectScoped("stop", true, lifecycle("stop")))
+		})
+		return nil
+	})
+	if stopErr != nil {
+		t.Fatalf("stop of a global harness under a malformed project file = %v, want success", stopErr)
+	}
+	if !strings.Contains(warn, "warning: ignoring project file") {
+		t.Errorf("stderr = %q, want the ignoring-project-file warning", warn)
+	}
+	if !strings.Contains(warn, "server") {
+		t.Errorf("warning %q should carry the parse error detail", warn)
+	}
+}
+
+// TestProjectVerbsMalformedProjectFileFatal: for the project verbs (up/ps)
+// the malformed project file stays fatal — they cannot mean anything without
+// a valid project scope.
+func TestProjectVerbsMalformedProjectFileFatal(t *testing.T) {
+	chdir(t, writeProjectDir(t, `[server]
+listen = ":9"
+`))
+	sock := filepath.Join(shortSockDir(t), "n.sock")
+
+	err := cmdUp(verbOpts{socket: sock})
+	if err == nil || !strings.Contains(err.Error(), "harness up:") {
+		t.Errorf("cmdUp under malformed project file = %v, want fatal wrapped parse error", err)
+	}
+	err = cmdPs(verbOpts{socket: sock})
+	if err == nil || !strings.Contains(err.Error(), "harness ps:") {
+		t.Errorf("cmdPs under malformed project file = %v, want fatal wrapped parse error", err)
+	}
+}
+
+// TestCmdUpExcludesActiveConfig: a custom-located global config passed via
+// --config must never be adopted as a project file by discovery — the walk
+// skips it exactly like the conventional DefaultPath() (SPEC-0004 REQ
+// "Project File Discovery").
+func TestCmdUpExcludesActiveConfig(t *testing.T) {
+	// A global-style config (contains [profile.*]) sitting in cwd: without
+	// the exclusion, discovery would adopt it and fail with the
+	// forbidden-table parse error instead of ErrNoProjectFound.
+	dir := writeProjectDir(t, `[harness.demo]
+cmd = "sleep"
+
+[profile.dev]
+harnesses = ["demo"]
+`)
+	chdir(t, dir)
+	o := verbOpts{
+		socket:     filepath.Join(shortSockDir(t), "n.sock"),
+		configPath: filepath.Join(dir, "harness.toml"),
+	}
+	err := cmdUp(o)
+	if !errors.Is(err, config.ErrNoProjectFound) {
+		t.Errorf("cmdUp with --config in cwd = %v, want ErrNoProjectFound (active config excluded from discovery)", err)
+	}
+}
+
 // TestWireHarnessesCarriesEnabledAndOrder: the wire conversion preserves file
 // order and the Enabled bit (the wire default is false, so dropping it would
 // register everything permanently stopped).
 func TestWireHarnessesCarriesEnabledAndOrder(t *testing.T) {
-	t.Parallel()
 	dir := writeProjectFile(t)
 	proj, err := config.LoadProject(filepath.Join(dir, "harness.toml"))
 	if err != nil {
@@ -480,7 +745,7 @@ func TestWireHarnessesCarriesEnabledAndOrder(t *testing.T) {
 		t.Error("agent Enabled not carried onto the wire")
 	}
 	if wire[1].Enabled {
-		t.Error("helper Enabled = true, want false")
+		t.Error("helper Enabled = true, want false (explicit enabled = false)")
 	}
 	if wire[0].Cmd != "sleep" || len(wire[0].Args) != 1 {
 		t.Errorf("agent definition not projected: %+v", wire[0])
