@@ -14,6 +14,7 @@ package attach_test
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -107,7 +108,7 @@ func (r *sizeRig) drain() {
 // wantSize waits for the child to report rows×cols on its PTY.
 func (r *sizeRig) wantSize(cols, rows int, what string) {
 	r.t.Helper()
-	want := strings.NewReplacer().Replace(itoa(rows) + " " + itoa(cols))
+	want := strconv.Itoa(rows) + " " + strconv.Itoa(cols)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		r.mu.Lock()
@@ -223,19 +224,6 @@ func TestResizeReachesAppAsSIGWINCH(t *testing.T) {
 	got := r.seen.String()
 	r.mu.Unlock()
 	t.Fatalf("app was never signalled about the new size; it reported: %q", lastLines(got, 4))
-}
-
-// itoa is a dependency-free strconv.Itoa for positive ints.
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	var b []byte
-	for i > 0 {
-		b = append([]byte{byte('0' + i%10)}, b...)
-		i /= 10
-	}
-	return string(b)
 }
 
 // lastLines returns the trailing n newline-separated chunks of s, for failure

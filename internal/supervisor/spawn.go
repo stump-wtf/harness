@@ -167,7 +167,16 @@ func spawn(h core.Harness, cols, rows int) (*process, error) {
 	// New session → child is a process-group leader (pgid == pid); a graceful
 	// stop can signal the entire group (kill(-pid)) to reap child processes
 	// like a shell's `sleep`.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	//
+	// Setctty additionally makes the PTY the new session's *controlling*
+	// terminal (Ctty 0 = the child's stdin, which xpty points at the slave).
+	// Without it the child has no ctty, and the kernel has nobody to notify:
+	// a TIOCSWINSZ changes the PTY's dimensions but raises no SIGWINCH, so a
+	// full-screen app never learns it should re-lay-out and keeps painting its
+	// old geometry into a correctly-sized window — the same symptom as spawning
+	// at the wrong size, one layer down (ADR-0003). It is also what lets an
+	// attached client's ^C reach the foreground process group as SIGINT.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 
 	if err := pty.Start(cmd); err != nil {
 		_ = pty.Close()
