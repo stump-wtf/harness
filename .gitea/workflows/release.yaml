@@ -1,0 +1,88 @@
+# harness — tag-triggered release. Push a `v*` tag and this cuts a Gitea
+# Release with cross-compiled tarballs (.goreleaser.yaml), then mirrors those
+# same tarballs into the Gitea generic package registry.
+#
+#   git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
+#
+# Two publish targets, on purpose:
+#   - Releases       — the front door, tied to the tag, with a changelog.
+#   - Generic packages — stable, guessable URLs that don't move:
+#       https://gitea.stump.rocks/api/packages/stump.wtf/generic/harness/<version>/<file>
+#     which is what an install script or an Ansible get_url wants to point at.
+#
+# AUTH: both steps use the automatic per-run `gitea.token` — no PAT, no repo
+# secret. That is only true on Gitea >= 1.26, where Actions tokens can carry
+# package scope; this instance is on 1.27. (See stump.wtf/switchboard's
+# build.yaml, which still carries a REGISTRY_TOKEN PAT workaround written for
+# the pre-1.26 behaviour and can now drop it.) The `permissions:` block below is
+# what grants the token `contents: write` (create the release) and
+# `packages: write` (upload to the registry).
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: ${{ gitea.workflow }}-${{ gitea.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: build + publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # GoReleaser derives the version and changelog from tag history, so
+          # the default shallow clone is not enough.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # ci.yaml gates PRs and main, but a tag can be pushed at any commit — so
+      # re-run the correctness gate here rather than releasing on trust.
+      - name: Test
+        run: go test ./...
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITEA_TOKEN: ${{ gitea.token }}
+
+      # Mirror the archives + checksums into the generic package registry. The
+      # registry rejects a re-upload of an existing version/filename with 409,
+      # so re-running this workflow for an already-published tag fails loudly
+      # instead of silently diverging from what is published. Delete the package
+      # version in the UI first if a genuine re-cut is needed.
+      - name: Publish to the generic package registry
+        env:
+          TOKEN: ${{ gitea.token }}
+          REF_NAME: ${{ gitea.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${REF_NAME#v}"   # v0.1.0 → 0.1.0
+          base="https://gitea.stump.rocks/api/packages/stump.wtf/generic/harness/${version}"
+          for f in dist/*.tar.gz dist/checksums.txt; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f")
+            echo "→ ${base}/${name}"
+            curl -sSf \
+              -H "Authorization: token ${TOKEN}" \
+              --upload-file "$f" \
+              "${base}/${name}"
+          done
+          echo "published harness ${version} to the generic registry"
