@@ -167,6 +167,21 @@ func TestValidationErrors(t *testing.T) {
 			wantSub:  `duplicate harness "a"`,
 		},
 		{
+			// "/" is reserved for the <project>/<harness> namespace (ADR-0009;
+			// SPEC-0004): a quoted-key global name carrying it could clobber a
+			// registered project harness.
+			name:     "slash in quoted harness name",
+			toml:     "[harness.\"reduit/agent\"]\ncmd = \"x\"\n",
+			wantLine: 1,
+			wantSub:  `must not contain "/"`,
+		},
+		{
+			name:     "slash in bare quoted table name",
+			toml:     "[\"a/b\"]\ncmd = \"x\"\n",
+			wantLine: 1,
+			wantSub:  `must not contain "/"`,
+		},
+		{
 			// A redefined table is illegal TOML, so the decoder rejects it
 			// with a location before our own duplicate-profile guard is
 			// reached — either way the failure carries the line.

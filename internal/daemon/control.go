@@ -43,6 +43,10 @@ func (c *conn) handleControl(payload []byte) {
 		c.opReload(req)
 	case protocol.OpDaemonInfo:
 		c.respond(req, c.opDaemonInfo())
+	case protocol.OpProjectUp:
+		c.opProjectUp(req)
+	case protocol.OpProjectDown:
+		c.opProjectDown(req)
 	default:
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownOp, "unknown op %q", req.Op)
 	}
@@ -72,11 +76,18 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		ConfigChanged: snap.ConfigChanged,
 		PID:           snap.PID,
 	}
-	if h, ok := c.srv.mgr.Config().Harnesses[snap.Name]; ok {
+	// HarnessRecord resolves the definition and provenance together under one
+	// manager lock hold — so a list of N harnesses costs N+1 lock round-trips
+	// instead of 2N+1, and Cmd/Backend and Project can never come from two
+	// different registry states mid-project_down (SPEC-0004 REQ "Project
+	// Naming And Namespacing"; ADR-0009).
+	h, project, ok := c.srv.mgr.HarnessRecord(snap.Name)
+	if ok {
 		info.Cmd = h.Cmd
 		info.Backend = string(h.Backend)
 		info.Description = h.Description
 	}
+	info.Project = project
 	return info
 }
 
@@ -184,14 +195,15 @@ func (c *conn) opReload(req protocol.ControlReq) {
 
 // opDaemonInfo returns daemon metadata.
 func (c *conn) opDaemonInfo() protocol.DaemonInfo {
-	cfg := c.srv.mgr.Config()
 	return protocol.DaemonInfo{
 		Version:       c.srv.version,
 		ProtoVersion:  protocol.ProtoVersion,
 		PID:           os.Getpid(),
 		UptimeSeconds: timeSince(c.srv.started),
 		Socket:        c.srv.socketPath,
-		Harnesses:     len(cfg.Harnesses),
+		// The registered count — globals plus project harnesses — so the
+		// number agrees with what list returns (SPEC-0004; ADR-0009).
+		Harnesses:     c.srv.mgr.HarnessCount(),
 		ActiveProfile: c.srv.mgr.ActiveProfile(),
 	}
 }

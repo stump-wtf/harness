@@ -226,6 +226,14 @@ func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness
 	if _, exists := cfg.Harnesses[name]; exists {
 		return newError(filename, line, "duplicate harness %q", name)
 	}
+	// "/" is reserved for the `<project>/<harness>` namespace: a (TOML-quoted)
+	// global name containing it could shadow or clobber a registered project
+	// harness. Governing: ADR-0009, SPEC-0004 REQ "Project Naming And
+	// Namespacing".
+	if strings.Contains(name, "/") {
+		return newError(filename, line,
+			"harness %q: name must not contain \"/\" (reserved for project namespacing)", name)
+	}
 	if strings.TrimSpace(rh.Cmd) == "" {
 		return newError(filename, line, "harness %q: missing required key \"cmd\"", name)
 	}

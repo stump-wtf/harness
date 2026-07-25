@@ -74,6 +74,20 @@ func (r *Registry) Mux(name string) *Mux {
 // Mux as an io.Writer so the supervisor tees raw PTY output into it.
 func (r *Registry) WriterFor(name string) io.Writer { return r.Mux(name) }
 
+// Remove drops the Mux registered for name, releasing its vt emulator and
+// scrollback ring for collection. The supervisor Manager calls this (via
+// ManagerOptions.DropExtraOut) when a project harness is deregistered, so an
+// up→down→up cycle starts from a fresh screen instead of resurfacing the dead
+// incarnation's scrollback — and churning project names cannot grow the map
+// without bound (SPEC-0004 REQ "Tear Down"; ADR-0009). Sessions still attached
+// keep their now-quiescent Mux until they detach; a later re-registration gets
+// a brand-new one.
+func (r *Registry) Remove(name string) {
+	r.mu.Lock()
+	delete(r.muxes, name)
+	r.mu.Unlock()
+}
+
 // controller reads the wired controller under the lock.
 func (r *Registry) controller() Controller {
 	r.mu.Lock()
