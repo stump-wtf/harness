@@ -6,7 +6,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 // CONFIGURE THESE VALUES FOR YOUR PROJECT
 // ============================================================
 const PROJECT_TITLE = 'Harness';
-const PROJECT_TAGLINE = 'systemctl for your agents — architecture decisions & specifications';
+const PROJECT_TAGLINE = 'systemctl for long-running terminal processes — architecture decisions & specifications';
 const GITHUB_URL = 'https://gitea.stump.rocks/stump.wtf/harness';
 // Host this build is served from. The same build ships to more than one host —
 // only `url` differs, so CI supplies it via DOCS_URL. Default is GitHub Pages,

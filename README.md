@@ -1,13 +1,10 @@
 # Harness
 
-> `systemctl` for your agents.
+> `systemctl` for long-running terminal processes.
 
 **Harness** is a client-server TUI for supervising, attaching to, and *hopping
-between* long-running terminal processes — agent CLIs (Claude Code, Crush),
-REPLs, watchers — built in Go on the
-[Charmbracelet](https://github.com/charmbracelet) ecosystem. It is the
-successor to [`zsh-harnessd`](https://github.com/stump-wtf/zsh-harnessd), which
-proved the idea as a zsh + tmux + systemd plugin.
+between* long-running terminal processes, built in Go on the
+[Charmbracelet](https://github.com/charmbracelet) ecosystem.
 
 A **harness** is any long-running command you want kept alive and
 re-attachable. The `harness` binary is a single Go binary with two faces:
@@ -19,15 +16,14 @@ harness and its state, hop into any one as a live terminal, switch between
 over a Unix socket, or remotely over SSH via
 [Wish](https://github.com/charmbracelet/wish).
 
-Think `tmux` + `systemctl` + a purpose-built agent-ops dashboard, as a single
+Think `tmux` + `systemctl` + a purpose-built ops dashboard, as a single
 Go binary — with tmux demoted from foundation to optional escape hatch.
 
 ## Status
 
 **Alpha — and self-hosting.**
 [`v0.1.0`](https://gitea.stump.rocks/stump.wtf/harness/releases/tag/v0.1.0) is
-tagged, and Harness now supervises real work daily: this paragraph was written
-from a Claude Code session running inside a harness.
+tagged, and Harness now supervises real work daily.
 
 What works today: `harness daemon` supervises each harness in its own PTY with
 daemon-owned scrollback; the TUI dashboard lists, starts, stops, edits and hops
@@ -92,7 +88,7 @@ The daemon is meant to be kept alive by your init system (ADR-0005). A
 ```ini
 # ~/.config/systemd/user/harness.service
 [Unit]
-Description=Harness agent supervisor
+Description=Harness supervisor
 
 [Service]
 ExecStart=%h/go/bin/harness daemon
@@ -136,14 +132,6 @@ on every push to `main`.
   the visual direction — calm ops cockpit, ANSI neon on blue-black, the "hop"
   as the signature moment. Open `docs/design/Harness.dc.html` in a browser for
   the full exploration.
-
-## Naming
-
-- **`harness`** — the CLI/TUI client (`harness` with no args opens the TUI;
-  `harness list`, `harness attach foo`, etc. mirror the daemon RPC for scripts)
-- **`harness daemon`** — the long-lived supervisor subcommand (run as a user
-  service). The historical standalone `harnessd` binary is retired — one binary,
-  two roles.
 
 ## Development
 

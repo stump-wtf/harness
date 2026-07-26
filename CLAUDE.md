@@ -1,8 +1,8 @@
 # Harness
 
-`systemctl` for your agents — a Go + Charmbracelet client-server TUI for
-supervising, attaching to, and hopping between long-running harnesses (agent
-CLIs, REPLs, watchers). Successor to `zsh-harnessd`. See `README.md`.
+`systemctl` for long-running terminal processes — a Go + Charmbracelet
+client-server TUI for supervising, attaching to, and hopping between
+long-running harnesses. See `README.md`.
 
 - Origin of truth: https://gitea.stump.rocks/stump.wtf/harness (Gitea). GitHub
   (https://github.com/stump-wtf/harness) is a read-only push mirror — issues,
