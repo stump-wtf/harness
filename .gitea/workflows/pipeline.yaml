@@ -73,13 +73,25 @@ jobs:
         run: echo "on main with a green build — releasing" >> "$GITHUB_STEP_SUMMARY"
 
   # ---- 7. Gitea Pages ------------------------------------------------------
-  # NEW: this repo has a Docusaurus docs-site/ but has never published it.
-  # Wired here because the pipeline is meant to be end-to-end; if you would
-  # rather it stay unpublished, delete this job — nothing else depends on it.
+  # The LAN-side twin of the GitHub Pages deploy in .github/workflows/pages.yml.
+  # Same build, same baseUrl (/harness/); only `url` differs, so the site_url
+  # input is exported to the build as DOCS_URL. Without it the published site
+  # would advertise the GitHub host in its canonical and og:url tags.
+  #
+  # The owner is slugified by garage-pages-deploy (lowercase, dots to dashes):
+  # stump.wtf publishes to stump-wtf.pages.stump.rocks, because a two-label host
+  # matches neither Caddy's *.pages.stump.rocks label nor its certificate.
+  #
+  # node 20, matching the GitHub twin, so the two hosts cannot drift onto
+  # different toolchains. The shared default of 22 does build this site (run 3348
+  # proved it), but Docusaurus is version-sensitive — node 23 fails outright on
+  # ProgressPlugin validation — so the version is stated rather than inherited.
   pages:
     needs: [main-only]
     uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/static-site.yaml@main
     with:
       working_directory: docs-site
       source_dir: docs-site/build
+      site_url: https://stump-wtf.pages.stump.rocks
+      node_version: "20"
     secrets: inherit
