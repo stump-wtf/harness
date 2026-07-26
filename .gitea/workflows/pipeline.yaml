@@ -82,8 +82,10 @@ jobs:
   # stump.wtf publishes to stump-wtf.pages.stump.rocks, because a two-label host
   # matches neither Caddy's *.pages.stump.rocks label nor its certificate.
   #
-  # node 20, not the shared workflow's default 22: newer Node trips Docusaurus's
-  # ProgressPlugin validation, and 20 is what the GitHub twin already builds on.
+  # node 20, matching the GitHub twin, so the two hosts cannot drift onto
+  # different toolchains. The shared default of 22 does build this site (run 3348
+  # proved it), but Docusaurus is version-sensitive — node 23 fails outright on
+  # ProgressPlugin validation — so the version is stated rather than inherited.
   pages:
     needs: [main-only]
     uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/static-site.yaml@main
