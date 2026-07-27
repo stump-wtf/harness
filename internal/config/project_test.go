@@ -325,6 +325,39 @@ func TestDiscoverProject_SkipsGlobalConfig(t *testing.T) {
 	}
 }
 
+// TestSamePath_ResolvesSymlinks pins the discovery fix: two spellings of the
+// same file that differ only by a symlink must compare equal, and a path
+// that doesn't exist on disk must still compare sensibly (EvalSymlinks
+// errors on a missing path, and an absent global config is normal).
+func TestSamePath_ResolvesSymlinks(t *testing.T) {
+	tmpDir := t.TempDir()
+	realDir := filepath.Join(tmpDir, "real")
+	if err := os.MkdirAll(realDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(realDir, "harness.toml")
+	if err := os.WriteFile(file, []byte("[harness.x]\ncmd=\"y\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(tmpDir, "link")
+	if err := os.Symlink(realDir, link); err != nil {
+		t.Skipf("cannot create symlinks here: %v", err)
+	}
+	if !samePath(file, filepath.Join(link, "harness.toml")) {
+		t.Error("samePath should treat a file and its symlinked spelling as the same path")
+	}
+
+	// Missing paths fall back to the absolute form — a non-existent global
+	// config must not make every candidate compare equal, nor error out.
+	missing := filepath.Join(tmpDir, "nope", "harness.toml")
+	if samePath(missing, file) {
+		t.Error("samePath(missing, existing) should be false")
+	}
+	if !samePath(missing, missing) {
+		t.Error("samePath(missing, missing) should be true (fallback to abs form)")
+	}
+}
+
 // ---- sanitizeProjectName tests -------------------------------------------
 
 func TestSanitizeProjectName(t *testing.T) {

@@ -351,14 +351,29 @@ func sanitizeProjectName(s string) string {
 // samePath returns true if two paths refer to the same file (best-effort:
 // resolves symlinks and relative components). Used to skip the global config
 // during discovery.
+//
+// Symlink resolution matters: os.Getwd (which builds the discovery
+// candidates) returns a symlink-resolved path, while the excluded path comes
+// from the caller (--config, or a harness that was launched through a
+// symlinked directory) and is not resolved. macOS makes this concrete — /var
+// is a symlink to /private/var, so /var/folders/… and /private/var/folders/…
+// are the same file yet compare unequal without resolution — but any
+// symlinked project dir, $HOME, or --config path hits it on Linux too.
 func samePath(a, b string) bool {
-	absA, err := filepath.Abs(a)
+	return canonicalPath(a) == canonicalPath(b)
+}
+
+// canonicalPath returns the absolute, symlink-resolved form of p, falling
+// back to the absolute form when p can't be resolved (filepath.EvalSymlinks
+// errors on a missing path, and an absent global config is a normal case
+// here).
+func canonicalPath(p string) string {
+	abs, err := filepath.Abs(p)
 	if err != nil {
-		absA = a
+		abs = p
 	}
-	absB, err := filepath.Abs(b)
-	if err != nil {
-		absB = b
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
 	}
-	return absA == absB
+	return abs
 }
