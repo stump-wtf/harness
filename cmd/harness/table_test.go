@@ -4,16 +4,15 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-	"unicode/utf8"
 )
 
-// TestTableTruncatesFixedColumn pins PR #23 M1: an over-long cell in a
-// fixed/structured column (NAME, STATE, …) must truncate with an ellipsis,
-// not wrap. wrap-then-join corrupts the row layout because Flush joins
-// wrapped continuation lines line-wise with the next column. A name like
-// "crush-signal-channel" (20 runes) is wider than NAME's budget (14), so it
-// must render as "crush-signal-…" on a single line, not two.
-func TestTableTruncatesFixedColumn(t *testing.T) {
+// TestTableNameNeverTruncates pins the name-preservation contract: a NAME
+// wider than the old fixed budget (14) is NEVER cut with an ellipsis — the
+// column widens to fit the longest name in the data (up to maxNameWidth),
+// and the DESCRIPTION column absorbs the slack (wrapping) instead. A name is
+// the harness's identity; losing it to truncation is a defect (see PR #23
+// M1, which made fixed columns truncate, later refined so NAME is exempt).
+func TestTableNameNeverTruncates(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	tt := NewTable(&buf, "NAME", "STATE", "DESCRIPTION")
@@ -21,27 +20,35 @@ func TestTableTruncatesFixedColumn(t *testing.T) {
 	_ = tt.Flush()
 	out := buf.String()
 
-	// The name must be truncated, not wrapped: every output line beyond the
-	// header rule begins with either spaces+content (continuation of the
-	// DESCRIPTION column) or a truncated name prefix, never with the
-	// un-truncated "crush-signal-channel".
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "crush-signal-channel") {
-			t.Errorf("NAME wrapped instead of truncating:\n%s", out)
-		}
+	// The full, un-truncated name must appear on one line: the column grew
+	// to fit it (20 runes > the old 14 budget).
+	if !strings.Contains(out, "crush-signal-channel") {
+		t.Errorf("NAME was truncated or wrapped; want full name on one line:\n%s", out)
 	}
-	// The ellipsis must be present.
-	if !strings.Contains(out, "…") {
-		t.Errorf("missing ellipsis on truncated NAME:\n%s", out)
+	// No ellipsis may attach to the name.
+	if strings.Contains(out, "crush-signal-…") || strings.Contains(out, "crush-signal…") {
+		t.Errorf("NAME truncated with an ellipsis; names are never cut:\n%s", out)
 	}
-	// And the visible width of the NAME cell (including ellipsis) must be
-	// within NAME's fixed budget (14).
-	wantPrefix := "crush-signal-…"
-	if !strings.Contains(out, wantPrefix) {
-		t.Errorf("expected truncated NAME %q in:\n%s", wantPrefix, out)
+}
+
+// TestTableNameWrapsPastCap pins the upper bound: a name longer than
+// maxNameWidth wraps onto continuation lines (Flush joins wrapped cells
+// line-wise per column, so the layout stays intact) rather than either
+// truncating or starving every other column of width.
+func TestTableNameWrapsPastCap(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	tt := NewTable(&buf, "NAME", "DESCRIPTION")
+	long := strings.Repeat("a", maxNameWidth+10)
+	tt.Row(long, "d")
+	_ = tt.Flush()
+	out := buf.String()
+	// The name is split (not shown whole on one line) but never ellipsized.
+	if strings.Contains(out, long) {
+		t.Errorf("over-cap NAME should have wrapped, not stayed on one line:\n%s", out)
 	}
-	if w := utf8.RuneCountInString(wantPrefix); w != 14 {
-		t.Errorf("truncation width = %d, want 14 (NAME budget)", w)
+	if strings.Contains(out, "…") {
+		t.Errorf("over-cap NAME should wrap, not truncate with an ellipsis:\n%s", out)
 	}
 }
 
@@ -62,12 +69,13 @@ func TestTableWrapsFlexColumn(t *testing.T) {
 	if !strings.Contains(out, long) {
 		// If the full long word isn't on one line, it wrapped (good).
 		// Verify wrapping happened by checking for a continuation line.
-		lines := strings.Split(out, "\n")
+		// A continuation line of the DESCRIPTION column starts with the
+		// NAME column's width + colSep (2) of indent. NAME holds "demo"
+		// (4 runes), so the column is 4 wide and the indent is 6 spaces.
+		indent := strings.Repeat(" ", 6)
 		wrapped := false
-		for _, l := range lines {
-			// A continuation line of the DESCRIPTION column starts with
-			// the NAME width (14) + colSep (2) = 16 spaces of indent.
-			if strings.HasPrefix(l, strings.Repeat(" ", 16)) {
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, indent) && strings.TrimSpace(l) != "" {
 				wrapped = true
 				break
 			}

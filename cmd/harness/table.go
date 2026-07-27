@@ -39,6 +39,11 @@ const (
 	tableWidthRatio   = 0.8
 	minTableWidth     = 60
 	maxTableWidth     = 160
+	// maxNameWidth caps how wide the NAME column may grow to fit the longest
+	// harness name. NAME is never truncated (it is the harness's identity),
+	// but an unbounded name would starve every other column; beyond this cap
+	// the name wraps onto continuation lines instead of being cut.
+	maxNameWidth = 40
 )
 
 // colSep is the visible-space separator inserted between cells on a row.
@@ -94,71 +99,78 @@ func palette() theme.Palette { return theme.Default().Palette }
 // Table is a tabular renderer with bold headers, separator rules, and
 // ANSI-aware column alignment. The zero value is not usable; use NewTable.
 type Table struct {
-	w          io.Writer
-	colored    bool
-	pal        theme.Palette
-	width      int        // cell-content budget for this table (resolved from writer's TTY size)
-	widths     []int      // visible width per column
-	truncators []bool     // truncate-with-ellipsis (true) vs wrap (false) per column
-	rows       []tableRow // queued rows
+	w         io.Writer
+	colored   bool
+	pal       theme.Palette
+	width     int        // cell-content budget for this table (resolved from writer's TTY size)
+	headers   []string   // raw header labels; column count + fit/truncate policy key off these
+	rows      []tableRow // queued rows (raw, unwrapped cells; laid out in Flush)
+	widths    []int      // resolved per-column widths; computed lazily in Flush
+	truncated []bool     // resolved per-column truncate policy; computed with widths
 }
 
 // tableRow is one queued output row. fullWidth rows span the entire
 // table cell-content budget (t.width, single cell); normal rows have one
-// cell per column.
+// cell per column. Cells are stored raw (unwrapped, unpadded); Flush
+// resolves column widths — measuring the NAME column's content so a name is
+// never cut — and only then wraps/pads.
 type tableRow struct {
 	fullWidth bool
 	separator bool
+	header    bool // bold every cell (the NewTable header row)
 	cells     []string
 }
 
-// NewTable starts a table written to w. headers also fixes the column count
-// and the visible width budget for each column. The cell-content budget is
-// resolved from w's terminal size (~80% of the window, clamped) or falls
-// back to defaultTableWidth when w isn't a TTY. Call Row any number of
-// times, then Flush.
+// NewTable starts a table written to w. headers fixes the column count and
+// the per-column fit/truncate policy. The cell-content budget is resolved
+// from w's terminal size (~80% of the window, clamped) or falls back to
+// defaultTableWidth when w isn't a TTY. Call Row any number of times, then
+// Flush — column widths are resolved at Flush so the NAME column can size
+// itself to the longest name in the data (never truncated; the DESCRIPTION
+// column absorbs whatever budget remains and wraps).
 func NewTable(w io.Writer, headers ...string) *Table {
-	colored := useColorFor(w)
-	pal := palette()
-	budget := resolveTableWidth(w)
-	widths, trunc := defaultColumnWidths(headers, budget)
 	t := &Table{
-		w:          w,
-		colored:    colored,
-		pal:        pal,
-		width:      budget,
-		widths:     widths,
-		truncators: trunc,
+		w:       w,
+		colored: useColorFor(w),
+		pal:     palette(),
+		width:   resolveTableWidth(w),
+		headers: append([]string(nil), headers...),
 	}
-	// Bold + pad each header cell to its column width.
-	styled := make([]string, len(headers))
-	for i, h := range headers {
-		styled[i] = t.wrapCell(t.bold(h), t.widths[i], true) // headers never wrap
-	}
-	t.rows = append(t.rows, tableRow{cells: styled})
-	// Header rule directly under the header row, so the table reads as a
-	// header + body block (rounded separator rules per the file docstring).
+	// Header row (raw labels) + the rule directly under it, so the table
+	// reads as a header + body block (rounded separator rules per the file
+	// docstring). Bold is applied at Flush once widths are known.
+	t.rows = append(t.rows, tableRow{cells: append([]string(nil), headers...), header: true})
 	t.Separator()
 	return t
 }
 
 // defaultColumnWidths picks per-column widths that fit budget (the table's
 // cell-content budget), and reports which columns should truncate (vs wrap)
-// on overflow. Short known columns (NAME/STATE/ENABLED/RESTARTS/PID/FIELD/
-// CHECK/STATUS/AUTOSTART) get fixed budgets and truncate-with-ellipsis —
-// they hold structured identifiers and a wrapped NAME like
-// "crush-signal-\nchannel" would corrupt the row layout (lipgloss.Width-
-// based wrapping gets joined line-wise with the next column). Everything
-// else (typically DESCRIPTION, DETAIL, VALUE) absorbs the remainder and
-// wraps on overflow, since long prose is the common case there.
-func defaultColumnWidths(headers []string, budget int) (widths []int, truncate []bool) {
+// on overflow.
+//
+// NAME is special: it is the harness's identity, so it is NEVER truncated.
+// Its width is measured from the longest name in the data (nameWidth,
+// pre-computed by Flush across all rows, capped at maxNameWidth so one
+// pathological name can't starve the table). If a name still exceeds the
+// cap it wraps onto continuation lines rather than being cut — Flush joins
+// wrapped cells line-wise per column, so a multi-line NAME no longer
+// corrupts the row the way it would have under the old naive join (PR #23
+// M1's original concern). The DESCRIPTION column absorbs whatever budget
+// remains and wraps (long prose is the common case there), so when space is
+// tight the description is sacrificed, never the name.
+//
+// The other short known columns (STATE/ENABLED/RESTARTS/PID/FIELD/CHECK/
+// STATUS/AUTOSTART) keep fixed budgets and truncate-with-ellipsis — they
+// hold structured values where a cut is safe.
+func defaultColumnWidths(headers []string, budget, nameWidth int) (widths []int, truncate []bool) {
 	n := len(headers)
 	if n == 0 {
 		return nil, nil
 	}
 	// Fixed budgets for known short columns. Values are visible-cell counts.
+	// NAME is deliberately absent: its width comes from the measured
+	// nameWidth, and it wraps (truncate stays false) so it is never cut.
 	fixed := map[string]int{
-		"NAME":      14,
 		"STATE":     12,
 		"ENABLED":   9,
 		"RESTARTS":  9,
@@ -172,7 +184,22 @@ func defaultColumnWidths(headers []string, budget int) (widths []int, truncate [
 	truncate = make([]bool, n)
 	used := 0
 	for i, h := range headers {
-		if w, ok := fixed[strings.ToUpper(strings.TrimSpace(h))]; ok {
+		key := strings.ToUpper(strings.TrimSpace(h))
+		if key == "NAME" {
+			// Fit the measured longest name, but never below the header
+			// label and never above the cap.
+			w := nameWidth
+			if w < len("NAME") {
+				w = len("NAME")
+			}
+			if w > maxNameWidth {
+				w = maxNameWidth
+			}
+			widths[i] = w
+			used += w
+			continue
+		}
+		if w, ok := fixed[key]; ok {
 			widths[i] = w
 			truncate[i] = true
 			used += w
@@ -212,25 +239,24 @@ func defaultColumnWidths(headers []string, budget int) (widths []int, truncate [
 // width (cell budget + inter-cell separators), so it spans the whole row
 // rather than under-spanning (PR #23 nit).
 func (t *Table) Separator() {
-	w := renderedWidth(t.width, len(t.widths))
+	w := renderedWidth(t.width, len(t.headers))
 	t.rows = append(t.rows, tableRow{separator: true, cells: []string{strings.Repeat("─", w)}})
 }
 
-// Row queues one data row. Cells that overflow their column width either
-// truncate with an ellipsis (fixed/structured columns: NAME, STATE, …) or wrap
-// onto continuation lines indented to the column's left edge (long-text
-// columns: DESCRIPTION, DETAIL, VALUE).
+// Row queues one data row. Cells are stored raw; Flush resolves the column
+// widths (measuring NAME content) and then lays each cell out — truncating
+// with an ellipsis in a fixed/structured column (STATE, ENABLED, …) or
+// wrapping onto continuation lines in a fit/wrap column (NAME, DESCRIPTION,
+// DETAIL, VALUE), with continuation text aligned under the column's left
+// edge.
 func (t *Table) Row(cells ...string) {
-	padded := make([]string, len(t.widths))
-	for i := range t.widths {
-		c := ""
+	raw := make([]string, len(t.headers))
+	for i := range t.headers {
 		if i < len(cells) {
-			c = cells[i]
+			raw[i] = cells[i]
 		}
-		trunc := i < len(t.truncators) && t.truncators[i]
-		padded[i] = t.wrapCell(c, t.widths[i], trunc)
 	}
-	t.rows = append(t.rows, tableRow{cells: padded})
+	t.rows = append(t.rows, tableRow{cells: raw})
 }
 
 // RowFull queues one row whose content spans the full table width (useful
@@ -239,19 +265,7 @@ func (t *Table) Row(cells ...string) {
 // cells wrap on overflow (RowFull is used for prose/tally, not structured
 // identifiers).
 func (t *Table) RowFull(label, value string) {
-	if label == "" {
-		t.rows = append(t.rows, tableRow{fullWidth: true, cells: []string{t.wrapCell(value, t.width, false)}})
-		return
-	}
-	labelW := 0
-	if len(t.widths) > 0 {
-		labelW = t.widths[0]
-	}
-	valW := t.width - labelW
-	t.rows = append(t.rows, tableRow{fullWidth: true, cells: []string{
-		t.wrapCell(label, labelW, false),
-		t.wrapCell(value, valW, false),
-	}})
+	t.rows = append(t.rows, tableRow{fullWidth: true, cells: []string{label, value}})
 }
 
 // wrapCell renders c into width visible columns. When truncate is true, an
@@ -356,12 +370,16 @@ func truncateVisible(s string, width int) string {
 	return b.String()
 }
 
-// Flush renders all queued rows to the writer. Separator rows are a single
-// horizontal rule. fullWidth rows are rendered as label+value (or just value).
-// Normal rows have each cell padded to its column width via lipgloss.Width,
-// and when a cell wraps to multiple lines, the row is expanded so
-// continuation text aligns under its own column's left edge.
+// Flush renders all queued rows to the writer. It first resolves the column
+// widths: the NAME column is measured from the longest name across every
+// queued row (capped at maxNameWidth) so a name is never cut, and the
+// remaining budget is split across the fixed and flex columns
+// (defaultColumnWidths). Each cell is then laid out — truncated in a
+// fixed/structured column, wrapped in a fit/wrap column — and padded to its
+// column width via lipgloss.Width; when a cell wraps to multiple lines the
+// row expands so continuation text aligns under its own column's left edge.
 func (t *Table) Flush() error {
+	t.resolveWidths()
 	var b strings.Builder
 	for _, row := range t.rows {
 		if row.separator {
@@ -370,9 +388,23 @@ func (t *Table) Flush() error {
 			continue
 		}
 		if row.fullWidth {
-			// Full-width row: cells are [value] or [label, value], already
-			// wrapped to their widths. Join label+value with colSep.
-			for ln, line := range strings.Split(strings.Join(row.cells, colSep), "\n") {
+			// Full-width row: cells are [label, value] (label may be "").
+			// Wrap to the full budget, then join label+value with colSep.
+			label, value := row.cells[0], row.cells[1]
+			var out string
+			if label == "" {
+				out = t.wrapCell(value, t.width, false)
+			} else {
+				labelW := 0
+				if len(t.widths) > 0 {
+					labelW = t.widths[0]
+				}
+				out = strings.Join([]string{
+					t.wrapCell(label, labelW, false),
+					t.wrapCell(value, t.width-labelW, false),
+				}, colSep)
+			}
+			for ln, line := range strings.Split(out, "\n") {
 				if ln > 0 {
 					b.WriteByte('\n')
 				}
@@ -381,12 +413,19 @@ func (t *Table) Flush() error {
 			b.WriteByte('\n')
 			continue
 		}
-		// Normal multi-column row. Split each cell into wrapped lines and
-		// emit maxLines output lines so continuation text aligns.
+		// Normal multi-column row. Lay out each cell (truncate or wrap +
+		// bold for the header), split into lines, and emit maxLines output
+		// lines so continuation text aligns under its own column.
 		cellLines := make([][]string, len(row.cells))
 		maxLines := 1
 		for i, cell := range row.cells {
-			lines := strings.Split(cell, "\n")
+			w := t.colWidth(i)
+			trunc := i < len(t.truncated) && t.truncated[i]
+			if row.header {
+				cell = t.bold(cell)
+				trunc = true // headers never wrap
+			}
+			lines := strings.Split(t.wrapCell(cell, w, trunc), "\n")
 			cellLines[i] = lines
 			if len(lines) > maxLines {
 				maxLines = len(lines)
@@ -395,10 +434,7 @@ func (t *Table) Flush() error {
 		for ln := 0; ln < maxLines; ln++ {
 			parts := make([]string, len(row.cells))
 			for i := range row.cells {
-				w := t.width
-				if i < len(t.widths) {
-					w = t.widths[i]
-				}
+				w := t.colWidth(i)
 				if ln < len(cellLines[i]) {
 					parts[i] = lipgloss.NewStyle().Width(w).Render(cellLines[i][ln])
 				} else {
@@ -411,6 +447,49 @@ func (t *Table) Flush() error {
 	}
 	_, err := io.WriteString(t.w, b.String())
 	return err
+}
+
+// colWidth returns column i's resolved width (falling back to the table
+// budget when out of range).
+func (t *Table) colWidth(i int) int {
+	if i < len(t.widths) {
+		return t.widths[i]
+	}
+	return t.width
+}
+
+// resolveWidths measures the NAME column's content across every queued row
+// and computes the final per-column widths and truncate policy. It is
+// idempotent (a second call is a no-op), so a Table can be flushed once.
+func (t *Table) resolveWidths() {
+	if t.widths != nil {
+		return
+	}
+	// The NAME column fits the longest name in the data. Bold styling on the
+	// header adds escape sequences, so measure the raw label, not the styled
+	// form; lipgloss.Width is ANSI-aware, but the raw header is unstyled here
+	// anyway.
+	nameW := 0
+	nameIdx := -1
+	for i, h := range t.headers {
+		if strings.ToUpper(strings.TrimSpace(h)) == "NAME" {
+			nameIdx = i
+			break
+		}
+	}
+	if nameIdx >= 0 {
+		for _, row := range t.rows {
+			if row.separator || row.fullWidth {
+				continue
+			}
+			if nameIdx < len(row.cells) {
+				if w := lipgloss.Width(row.cells[nameIdx]); w > nameW {
+					nameW = w
+				}
+			}
+		}
+	}
+	t.widths, t.truncated = defaultColumnWidths(t.headers, t.width, nameW)
 }
 
 // bold renders s bold in the foreground color when coloring is on.
