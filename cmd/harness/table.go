@@ -44,6 +44,16 @@ const (
 	// but an unbounded name would starve every other column; beyond this cap
 	// the name wraps onto continuation lines instead of being cut.
 	maxNameWidth = 40
+	// minNameWidth is the floor NAME may be squeezed to when the budget can't
+	// seat both the measured name and a usable wrap column. Squeezing NAME is
+	// safe precisely because it wraps rather than truncates: the cost is
+	// continuation lines, never characters, so the name stays whole.
+	minNameWidth = 12
+	// minFlexWidth is the width a wrap column (DESCRIPTION/DETAIL/VALUE) is
+	// squeezed toward before NAME gives ground. It is a target, not a
+	// guarantee — on a genuinely narrow terminal a flex column ends up
+	// narrower, but never non-positive (see defaultColumnWidths).
+	minFlexWidth = 12
 )
 
 // colSep is the visible-space separator inserted between cells on a row.
@@ -159,6 +169,12 @@ func NewTable(w io.Writer, headers ...string) *Table {
 // remains and wraps (long prose is the common case there), so when space is
 // tight the description is sacrificed, never the name.
 //
+// "Sacrificed" has a floor, though: once the wrap columns are squeezed to
+// minFlexWidth, NAME gives ground instead (down to minNameWidth) — squeezing
+// a wrapping column costs continuation lines, but a non-positive one makes
+// wrapWords emit the cell unwrapped and blows the row past the terminal
+// width. No column is ever handed a width below 1.
+//
 // The other short known columns (STATE/ENABLED/RESTARTS/PID/FIELD/CHECK/
 // STATUS/AUTOSTART) keep fixed budgets and truncate-with-ellipsis — they
 // hold structured values where a cut is safe.
@@ -183,9 +199,11 @@ func defaultColumnWidths(headers []string, budget, nameWidth int) (widths []int,
 	widths = make([]int, n)
 	truncate = make([]bool, n)
 	used := 0
+	nameIdx := -1
 	for i, h := range headers {
 		key := strings.ToUpper(strings.TrimSpace(h))
 		if key == "NAME" {
+			nameIdx = i
 			// Fit the measured longest name, but never below the header
 			// label and never above the cap.
 			w := nameWidth
@@ -207,22 +225,54 @@ func defaultColumnWidths(headers []string, budget, nameWidth int) (widths []int,
 	}
 	// Distribute the remainder evenly across the non-fixed (long-text)
 	// columns. If every column was fixed, they're already set.
-	rest := budget - used
 	flexCols := 0
 	for i := range widths {
 		if widths[i] == 0 {
 			flexCols++
 		}
 	}
+	// A wide NAME must not starve the wrap columns. At width <= 0 wrapWords
+	// gives up and returns the cell unwrapped, so the row renders far past
+	// the terminal width and destroys the alignment this table exists to
+	// provide — on an 80-column terminal a 27-rune name left DESCRIPTION at
+	// -2 and blew the row out to 113 columns. Reclaim the shortfall from
+	// NAME first (it wraps, so it stays whole) before any flex column is
+	// squeezed below minFlexWidth.
+	if flexCols > 0 && nameIdx >= 0 {
+		if short := flexCols*minFlexWidth - (budget - used); short > 0 {
+			give := widths[nameIdx] - minNameWidth
+			if give > short {
+				give = short
+			}
+			if give > 0 {
+				widths[nameIdx] -= give
+				used -= give
+			}
+		}
+	}
+	rest := budget - used
 	if flexCols > 0 {
 		per := rest / flexCols
-		rem := rest - per*flexCols
+		// Never hand out a non-positive width: a terminal narrow enough to
+		// force that is better served by a cramped-but-wrapping column than
+		// by a row that overflows.
+		if per < 1 {
+			per = 1
+		}
+		last := -1
 		for i := range widths {
 			if widths[i] == 0 {
 				widths[i] = per
+				last = i
 			}
 		}
-		widths[n-1] += rem // remainder to last column
+		// Hand the indivisible remainder to the last flex column — only on a
+		// genuine surplus, so the floor above is never clawed back, and to a
+		// flex column rather than blindly to widths[n-1] (which may be a
+		// fixed column when DESCRIPTION isn't last).
+		if rem := rest - per*flexCols; rem > 0 && last >= 0 {
+			widths[last] += rem
+		}
 	}
 	// Fallback: if all columns were "flex" (unknown headers), use even split.
 	if used == 0 {
@@ -238,9 +288,12 @@ func defaultColumnWidths(headers []string, budget, nameWidth int) (widths []int,
 // Separator queues a horizontal rule sized to the table's rendered row
 // width (cell budget + inter-cell separators), so it spans the whole row
 // rather than under-spanning (PR #23 nit).
+// The rule itself is sized in Flush, not here: every other row now resolves
+// its layout at flush time, and a rule measured at queue time would silently
+// disagree with the rows around it if the budget were ever set after the
+// first Separator (NewTable queues one).
 func (t *Table) Separator() {
-	w := renderedWidth(t.width, len(t.headers))
-	t.rows = append(t.rows, tableRow{separator: true, cells: []string{strings.Repeat("─", w)}})
+	t.rows = append(t.rows, tableRow{separator: true})
 }
 
 // Row queues one data row. Cells are stored raw; Flush resolves the column
@@ -383,7 +436,7 @@ func (t *Table) Flush() error {
 	var b strings.Builder
 	for _, row := range t.rows {
 		if row.separator {
-			b.WriteString(row.cells[0])
+			b.WriteString(strings.Repeat("─", renderedWidth(t.width, len(t.headers))))
 			b.WriteByte('\n')
 			continue
 		}

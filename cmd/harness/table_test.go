@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // TestTableNameNeverTruncates pins the name-preservation contract: a NAME
@@ -49,6 +51,64 @@ func TestTableNameWrapsPastCap(t *testing.T) {
 	}
 	if strings.Contains(out, "…") {
 		t.Errorf("over-cap NAME should wrap, not truncate with an ellipsis:\n%s", out)
+	}
+}
+
+// TestTableWideNameNeverStarvesFlexColumn pins the width-resolution floor.
+// Growing NAME to fit the data spends budget the flex columns were relying
+// on: on an 80-column terminal (budget 64) a 27-rune name left DESCRIPTION
+// at -2, and at width <= 0 wrapWords returns the cell unwrapped, so the row
+// rendered 113 columns wide and soft-wrapped in the terminal — destroying
+// exactly the alignment this table exists to provide. NAME must give ground
+// (it wraps, so it stays whole) before a flex column goes non-positive.
+func TestTableWideNameNeverStarvesFlexColumn(t *testing.T) {
+	t.Parallel()
+	headers := []string{"NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION"}
+	// Budgets span the clamp range (minTableWidth..default); names span
+	// "comfortably fits" through "past the cap".
+	for _, budget := range []int{minTableWidth, 64, 72, defaultTableWidth} {
+		for _, nameW := range []int{4, 20, 27, maxNameWidth + 10} {
+			widths, _ := defaultColumnWidths(headers, budget, nameW)
+			total := 0
+			for i, w := range widths {
+				if w < 1 {
+					t.Errorf("budget=%d nameW=%d: column %q width = %d, want >= 1 (a non-positive width renders the cell unwrapped)",
+						budget, nameW, headers[i], w)
+				}
+				total += w
+			}
+			if total > budget {
+				t.Errorf("budget=%d nameW=%d: widths %v sum to %d, over budget %d",
+					budget, nameW, widths, total, budget)
+			}
+			if widths[0] > maxNameWidth {
+				t.Errorf("budget=%d nameW=%d: NAME width %d exceeds cap %d",
+					budget, nameW, widths[0], maxNameWidth)
+			}
+		}
+	}
+}
+
+// TestTableRowNeverExceedsBudget is the rendering-level counterpart: with a
+// long name and a long description in a narrow table, every emitted line
+// must stay within the table's rendered width. That is the symptom a user
+// actually sees — a row wider than the terminal soft-wraps and the columns
+// stop lining up.
+func TestTableRowNeverExceedsBudget(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	tt := NewTable(&buf, "NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
+	tt.width = 64 // simulate an 80-column terminal
+	tt.Row("claude-code-supervisor-long", "running", "yes", "0", "1234",
+		"supervises the claude code agent loop and restarts it on exit")
+	tt.Row("short", "running", "yes", "0", "12", "tiny")
+	_ = tt.Flush()
+
+	want := renderedWidth(tt.width, len(tt.headers))
+	for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+		if got := lipgloss.Width(line); got > want {
+			t.Errorf("line is %d columns, want <= %d:\n%s", got, want, line)
+		}
 	}
 }
 
