@@ -6,6 +6,7 @@ package supervisor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +88,52 @@ func TestExpandHome(t *testing.T) {
 	}
 	if got := expandHome("/abs/path"); got != "/abs/path" {
 		t.Errorf("absolute path changed: %q", got)
+	}
+}
+
+// lookupEnv returns the value of the LAST KEY= entry (exec.Cmd.Env semantics:
+// later duplicates shadow earlier ones), plus whether the key appeared at all.
+func lookupEnv(env []string, key string) (string, bool) {
+	val, found := "", false
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			val, found = v, true
+		}
+	}
+	return val, found
+}
+
+// TestEnsureTermEnvGuaranteesColor pins the color fix: a harness spawned under
+// a real PTY must advertise a color-capable terminal. A daemon launched
+// detached (launchd/systemd, a closed login shell) can carry a missing or
+// "dumb" TERM and no COLORTERM, which made harness apps render in black &
+// white. ensureTermEnv repairs exactly that case.
+func TestEnsureTermEnvGuaranteesColor(t *testing.T) {
+	// Colorless daemon env: no TERM, no COLORTERM → both are supplied.
+	got := ensureTermEnv([]string{"PATH=/usr/bin"})
+	if v, ok := lookupEnv(got, "TERM"); !ok || v != "xterm-256color" {
+		t.Errorf("TERM = %q (present %v), want xterm-256color", v, ok)
+	}
+	if v, ok := lookupEnv(got, "COLORTERM"); !ok || v != "truecolor" {
+		t.Errorf("COLORTERM = %q (present %v), want truecolor", v, ok)
+	}
+
+	// A "dumb" TERM advertises no color; it is replaced, not kept.
+	got = ensureTermEnv([]string{"TERM=dumb"})
+	if v, _ := lookupEnv(got, "TERM"); v != "xterm-256color" {
+		t.Errorf("dumb TERM should be repaired, got TERM=%q", v)
+	}
+}
+
+// TestEnsureTermEnvPreservesExisting confirms existing terminal values win:
+// a deliberate TERM/COLORTERM (from the daemon env or the env_file) is never
+// clobbered by the generic defaults.
+func TestEnsureTermEnvPreservesExisting(t *testing.T) {
+	got := ensureTermEnv([]string{"TERM=xterm-kitty", "COLORTERM=yes"})
+	if v, _ := lookupEnv(got, "TERM"); v != "xterm-kitty" {
+		t.Errorf("existing TERM should win, got %q", v)
+	}
+	if v, _ := lookupEnv(got, "COLORTERM"); v != "yes" {
+		t.Errorf("existing COLORTERM should win, got %q", v)
 	}
 }

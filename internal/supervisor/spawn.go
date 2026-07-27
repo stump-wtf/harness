@@ -98,14 +98,64 @@ func unquote(s string) string {
 
 // buildEnv composes the child environment: the daemon's own environment plus
 // the parsed env_file (env_file wins on key collisions, appended last).
+//
+// The child runs under a real, color-capable PTY (xpty), so it must advertise
+// one: a daemon launched detached (launchd/systemd, a closed login shell) can
+// carry a TERM that is missing or "dumb" and no COLORTERM, which makes
+// full-screen harness apps render in black & white. We therefore guarantee
+// sane terminal defaults — a color-capable TERM and COLORTERM=truecolor —
+// for any key neither the daemon's environment nor the env_file already set.
 func buildEnv(h core.Harness) ([]string, error) {
 	extra, err := parseEnvFile(h.EnvFile)
 	if err != nil {
 		return nil, err
 	}
 	env := os.Environ()
+	env = ensureTermEnv(env)
 	env = append(env, extra...)
 	return env, nil
+}
+
+// ensureTermEnv returns env with a color-capable TERM and COLORTERM=truecolor
+// appended for any terminal key it does not already set. Existing values win:
+// a daemon that already exports TERM=xterm-kitty (or an env_file that pins
+// COLORTERM) is left untouched, so this only repairs a colorless default.
+//
+// exec.Cmd.Env semantics: later duplicates shadow earlier ones, so appending
+// only when absent is both sufficient and the conservative choice — we never
+// clobber a deliberate value with our generic default.
+func ensureTermEnv(env []string) []string {
+	var hasTERM, hasCOLORTERM bool
+	for _, kv := range env {
+		if k, _, ok := strings.Cut(kv, "="); ok {
+			switch k {
+			case "TERM":
+				hasTERM = true
+			case "COLORTERM":
+				hasCOLORTERM = true
+			}
+		}
+	}
+	// Treat an empty or "dumb" TERM as absent: it advertises no color and no
+	// cursor addressing, which is exactly the broken default we are repairing.
+	if !hasTERM || envValue(env, "TERM") == "" || envValue(env, "TERM") == "dumb" {
+		env = append(env, "TERM=xterm-256color")
+	}
+	if !hasCOLORTERM {
+		env = append(env, "COLORTERM=truecolor")
+	}
+	return env
+}
+
+// envValue returns the value of the last KEY= entry in env ("" if unset).
+func envValue(env []string, key string) string {
+	val := ""
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			val = v
+		}
+	}
+	return val
 }
 
 // expandArgs substitutes the {workdir} placeholder in each arg with the
