@@ -137,6 +137,14 @@ func (m *Model) onDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.guardedAction(ActionDelete)
 	case key.Matches(msg, m.keys.Logs):
 		return m, m.peekCmd()
+	case key.Matches(msg, m.keys.Copy):
+		// Yank the selected harness's name to the system clipboard (OSC52).
+		// Mouse-drag copy is unavailable while the TUI holds the mouse, so
+		// this key is the reliable way to grab a name out of the cockpit.
+		if sel, ok := m.selectedHarness(); ok {
+			return m, copyToClipboard(sel.Name)
+		}
+		return m, nil
 	}
 	return m, nil
 }

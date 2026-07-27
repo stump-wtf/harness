@@ -35,6 +35,7 @@ type KeyMap struct {
 	Profile key.Binding
 	ShowAll key.Binding
 	Logs    key.Binding
+	Copy    key.Binding
 
 	// Everywhere.
 	Search  key.Binding
@@ -81,6 +82,11 @@ func Default() KeyMap {
 		Profile: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "profile")),
 		ShowAll: key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "show all")),
 		Logs:    key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "logs")),
+		// Copy yanks the selected harness name to the system clipboard (OSC52).
+		// Mouse-drag selection is unavailable while the TUI holds the mouse
+		// (WithMouseCellMotion), so an explicit copy key is how you grab a name
+		// out of the cockpit.
+		Copy: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy name")),
 
 		Search:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 		Palette: key.NewBinding(key.WithKeys("ctrl+k", ":"), key.WithHelp("^k/:", "palette")),
@@ -145,7 +151,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bot},
 		{k.Attach, k.Start, k.Stop, k.Restart, k.Edit, k.New, k.Delete},
-		{k.Profile, k.ShowAll, k.Logs, k.Search, k.Palette, k.Help, k.Quit},
+		{k.Profile, k.ShowAll, k.Logs, k.Copy, k.Search, k.Palette, k.Help, k.Quit},
 		{k.Detach, k.Scrollback, k.HopPrev, k.HopNext, k.AttStart, k.AttRestart, k.AttHelp},
 		{k.PageUp, k.PageDown, k.Live, k.Confirm, k.Back},
 	}

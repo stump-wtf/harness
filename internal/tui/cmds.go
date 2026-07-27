@@ -8,9 +8,12 @@ package tui
 // control Calls").
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	osc52 "github.com/aymanbagabas/go-osc52/v2"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -60,6 +63,14 @@ type profileSwitchMsg struct {
 
 // tickMsg drives the peek-pane refresh and backoff countdowns.
 type tickMsg time.Time
+
+// copyResultMsg reports that an OSC52 clipboard write was emitted (ok is
+// false when there was nothing to copy). The text is echoed back so the
+// status line can confirm what landed on the clipboard.
+type copyResultMsg struct {
+	text string
+	ok   bool
+}
 
 // --- commands ---
 
@@ -154,4 +165,34 @@ func writeConfigAndReload(ctrl Controller, path string, body []byte) tea.Cmd {
 // tick schedules the next periodic refresh/countdown tick.
 func tick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// copyToClipboard emits an OSC52 escape sequence that places text on the
+// system clipboard, and returns a copyResultMsg so the status line can
+// confirm. OSC52 is used rather than a shell-out to pbcopy/xclip because it
+// works over SSH and inside tmux (the sequence is forwarded to the outer
+// terminal), which is exactly where a supervising cockpit tends to run.
+//
+// The sequence is written to stderr: Bubble Tea's alt-screen renderer owns
+// stdout, but OSC52 is a non-printing operating-system command, so emitting
+// it on the controlling terminal's other stream neither disturbs the layout
+// nor interleaves with frame writes.
+func copyToClipboard(text string) tea.Cmd {
+	if text == "" {
+		return func() tea.Msg { return copyResultMsg{ok: false} }
+	}
+	return func() tea.Msg {
+		seq := osc52.New(text)
+		// tmux and screen intercept the outer escape and require it wrapped in
+		// their own DCS passthrough, or the sequence never reaches the real
+		// terminal. TERM tells us which wrapper (if any) applies.
+		switch {
+		case os.Getenv("TMUX") != "":
+			seq = seq.Tmux()
+		case strings.HasPrefix(os.Getenv("TERM"), "screen"):
+			seq = seq.Screen()
+		}
+		_, _ = fmt.Fprint(os.Stderr, seq.String())
+		return copyResultMsg{text: text, ok: true}
+	}
 }

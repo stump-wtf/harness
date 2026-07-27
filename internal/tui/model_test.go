@@ -189,6 +189,48 @@ func TestSkipConfirmSetting(t *testing.T) {
 	}
 }
 
+// TestCopyYanksSelectedName verifies the copy verb (y) emits an OSC52
+// clipboard write for the selected harness's name and reports it back via the
+// status line. Mouse-drag selection is unavailable while the TUI holds the
+// mouse (WithMouseCellMotion), so the explicit copy key is how a name leaves
+// the cockpit. The OSC52 write itself goes to stderr and is a no-op in the
+// test environment; we assert on the resulting copyResultMsg.
+func TestCopyYanksSelectedName(t *testing.T) {
+	fc := &fakeController{harnesses: sampleHarnesses()}
+	m := New(Options{})
+	m.ctrl = fc
+	m.harnesses = fc.harnesses
+	m.sel = 1 // claude-src
+
+	_, cmd := m.onKey(runeKey("y"))
+	msg := drain(cmd)
+	res, ok := msg.(copyResultMsg)
+	if !ok {
+		t.Fatalf("copy cmd returned %T, want copyResultMsg", msg)
+	}
+	if !res.ok || res.text != "claude-src" {
+		t.Fatalf("copyResultMsg = %+v, want {text:claude-src ok:true}", res)
+	}
+
+	// Route the message back through Update so the status line confirms.
+	model, _ := m.Update(res)
+	m = model.(*Model)
+	if m.status != "copied: claude-src" {
+		t.Fatalf("status = %q, want %q", m.status, "copied: claude-src")
+	}
+}
+
+// TestCopyNoSelection verifies the copy verb is a no-op when no harness is
+// selected (e.g. an empty dashboard) rather than panicking.
+func TestCopyNoSelection(t *testing.T) {
+	m := New(Options{})
+	m.ctrl = &fakeController{}
+	m.harnesses = nil
+	if _, cmd := m.onKey(runeKey("y")); cmd != nil {
+		t.Fatalf("copy with no selection should return a nil cmd, got %v", cmd)
+	}
+}
+
 // TestDetachReturnsHome is the SPEC-0001 scenario "Detach returns home":
 // detaching from attached mode returns to the Dashboard and never signals a
 // stop (the harness keeps running). The detach chord itself (Ctrl-b d) is

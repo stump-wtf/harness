@@ -81,6 +81,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = msg.err.Error()
 		return m, waitForFrame(m.events)
 
+	case copyResultMsg:
+		if msg.ok {
+			m.status = "copied: " + msg.text
+		} else {
+			m.status = "nothing to copy"
+		}
+		return m, nil
+
 	case disconnectMsg:
 		return m.onDisconnect(msg)
 
