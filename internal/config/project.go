@@ -274,6 +274,16 @@ func addProjectHarness(cfg *core.Config, filename, name string, line int, rh raw
 			"harness %q: restart_delay must not be negative (got %d)", name, rh.RestartDelay)
 	}
 
+	restartPolicy := core.RestartPolicy(rh.Restart)
+	if !restartPolicy.Valid() {
+		return newError(filename, line,
+			"harness %q: invalid restart policy %q (want \"no\", \"always\", \"unless-stopped\", or \"on-failure\")",
+			name, rh.Restart)
+	}
+	if restartPolicy == "" {
+		restartPolicy = core.RestartAlways // omitted key = the documented default
+	}
+
 	// Project semantics differ from the global config here: an absent
 	// `enabled` key defaults to TRUE, because SPEC-0004 REQ "Bring Up"
 	// requires the first `harness up` to register AND start each harness (the
@@ -298,6 +308,7 @@ func addProjectHarness(cfg *core.Config, filename, name string, line int, rh raw
 		Workdir:      workdir,
 		EnvFile:      resolvePath(rh.EnvFile, projectRoot),
 		RestartDelay: time.Duration(rh.RestartDelay) * time.Second,
+		Restart:      restartPolicy,
 		Backend:      backend,
 		Description:  rh.Description,
 		Enabled:      enabled,

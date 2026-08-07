@@ -230,6 +230,7 @@ func wireHarnesses(proj *config.Project) []protocol.ProjectHarness {
 			Workdir:        h.Workdir,
 			EnvFile:        h.EnvFile,
 			RestartDelayMs: h.RestartDelay.Milliseconds(),
+			Restart:        string(h.Restart),
 			Backend:        string(h.Backend),
 			Description:    h.Description,
 			TmuxSocket:     h.TmuxSocket,

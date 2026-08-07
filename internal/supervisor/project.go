@@ -339,6 +339,9 @@ func validateProjectDefs(project string, defs []core.Harness) error {
 		case !h.Backend.Valid():
 			return fmt.Errorf("project up %q: harness %q: %w: invalid backend %q",
 				project, h.Name, ErrInvalidProjectDef, h.Backend)
+		case !h.Restart.Valid():
+			return fmt.Errorf("project up %q: harness %q: %w: invalid restart policy %q",
+				project, h.Name, ErrInvalidProjectDef, h.Restart)
 		case h.RestartDelay < 0:
 			return fmt.Errorf("project up %q: harness %q: %w: negative restart delay",
 				project, h.Name, ErrInvalidProjectDef)
@@ -357,6 +360,7 @@ func harnessDefEqual(a, b core.Harness) bool {
 		a.Workdir == b.Workdir &&
 		a.EnvFile == b.EnvFile &&
 		a.RestartDelay == b.RestartDelay &&
+		a.Restart == b.Restart &&
 		a.Backend == b.Backend &&
 		a.Description == b.Description &&
 		a.Enabled == b.Enabled &&

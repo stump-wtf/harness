@@ -101,9 +101,12 @@ type ProjectHarness struct {
 	Workdir        string   `json:"workdir,omitempty"`
 	EnvFile        string   `json:"env_file,omitempty"`
 	RestartDelayMs int64    `json:"restart_delay_ms,omitempty"`
-	Backend        string   `json:"backend,omitempty"`
-	Description    string   `json:"description,omitempty"`
-	TmuxSocket     string   `json:"tmux_socket,omitempty"`
+	// Restart mirrors the schema's `restart` policy (core.RestartPolicy);
+	// empty means the always-restart default, matching an omitted key.
+	Restart     string `json:"restart,omitempty"`
+	Backend     string `json:"backend,omitempty"`
+	Description string `json:"description,omitempty"`
+	TmuxSocket  string `json:"tmux_socket,omitempty"`
 	// Enabled mirrors the schema's `enabled`: a disabled harness is registered
 	// (visible to list/ps) but not started by project_up — the same way the
 	// global config's `enabled` gates autostart (SPEC-0004 REQ "Project File

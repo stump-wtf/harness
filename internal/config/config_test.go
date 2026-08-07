@@ -39,6 +39,7 @@ func TestParseZshHarnessdExample(t *testing.T) {
 		Workdir:      "~/.local/share/crush-signal-channel",
 		EnvFile:      "~/.config/vault/secrets-static.env",
 		RestartDelay: 5 * time.Second,
+		Restart:      core.RestartAlways, // defaulted, not present in the file
 		Backend:      core.BackendNative, // defaulted, not present in the file
 		Enabled:      false,              // defaulted
 	}
@@ -239,13 +240,15 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
-// TestParseRestartPolicy exercises the restart = "..." directive.
+// TestParseRestartPolicy exercises the restart = "..." directive. An omitted
+// key normalizes to the always default so the config layer emits exactly one
+// in-memory spelling per behavior.
 func TestParseRestartPolicy(t *testing.T) {
 	tests := []struct {
 		toml string
 		want core.RestartPolicy
 	}{
-		{`[harness.a]` + "\n" + `cmd = "x"` + "\n", core.RestartPolicy("")},
+		{`[harness.a]` + "\n" + `cmd = "x"` + "\n", core.RestartAlways},
 		{`[harness.a]` + "\n" + `cmd = "x"` + "\n" + `restart = "no"` + "\n", core.RestartNo},
 		{`[harness.a]` + "\n" + `cmd = "x"` + "\n" + `restart = "always"` + "\n", core.RestartAlways},
 		{`[harness.a]` + "\n" + `cmd = "x"` + "\n" + `restart = "unless-stopped"` + "\n", core.RestartUnlessStopped},
@@ -256,7 +259,10 @@ func TestParseRestartPolicy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Parse: %v", err)
 		}
-		h := cfg.Harnesses["a"]
+		h, ok := cfg.Harnesses["a"]
+		if !ok {
+			t.Fatal("harness \"a\" not registered")
+		}
 		if h.Restart != tt.want {
 			t.Errorf("restart = %q, want %q", h.Restart, tt.want)
 		}

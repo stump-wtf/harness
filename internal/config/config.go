@@ -258,6 +258,12 @@ func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness
 			"harness %q: invalid restart policy %q (want \"no\", \"always\", \"unless-stopped\", or \"on-failure\")",
 			name, rh.Restart)
 	}
+	if restartPolicy == "" {
+		// Omitted key = the documented default. Normalizing here keeps one
+		// canonical in-memory spelling, so an explicit `restart = "always"`
+		// compares equal to the default everywhere downstream.
+		restartPolicy = core.RestartAlways
+	}
 
 	enabled := false
 	if rh.Enabled != nil {
