@@ -55,8 +55,9 @@ polluting a repo, the dotfiles, or every agent's context window?**
 ## Decision Outcome
 
 Chosen option: **Option 2**, because it puts the cheap objective signal
-(repetition) in the daemon, the expensive subjective step (authoring) in a
-harness, and the review gate in a human — and because the cross-project
+(repetition) in a model-free counting pass, the expensive subjective step
+(authoring) behind a single model call in a supervised harness, and the review
+gate in a human — and because the cross-project
 threshold is not a heuristic but the actual definition of the thing being
 captured.
 
@@ -81,14 +82,17 @@ schedule and:
 
 1. **Reads** trajectories via the ADR-0010 facade (read-only tools).
 2. **Clusters** by error string, grouped by project provenance. No LLM.
-3. **Authors** — the single LLM step. Writes `SKILL.md`, with the `description`
-   given the most care because it is the entire retrieval surface.
+3. **Authors** — the single LLM step, producing whichever artifact the gate
+   chose: the context-file change proposed in a single-project PR, or
+   `SKILL.md` with the `description` given the most care because it is the
+   entire retrieval surface.
 4. **Writes** to `$XDG_STATE_HOME/harness/skills/learned/<slug>/SKILL.md` with
    `status: proposed` and provenance frontmatter.
 5. **Posts** for human review.
 
-The daemon's total involvement is keeping the distiller alive and answering
-read-only trajectory queries. It never learns what a skill is.
+The daemon's total involvement is keeping the distiller alive, answering
+read-only trajectory queries, and serving the learned tier's search tools over
+its index. It never authors, judges, or projects a skill.
 
 ### Storage and delivery are orthogonal
 
@@ -240,11 +244,12 @@ flowchart TD
     subgraph distiller["distiller — an ordinary harness"]
         CL["cluster literal error strings<br/>group by project provenance"]
         TH{"recurs across<br/>≥N projects?"}
-        AU["author SKILL.md + symptoms[]<br/>(the only LLM step)"]
+        AU["author SKILL.md + symptoms[]<br/>(model call)"]
     end
 
     FAC --> CL --> TH
-    TH -->|"no — one project"| PR["pull request →<br/>repo CLAUDE.md / AGENTS.md"]
+    TH -->|"no — one project"| AUP["author context-file change<br/>(model call)"]
+    AUP --> PR["pull request →<br/>repo CLAUDE.md / AGENTS.md"]
     TH -->|"yes — stack knowledge"| AU
     AU -->|"status: proposed"| DISK["$XDG_STATE_HOME/harness/skills/learned/<br/>markdown, git-tracked"]
 
@@ -266,8 +271,8 @@ flowchart TD
   program printed itself; the distiller, not the daemon, holds model
   credentials.
 * **Related [ADR-0010](adr-0010-local-mcp-surface.md)** — trajectories are read
-  through the facade and learned skills are served through the broker; this ADR
-  adds no transport of its own.
+  through the facade and learned skills are served through the facade's search
+  tools; this ADR adds no transport of its own.
 * **Related [ADR-0011](adr-0011-agent-adapters.md)** — the adapter locates
   trajectories, and the learned tier is deliberately excluded from that ADR's
   projection path.

@@ -63,10 +63,11 @@ threshold SHALL be configurable.
 
 ### Requirement: Distillation Runs Outside The Daemon
 
-The authoring step SHALL run in a supervised harness, not in the daemon. The
-daemon MUST NOT issue model requests, MUST NOT hold model credentials, and MUST
-NOT write to any repository working tree. The daemon's only obligations are
-supervising the distiller and answering read-only trajectory queries.
+The detection and authoring steps SHALL run in a supervised harness, not in
+the daemon. The daemon MUST NOT issue model requests, MUST NOT hold model
+credentials, and MUST NOT write to any repository working tree. The daemon's
+only obligations are supervising the distiller, answering read-only trajectory
+queries, and serving the retrieval tools.
 
 #### Scenario: Daemon issues no model requests
 
@@ -172,10 +173,12 @@ instruct callers to supply multiple phrasings including any literal error text.
 ### Requirement: Supersession
 
 When a newly authored skill contradicts or subsumes an existing learned skill,
-it SHALL supersede rather than accompany it: the superseded skill SHALL be
-removed from the retrieval index and SHALL record the identifier of the skill
-replacing it. Two learned skills describing the same pattern MUST NOT both be
-retrievable.
+it SHALL supersede rather than accompany it. Supersession SHALL take effect
+only when the superseding skill is promoted; a `proposed` skill MUST NOT alter
+the retrieval status of any existing skill. On promotion, the superseded skill
+SHALL be removed from the retrieval index and SHALL record the identifier of
+the skill replacing it. Two learned skills describing the same pattern MUST
+NOT both be retrievable.
 
 #### Scenario: Superseding replaces rather than accumulates
 
@@ -190,7 +193,9 @@ promoted skill SHALL become eligible for retirement only after a configurable
 grace period has elapsed **since its promotion**, and only if it has accrued no
 retrievals within a configurable window. A skill inside its grace period MUST
 NOT be retired. Retirement SHALL remove the skill from the index; it MUST NOT
-delete the markdown file.
+delete the markdown file. Retirement SHALL be recorded in the skill's
+frontmatter, so that rebuilding the index from the markdown files does not
+resurrect a retired skill.
 
 #### Scenario: Grace period protects new skills
 

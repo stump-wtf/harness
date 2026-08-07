@@ -101,8 +101,9 @@ gets both properties:
 
 ### `status` gates both channels at once
 
-**Choice**: A single frontmatter field controls projection eligibility and
-indexing.
+**Choice**: A single frontmatter field controls indexing eligibility;
+projection of the learned tier is banned unconditionally, so an unreviewed
+skill is inert on every path.
 
 **Rationale**: One mechanism, one place to look, no way for the two channels to
 disagree. An unreviewed skill is inert everywhere until a human flips a field —
@@ -172,9 +173,10 @@ sequenceDiagram
     Note over X: cluster literal error strings,<br/>group by project provenance<br/>(no model)
 
     alt confined to one project
+        Note over X: author context-file change<br/>(model call)
         X->>P: pull request against repo context file
     else spans N distinct projects
-        Note over X: author SKILL.md + symptoms[]<br/>(the only model call)
+        Note over X: author SKILL.md + symptoms[]<br/>(model call)
         X->>S: write status: proposed
         S-->>P: review
         P->>S: flip to status: promoted
