@@ -1,9 +1,16 @@
 # Agent awareness: MCP, shared skills, and distilled trajectories
 
-> **Status:** design exploration, pre-ADR. Nothing here is decided; this is the
-> record of a design conversation, written down so it can be argued with.
+> **Status:** design exploration — the historical record of the conversation
+> that preceded the ADRs, kept for its reasoning trail.
 >
 > **Date:** 2026-07-27
+>
+> **Superseded by** [ADR-0010](adrs/adr-0010-local-mcp-surface.md),
+> [ADR-0011](adrs/adr-0011-agent-adapters.md), and
+> [ADR-0012](adrs/adr-0012-cross-harness-distillation.md) (with SPEC-0005,
+> SPEC-0006, and SPEC-0007). Where this record and the ADRs disagree — e.g.
+> the Cairn review gate below, which the ADRs generalized to plain human
+> review — the ADRs win.
 
 Three proposals, and how they turned into one architecture.
 
@@ -328,8 +335,9 @@ stops being load-bearing for skills.
 
 Sequencing: 0010 first — 0012's delivery path depends on the broker existing.
 
-Orthogonal and deliberately unentangled: **schema governance**. SPEC-0002
-commits to "additive changes only" for protocol minor bumps but cannot check it;
+Orthogonal and deliberately unentangled: **schema governance**. The protocol
+source ([`internal/protocol/messages.go`](../internal/protocol/messages.go))
+documents minor bumps as "additive changes only" but nothing checks it;
 [Omnist](https://github.com/omnist-dev/omnist) does decidable backward-
 compatibility checking over TOML/JSON/YAML and could make that a CI gate. It's
 Python, so CI-time only, never in the daemon. Worth its own ADR once the three
