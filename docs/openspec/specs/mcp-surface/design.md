@@ -168,6 +168,12 @@ C4Container
 - **Secrets in upstream env.** Upstream servers take `env_file` like harnesses.
   → Same ADR-0008 fence: values reach the child environment and nothing the
   daemon persists.
+- **Harvested trajectories are readable fleet-wide.** Trajectory tools are
+  read-class, and read tools reach every harness — so one harness opting into
+  harvesting (SPEC-0006) exposes its full transcript, secrets included, to
+  every default-scope caller, not just the distiller. The accepted-injection
+  analysis above covers writes only; scoping trajectory reads to a consumer is
+  an open question below.
 
 ## Migration Plan
 
@@ -184,6 +190,11 @@ read-only — so `ProtoMinor` moves and `ProtoMajor` does not.
 - Should the broker expose upstream *resources* as well as tools and prompts?
   Deferred until a concrete consumer needs it.
 - Should `mcp_allow` grow finer classes than read/write (e.g. a `lifecycle`
-  scope distinct from a `config` scope) as the facade surface widens?
+  scope distinct from a `config` scope, or a `trajectory` read scope distinct
+  from plain `read`) as the facade surface widens?
+- How is a caller attributed to a harness for per-call `mcp_allow` evaluation
+  (per-harness socket path, token, injected env), and which component wires
+  the endpoint into each tool's MCP client configuration? Neither this spec
+  nor SPEC-0006's three adapter questions currently answers it.
 - Should a project's `[mcp.*]` tables be able to *override* a global upstream of
   the same key, or only add new ones? Currently additive-only.

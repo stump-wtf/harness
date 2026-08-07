@@ -193,3 +193,7 @@ regardless.
   merely reported, so a project can deliberately use both copies?
 - Does `AGENTS.md`-style single-file context (Codex) fit the same projection
   model, or does it need a distinct concatenation step in its adapter?
+- The target directory is per-tool while merged sets are per-harness: two
+  concurrent harnesses of the same tool in different projects contend for one
+  directory (each start rewrites it), and nothing removes projected skills on
+  stop. Does projection need per-harness target isolation, and a cleanup pass?

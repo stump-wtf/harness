@@ -36,7 +36,9 @@ only where `mcp_allow` grants `write`. The remaining SPEC-0002 operations
 `daemon_info`) are not part of the initial facade; exposing one later requires
 classifying it here as read or write. Additional read-only facade tools are
 defined by SPEC-0006 (trajectories) and SPEC-0007 (learned-skill search) and
-SHALL be classified as read operations under `mcp_allow`. A facade tool MUST
+SHALL be classified as read operations under `mcp_allow`; SPEC-0007
+additionally defines promoted-skill MCP resources, which the facade serves
+alongside its tools. A facade tool MUST
 NOT expose data the corresponding control operation does not already return.
 
 #### Scenario: Facade mirrors the control operation
@@ -141,7 +143,11 @@ parse SHALL be skipped with a logged warning rather than failing the scan.
 
 ### Requirement: Capability Scoping
 
-Each harness SHALL carry an `mcp_allow` list defaulting to `["read"]`. A tool
+Each harness SHALL carry an `mcp_allow` list defaulting to `["read"]`.
+`mcp_allow` SHALL be accepted only from the global configuration file: a
+project `harness.toml` declaring it SHALL be rejected, joining `[server]` and
+`[profile.*]` on the ADR-0009 global-only list — otherwise a cloned repository
+could grant its own harnesses write authority over the fleet. A tool
 classified as a write operation SHALL be refused for a harness whose
 `mcp_allow` does not include `write`, and the refusal SHALL carry a structured
 error distinguishing "not permitted" from "operation failed". Scoping SHALL be

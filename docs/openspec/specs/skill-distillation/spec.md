@@ -88,7 +88,8 @@ directory under the state directory, one directory per skill. Its frontmatter
 SHALL carry a `status` field, a `symptoms` list containing the literal strings
 that formed its cluster, and provenance recording the contributing trajectories,
 the distinct project count, and first- and last-seen timestamps. Learned skills
-MUST NOT be written into any repository or into a user's dotfiles.
+MUST NOT be written into any project repository working tree or into a user's
+dotfiles; the Harness-owned learned store is itself git-tracked by design.
 
 #### Scenario: Artifact carries its evidence
 
@@ -176,9 +177,10 @@ When a newly authored skill contradicts or subsumes an existing learned skill,
 it SHALL supersede rather than accompany it. Supersession SHALL take effect
 only when the superseding skill is promoted; a `proposed` skill MUST NOT alter
 the retrieval status of any existing skill. On promotion, the superseded skill
-SHALL be removed from the retrieval index and SHALL record the identifier of
-the skill replacing it. Two learned skills describing the same pattern MUST
-NOT both be retrievable.
+SHALL be removed from the retrieval index, SHALL record the identifier of the
+skill replacing it in its frontmatter, and its `status` SHALL become
+`superseded` — so a rebuilt index excludes it. Two learned skills describing
+the same pattern MUST NOT both be retrievable.
 
 #### Scenario: Superseding replaces rather than accumulates
 
