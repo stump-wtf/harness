@@ -39,6 +39,13 @@ func shHarness(name, script string, restartDelay time.Duration) core.Harness {
 	}
 }
 
+// shHarnessWithRestart builds a harness with a specific restart policy.
+func shHarnessWithRestart(name, script string, restartDelay time.Duration, policy core.RestartPolicy) core.Harness {
+	h := shHarness(name, script, restartDelay)
+	h.Restart = policy
+	return h
+}
+
 // newTestSupervisor builds a supervisor writing logs into a temp dir.
 func newTestSupervisor(t *testing.T, h core.Harness, p Policy) *Supervisor {
 	t.Helper()
@@ -273,4 +280,59 @@ func TestStartIsIdempotent(t *testing.T) {
 	if s.Snapshot().PID != pid {
 		t.Fatal("second Start replaced the running process")
 	}
+}
+
+// ---- Restart Policy: "no" never restarts ----------------------------------
+
+func TestRestartPolicyNoDoesNotRestart(t *testing.T) {
+	p := Policy{CrashWindow: 10 * time.Millisecond, CrashThreshold: 1000, MaxRestarts: 0, StopGrace: 100 * time.Millisecond}
+	s := newTestSupervisor(t, shHarnessWithRestart("norestart", "exit 0", 5*time.Millisecond, core.RestartNo), p)
+	s.Start()
+	// The harness exits cleanly; with restart="no" it must land in stopped,
+	// not respawn.
+	waitState(t, s, core.StateStopped)
+	if snap := s.Snapshot(); snap.RestartCount != 0 {
+		t.Fatalf("restart count = %d, want 0 (restart=no must not restart)", snap.RestartCount)
+	}
+	if snap := s.Snapshot(); snap.Enabled {
+		t.Fatal("enabled should be false after restart=no policy finalizes the exit")
+	}
+}
+
+// ---- Restart Policy: "on-failure" skips clean exits, respawns failures ----
+
+func TestRestartPolicyOnFailureSkipsCleanExit(t *testing.T) {
+	p := Policy{CrashWindow: 10 * time.Millisecond, CrashThreshold: 1000, MaxRestarts: 0, StopGrace: 100 * time.Millisecond}
+	s := newTestSupervisor(t, shHarnessWithRestart("clean", "exit 0", 5*time.Millisecond, core.RestartOnFailure), p)
+	s.Start()
+	// Clean exit (code 0) with restart="on-failure" must not restart.
+	waitState(t, s, core.StateStopped)
+	if snap := s.Snapshot(); snap.RestartCount != 0 {
+		t.Fatalf("restart count = %d, want 0 (on-failure must skip clean exits)", snap.RestartCount)
+	}
+}
+
+func TestRestartPolicyOnFailureRestartsOnFailure(t *testing.T) {
+	p := Policy{CrashWindow: 10 * time.Millisecond, CrashThreshold: 1000, MaxRestarts: 0, StopGrace: 100 * time.Millisecond}
+	s := newTestSupervisor(t, shHarnessWithRestart("fail", "exit 1", 5*time.Millisecond, core.RestartOnFailure), p)
+	s.Start()
+	// Non-zero exit with restart="on-failure" must restart.
+	waitFor(t, 3*time.Second, "restart count grows past 2", func() bool {
+		return s.Snapshot().RestartCount >= 2
+	})
+	if code := s.Snapshot().LastExitCode; code != 1 {
+		t.Fatalf("last exit code = %d, want 1", code)
+	}
+}
+
+// ---- Restart Policy: default (unset) preserves always-restart behavior ----
+
+func TestRestartPolicyDefaultRestartsOnCleanExit(t *testing.T) {
+	p := Policy{CrashWindow: 10 * time.Millisecond, CrashThreshold: 1000, MaxRestarts: 0, StopGrace: 100 * time.Millisecond}
+	s := newTestSupervisor(t, shHarnessWithRestart("def", "exit 0", 5*time.Millisecond, core.RestartPolicy("")), p)
+	s.Start()
+	// Default policy (empty string) must restart on clean exit (backward compat).
+	waitFor(t, 3*time.Second, "restart count grows past 2", func() bool {
+		return s.Snapshot().RestartCount >= 2
+	})
 }

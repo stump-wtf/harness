@@ -28,6 +28,7 @@ type rawHarness struct {
 	Workdir      string   `toml:"workdir"`
 	EnvFile      string   `toml:"env_file"`
 	RestartDelay int      `toml:"restart_delay"`
+	Restart      string   `toml:"restart"`
 	Backend      string   `toml:"backend"`
 	Description  string   `toml:"description"`
 	Enabled      *bool    `toml:"enabled"`
@@ -251,6 +252,13 @@ func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness
 			"harness %q: restart_delay must not be negative (got %d)", name, rh.RestartDelay)
 	}
 
+	restartPolicy := core.RestartPolicy(rh.Restart)
+	if !restartPolicy.Valid() {
+		return newError(filename, line,
+			"harness %q: invalid restart policy %q (want \"no\", \"always\", \"unless-stopped\", or \"on-failure\")",
+			name, rh.Restart)
+	}
+
 	enabled := false
 	if rh.Enabled != nil {
 		enabled = *rh.Enabled
@@ -263,6 +271,7 @@ func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness
 		Workdir:      rh.Workdir,
 		EnvFile:      rh.EnvFile,
 		RestartDelay: time.Duration(rh.RestartDelay) * time.Second,
+		Restart:      restartPolicy,
 		Backend:      backend,
 		Description:  rh.Description,
 		Enabled:      enabled,

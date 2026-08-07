@@ -23,6 +23,34 @@ func (b Backend) Valid() bool {
 	return b == BackendNative || b == BackendTmux
 }
 
+// RestartPolicy controls whether a harness is automatically restarted after it
+// exits, mirroring Docker Compose's `restart` directive. The empty string means
+// "default" (always restart while enabled), preserving backward compatibility.
+type RestartPolicy string
+
+const (
+	// RestartAlways restarts the harness unconditionally while enabled.
+	RestartAlways RestartPolicy = "always"
+	// RestartNo never restarts the harness automatically.
+	RestartNo RestartPolicy = "no"
+	// RestartUnlessStopped restarts the harness unless it was explicitly stopped.
+	// This is equivalent to RestartAlways in the current daemon model, since an
+	// explicit Stop already clears enabled intent.
+	RestartUnlessStopped RestartPolicy = "unless-stopped"
+	// RestartOnFailure restarts the harness only when it exits with a non-zero
+	// code.
+	RestartOnFailure RestartPolicy = "on-failure"
+)
+
+// Valid reports whether p is a known restart policy.
+func (p RestartPolicy) Valid() bool {
+	switch p {
+	case "", RestartAlways, RestartNo, RestartUnlessStopped, RestartOnFailure:
+		return true
+	}
+	return false
+}
+
 // Harness is one supervised process definition: a command + args + working
 // directory the daemon spawns and keeps alive. The daemon knows nothing about
 // what runs inside — it is just cmd/args/workdir (ADR-0006).
@@ -41,6 +69,12 @@ type Harness struct {
 	EnvFile string
 	// RestartDelay is the base delay between a crash and a respawn.
 	RestartDelay time.Duration
+	// Restart controls whether the harness is automatically restarted after it
+	// exits, mirroring Docker Compose's `restart` directive. Empty means
+	// "default" (always restart while enabled), preserving the daemon's
+	// historical behavior. Valid values: "no", "always", "unless-stopped",
+	// "on-failure".
+	Restart RestartPolicy
 	// Backend selects the hosting strategy (default native, ADR-0003).
 	Backend Backend
 	// Description is shown in the TUI list (ADR-0006).

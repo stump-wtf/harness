@@ -431,6 +431,17 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		return
 	}
 
+	// Restart policy gates automatic respawn (mirrors Docker Compose's
+	// `restart` directive). The default (empty) and "always"/"unless-stopped"
+	// preserve the daemon's historical always-restart-when-enabled behavior.
+	// "no" never restarts. "on-failure" restarts only on non-zero exit.
+	if !s.shouldRestart(code) {
+		s.enabled = false // honor the policy: this exit is final
+		s.transition(core.StateStopped)
+		s.publishSnapshot()
+		return
+	}
+
 	// Determine whether the just-ended run survived the crash window; if so the
 	// counter resets before we count this exit.
 	if !spawnFailed && !s.startedAt.IsZero() && now.Sub(s.startedAt) > s.policy.CrashWindow {
@@ -565,6 +576,21 @@ func (s *Supervisor) gracefulStopKeepEnabled() {
 
 func (s *Supervisor) hasProcess() bool { return s.proc != nil }
 
+// shouldRestart evaluates the harness's restart policy against an exit code.
+// The empty default and "always"/"unless-stopped" always restart. "no" never
+// restarts. "on-failure" restarts only on non-zero exit codes. A spawn failure
+// (code == -1) counts as a failure for "on-failure".
+func (s *Supervisor) shouldRestart(code int) bool {
+	switch s.harness.Restart {
+	case core.RestartNo:
+		return false
+	case core.RestartOnFailure:
+		return code != 0
+	default:
+		return true
+	}
+}
+
 // reapProcess closes the PTY (unblocking the reader) and drops the process.
 func (s *Supervisor) reapProcess() {
 	if s.proc != nil {
@@ -665,7 +691,8 @@ func (s *Supervisor) applyConfig(h core.Harness) {
 // (description, enabled intent) do not count.
 func runAffecting(a, b core.Harness) bool {
 	if a.Cmd != b.Cmd || a.Workdir != b.Workdir || a.EnvFile != b.EnvFile ||
-		a.RestartDelay != b.RestartDelay || a.Backend != b.Backend || a.TmuxSocket != b.TmuxSocket {
+		a.RestartDelay != b.RestartDelay || a.Restart != b.Restart ||
+		a.Backend != b.Backend || a.TmuxSocket != b.TmuxSocket {
 		return true
 	}
 	if len(a.Args) != len(b.Args) {

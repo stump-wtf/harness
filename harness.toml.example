@@ -35,8 +35,16 @@ enabled = false
 cmd = "/usr/local/bin/maybe-fails"
 workdir = "/srv/flaky"
 restart_delay = 5
+restart = "on-failure"
 description = "service that sometimes falls over"
 enabled = false
+
+# restart mirrors Docker Compose's `restart` directive:
+#   "no"              — never restart automatically
+#   "always"          — always restart (default when enabled)
+#   "unless-stopped"  — always restart, unless explicitly stopped
+#   "on-failure"      — restart only on non-zero exit code
+# Omitting the key is the same as "always" (backward compatible).
 
 # Profiles (ADR-0006): named groups of harnesses that switch together via
 # `harness use-profile <name>`. Only one profile is active at a time; the
