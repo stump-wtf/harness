@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
+	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
@@ -22,6 +23,7 @@ func TestHarnessFormRoundTrip(t *testing.T) {
 		Workdir:      "~/.local/share/reduit",
 		EnvFile:      "~/.config/vault/secrets.env",
 		RestartDelay: 5,
+		Restart:      "on-failure",
 		Backend:      "native",
 		Description:  "the reduit agent",
 		Enabled:      true,
@@ -49,6 +51,9 @@ func TestHarnessFormRoundTrip(t *testing.T) {
 	if h.RestartDelay.Seconds() != 5 {
 		t.Errorf("restart_delay = %v, want 5s", h.RestartDelay)
 	}
+	if h.Restart != core.RestartOnFailure {
+		t.Errorf("restart = %q, want on-failure", h.Restart)
+	}
 	if !h.Enabled {
 		t.Error("enabled did not round-trip")
 	}
@@ -75,6 +80,7 @@ func TestEditPreservesOmittedFields(t *testing.T) {
 		`workdir = "~/.local/share/reduit"`,
 		`env_file = "~/.config/vault/secrets.env"`,
 		"restart_delay = 5",
+		`restart = "on-failure"`,
 		`description = "the reduit agent"`,
 		"enabled = true",
 		"",
@@ -104,6 +110,9 @@ func TestEditPreservesOmittedFields(t *testing.T) {
 	if fi.delay != "5" {
 		t.Errorf("restart_delay not pre-filled: %q", fi.delay)
 	}
+	if fi.restart != "on-failure" {
+		t.Errorf("restart not pre-filled: %q", fi.restart)
+	}
 
 	// Now drive the full edit-save path (change only the description) and confirm
 	// the omitted keys survive into the reparsed config.
@@ -132,6 +141,9 @@ func TestEditPreservesOmittedFields(t *testing.T) {
 	if h.RestartDelay.Seconds() != 5 {
 		t.Errorf("restart_delay wiped by edit: %v", h.RestartDelay)
 	}
+	if h.Restart != core.RestartOnFailure {
+		t.Errorf("restart wiped by edit: %q", h.Restart)
+	}
 	if h.Description != "edited description" {
 		t.Errorf("description edit did not take: %q", h.Description)
 	}
@@ -150,6 +162,9 @@ func TestFormValidate(t *testing.T) {
 	}
 	if err := (HarnessForm{Name: "x", Cmd: "y", RestartDelay: -1}).Validate(); err == nil {
 		t.Error("negative delay should fail")
+	}
+	if err := (HarnessForm{Name: "x", Cmd: "y", Restart: "until-pigs-fly"}).Validate(); err == nil {
+		t.Error("bad restart policy should fail")
 	}
 }
 

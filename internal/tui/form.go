@@ -1,8 +1,8 @@
 package tui
 
 // Governing: SPEC-0001 REQ "Harness Form" — n/e open a Huh form over the harness
-// schema (cmd/args/workdir/env_file/restart_delay/backend/description/profile
-// membership) that writes back to harness.toml (ADR-0006: file is truth); e
+// schema (cmd/args/workdir/env_file/restart_delay/restart/backend/description/
+// profile membership) that writes back to harness.toml (ADR-0006: file is truth); e
 // pre-fills from the existing harness; then the daemon reloads and the harness
 // appears on the dashboard. This file owns the schema<->TOML serialization; the
 // Huh widget wiring lives in overlays.go.
@@ -28,7 +28,8 @@ type HarnessForm struct {
 	Args         []string
 	Workdir      string
 	EnvFile      string
-	RestartDelay int // seconds
+	RestartDelay int    // seconds
+	Restart      string // core.RestartPolicy; empty = the always default
 	Backend      string
 	Description  string
 	Enabled      bool
@@ -55,6 +56,9 @@ func (f HarnessForm) Validate() error {
 	if f.RestartDelay < 0 {
 		return fmt.Errorf("restart_delay must not be negative")
 	}
+	if !core.RestartPolicy(f.Restart).Valid() {
+		return fmt.Errorf("restart must be no, always, unless-stopped, or on-failure")
+	}
 	return nil
 }
 
@@ -80,6 +84,9 @@ func (f HarnessForm) TOML() string {
 	}
 	if f.RestartDelay > 0 {
 		fmt.Fprintf(&b, "restart_delay = %d\n", f.RestartDelay)
+	}
+	if f.Restart != "" && f.Restart != string(core.RestartAlways) {
+		fmt.Fprintf(&b, "restart = %s\n", strconv.Quote(f.Restart))
 	}
 	if f.Backend != "" && f.Backend != string(core.BackendNative) {
 		fmt.Fprintf(&b, "backend = %s\n", strconv.Quote(f.Backend))
@@ -139,6 +146,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	if h.RestartDelay > 0 {
 		fi.delay = strconv.Itoa(int(h.RestartDelay / time.Second))
 	}
+	fi.restart = orDefault(string(h.Restart), string(core.RestartAlways))
 	fi.backend = orDefault(string(h.Backend), string(core.BackendNative))
 	fi.description = h.Description
 	fi.enabled = h.Enabled
@@ -153,6 +161,7 @@ func (fi formInputs) toForm() HarnessForm {
 		Cmd:         strings.TrimSpace(fi.cmd),
 		Workdir:     strings.TrimSpace(fi.workdir),
 		EnvFile:     strings.TrimSpace(fi.envFile),
+		Restart:     strings.TrimSpace(fi.restart),
 		Backend:     strings.TrimSpace(fi.backend),
 		Description: strings.TrimSpace(fi.description),
 		Enabled:     fi.enabled,
