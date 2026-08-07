@@ -145,7 +145,7 @@ flowchart TD
 
     AD --> TRJ{"trajectory path?"}
     TRJ -->|yes| NAT["native transcript"]
-    TRJ -->|no| RING["scrollback record (SPEC-0003)"]
+    TRJ -->|no| RING["scrollback record (SPEC-0002)"]
     NAT --> OPT{"harvest opted in?"}
     RING --> OPT
     OPT -->|yes| FAC["SPEC-0005 facade<br/>list/get_trajectory (read-only)"]
@@ -173,11 +173,15 @@ flowchart TD
 
 ## Migration Plan
 
-Additive. A harness with no `agent`, no `skill_paths`, and no harvesting behaves
-exactly as today: it starts, no projection occurs, and no trajectory is exposed.
-Adapters can be adopted one harness at a time. Because `agent` is inferred from
-`cmd`, existing harnesses gain projection only once a skill root is configured —
-inference alone changes nothing observable.
+Additive for unknown tools: a harness resolving to `generic` starts exactly as
+today — no projection, no trajectory exposed. For a recognized `cmd`, inference
+is on by default and so are the adapter's default roots, so projection runs at
+spawn from those roots; because the target directory is excluded as a source,
+the zero-config case projects only the tool's own default roots into its own
+target — content the tool would discover natively anyway. A harness that must
+stay untouched sets `use_default_skill_paths = false` (or `agent = "generic"`).
+Adapters can be adopted one harness at a time, and harvesting stays opt-in
+regardless.
 
 ## Open Questions
 

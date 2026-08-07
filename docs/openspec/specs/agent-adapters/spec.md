@@ -2,7 +2,7 @@
 status: draft
 date: 2026-07-27
 implements: [ADR-0011]
-requires: [SPEC-0004, SPEC-0005]
+requires: [SPEC-0002, SPEC-0004, SPEC-0005]
 ---
 
 # SPEC-0006: Agent Adapters (skill paths, projection, trajectory discovery)
@@ -47,7 +47,8 @@ validation with an error identifying the harness and the unknown adapter.
 
 - **WHEN** a harness declares a `cmd` matching no adapter and sets no `agent`
 - **THEN** it resolves to `generic`, starts normally, receives no projection,
-  and reports no trajectory
+  and reports no native trajectory (its trajectory source is the SPEC-0002
+  scrollback fallback)
 
 #### Scenario: Unknown adapter name is rejected
 
@@ -108,12 +109,14 @@ enumerable through a diagnostic surface so the winning copy is attributable.
 ### Requirement: Spawn-Time Projection
 
 Before executing a harness's command, the daemon SHALL materialize the merged
-skill set into the adapter's target directory. Projection SHALL copy file
-contents; it MUST NOT create symbolic links into a configured source root, so a
-harness writing into its own skill directory cannot mutate a shared source.
-Projection SHALL occur on every start and restart. When an adapter declares no
-target directory, projection SHALL be skipped and the harness SHALL start
-normally.
+skill set into the adapter's target directory. The target directory MUST NOT
+itself be treated as a contributing source root; the merged set is drawn from
+the remaining roots. Projection SHALL copy file contents; it MUST NOT create
+symbolic links into a configured source root, so a harness writing into its
+own skill directory cannot mutate a shared source. The learned skill tier
+(SPEC-0007) SHALL be excluded from projection unconditionally. Projection
+SHALL occur on every start and restart. When an adapter declares no target
+directory, projection SHALL be skipped and the harness SHALL start normally.
 
 #### Scenario: Merged set lands before exec
 
@@ -136,7 +139,8 @@ normally.
 
 Each adapter SHALL report the location of its tool's native trajectory for a
 given harness, or report that none exists. When an adapter reports no
-trajectory, the daemon SHALL fall back to the SPEC-0003 scrollback record. The
+trajectory, the daemon SHALL fall back to the SPEC-0002 scrollback record
+(ADR-0007). The
 daemon SHALL expose trajectories through the SPEC-0005 facade as read-only
 operations (`list_trajectories`, `get_trajectory`) and MUST NOT write to, alter,
 or delete a tool's trajectory.

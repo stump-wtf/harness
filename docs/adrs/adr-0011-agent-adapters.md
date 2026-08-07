@@ -4,6 +4,7 @@ date: 2026-07-27
 decision-makers: [joestump]
 extends: [ADR-0006]
 governs: [SPEC-0006]
+enables: [ADR-0010, ADR-0012]
 related: [ADR-0003, ADR-0007, ADR-0009]
 ---
 
@@ -115,7 +116,10 @@ The daemon materializes the merged set into the adapter's target directory
 immediately before exec, as an extension of the work it already does setting
 `workdir`, `env`, and `env_file`. Projection is **copy, not symlink**: agent
 CLIs write into their own config directories, and a symlink farm would let one
-harness mutate another's source of truth.
+harness mutate another's source of truth. The target directory is not itself a
+source root — whatever already lives there is the tool's own concern, and the
+merge draws only from the remaining roots, so copy-isolation stays satisfiable
+even when a tool's default discovery root doubles as its target.
 
 ### Trajectory discovery is read-only
 
@@ -156,7 +160,8 @@ preferred wherever one exists.
   one with the other listed as shadowed; `use_default_skill_paths = false` drops
   adapter roots; a project file carrying `skill_paths` is accepted where one
   carrying `[server]` is rejected; a `generic` harness starts with no projection
-  and reports no trajectory; projection writes copies, and mutating the
+  and reports no native trajectory (its record is the ADR-0007 scrollback
+  fallback); projection writes copies, and mutating the
   projected copy leaves the source untouched.
 
 ## Pros and Cons of the Options
