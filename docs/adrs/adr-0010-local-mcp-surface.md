@@ -126,7 +126,11 @@ background agents, no human is watching when it does. Prompt injection reaching
 any harness's *output* can therefore reach the fleet. The project accepts this:
 the stated goal is removing a human from loops they add no value to, and a
 confirmation gate re-adds the human. Guardrails belong at the work-routing layer
-(Switchboard), not in the fleet's own control path.
+(Switchboard), not in the fleet's own control path. One honest gap, recorded
+rather than resolved: Switchboard gates *inbound work routing*, not an agent
+calling `harness_stop` on a sibling — if fleet control should be gated too, the
+move is routing write ops through Switchboard as todos rather than direct MCP
+calls.
 
 ### Consequences
 
