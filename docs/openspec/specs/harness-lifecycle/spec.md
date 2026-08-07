@@ -42,14 +42,16 @@ On daemon start, every harness that is `enabled` — directly or via an
 
 ### Requirement: Restart On Exit
 
-While a harness is `enabled`, any exit — including a clean exit code 0 — SHALL
-be followed by a restart per policy (`restarting`, wait `restart_delay`, then
+While a harness is `enabled` and its restart policy permits it (REQ "Restart
+Policy"; the always-restart default), any exit — including a clean exit code
+0 — SHALL be followed by a restart (`restarting`, wait `restart_delay`, then
 `starting`), incrementing the restart count (`↻`). If the harness is not
 `enabled`, an exit SHALL transition it to `stopped`.
 
 #### Scenario: Clean exit while enabled
 
-- **WHEN** an enabled harness exits with code 0
+- **WHEN** an enabled harness under the default restart policy exits with
+  code 0
 - **THEN** the daemon restarts it after `restart_delay` (agents and watchers
   are meant to be long-lived)
 
@@ -57,6 +59,41 @@ be followed by a restart per policy (`restarting`, wait `restart_delay`, then
 
 - **WHEN** a harness exits and `enabled` is false
 - **THEN** the harness transitions to `stopped` and is not respawned
+
+### Requirement: Restart Policy
+
+Each harness MAY carry a `restart` policy mirroring Docker Compose's `restart`
+directive: `"always"` (the default; an omitted key normalizes to it),
+`"unless-stopped"` (equivalent to `"always"` here — a manual stop already
+persists `enabled=false`, so both behave like Docker's `unless-stopped`),
+`"on-failure"` (restart only on a non-zero exit; a spawn failure counts as a
+failure), and `"no"` (never restart automatically).
+
+When the policy suppresses the respawn, the exit is final: the daemon SHALL
+clear `enabled` (the policy outcome persists like an explicit stop, so the
+harness stays down across daemon restarts, as in Docker), reset crash-loop
+bookkeeping, and transition the harness to `stopped` — except a spawn failure,
+which SHALL land in `failed` so a command that never came up surfaces loudly
+rather than as a clean stop. Because the policy is consulted only at exit
+time, a config change that alters only `restart` SHALL apply immediately to
+the running harness (it is not run-affecting; see REQ "Config Change
+Application").
+
+#### Scenario: Clean exit under on-failure
+
+- **WHEN** an enabled harness with `restart = "on-failure"` exits with code 0
+- **THEN** it transitions to `stopped`, `enabled` becomes false, and it is not
+  respawned
+
+#### Scenario: Failing exit under on-failure
+
+- **WHEN** an enabled harness with `restart = "on-failure"` exits non-zero
+- **THEN** the daemon restarts it per REQ "Restart On Exit"
+
+#### Scenario: Spawn failure under restart=no
+
+- **WHEN** a harness with `restart = "no"` fails to spawn at all
+- **THEN** it transitions to `failed` (not `stopped`) and is not retried
 
 ### Requirement: Crash-Loop Detection
 

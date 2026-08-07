@@ -31,6 +31,17 @@ enabled = false
 
 # A crash-looping example. The full restart_delay is seconds; the supervisor
 # honours it once a harness exits while still enabled.
+#
+# restart mirrors Docker Compose's `restart` directive:
+#   "no"              — never restart automatically
+#   "always"          — always restart (the default; omitting the key is the
+#                       same, backward compatible)
+#   "unless-stopped"  — always restart, unless explicitly stopped (here this
+#                       equals "always": a manual stop persists across daemon
+#                       restarts under either value)
+#   "on-failure"      — restart only on non-zero exit code
+# Compose's "on-failure:<max-retries>" suffix is not supported; retry limits
+# come from the daemon's crash-loop policy instead.
 [harness.flaky]
 cmd = "/usr/local/bin/maybe-fails"
 workdir = "/srv/flaky"
@@ -38,13 +49,6 @@ restart_delay = 5
 restart = "on-failure"
 description = "service that sometimes falls over"
 enabled = false
-
-# restart mirrors Docker Compose's `restart` directive:
-#   "no"              — never restart automatically
-#   "always"          — always restart (default when enabled)
-#   "unless-stopped"  — always restart, unless explicitly stopped
-#   "on-failure"      — restart only on non-zero exit code
-# Omitting the key is the same as "always" (backward compatible).
 
 # Profiles (ADR-0006): named groups of harnesses that switch together via
 # `harness use-profile <name>`. Only one profile is active at a time; the
