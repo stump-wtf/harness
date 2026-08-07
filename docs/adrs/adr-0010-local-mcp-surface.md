@@ -4,7 +4,8 @@ date: 2026-07-27
 decision-makers: [joestump]
 extends: [ADR-0002]
 governs: [SPEC-0005]
-related: [ADR-0004, ADR-0005, ADR-0008]
+enables: [ADR-0012]
+related: [ADR-0004, ADR-0005, ADR-0008, ADR-0011]
 ---
 
 # ADR-0010: Local MCP surface — control-plane facade, server broker, and side-loaded prompts
@@ -65,8 +66,10 @@ responsibility.
 
 ### The facade: a third thin client
 
-The MCP tool surface maps 1:1 onto SPEC-0002 control operations. It introduces
-no new authority: everything it can do, `harness` the CLI can already do.
+The control-plane rows below map 1:1 onto SPEC-0002 operations and introduce no
+new authority: everything they can do, `harness` the CLI can already do. The
+trajectory rows are new, additive read-only operations — defined in SPEC-0006,
+carried by the same protocol, and the reason `ProtoMinor` moves.
 
 | MCP tool | Control op | Access |
 | --- | --- | --- |
@@ -106,7 +109,8 @@ is a separate decision (ADR-0011) rather than a feature of this one.
 ### Capability scoping
 
 Read operations are available by default. **Write operations are opt-in per
-harness**, closing ADR-0008's deferred "per-key authorization scoping":
+harness**, answering for MCP callers the same least-privilege question ADR-0008
+deferred for SSH keys (whose per-key attach scoping remains open):
 
 ```toml
 [harness.reviewer]
@@ -126,14 +130,15 @@ confirmation gate re-adds the human. Guardrails belong at the work-routing layer
 
 ### Consequences
 
-* Good, because the facade costs no daemon changes — it is a client under
-  ADR-0002, exactly like the CLI and TUI.
-* Good, because the broker collapses N×M server processes to N, and N config
-  sites to one.
+* Good, because the facade adds no second engine — it delegates to the same
+  control-plane handlers the CLI and TUI use (ADR-0002), and its only additions
+  are additive read-only trajectory operations.
+* Good, because with N harnesses and M upstream servers the broker collapses
+  N×M server processes to M, and N config sites to one.
 * Good, because prompts become fleet-wide for free via an existing MCP
   primitive.
-* Good, because it resolves a scoping question ADR-0008 left open, rather than
-  deferring it a second time.
+* Good, because it answers the MCP half of the least-privilege scoping ADR-0008
+  left open, rather than deferring that too (per-SSH-key scoping stays deferred).
 * Bad, because the daemon now supervises a second process class (stdio servers
   with no PTY), so the registry and lifecycle model must distinguish them from
   harnesses.
@@ -234,4 +239,4 @@ flowchart TD
 * **Governs [SPEC-0005](../openspec/specs/mcp-surface/spec.md)**.
 * Enables [ADR-0012](adr-0012-cross-harness-distillation.md), whose distiller
   reads trajectories through this facade and whose learned skills are served
-  through this broker.
+  through this facade's search tools.

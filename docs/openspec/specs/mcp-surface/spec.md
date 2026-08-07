@@ -2,7 +2,7 @@
 status: draft
 date: 2026-07-27
 implements: [ADR-0010]
-requires: [SPEC-0002]
+requires: [SPEC-0002, SPEC-0003, SPEC-0004]
 ---
 
 # SPEC-0005: Local MCP Surface (facade, broker, prompts)
@@ -18,20 +18,26 @@ directories as MCP prompts (**side-loading**). See **ADR-0010**.
 The facade introduces no authority the CLI does not already have; it is a thin
 client under ADR-0002. The broker is a new *supervised process class* — stdio
 servers with no PTY — sharing the ADR-0005 restart machinery with harnesses.
-Write operations are gated per harness by `mcp_allow`, which realizes the
-per-key authorization scoping ADR-0008 deferred.
+Write operations are gated per harness by `mcp_allow` — per-caller authorization
+scoping analogous to the per-SSH-key scoping ADR-0008 deferred (which remains
+open for remote keys).
 
 ## Requirements
 
 ### Requirement: Facade Tool Surface
 
-The daemon SHALL expose an MCP tool for each control operation it already
-serves, and those tools SHALL delegate to the same handlers the CLI and TUI
+The daemon SHALL expose MCP tools mirroring the control operations enumerated
+here, and those tools SHALL delegate to the same handlers the CLI and TUI
 invoke rather than reimplementing the operation. Read tools (`harness_list`,
 `harness_describe`, `harness_logs`) SHALL be available to every harness. Write
 tools (`harness_start`, `harness_stop`, `harness_restart`) SHALL be available
-only where `mcp_allow` grants `write`. A facade tool MUST NOT expose data the
-corresponding control operation does not already return.
+only where `mcp_allow` grants `write`. The remaining SPEC-0002 operations
+(`project_up`, `project_down`, `profiles`, `use_profile`, `reload`,
+`daemon_info`) are not part of the initial facade; exposing one later requires
+classifying it here as read or write. Additional read-only facade tools are
+defined by SPEC-0006 (trajectories) and SPEC-0007 (learned-skill search) and
+SHALL be classified as read operations under `mcp_allow`. A facade tool MUST
+NOT expose data the corresponding control operation does not already return.
 
 #### Scenario: Facade mirrors the control operation
 
@@ -49,11 +55,14 @@ corresponding control operation does not already return.
 
 The global `harness.toml` SHALL accept `[mcp.<key>]` tables declaring upstream
 MCP servers, reusing the `cmd`, `args`, `env_file`, and `restart_delay` field
-meanings from the `[harness.*]` schema. A `[mcp.prompts]` table with a `paths`
-list SHALL declare directories scanned for prompt markdown. Project files MAY
-declare `[mcp.*]` tables, which SHALL apply only to that project's harnesses.
-The daemon SHALL reject an `[mcp.*]` table whose `cmd` is empty with a
-validation error naming the offending key.
+meanings from the `[harness.*]` schema. `prompts` is a reserved key that
+declares no upstream server: a `[mcp.prompts]` table with a `paths` list SHALL
+declare directories scanned for prompt markdown. Project files MAY declare
+`[mcp.*]` tables, which SHALL apply only to that project's harnesses; this
+extends the SPEC-0004 project-file schema, which must admit `[mcp.*]`
+alongside `[harness.*]`. The daemon SHALL reject an `[mcp.*]` table other than
+`[mcp.prompts]` whose `cmd` is empty with a validation error naming the
+offending key.
 
 #### Scenario: Upstream server declared once, started once
 

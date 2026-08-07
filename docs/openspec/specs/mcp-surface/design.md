@@ -13,7 +13,7 @@ SPEC-0002 control operations as MCP tools, and a *broker* that supervises
 upstream servers centrally and fans one endpoint into every harness. Prompts
 declared once are served to all.
 
-This spec (SPEC-0005) formalizes that behavior. It extends SPEC-0002 (whose
+This spec (SPEC-0005) formalizes that behavior. It requires SPEC-0002 (whose
 control operations the facade delegates to) and leans on SPEC-0003 (whose
 lifecycle machinery supervises upstream servers exactly as it supervises
 harnesses). It is consumed by SPEC-0006 (trajectory read tools) and SPEC-0007
@@ -25,7 +25,8 @@ harnesses). It is consumed by SPEC-0006 (trajectory read tools) and SPEC-0007
 
 - Expose the existing control plane to agents without a second implementation of
   it.
-- Collapse N×M upstream MCP server processes to N, and N config sites to one.
+- Collapse N×M upstream MCP server processes (N harnesses × M servers) to M,
+  and N config sites to one.
 - Make prompts a fleet-wide artifact using an existing MCP primitive.
 - Answer the write-authorization question ADR-0008 deferred, in config.
 
@@ -170,11 +171,13 @@ C4Container
 
 ## Migration Plan
 
-Additive throughout. A daemon with no `[mcp.*]` tables behaves exactly as today
-and serves no broker endpoint. Existing per-harness MCP configuration continues
-to work untouched; adopting the broker is per-server and reversible by deleting
-a table. The protocol gains no new control operations — the facade rides
-existing ones — so `ProtoMinor` moves and `ProtoMajor` does not.
+Additive throughout. A daemon with no `[mcp.*]` tables serves a facade-only
+endpoint — the required read tools, with no upstreams and no prompts — and
+existing harness behavior is otherwise unchanged. Existing per-harness MCP
+configuration continues to work untouched; adopting the broker is per-server
+and reversible by deleting a table. The facade rides existing control
+operations, and the trajectory reads it adds (SPEC-0006) are additive and
+read-only — so `ProtoMinor` moves and `ProtoMajor` does not.
 
 ## Open Questions
 
