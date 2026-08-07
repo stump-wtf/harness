@@ -8,6 +8,7 @@ package supervisor
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -37,6 +38,13 @@ func shHarness(name, script string, restartDelay time.Duration) core.Harness {
 		Backend:      core.BackendNative,
 		RestartDelay: restartDelay,
 	}
+}
+
+// shHarnessWithRestart builds a harness with a specific restart policy.
+func shHarnessWithRestart(name, script string, restartDelay time.Duration, policy core.RestartPolicy) core.Harness {
+	h := shHarness(name, script, restartDelay)
+	h.Restart = policy
+	return h
 }
 
 // newTestSupervisor builds a supervisor writing logs into a temp dir.
@@ -272,5 +280,110 @@ func TestStartIsIdempotent(t *testing.T) {
 	s.Start() // second start must not spawn a new process
 	if s.Snapshot().PID != pid {
 		t.Fatal("second Start replaced the running process")
+	}
+}
+
+// ---- Restart Policy (core.RestartPolicy; the policy × exit-code truth table
+// itself is unit-tested in internal/core/harness_test.go — these exercise the
+// supervisor plumbing around it; the default/always path is already covered by
+// TestCleanExitWhileEnabledRestarts, whose shHarness carries the zero value) --
+
+// noFlapPolicy never flaps or gives up, exercising pure policy gating.
+func noFlapPolicy() Policy {
+	return Policy{CrashWindow: 10 * time.Millisecond, CrashThreshold: 1000, MaxRestarts: 0, StopGrace: 100 * time.Millisecond}
+}
+
+func TestRestartPolicyNoDoesNotRestart(t *testing.T) {
+	s := newTestSupervisor(t, shHarnessWithRestart("norestart", "exit 0", 5*time.Millisecond, core.RestartNo), noFlapPolicy())
+	s.Start()
+	// The harness exits cleanly; with restart="no" it must land in stopped,
+	// not respawn.
+	waitState(t, s, core.StateStopped)
+	snap := s.Snapshot()
+	if snap.LastExitCode != 0 {
+		// Anchors that the process really ran and exited 0 — a spawn failure
+		// (-1) would land in failed, not satisfy this test vacuously.
+		t.Fatalf("last exit code = %d, want 0", snap.LastExitCode)
+	}
+	if snap.RestartCount != 0 {
+		t.Fatalf("restart count = %d, want 0 (restart=no must not restart)", snap.RestartCount)
+	}
+	if snap.Enabled {
+		t.Fatal("enabled should be false after restart=no policy finalizes the exit")
+	}
+	if snap.Flapping || snap.NextRetryIn != 0 {
+		t.Fatal("policy-final exit must clear flap bookkeeping")
+	}
+}
+
+func TestRestartPolicyNoSpawnFailureLandsFailed(t *testing.T) {
+	h := shHarnessWithRestart("nospawn", "exit 0", 5*time.Millisecond, core.RestartNo)
+	h.Cmd = "/nonexistent-harness-test-binary"
+	s := newTestSupervisor(t, h, noFlapPolicy())
+	s.Start()
+	// A command that never came up is a failure, not a completion: with
+	// restart="no" it must surface as failed (loud), not a clean stopped.
+	waitState(t, s, core.StateFailed)
+	if snap := s.Snapshot(); snap.RestartCount != 0 {
+		t.Fatalf("restart count = %d, want 0", snap.RestartCount)
+	}
+}
+
+// ---- Restart Policy: "on-failure" skips clean exits, respawns failures ----
+
+func TestRestartPolicyOnFailureSkipsCleanExit(t *testing.T) {
+	s := newTestSupervisor(t, shHarnessWithRestart("clean", "exit 0", 5*time.Millisecond, core.RestartOnFailure), noFlapPolicy())
+	s.Start()
+	// Clean exit (code 0) with restart="on-failure" must not restart.
+	waitState(t, s, core.StateStopped)
+	snap := s.Snapshot()
+	if snap.LastExitCode != 0 {
+		t.Fatalf("last exit code = %d, want 0", snap.LastExitCode)
+	}
+	if snap.RestartCount != 0 {
+		t.Fatalf("restart count = %d, want 0 (on-failure must skip clean exits)", snap.RestartCount)
+	}
+}
+
+func TestRestartPolicyOnFailureRestartsOnFailure(t *testing.T) {
+	s := newTestSupervisor(t, shHarnessWithRestart("fail", "exit 1", 5*time.Millisecond, core.RestartOnFailure), noFlapPolicy())
+	s.Start()
+	// Non-zero exit with restart="on-failure" must restart.
+	waitFor(t, 3*time.Second, "restart count grows past 2", func() bool {
+		return s.Snapshot().RestartCount >= 2
+	})
+	if code := s.Snapshot().LastExitCode; code != 1 {
+		t.Fatalf("last exit code = %d, want 1", code)
+	}
+}
+
+// ---- Restart Policy: a policy-only config change applies without a restart --
+
+func TestRestartPolicyChangeAppliesWithoutRestart(t *testing.T) {
+	s := newTestSupervisor(t, shHarness("hotpolicy", "sleep 60", 5*time.Millisecond), noFlapPolicy())
+	s.Start()
+	waitState(t, s, core.StateRunning)
+	pid := s.Snapshot().PID
+
+	// The policy is consulted at exit time, never at spawn time, so changing
+	// only `restart` must apply immediately: no staging, no "restart to
+	// apply", no process bounce.
+	s.ApplyConfig(shHarnessWithRestart("hotpolicy", "sleep 60", 5*time.Millisecond, core.RestartNo))
+	snap := s.Snapshot()
+	if snap.ConfigChanged {
+		t.Fatal("restart-policy-only change must not be staged as run-affecting")
+	}
+	if snap.PID != pid {
+		t.Fatal("restart-policy-only change must not bounce the process")
+	}
+
+	// The very next exit is governed by the new policy: kill the process and
+	// confirm restart="no" suppresses the respawn.
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	waitState(t, s, core.StateStopped)
+	if got := s.Snapshot().RestartCount; got != 0 {
+		t.Fatalf("restart count = %d, want 0 (restart=no adopted live must suppress the respawn)", got)
 	}
 }

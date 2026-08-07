@@ -23,6 +23,53 @@ func (b Backend) Valid() bool {
 	return b == BackendNative || b == BackendTmux
 }
 
+// RestartPolicy controls whether a harness is automatically restarted after it
+// exits, mirroring Docker Compose's `restart` directive. The empty string means
+// "default" (always restart while enabled), preserving backward compatibility.
+type RestartPolicy string
+
+const (
+	// RestartAlways restarts the harness unconditionally while enabled.
+	RestartAlways RestartPolicy = "always"
+	// RestartNo never restarts the harness automatically.
+	RestartNo RestartPolicy = "no"
+	// RestartUnlessStopped restarts the harness unless it was explicitly stopped.
+	// In this daemon both RestartAlways and RestartUnlessStopped behave like
+	// Docker's unless-stopped: an explicit Stop persists enabled=false
+	// (ADR-0007), so a manually stopped harness stays down across daemon
+	// restarts under either value. Docker's stronger `always` (comes back on
+	// daemon restart even after a manual stop) is intentionally not modeled.
+	RestartUnlessStopped RestartPolicy = "unless-stopped"
+	// RestartOnFailure restarts the harness only when it exits with a non-zero
+	// code.
+	RestartOnFailure RestartPolicy = "on-failure"
+)
+
+// Valid reports whether p is a known restart policy. The empty string (the
+// zero value / omitted key) is valid and means the default, RestartAlways.
+func (p RestartPolicy) Valid() bool {
+	switch p {
+	case "", RestartAlways, RestartNo, RestartUnlessStopped, RestartOnFailure:
+		return true
+	}
+	return false
+}
+
+// ShouldRestart reports whether an exit with the given code should be followed
+// by an automatic respawn under policy p. A spawn failure or signal death
+// (code == -1) counts as a failure for RestartOnFailure. The zero value and any
+// unknown policy fall through to the always-restart default.
+func (p RestartPolicy) ShouldRestart(code int) bool {
+	switch p {
+	case RestartNo:
+		return false
+	case RestartOnFailure:
+		return code != 0
+	default: // "", RestartAlways, RestartUnlessStopped
+		return true
+	}
+}
+
 // Harness is one supervised process definition: a command + args + working
 // directory the daemon spawns and keeps alive. The daemon knows nothing about
 // what runs inside — it is just cmd/args/workdir (ADR-0006).
@@ -41,6 +88,12 @@ type Harness struct {
 	EnvFile string
 	// RestartDelay is the base delay between a crash and a respawn.
 	RestartDelay time.Duration
+	// Restart controls whether the harness is automatically restarted after it
+	// exits, mirroring Docker Compose's `restart` directive. Empty means
+	// "default" (always restart while enabled), preserving the daemon's
+	// historical behavior. Valid values: "no", "always", "unless-stopped",
+	// "on-failure".
+	Restart RestartPolicy
 	// Backend selects the hosting strategy (default native, ADR-0003).
 	Backend Backend
 	// Description is shown in the TUI list (ADR-0006).

@@ -97,6 +97,12 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 	if ph.Backend == "" {
 		backend = core.BackendNative
 	}
+	restart := core.RestartPolicy(ph.Restart)
+	if ph.Restart == "" {
+		// Absent on the wire (or an older client) = the always-restart
+		// default, matching the config parsers' normalization.
+		restart = core.RestartAlways
+	}
 	return core.Harness{
 		Name:         ph.Name,
 		Cmd:          ph.Cmd,
@@ -104,6 +110,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		Workdir:      ph.Workdir,
 		EnvFile:      ph.EnvFile,
 		RestartDelay: time.Duration(ph.RestartDelayMs) * time.Millisecond,
+		Restart:      restart,
 		Backend:      backend,
 		Description:  ph.Description,
 		Enabled:      ph.Enabled,

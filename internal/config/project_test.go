@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )
 
 // writeProjectFile writes data to a harness.toml in dir and returns its path.
@@ -53,6 +55,48 @@ workdir = "."
 	// Relative workdir resolved against project root.
 	if h.Workdir != "/tmp/myrepo" {
 		t.Errorf("Workdir = %q, want %q (resolved against project root)", h.Workdir, "/tmp/myrepo")
+	}
+}
+
+// TestParseProject_RestartPolicy: the project schema carries the same restart
+// directive as the global config (SPEC-0004 REQ "Project File Schema":
+// identical field meanings), including the normalization of an omitted key to
+// the always default and the rejection of unknown values.
+func TestParseProject_RestartPolicy(t *testing.T) {
+	data := []byte(`
+[harness.migrate]
+cmd = "./migrate"
+restart = "no"
+
+[harness.agent]
+cmd = "claude"
+`)
+	proj, err := ParseProject(data, "/tmp/myrepo/harness.toml")
+	if err != nil {
+		t.Fatalf("ParseProject: %v", err)
+	}
+	if got := proj.Config.Harnesses["migrate"].Restart; got != core.RestartNo {
+		t.Errorf("migrate restart = %q, want %q", got, core.RestartNo)
+	}
+	if got := proj.Config.Harnesses["agent"].Restart; got != core.RestartAlways {
+		t.Errorf("agent restart = %q, want %q (omitted key normalizes to the default)", got, core.RestartAlways)
+	}
+
+	bad := []byte(`
+[harness.agent]
+cmd = "claude"
+restart = "until-pigs-fly"
+`)
+	_, err = ParseProject(bad, "/tmp/myrepo/harness.toml")
+	if err == nil {
+		t.Fatal("expected error for invalid restart policy, got nil")
+	}
+	var cerr *Error
+	if !errors.As(err, &cerr) {
+		t.Fatalf("expected *Error, got %T: %v", err, err)
+	}
+	if !strings.Contains(cerr.Msg, "invalid restart policy") {
+		t.Errorf("error message should mention the restart policy: %s", cerr.Msg)
 	}
 }
 

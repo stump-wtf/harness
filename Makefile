@@ -21,7 +21,7 @@ LDFLAGS   := -X $(PKG)/internal/buildinfo.Version=$(VERSION)
 GOFLAGS   := -trimpath -ldflags "$(LDFLAGS)"
 BIN       := harness
 
-.PHONY: all build check fmt vet test race tidy clean run daemon install version release-snapshot release-check
+.PHONY: all build check lint fmt vet test race tidy clean run daemon install version release-snapshot release-check
 
 # The default "did I break it" loop.
 all: build check
@@ -32,6 +32,9 @@ build:
 
 # Full CI gate: formatting, vet, build, tests, and the race detector.
 check: fmt vet test race
+
+# Static checks only (the uniform `make lint` entry point).
+lint: fmt vet
 
 fmt:
 	@unformatted=$$(gofmt -l $$(git ls-files '*.go' | grep -v '^vendor/')); \

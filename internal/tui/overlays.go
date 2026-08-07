@@ -225,7 +225,7 @@ func (m *Model) onProfileKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // harness (SPEC-0001 REQ "Harness Form"; `e` pre-fills).
 func (m *Model) openForm(editing bool) (tea.Model, tea.Cmd) {
 	m.editing = editing
-	m.fInputs = formInputs{backend: string(core.BackendNative)}
+	m.fInputs = formInputs{backend: string(core.BackendNative), restart: string(core.RestartAlways)}
 	if editing {
 		if sel, ok := m.selectedHarness(); ok {
 			// Pre-fill the WHOLE schema from the config file (file-is-truth,
@@ -338,7 +338,8 @@ func (m *Model) onConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // --- helpers --------------------------------------------------------------
 
 // buildHarnessForm constructs the Huh form bound to fi (SPEC-0001 REQ "Harness
-// Form" schema: cmd/args/workdir/env_file/restart_delay/backend/description).
+// Form" schema: cmd/args/workdir/env_file/restart_delay/restart/backend/
+// description).
 func buildHarnessForm(fi *formInputs) *huh.Form {
 	return huh.NewForm(
 		huh.NewGroup(
@@ -348,6 +349,14 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 			huh.NewInput().Title("workdir").Value(&fi.workdir),
 			huh.NewInput().Title("env_file").Value(&fi.envFile),
 			huh.NewInput().Title("restart_delay (seconds)").Value(&fi.delay),
+			huh.NewSelect[string]().Title("restart").
+				Options(
+					huh.NewOption("always", string(core.RestartAlways)),
+					huh.NewOption("unless-stopped", string(core.RestartUnlessStopped)),
+					huh.NewOption("on-failure", string(core.RestartOnFailure)),
+					huh.NewOption("no", string(core.RestartNo)),
+				).
+				Value(&fi.restart),
 			huh.NewSelect[string]().Title("backend").
 				Options(huh.NewOption("native", "native"), huh.NewOption("tmux", "tmux")).
 				Value(&fi.backend),

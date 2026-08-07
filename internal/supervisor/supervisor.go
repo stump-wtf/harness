@@ -2,7 +2,8 @@ package supervisor
 
 // Governing: SPEC-0003 (harness-lifecycle) — the full seven-state machine with
 // `enabled` orthogonal to `state`, autostart, restart-on-exit (incl. clean
-// exit), crash-loop detection with capped-exponential backoff → degraded →
+// exit, gated by the per-harness restart policy REQ "Restart Policy"),
+// crash-loop detection with capped-exponential backoff → degraded →
 // failed, manual restart clearing failed, and graceful stop; ADR-0005 (the
 // daemon supervises each harness with one in-process goroutine that owns its
 // state). All mutation happens on a single goroutine (the actor loop); external
@@ -431,6 +432,26 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		return
 	}
 
+	// Restart policy gates automatic respawn (core.RestartPolicy, mirroring
+	// Docker Compose's `restart` directive; SPEC-0003 REQ "Restart On Exit").
+	if !s.harness.Restart.ShouldRestart(code) {
+		s.enabled = false // honor the policy: this exit is final
+		// This harness will never retry on its own: clear flap bookkeeping so
+		// the final snapshot (and state.json) don't advertise a bogus
+		// "retry in Ns" / flapping marker, and so a later manual start begins
+		// with a clean crash window.
+		s.resetCrashState()
+		if spawnFailed {
+			// A command that never came up is a failure, not a completion.
+			// Land in failed (starting→failed) so the TUI/doctor surface it
+			// loudly instead of showing a clean stop.
+			s.transition(core.StateFailed)
+		} else {
+			s.transition(core.StateStopped)
+		}
+		return
+	}
+
 	// Determine whether the just-ended run survived the crash window; if so the
 	// counter resets before we count this exit.
 	if !spawnFailed && !s.startedAt.IsZero() && now.Sub(s.startedAt) > s.policy.CrashWindow {
@@ -662,7 +683,10 @@ func (s *Supervisor) applyConfig(h core.Harness) {
 
 // runAffecting reports whether a config change would alter how the process
 // runs (and thus needs a restart to take effect). Cosmetic fields
-// (description, enabled intent) do not count.
+// (description, enabled intent) do not count. Restart (the policy) doesn't
+// either: it is consulted only at exit time from s.harness, never at spawn
+// time, so a policy-only edit applies immediately — staging it would leave the
+// old policy governing the very next exit and demand a pointless restart.
 func runAffecting(a, b core.Harness) bool {
 	if a.Cmd != b.Cmd || a.Workdir != b.Workdir || a.EnvFile != b.EnvFile ||
 		a.RestartDelay != b.RestartDelay || a.Backend != b.Backend || a.TmuxSocket != b.TmuxSocket {

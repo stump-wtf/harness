@@ -39,6 +39,7 @@ func TestParseZshHarnessdExample(t *testing.T) {
 		Workdir:      "~/.local/share/crush-signal-channel",
 		EnvFile:      "~/.config/vault/secrets-static.env",
 		RestartDelay: 5 * time.Second,
+		Restart:      core.RestartAlways, // defaulted, not present in the file
 		Backend:      core.BackendNative, // defaulted, not present in the file
 		Enabled:      false,              // defaulted
 	}
@@ -236,5 +237,51 @@ func TestLoadMissingFile(t *testing.T) {
 	_, err := Load(filepath.Join(t.TempDir(), "does-not-exist.toml"))
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("want os.ErrNotExist, got %v", err)
+	}
+}
+
+// TestParseRestartPolicy exercises the restart = "..." directive. An omitted
+// key normalizes to the always default so the config layer emits exactly one
+// in-memory spelling per behavior.
+func TestParseRestartPolicy(t *testing.T) {
+	tests := []struct {
+		toml string
+		want core.RestartPolicy
+	}{
+		{`[harness.a]` + "\n" + `cmd = "x"` + "\n", core.RestartAlways},
+		{`[harness.a]` + "\n" + `cmd = "x"` + "\n" + `restart = "no"` + "\n", core.RestartNo},
+		{`[harness.a]` + "\n" + `cmd = "x"` + "\n" + `restart = "always"` + "\n", core.RestartAlways},
+		{`[harness.a]` + "\n" + `cmd = "x"` + "\n" + `restart = "unless-stopped"` + "\n", core.RestartUnlessStopped},
+		{`[harness.a]` + "\n" + `cmd = "x"` + "\n" + `restart = "on-failure"` + "\n", core.RestartOnFailure},
+	}
+	for _, tt := range tests {
+		cfg, err := Parse([]byte(tt.toml), "test.toml")
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		h, ok := cfg.Harnesses["a"]
+		if !ok {
+			t.Fatal("harness \"a\" not registered")
+		}
+		if h.Restart != tt.want {
+			t.Errorf("restart = %q, want %q", h.Restart, tt.want)
+		}
+	}
+}
+
+// TestParseInvalidRestartPolicy confirms an unknown restart policy is rejected
+// at parse time with a location-carrying error.
+func TestParseInvalidRestartPolicy(t *testing.T) {
+	src := "[harness.foo]\ncmd = \"x\"\nrestart = \"until-pigs-fly\"\n"
+	_, err := Parse([]byte(src), "test.toml")
+	if err == nil {
+		t.Fatal("expected error for invalid restart policy")
+	}
+	var ce *Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("error is %T, want *config.Error: %v", err, err)
+	}
+	if !strings.Contains(ce.Msg, "invalid restart policy") {
+		t.Errorf("message %q does not contain \"invalid restart policy\"", ce.Msg)
 	}
 }
