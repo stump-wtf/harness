@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // TestVTViewRendersWrittenBytes verifies the client-side embedded terminal
@@ -46,27 +48,47 @@ func TestVTViewResize(t *testing.T) {
 	}
 }
 
-// TestVTViewCursorSeqReturnsCUP verifies cursorSeq emits a CUP (CSI row;col H)
-// sequence matching the emulator's tracked cursor position. This is what makes
-// the hardware cursor visible in attached mode (#48).
-func TestVTViewCursorSeqReturnsCUP(t *testing.T) {
-	v := newVTView(40, 10)
-	// Move cursor to row 5, col 12 (1-indexed in CUP).
-	v.write([]byte("\x1b[5;12H"))
-	seq := v.cursorSeq()
-	// CUP is \x1b[row;colH — the emulator tracks 0-indexed, CUP is 1-indexed.
-	want := "\x1b[5;12H"
-	if seq != want {
-		t.Errorf("cursorSeq = %q, want %q", seq, want)
+// TestVTViewRenderPaintsCursorCell verifies render() paints the emulator's
+// cursor cell in reverse video (#48): Bubble Tea owns the hardware cursor, so
+// the guest cursor is shown by inverting the cell it occupies.
+func TestVTViewRenderPaintsCursorCell(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		x, y  int // expected 0-indexed cursor cell
+	}{
+		{name: "home", input: "", x: 0, y: 0},
+		{name: "moved", input: "\x1b[5;12H", x: 11, y: 4}, // CUP is 1-indexed
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newVTView(40, 10)
+			v.write([]byte(tc.input))
+			lines := strings.Split(v.render(), "\n")
+			const marker = "\x1b[7m"
+			for i, ln := range lines {
+				if has := strings.Contains(ln, marker); has != (i == tc.y) {
+					t.Errorf("row %d: cursor cell present=%v, want %v", i, has, i == tc.y)
+				}
+			}
+			row := lines[tc.y]
+			idx := strings.Index(row, marker)
+			if idx < 0 {
+				t.Fatalf("row %d has no cursor cell: %q", tc.y, row)
+			}
+			if got := lipgloss.Width(row[:idx]); got != tc.x {
+				t.Errorf("cursor cell painted at column %d, want %d", got, tc.x)
+			}
+		})
 	}
 }
 
-// TestVTViewCursorSeqDefault verifies the cursor starts at 1;1 (home).
-func TestVTViewCursorSeqDefault(t *testing.T) {
+// TestVTViewRenderRespectsHiddenCursor verifies DECTCEM: a guest that hides
+// its cursor (\x1b[?25l) gets no painted cursor cell (#48).
+func TestVTViewRenderRespectsHiddenCursor(t *testing.T) {
 	v := newVTView(40, 10)
-	seq := v.cursorSeq()
-	want := "\x1b[1;1H"
-	if seq != want {
-		t.Errorf("cursorSeq on fresh view = %q, want %q", seq, want)
+	v.write([]byte("\x1b[?25l"))
+	if strings.Contains(v.render(), "\x1b[7m") {
+		t.Fatal("hidden cursor must not be painted")
 	}
 }
