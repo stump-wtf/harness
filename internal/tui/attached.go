@@ -58,6 +58,12 @@ type attachState struct {
 	// better served by a clean cancel than a phantom letter reaching the
 	// agent. This is exactly how tmux handles its prefix.
 	prefixArmed bool
+
+	// mouseReleased is set when shift+mouse released the TUI's mouse grab
+	// for native terminal text selection (#49). The next non-shift key or
+	// mouse event re-enables mouse cell motion so scrollback-entry and
+	// dashboard scrolling work again.
+	mouseReleased bool
 }
 
 // newAttachState builds attach state for a harness at the given viewport size.

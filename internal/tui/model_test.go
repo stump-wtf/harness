@@ -524,3 +524,50 @@ func TestPrefixChordHelp(t *testing.T) {
 		t.Fatalf("prefixed ? must not be forwarded to the PTY, inputs=%v", fa.inputs)
 	}
 }
+
+// TestShiftMouseReleasesMouseGrab verifies shift+mouse in attached interactive
+// mode sets mouseReleased so the TUI releases its mouse grab for native
+// terminal text selection (#49). The next key press clears the flag and
+// re-enables mouse cell motion.
+func TestShiftMouseReleasesMouseGrab(t *testing.T) {
+	fa := &fakeAttach{}
+	m := New(Options{})
+	m.conn = startOK
+	m.w, m.h = 80, 24
+	m.mode = modeAttached
+	cols, rows := m.attachViewport()
+	m.att = newAttachState("test", protocol.AttachRW, sessionBase, cols, rows)
+	m.attach = fa
+	m.harnesses = []protocol.HarnessInfo{{Name: "test", State: "running"}}
+
+	// Shift+mouse click should set mouseReleased.
+	shiftClick := tea.MouseMsg{Type: tea.MouseLeft, Shift: true}
+	m.onMouse(shiftClick)
+	if !m.att.mouseReleased {
+		t.Fatal("shift+mouse should set mouseReleased=true")
+	}
+
+	// Next key press should clear mouseReleased (re-enabling mouse).
+	m.onKey(runeKey("a"))
+	if m.att.mouseReleased {
+		t.Fatal("key press after shift-mouse should clear mouseReleased")
+	}
+}
+
+// TestNonShiftMouseDoesNotReleaseGrab verifies regular (non-shift) mouse events
+// do NOT release the mouse grab.
+func TestNonShiftMouseDoesNotReleaseGrab(t *testing.T) {
+	m := New(Options{})
+	m.conn = startOK
+	m.w, m.h = 80, 24
+	m.mode = modeAttached
+	cols, rows := m.attachViewport()
+	m.att = newAttachState("test", protocol.AttachRW, sessionBase, cols, rows)
+	m.harnesses = []protocol.HarnessInfo{{Name: "test", State: "running"}}
+
+	click := tea.MouseMsg{Type: tea.MouseLeft}
+	m.onMouse(click)
+	if m.att.mouseReleased {
+		t.Fatal("non-shift mouse should not set mouseReleased")
+	}
+}

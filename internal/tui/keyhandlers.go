@@ -40,7 +40,16 @@ func (m *Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // onAttachedMouse handles mouse events while in attached mode. Wheel-up in
 // the interactive substate enters scrollback; wheel in scrollback navigates.
+// Shift+mouse releases the TUI's mouse grab so the terminal handles native
+// text selection (tmux-style shift-passthrough, #49).
 func (m *Model) onAttachedMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// Shift held: release mouse for native terminal selection (#49). The TUI
+	// gives up its mouse grab so click-drag selects text in the user's
+	// terminal emulator. Mouse mode is re-enabled on the next non-shift key.
+	if msg.Shift && m.att.substate == substateInteractive {
+		m.att.mouseReleased = true
+		return m, tea.DisableMouse
+	}
 	switch msg.Type { //nolint:exhaustive
 	case tea.MouseWheelUp:
 		if m.att.substate == substateInteractive {
@@ -202,25 +211,34 @@ func (m *Model) onAttachedKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onScrollbackKey(msg)
 	}
 
+	// Re-enable mouse after shift-passthrough released it (#49). Any key press
+	// restores the TUI's mouse grab so scrollback-entry wheel works again.
+	var cmds []tea.Cmd
+	if m.att.mouseReleased {
+		m.att.mouseReleased = false
+		cmds = append(cmds, tea.EnableMouseCellMotion)
+	}
+
 	// If the prefix is armed, intercept the next key as a harness command.
 	// PgUp is a special case: it enters scrollback without the prefix (it's a
 	// dedicated key with no agent-TUI collision risk).
 	if m.att.prefixArmed {
 		m.att.prefixArmed = false
-		return m, m.dispatchPrefixKey(msg)
+		cmds = append(cmds, m.dispatchPrefixKey(msg))
+		return m, tea.Batch(cmds...)
 	}
 
 	// Ctrl-b arms the prefix (only in read-write mode — read-only viewers
 	// don't need intercepts, their keys are dropped anyway).
 	if !m.att.readOnly() && msg.Type == tea.KeyCtrlB {
 		m.att.prefixArmed = true
-		return m, nil
+		return m, tea.Batch(cmds...)
 	}
 
 	// PgUp enters scrollback without the prefix.
 	if key.Matches(msg, m.keys.Scrollback) {
 		m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
-		return m, nil
+		return m, tea.Batch(cmds...)
 	}
 
 	// Forward to the PTY (read-write only; a read-only attach ignores input,
@@ -229,10 +247,11 @@ func (m *Model) onAttachedKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if b := keyToBytes(msg); len(b) > 0 {
 			sid := m.att.sessionID
 			data := b
-			return m, func() tea.Msg { _ = m.attach.AttachInput(sid, data); return nil }
+			cmds = append(cmds, func() tea.Msg { _ = m.attach.AttachInput(sid, data); return nil })
+			return m, tea.Batch(cmds...)
 		}
 	}
-	return m, nil
+	return m, tea.Batch(cmds...)
 }
 
 // dispatchPrefixKey handles the keystroke that follows the Ctrl-b prefix. It
