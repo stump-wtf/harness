@@ -7,6 +7,7 @@ package daemon
 // — all over a real Unix socket. ADR-0009.
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -326,6 +327,35 @@ func TestNoopReUpDoesNotBroadcast(t *testing.T) {
 		if f.Type == protocol.TypeEvent && decodeEvent(t, f.Payload).Kind == protocol.EvConfigReload {
 			return
 		}
+	}
+}
+
+// TestHarnessFromWirePrompt: the wire → core copier is field-complete for
+// prompt harnesses — Prompt survives the JSON wire encode/decode (the additive
+// ProtoMinor 2 field) — and an absent restart defaults to "no" for a one-shot,
+// matching the config parsers' normalization, instead of the always default
+// that would respawn a completed agent run.
+func TestHarnessFromWirePrompt(t *testing.T) {
+	ph := protocol.ProjectHarness{Name: "oneshot", Prompt: "do the thing", Enabled: true}
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded protocol.ProjectHarness
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	h := harnessFromWire(decoded)
+	if h.Prompt != "do the thing" || h.Cmd != "" {
+		t.Errorf("harnessFromWire Prompt/Cmd = %q/%q, want prompt-only", h.Prompt, h.Cmd)
+	}
+	if h.Restart != core.RestartNo {
+		t.Errorf("Restart = %q, want %q (one-shot wire default)", h.Restart, core.RestartNo)
+	}
+	// An explicit restart still wins over the one-shot default.
+	decoded.Restart = string(core.RestartOnFailure)
+	if h := harnessFromWire(decoded); h.Restart != core.RestartOnFailure {
+		t.Errorf("explicit Restart = %q, want %q", h.Restart, core.RestartOnFailure)
 	}
 }
 

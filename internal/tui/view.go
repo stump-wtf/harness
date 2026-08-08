@@ -216,9 +216,15 @@ func (m *Model) viewPeek(w, h int) string {
 		tailLines = tailLines[len(tailLines)-maxLines:]
 	}
 
+	// A prompt harness carries no configured cmd — surface the prompt, what
+	// the user actually wrote (ADR-0011 spawn-time synthesis).
+	what := m.theme.Faint().Render("cmd     ") + sel.Cmd
+	if sel.Prompt != "" {
+		what = m.theme.Faint().Render("prompt  ") + sel.Prompt
+	}
 	summary := []string{
 		"",
-		m.theme.Faint().Render("cmd     ") + sel.Cmd,
+		what,
 		m.theme.Faint().Render("backend ") + orDefault(sel.Backend, "native"),
 		m.theme.Faint().Render("exit    ") + fmt.Sprintf("%d", sel.LastExitCode),
 		m.theme.Faint().Render("restarts") + fmt.Sprintf(" %d", sel.RestartCount),

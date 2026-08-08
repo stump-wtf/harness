@@ -185,6 +185,14 @@ func TestProjectUpInvalidDefsNoPartialState(t *testing.T) {
 		{"dotdot harness name", "reduit", []core.Harness{shHarness("..", loopScript, 0)}},
 		{"duplicate harness", "reduit", projectDefs("agent", "agent")},
 		{"missing cmd", "reduit", []core.Harness{{Name: "agent", Backend: core.BackendNative}}},
+		// Exactly one of cmd/prompt, and args belong to cmd only — the same
+		// invariants the config parsers enforce (ADR-0011).
+		{"prompt and cmd both set", "reduit", []core.Harness{{
+			Name: "agent", Cmd: "sh", Prompt: "hi", Backend: core.BackendNative,
+		}}},
+		{"prompt with args", "reduit", []core.Harness{{
+			Name: "agent", Prompt: "hi", Args: []string{"x"}, Backend: core.BackendNative,
+		}}},
 		{"invalid backend", "reduit", []core.Harness{{Name: "agent", Cmd: "sh", Backend: "bogus"}}},
 		{"negative restart delay", "reduit", []core.Harness{{
 			Name: "agent", Cmd: "sh", Backend: core.BackendNative, RestartDelay: -time.Second,
@@ -210,6 +218,34 @@ func TestProjectUpInvalidDefsNoPartialState(t *testing.T) {
 				t.Error("project record left behind despite invalid defs")
 			}
 		})
+	}
+}
+
+// TestProjectUpAcceptsPromptHarness: a prompt-only definition (empty Cmd) is a
+// valid project harness — its argv is synthesized at spawn (ADR-0011), so the
+// registration path must not hard-require cmd. Registered disabled so the test
+// never actually launches an agent CLI.
+func TestProjectUpAcceptsPromptHarness(t *testing.T) {
+	m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
+	def := core.Harness{
+		Name:    "oneshot",
+		Prompt:  "do the thing",
+		Backend: core.BackendNative,
+		Restart: core.RestartNo,
+	}
+	res, err := m.ProjectUp("reduit", []core.Harness{def})
+	if err != nil {
+		t.Fatalf("ProjectUp: %v", err)
+	}
+	if len(res.Names) != 1 || res.Names[0] != "reduit/oneshot" {
+		t.Fatalf("Names = %v, want [reduit/oneshot]", res.Names)
+	}
+	h, ok := m.HarnessDef("reduit/oneshot")
+	if !ok {
+		t.Fatal("prompt harness not registered")
+	}
+	if h.Prompt != "do the thing" || h.Cmd != "" {
+		t.Errorf("registered def Prompt/Cmd = %q/%q, want prompt-only", h.Prompt, h.Cmd)
 	}
 }
 

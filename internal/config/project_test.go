@@ -293,6 +293,68 @@ args = ["--yolo"]
 	}
 }
 
+// ---- Prompt harness parity (SPEC-0004 REQ "Project File Schema") ----------
+
+// TestParseProject_PromptHarness: the agent one-shot `prompt` field means the
+// same thing in a project file as in the global config (identical field
+// meanings): the prompt stored verbatim, Cmd/Args left empty for spawn-time
+// synthesis (ADR-0011), and an omitted restart defaulting to "no".
+func TestParseProject_PromptHarness(t *testing.T) {
+	data := []byte(`
+[harness.agent]
+prompt = "summarize the day"
+`)
+	proj, err := ParseProject(data, "/tmp/myrepo/harness.toml")
+	if err != nil {
+		t.Fatalf("ParseProject: %v", err)
+	}
+	h, ok := proj.Config.Harnesses["agent"]
+	if !ok {
+		t.Fatal("missing harness 'agent'")
+	}
+	if h.Prompt != "summarize the day" {
+		t.Errorf("Prompt = %q, want %q", h.Prompt, "summarize the day")
+	}
+	if h.Cmd != "" || h.Args != nil {
+		t.Errorf("Cmd/Args = %q/%v, want empty (spawn-time synthesis)", h.Cmd, h.Args)
+	}
+	if h.Restart != core.RestartNo {
+		t.Errorf("Restart = %q, want %q (one-shot default)", h.Restart, core.RestartNo)
+	}
+	// The project bring-up default still applies to prompt harnesses.
+	if !h.Enabled {
+		t.Error("Enabled = false, want true (project bring-up default)")
+	}
+}
+
+// TestParseProject_PromptErrors: the prompt exclusivity rules hold in project
+// files too, with the same located-error contract as the global parser.
+func TestParseProject_PromptErrors(t *testing.T) {
+	tests := []struct{ name, toml, wantSub string }{
+		{"prompt and cmd", "[harness.bad]\ncmd = \"echo\"\nprompt = \"hi\"\n", `"prompt" and "cmd" are mutually exclusive`},
+		{"prompt and args", "[harness.bad]\nprompt = \"hi\"\nargs = [\"x\"]\n", `"prompt" and "args" are mutually exclusive`},
+		{"blank prompt", "[harness.bad]\nprompt = \" \"\n", `"prompt" must not be blank`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseProject([]byte(tt.toml), "/tmp/repo/harness.toml")
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			var cerr *Error
+			if !errors.As(err, &cerr) {
+				t.Fatalf("expected *Error, got %T: %v", err, err)
+			}
+			if !strings.Contains(cerr.Msg, tt.wantSub) {
+				t.Errorf("message %q does not contain %q", cerr.Msg, tt.wantSub)
+			}
+			if cerr.Line <= 0 {
+				t.Errorf("expected positive source line, got %d", cerr.Line)
+			}
+		})
+	}
+}
+
 // ---- Discovery tests -----------------------------------------------------
 
 func TestDiscoverProject_FindsAncestorFile(t *testing.T) {

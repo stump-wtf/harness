@@ -1,8 +1,9 @@
 package tui
 
 // Governing: SPEC-0001 REQ "Harness Form" — n/e open a Huh form over the harness
-// schema (cmd/args/workdir/env_file/restart_delay/restart/backend/description/
-// profile membership) that writes back to harness.toml (ADR-0006: file is truth); e
+// schema (cmd/prompt/args/workdir/env_file/restart_delay/restart/backend/
+// description/profile membership) that writes back to harness.toml (ADR-0006:
+// file is truth); e
 // pre-fills from the existing harness; then the daemon reloads and the harness
 // appears on the dashboard. This file owns the schema<->TOML serialization; the
 // Huh widget wiring lives in overlays.go.
@@ -23,13 +24,16 @@ import (
 // TUI-facing projection of a core.Harness table; RestartDelay is seconds to
 // match the TOML unit (config.rawHarness.RestartDelay).
 type HarnessForm struct {
-	Name         string
-	Cmd          string
+	Name string
+	Cmd  string
+	// Prompt is the agent one-shot alternative to Cmd (ADR-0011): exactly one
+	// of the two is set, and Args belong to Cmd only (Validate enforces both).
+	Prompt       string
 	Args         []string
 	Workdir      string
 	EnvFile      string
 	RestartDelay int    // seconds
-	Restart      string // core.RestartPolicy; empty = the always default
+	Restart      string // core.RestartPolicy; empty = the parse default
 	Backend      string
 	Description  string
 	Enabled      bool
@@ -40,15 +44,22 @@ func NewHarnessForm() HarnessForm {
 	return HarnessForm{Backend: string(core.BackendNative)}
 }
 
-// Validate checks the minimum the daemon config parser requires (a name and a
-// cmd, a known backend, non-negative delay) so the form catches errors before
-// writing TOML the daemon would reject on reload.
+// Validate checks the minimum the daemon config parser requires (a name and
+// exactly one of cmd/prompt, a known backend, non-negative delay) so the form
+// catches errors before writing TOML the daemon would reject on reload.
 func (f HarnessForm) Validate() error {
 	if strings.TrimSpace(f.Name) == "" {
 		return fmt.Errorf("name is required")
 	}
-	if strings.TrimSpace(f.Cmd) == "" {
-		return fmt.Errorf("cmd is required")
+	cmdSet := strings.TrimSpace(f.Cmd) != ""
+	promptSet := strings.TrimSpace(f.Prompt) != ""
+	switch {
+	case !cmdSet && !promptSet:
+		return fmt.Errorf("cmd is required (or prompt for an agent one-shot)")
+	case cmdSet && promptSet:
+		return fmt.Errorf("cmd and prompt are mutually exclusive")
+	case promptSet && len(f.Args) > 0:
+		return fmt.Errorf("prompt and args are mutually exclusive")
 	}
 	if f.Backend != "" && !core.Backend(f.Backend).Valid() {
 		return fmt.Errorf("backend must be native or tmux")
@@ -68,13 +79,21 @@ func (f HarnessForm) Validate() error {
 func (f HarnessForm) TOML() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[harness.%s]\n", f.Name)
-	fmt.Fprintf(&b, "cmd = %s\n", strconv.Quote(f.Cmd))
-	if len(f.Args) > 0 {
-		parts := make([]string, len(f.Args))
-		for i, a := range f.Args {
-			parts[i] = strconv.Quote(a)
+	prompt := strings.TrimSpace(f.Prompt)
+	if prompt != "" {
+		// Prompt harness: `prompt` replaces cmd/args entirely (Validate
+		// enforces the exclusivity; the daemon synthesizes the argv at spawn,
+		// ADR-0011).
+		fmt.Fprintf(&b, "prompt = %s\n", strconv.Quote(prompt))
+	} else {
+		fmt.Fprintf(&b, "cmd = %s\n", strconv.Quote(f.Cmd))
+		if len(f.Args) > 0 {
+			parts := make([]string, len(f.Args))
+			for i, a := range f.Args {
+				parts[i] = strconv.Quote(a)
+			}
+			fmt.Fprintf(&b, "args = [%s]\n", strings.Join(parts, ", "))
 		}
-		fmt.Fprintf(&b, "args = [%s]\n", strings.Join(parts, ", "))
 	}
 	if f.Workdir != "" {
 		fmt.Fprintf(&b, "workdir = %s\n", strconv.Quote(f.Workdir))
@@ -85,7 +104,14 @@ func (f HarnessForm) TOML() string {
 	if f.RestartDelay > 0 {
 		fmt.Fprintf(&b, "restart_delay = %d\n", f.RestartDelay)
 	}
-	if f.Restart != "" && f.Restart != string(core.RestartAlways) {
+	// Omit restart when it equals the parse default for this harness kind —
+	// "no" for prompt one-shots, "always" otherwise — so an untouched edit
+	// round-trips without growing keys.
+	defaultRestart := string(core.RestartAlways)
+	if prompt != "" {
+		defaultRestart = string(core.RestartNo)
+	}
+	if f.Restart != "" && f.Restart != defaultRestart {
 		fmt.Fprintf(&b, "restart = %s\n", strconv.Quote(f.Restart))
 	}
 	if f.Backend != "" && f.Backend != string(core.BackendNative) {
@@ -127,6 +153,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi := formInputs{
 		name:        sel.Name,
 		cmd:         sel.Cmd,
+		prompt:      sel.Prompt,
 		backend:     orDefault(sel.Backend, string(core.BackendNative)),
 		description: sel.Description,
 		enabled:     sel.Enabled,
@@ -140,6 +167,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 		return fi
 	}
 	fi.cmd = h.Cmd
+	fi.prompt = h.Prompt
 	fi.args = strings.Join(h.Args, " ")
 	fi.workdir = h.Workdir
 	fi.envFile = h.EnvFile
@@ -159,6 +187,7 @@ func (fi formInputs) toForm() HarnessForm {
 	f := HarnessForm{
 		Name:        strings.TrimSpace(fi.name),
 		Cmd:         strings.TrimSpace(fi.cmd),
+		Prompt:      strings.TrimSpace(fi.prompt),
 		Workdir:     strings.TrimSpace(fi.workdir),
 		EnvFile:     strings.TrimSpace(fi.envFile),
 		Restart:     strings.TrimSpace(fi.restart),

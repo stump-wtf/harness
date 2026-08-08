@@ -86,7 +86,13 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	t.Row(t.accentBold("name"), fmt.Sprintf("%s %s", t.stateGlyphOnly(h.State), h.Name))
 	t.Row("state", t.stateCell(h.State))
 	t.Row("enabled", t.enabledCell(h.Enabled))
-	t.Row("cmd", t.faintPlain(h.Cmd))
+	// A prompt harness has no configured cmd — show what the user wrote (the
+	// prompt), not the synthesized agent argv (ADR-0011 spawn-time synthesis).
+	if h.Prompt != "" {
+		t.Row("prompt", t.faintPlain(h.Prompt))
+	} else {
+		t.Row("cmd", t.faintPlain(h.Cmd))
+	}
 	t.Row("backend", t.faintPlain(h.Backend))
 	t.Row("restarts", fmt.Sprintf("%d", h.RestartCount))
 	t.Row("last_exit", fmt.Sprintf("%d", h.LastExitCode))

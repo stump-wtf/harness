@@ -3,6 +3,7 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -60,6 +61,101 @@ func TestHarnessFormRoundTrip(t *testing.T) {
 	// The pre-existing harness must survive the append (non-destructive write).
 	if _, ok := cfg.Harnesses["existing"]; !ok {
 		t.Error("append clobbered the existing harness")
+	}
+}
+
+// TestHarnessFormRoundTripPrompt: `n` can author a prompt-only harness — the
+// form emits `prompt` and no cmd/args (ADR-0011 spawn-time synthesis), and the
+// TOML re-parses into a prompt harness with the one-shot restart="no" default
+// intact.
+func TestHarnessFormRoundTripPrompt(t *testing.T) {
+	f := HarnessForm{
+		Name:        "deploy-check",
+		Prompt:      "check the deployments and report anything unhealthy",
+		Workdir:     "~/src/my-project",
+		Restart:     string(core.RestartNo),
+		Backend:     "native",
+		Description: "one-shot agent run",
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatalf("valid prompt form rejected: %v", err)
+	}
+	body := f.TOML()
+	if !strings.Contains(body, "prompt = ") {
+		t.Fatalf("TOML missing prompt key:\n%s", body)
+	}
+	if strings.Contains(body, "cmd = ") || strings.Contains(body, "args = ") {
+		t.Fatalf("prompt harness TOML must not carry cmd/args:\n%s", body)
+	}
+	cfg, err := config.Parse([]byte(body), "harness.toml")
+	if err != nil {
+		t.Fatalf("config.Parse rejected form TOML: %v\n---\n%s", err, body)
+	}
+	h, ok := cfg.Harnesses["deploy-check"]
+	if !ok {
+		t.Fatalf("harness not present after parse; got %v", cfg.HarnessOrder)
+	}
+	if h.Prompt != f.Prompt {
+		t.Errorf("Prompt = %q, want %q (multi-word prompt must survive verbatim)", h.Prompt, f.Prompt)
+	}
+	if h.Cmd != "" || h.Args != nil {
+		t.Errorf("Cmd/Args = %q/%v, want empty (spawn-time synthesis)", h.Cmd, h.Args)
+	}
+	if h.Restart != core.RestartNo {
+		t.Errorf("Restart = %q, want %q (one-shot default)", h.Restart, core.RestartNo)
+	}
+}
+
+// TestEditPromptHarnessRoundTrip: editing a prompt harness with `e` and saving
+// unchanged round-trips the `prompt` key losslessly — parse no longer desugars
+// prompt into cmd/args, so the pre-fill sees the real field and the rewrite
+// emits it back.
+func TestEditPromptHarnessRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.toml")
+	original := "[harness.deploy-check]\nprompt = \"check the deployments and report anything unhealthy\"\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sel := protocol.HarnessInfo{
+		Name:   "deploy-check",
+		Prompt: "check the deployments and report anything unhealthy",
+	}
+	fi := editInputsFor(path, sel)
+	if fi.prompt != "check the deployments and report anything unhealthy" {
+		t.Fatalf("prompt not pre-filled: %q", fi.prompt)
+	}
+	if fi.cmd != "" {
+		t.Fatalf("cmd pre-filled for a prompt harness: %q", fi.cmd)
+	}
+	if fi.restart != string(core.RestartNo) {
+		t.Errorf("restart pre-fill = %q, want %q (one-shot default)", fi.restart, core.RestartNo)
+	}
+
+	// Save unchanged: the rewritten table must carry the prompt key and parse
+	// back to the identical harness.
+	form := fi.toForm()
+	if err := form.Validate(); err != nil {
+		t.Fatalf("unchanged edit failed validation: %v", err)
+	}
+	body := []byte(removeHarnessTOML(original, form.Name))
+	body = AppendHarness(body, form)
+	if !strings.Contains(string(body), "prompt = ") {
+		t.Fatalf("prompt key lost on save:\n%s", body)
+	}
+
+	cfg, err := config.Parse(body, "harness.toml")
+	if err != nil {
+		t.Fatalf("edited config did not parse: %v\n%s", err, body)
+	}
+	before, err := config.Parse([]byte(original), "harness.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Harnesses["deploy-check"], before.Harnesses["deploy-check"]) {
+		t.Errorf("unchanged edit not lossless:\n got %+v\nwant %+v",
+			cfg.Harnesses["deploy-check"], before.Harnesses["deploy-check"])
 	}
 }
 
@@ -165,6 +261,15 @@ func TestFormValidate(t *testing.T) {
 	}
 	if err := (HarnessForm{Name: "x", Cmd: "y", Restart: "until-pigs-fly"}).Validate(); err == nil {
 		t.Error("bad restart policy should fail")
+	}
+	if err := (HarnessForm{Name: "x", Cmd: "y", Prompt: "z"}).Validate(); err == nil {
+		t.Error("cmd+prompt should fail (mutually exclusive)")
+	}
+	if err := (HarnessForm{Name: "x", Prompt: "z", Args: []string{"a"}}).Validate(); err == nil {
+		t.Error("prompt+args should fail (args belong to cmd)")
+	}
+	if err := (HarnessForm{Name: "x", Prompt: "do the thing"}).Validate(); err != nil {
+		t.Errorf("prompt-only form should validate: %v", err)
 	}
 }
 
