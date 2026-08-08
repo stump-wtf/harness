@@ -6,7 +6,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 // CONFIGURE THESE VALUES FOR YOUR PROJECT
 // ============================================================
 const PROJECT_TITLE = 'Harness';
-const PROJECT_TAGLINE = 'systemctl for your agents — architecture decisions & specifications';
+const PROJECT_TAGLINE = 'systemctl for your agents — usage, architecture decisions & specifications';
 const GITHUB_URL = 'https://gitea.stump.rocks/stump.wtf/harness';
 // Host this build is served from. The same build ships to more than one host —
 // only `url` differs, so CI supplies it via DOCS_URL. Default is GitHub Pages,
@@ -84,6 +84,12 @@ const config: Config = {
       items: [
         {
           type: 'docSidebar',
+          sidebarId: 'usageSidebar',
+          position: 'left',
+          label: 'Usage',
+        },
+        {
+          type: 'docSidebar',
           sidebarId: 'decisionsSidebar',
           position: 'left',
           label: 'ADRs',
@@ -107,6 +113,10 @@ const config: Config = {
         {
           title: 'Documentation',
           items: [
+            {
+              label: 'Usage',
+              to: '/usage',
+            },
             {
               label: 'Architecture Decisions',
               to: '/decisions',
