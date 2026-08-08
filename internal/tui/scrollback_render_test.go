@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -177,5 +178,48 @@ func TestScrollbackSearchMatchesVisibleText(t *testing.T) {
 	sb.search("0m") // raw escape bytes must be unmatchable
 	if len(sb.matches) != 0 {
 		t.Fatalf("search(\"0m\") matched %d lines via escape bytes, want 0", len(sb.matches))
+	}
+}
+
+// TestScrollbackResizeReclamps: a window resize during scrollback must rebind
+// the frozen viewport geometry, or the old height renders more rows than the
+// window has and the alt-screen scrolls.
+func TestScrollbackResizeReclamps(t *testing.T) {
+	m := scrollbackModelWithScreen(80, 40, strings.Repeat("history line\n", 60), "screen content")
+	_, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if got, want := m.att.scroll.height, m.scrollbackHeight(); got != want {
+		t.Fatalf("scroll height after resize = %d, want %d", got, want)
+	}
+	if got := len(strings.Split(m.viewAttached(), "\n")); got > 24 {
+		t.Fatalf("scrollback view is %d lines after shrink to 24 — the alt-screen scrolls", got)
+	}
+}
+
+// TestAttachDataFlowsDuringScrollback: bytes arriving while frozen in
+// scrollback must still feed the emulator — the frozen view reads from its
+// copy, and dropping them would resume a stale live view on exit.
+func TestAttachDataFlowsDuringScrollback(t *testing.T) {
+	m := scrollbackModelWithScreen(80, 24, "history\n", "before")
+	_, _ = m.Update(attachDataMsg{sessionID: sessionBase, data: []byte(" LIVE-BYTES")})
+	m.att.exitScrollback()
+	if !strings.Contains(m.viewAttached(), "LIVE-BYTES") {
+		t.Fatal("bytes received during scrollback were dropped; live view resumed stale")
+	}
+}
+
+// TestScrollbackEntryDropsForeignPeek: after a hop the peek can still belong
+// to the previous harness; its history must not be stitched under this
+// harness's frame as if it were ours.
+func TestScrollbackEntryDropsForeignPeek(t *testing.T) {
+	m := scrollbackModelWithScreen(80, 24, "historical line\n", "screen content")
+	m.att.exitScrollback()
+	m.peek = logsMsg{name: "some-other-harness", text: "foreign history\n"}
+	m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
+	joined := strings.Join(m.att.scroll.lines, "\n")
+	if strings.Contains(joined, "foreign history") {
+		t.Fatal("scrollback stitched another harness's peek under this harness's frame")
+	}
+	if !strings.Contains(joined, "screen content") {
+		t.Fatal("scrollback lost the current frame when dropping a foreign peek")
 	}
 }

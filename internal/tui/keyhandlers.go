@@ -372,7 +372,10 @@ func (m *Model) hopTo(direction int) tea.Cmd {
 	}
 	next := hopIndex(cur, len(v), direction)
 	m.sel = next
-	return m.attachTo(v[next], direction)
+	// Refresh the peek for the hopped-to harness so a subsequent scrollback
+	// entry has this harness's history rather than none (peekLines drops a
+	// mismatched peek).
+	return tea.Batch(m.attachTo(v[next], direction), m.peekCmd())
 }
 
 // attachTo opens (or hops to) an attach session for info. A hop (direction!=0)
@@ -433,7 +436,13 @@ func (m *Model) detach() tea.Cmd {
 }
 
 // peekLines returns the current peek text split into lines, used as the frozen
-// scrollback buffer when entering the substate.
+// scrollback buffer when entering the substate. After a hop (or in attach-only
+// mode) the peek can still belong to a different harness — stitching its
+// history under this harness's frame would present another session's log as
+// ours — so a mismatched peek yields no history rather than the wrong one.
 func (m *Model) peekLines() []string {
+	if m.att != nil && m.peek.name != m.att.name {
+		return nil
+	}
 	return splitLines(m.peek.text)
 }
