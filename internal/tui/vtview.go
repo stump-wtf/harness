@@ -62,7 +62,15 @@ func (v *vtView) write(p []byte) {
 // guest cursor is to draw it as cell content. The guest's DECTCEM state is
 // respected: a program that hides its cursor (\x1b[?25l) gets no painted
 // cursor either.
-func (v *vtView) render() string {
+func (v *vtView) render() string { return v.renderScreen(true) }
+
+// renderNoCursor is render without the painted cursor cell — for frozen
+// frames (the scrollback snapshot, #50), where a reverse-video cursor cell
+// would masquerade as live state in a view that has no live cursor to show.
+func (v *vtView) renderNoCursor() string { return v.renderScreen(false) }
+
+// renderScreen is the shared implementation behind render / renderNoCursor.
+func (v *vtView) renderScreen(paintCursor bool) string {
 	w, h := v.term.Width(), v.term.Height()
 	cur := v.term.Screen().Cursor()
 	var lines []string
@@ -75,7 +83,7 @@ func (v *vtView) render() string {
 				skip--
 				continue
 			}
-			atCursor := !cur.Hidden && x == cur.X && y == cur.Y
+			atCursor := paintCursor && !cur.Hidden && x == cur.X && y == cur.Y
 			cell := v.term.Cell(x, y)
 			if cell == nil {
 				if atCursor {

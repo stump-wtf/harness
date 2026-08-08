@@ -76,7 +76,7 @@ func journeys() []journey {
 			for i := 0; i < h*3; i++ {
 				lines = append(lines, fmt.Sprintf("scrollback history line %d", i))
 			}
-			m.att.enterScrollback(lines, m.scrollbackHeight(), "")
+			m.att.enterScrollback(lines, m.scrollbackHeight())
 			return m
 		}},
 		{name: "palette", build: func(w, h int) *Model {

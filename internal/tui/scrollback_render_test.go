@@ -31,6 +31,14 @@ const rawPTYLog = "\x1b[?1049h\x1b[2J\x1b[H" +
 // scrollbackModel returns an attached model frozen in the scrollback substate
 // over the raw log above — the state a mouse wheel-up drops you into.
 func scrollbackModel(w, h int) *Model {
+	return scrollbackModelWithScreen(w, h, rawPTYLog, "")
+}
+
+// scrollbackModelWithScreen is scrollbackModel with the peek history and the
+// live screen contents both under test control: screen is written into the
+// vtView before entering scrollback, so the appended frame is the one the
+// real entry paths capture.
+func scrollbackModelWithScreen(w, h int, peekText, screen string) *Model {
 	fc := &fakeController{harnesses: sampleHarnesses(), profiles: sampleProfiles()}
 	m := New(Options{})
 	m.ctrl, m.attach = fc, &fakeAttach{}
@@ -42,8 +50,11 @@ func scrollbackModel(w, h int) *Model {
 	m.mode = modeAttached
 	cols, rows := m.attachViewport()
 	m.att = newAttachState(m.harnesses[0].Name, protocol.AttachRW, sessionBase, cols, rows)
-	m.peek = logsMsg{name: m.harnesses[0].Name, text: rawPTYLog}
-	m.att.enterScrollback(m.peekLines(), m.scrollbackHeight(), "")
+	m.peek = logsMsg{name: m.harnesses[0].Name, text: peekText}
+	if screen != "" {
+		m.att.view.write([]byte(screen))
+	}
+	m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
 	return m
 }
 
@@ -123,40 +134,31 @@ func TestDashboardPeekDoesNotEmitControlSequences(t *testing.T) {
 	}
 }
 
-// TestScrollbackIncludesCurrentFrame verifies that entering scrollback with a
-// rendered current frame appends the frame's content to the scrollback lines
-// (#50). This is what makes the bottom of scrollback show the faithful screen
-// state rather than garbled cursor-addressed repaint traffic.
+// TestScrollbackIncludesCurrentFrame verifies that entering scrollback appends
+// the rendered current screen to the scrollback lines (#50). This is what
+// makes the bottom of scrollback show the faithful screen state rather than
+// garbled cursor-addressed repaint traffic.
 func TestScrollbackIncludesCurrentFrame(t *testing.T) {
-	w, h := 80, 24
-	fc := &fakeController{harnesses: sampleHarnesses(), profiles: sampleProfiles()}
-	m := New(Options{})
-	m.ctrl, m.attach = fc, &fakeAttach{}
-	m.conn = startOK
-	m.harnesses = fc.harnesses
-	m.profiles = fc.profiles
-	m.w, m.h = w, h
-	m.help.Width = w
-	m.mode = modeAttached
-	cols, rows := m.attachViewport()
-	m.att = newAttachState(m.harnesses[0].Name, protocol.AttachRW, sessionBase, cols, rows)
-	m.peek = logsMsg{name: m.harnesses[0].Name, text: "historical line\n"}
-
-	// Feed some content into the vtView so the rendered frame has something.
-	m.att.view.write([]byte("\x1b[32mVISIBLE-SENTINEL\x1b[0m"))
-	currentFrame := m.att.view.render()
-
-	m.att.enterScrollback(m.peekLines(), m.scrollbackHeight(), currentFrame)
-
-	// The scrollback should contain the sentinel from the rendered frame.
-	found := false
-	for _, ln := range m.att.scroll.lines {
-		if strings.Contains(ln, "VISIBLE-SENTINEL") {
-			found = true
-			break
-		}
-	}
-	if !found {
+	m := scrollbackModelWithScreen(80, 24, "historical line\n", "\x1b[32mVISIBLE-SENTINEL\x1b[0m")
+	if !strings.Contains(strings.Join(m.att.scroll.lines, "\n"), "VISIBLE-SENTINEL") {
 		t.Fatal("scrollback missing current frame content (VISIBLE-SENTINEL)")
+	}
+	// And it must actually be visible in the rendered view, not just stored.
+	if !strings.Contains(m.viewAttached(), "VISIBLE-SENTINEL") {
+		t.Fatal("rendered scrollback view missing current frame content")
+	}
+}
+
+// TestScrollbackTrimsBlankFrameRows: the appended frame contributes only the
+// rows the guest has drawn — a mostly-empty screen must not bury the history
+// under a page of blank padding (nor open scrollback on an empty page).
+func TestScrollbackTrimsBlankFrameRows(t *testing.T) {
+	m := scrollbackModelWithScreen(80, 24, "historical line\n", "one line of output")
+	sb := m.att.scroll
+	if n := len(sb.lines); n != 2 {
+		t.Fatalf("scrollback has %d lines, want 2 (history + 1 drawn frame row)", n)
+	}
+	if !strings.Contains(m.viewAttached(), "historical line") {
+		t.Fatal("entry page hides the history behind blank frame padding")
 	}
 }

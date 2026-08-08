@@ -119,9 +119,13 @@ func TestAttachedCursorPaintedInInteractive(t *testing.T) {
 
 // TestAttachedCursorNotPaintedInScrollback verifies scrollback frames stay
 // inert: a frozen view has no live cursor to show, so neither a reverse-video
-// cursor cell nor any cursor-addressing escape may appear.
+// cursor cell nor any cursor-addressing escape may appear. The screen is
+// non-empty with a visible guest cursor, so the appended frame — the path
+// every real scrollback entry takes — is what's being checked, not an empty
+// fixture.
 func TestAttachedCursorNotPaintedInScrollback(t *testing.T) {
-	m := scrollbackModel(80, 24)
+	m := scrollbackModelWithScreen(80, 24, rawPTYLog,
+		"output line\r\noutput line\r\nshell$ ")
 	view := m.View()
 	if strings.Contains(view, "\x1b[7m") {
 		t.Error("scrollback frame paints a cursor cell")
@@ -129,5 +133,14 @@ func TestAttachedCursorNotPaintedInScrollback(t *testing.T) {
 	if cupRE.MatchString(view) {
 		t.Errorf("scrollback frame contains cursor-addressing escapes: %q",
 			cupRE.FindString(view))
+	}
+	// The stored buffer must be clean too, not just the visible window.
+	joined := strings.Join(m.att.scroll.lines, "\n")
+	if strings.Contains(joined, "\x1b[7m") {
+		t.Error("scrollback buffer holds a painted cursor cell")
+	}
+	if cupRE.MatchString(joined) {
+		t.Errorf("scrollback buffer contains cursor-addressing escapes: %q",
+			cupRE.FindString(joined))
 	}
 }
