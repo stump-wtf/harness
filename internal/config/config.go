@@ -25,6 +25,7 @@ import (
 type rawHarness struct {
 	Cmd          string   `toml:"cmd"`
 	Args         []string `toml:"args"`
+	Prompt       string   `toml:"prompt"`
 	Workdir      string   `toml:"workdir"`
 	EnvFile      string   `toml:"env_file"`
 	RestartDelay int      `toml:"restart_delay"`
@@ -235,8 +236,20 @@ func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness
 		return newError(filename, line,
 			"harness %q: name must not contain \"/\" (reserved for project namespacing)", name)
 	}
-	if strings.TrimSpace(rh.Cmd) == "" {
-		return newError(filename, line, "harness %q: missing required key \"cmd\"", name)
+	if strings.TrimSpace(rh.Cmd) == "" && strings.TrimSpace(rh.Prompt) == "" {
+		return newError(filename, line, "harness %q: missing required key \"cmd\" (or set \"prompt\" for agent one-shot mode)", name)
+	}
+	if strings.TrimSpace(rh.Prompt) != "" && strings.TrimSpace(rh.Cmd) != "" {
+		return newError(filename, line, "harness %q: \"prompt\" and \"cmd\" are mutually exclusive", name)
+	}
+
+	cmd := rh.Cmd
+	args := rh.Args
+	prompt := strings.TrimSpace(rh.Prompt)
+	if prompt != "" {
+		// Governing: issue #56 (harness abstraction for agent CLIs).
+		cmd = "crush"
+		args = []string{"run", "--quiet", prompt}
 	}
 
 	backend := core.Backend(rh.Backend)
@@ -272,8 +285,9 @@ func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness
 
 	h := core.Harness{
 		Name:         name,
-		Cmd:          rh.Cmd,
-		Args:         rh.Args,
+		Cmd:          cmd,
+		Args:         args,
+		Prompt:       prompt,
 		Workdir:      rh.Workdir,
 		EnvFile:      rh.EnvFile,
 		RestartDelay: time.Duration(rh.RestartDelay) * time.Second,

@@ -285,3 +285,47 @@ func TestParseInvalidRestartPolicy(t *testing.T) {
 		t.Errorf("message %q does not contain \"invalid restart policy\"", ce.Msg)
 	}
 }
+
+func TestParsePromptShorthand(t *testing.T) {
+	src := "[harness.agent]\nprompt = \"check deployments\"\n"
+	cfg, err := Parse([]byte(src), "test.toml")
+	if err != nil {
+		t.Fatalf("prompt-only harness rejected: %v", err)
+	}
+	h, ok := cfg.Harnesses["agent"]
+	if !ok {
+		t.Fatal("agent harness missing")
+	}
+	if h.Cmd != "crush" {
+		t.Errorf("Cmd = %q, want \"crush\"", h.Cmd)
+	}
+	want := []string{"run", "--quiet", "check deployments"}
+	if !reflect.DeepEqual(h.Args, want) {
+		t.Errorf("Args = %v, want %v", h.Args, want)
+	}
+	if h.Prompt != "check deployments" {
+		t.Errorf("Prompt = %q, want \"check deployments\"", h.Prompt)
+	}
+}
+
+func TestParsePromptAndCmdConflict(t *testing.T) {
+	src := "[harness.bad]\ncmd = \"echo\"\nprompt = \"hello\"\n"
+	_, err := Parse([]byte(src), "test.toml")
+	if err == nil {
+		t.Fatal("expected error when both cmd and prompt are set")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("error %q does not mention mutual exclusivity", err)
+	}
+}
+
+func TestParseMissingCmdAndPrompt(t *testing.T) {
+	src := "[harness.empty]\ndescription = \"no cmd or prompt\"\n"
+	_, err := Parse([]byte(src), "test.toml")
+	if err == nil {
+		t.Fatal("expected error when neither cmd nor prompt is set")
+	}
+	if !strings.Contains(err.Error(), "missing required key") {
+		t.Errorf("error %q does not mention missing key", err)
+	}
+}

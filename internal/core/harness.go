@@ -76,11 +76,15 @@ func (p RestartPolicy) ShouldRestart(code int) bool {
 type Harness struct {
 	// Name is the table name, unique across the config.
 	Name string
-	// Cmd is the executable to run (required).
+	// Cmd is the executable to run (required unless Prompt is set).
 	Cmd string
 	// Args are the command arguments; {workdir} placeholders are expanded at
 	// spawn time by the supervisor, not here.
 	Args []string
+	// Prompt is an optional agent one-shot instruction. When set (and Cmd is
+	// empty), the config parser synthesizes Cmd="crush" Args=["run","--quiet",prompt].
+	// Governing: issue #56 (harness abstraction for agent CLIs).
+	Prompt string
 	// Workdir is the process working directory (may contain a leading ~).
 	Workdir string
 	// EnvFile is a file of KEY=VALUE pairs sourced before launch (ADR-0008;
