@@ -322,7 +322,11 @@ func (m *Model) onScrollbackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.att.search, cmd = m.att.search.Update(msg)
-		sb.search(m.att.search.Value()) // live-preview matches
+		// Live-preview matches — but only when the value actually changed;
+		// cursor movement inside the input shouldn't rescan the buffer.
+		if v := m.att.search.Value(); v != sb.term {
+			sb.search(v)
+		}
 		return m, cmd
 	}
 

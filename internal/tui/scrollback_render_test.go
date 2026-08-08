@@ -162,3 +162,20 @@ func TestScrollbackTrimsBlankFrameRows(t *testing.T) {
 		t.Fatal("entry page hides the history behind blank frame padding")
 	}
 }
+
+// TestScrollbackSearchMatchesVisibleText: search must match what the user can
+// see on the appended frame — words split by SGR style runs are still found,
+// and escape bytes are never matched (#50 follow-up; enterScrollback's
+// documented guarantee).
+func TestScrollbackSearchMatchesVisibleText(t *testing.T) {
+	m := scrollbackModelWithScreen(80, 24, "historical line\n", "ER\x1b[31mROR\x1b[0m happened")
+	sb := m.att.scroll
+	sb.search("error")
+	if len(sb.matches) != 1 {
+		t.Fatalf("search(\"error\") over a style-split ERROR: %d matches, want 1", len(sb.matches))
+	}
+	sb.search("0m") // raw escape bytes must be unmatchable
+	if len(sb.matches) != 0 {
+		t.Fatalf("search(\"0m\") matched %d lines via escape bytes, want 0", len(sb.matches))
+	}
+}
