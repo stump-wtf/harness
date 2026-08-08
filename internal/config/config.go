@@ -28,6 +28,7 @@ type rawHarness struct {
 	Args         []string `toml:"args"`
 	Prompt       string   `toml:"prompt"`
 	Model        string   `toml:"model"`
+	AutoAccept   *bool    `toml:"auto_accept"`
 	Workdir      string   `toml:"workdir"`
 	EnvFile      string   `toml:"env_file"`
 	RestartDelay int      `toml:"restart_delay"`
@@ -329,10 +330,18 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		resolve = func(p string) string { return p }
 	}
 
+	autoAccept := rh.AutoAccept != nil && *rh.AutoAccept
+	args := rh.Args
+	if autoAccept {
+		// Governing: issue #58 (add `auto_accept` field for unattended mode).
+		args = append(args, "--yolo")
+	}
+
 	h := core.Harness{
 		Name:         name,
 		Cmd:          rh.Cmd,
-		Args:         rh.Args,
+		Args:         args,
+		AutoAccept:   autoAccept,
 		Model:        model,
 		Prompt:       prompt,
 		Workdir:      resolve(rh.Workdir),

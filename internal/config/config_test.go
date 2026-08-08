@@ -504,3 +504,35 @@ func TestParseModelErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestParseAutoAcceptTrue(t *testing.T) {
+	src := "[harness.agent]\ncmd = \"crush\"\nargs = [\"run\", \"do stuff\"]\nauto_accept = true\n"
+	cfg, err := Parse([]byte(src), "test.toml")
+	if err != nil {
+		t.Fatalf("auto_accept rejected: %v", err)
+	}
+	h := cfg.Harnesses["agent"]
+	if !h.AutoAccept {
+		t.Error("AutoAccept = false, want true")
+	}
+	want := []string{"run", "do stuff", "--yolo"}
+	if !reflect.DeepEqual(h.Args, want) {
+		t.Errorf("Args = %v, want %v", h.Args, want)
+	}
+}
+
+func TestParseAutoAcceptAbsent(t *testing.T) {
+	src := "[harness.agent]\ncmd = \"echo\"\nargs = [\"hello\"]\n"
+	cfg, err := Parse([]byte(src), "test.toml")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	h := cfg.Harnesses["agent"]
+	if h.AutoAccept {
+		t.Error("AutoAccept = true, want false")
+	}
+	want := []string{"hello"}
+	if !reflect.DeepEqual(h.Args, want) {
+		t.Errorf("Args = %v, want %v", h.Args, want)
+	}
+}

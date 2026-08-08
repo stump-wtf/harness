@@ -98,6 +98,10 @@ type Harness struct {
 	// exempt from {workdir} arg expansion.
 	// Governing: ADR-0011; issue #57 (add `model` field for model selection).
 	Model string
+	// AutoAccept enables unattended/yolo mode for agent CLIs, bypassing
+	// permission prompts. Appended as --yolo to args at parse time.
+	// Governing: issue #58.
+	AutoAccept bool
 	// Workdir is the process working directory (may contain a leading ~).
 	Workdir string
 	// EnvFile is a file of KEY=VALUE pairs sourced before launch (ADR-0008;
