@@ -8,6 +8,8 @@ package tui
 // ADR-0007 (scrollback), ADR-0008 (read-only attach).
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/harmonica"
 
@@ -113,9 +115,21 @@ func (a *attachState) animate() bool {
 // emulator, but this frozen view prints them straight at the user's terminal,
 // where they act rather than display. Doing it once at entry also means search
 // matches visible text rather than escape noise.
-func (a *attachState) enterScrollback(lines []string, height int) {
+//
+// currentFrame is the vtView's rendered output — a faithful reconstruction of
+// the current screen with colors and layout intact (#50). Its lines are
+// appended after the inert historical lines so scrolling to the bottom shows
+// the actual screen rather than garbled cursor-addressed repaint traffic.
+func (a *attachState) enterScrollback(lines []string, height int, currentFrame string) {
 	a.substate = substateScrollback
-	a.scroll = newScrollback(inertLines(lines), height)
+	inert := inertLines(lines)
+	// Append the rendered current frame so the bottom of scrollback shows the
+	// faithful screen state rather than flattened raw PTY bytes (#50).
+	if currentFrame != "" {
+		frameLines := strings.Split(currentFrame, "\n")
+		inert = append(inert, frameLines...)
+	}
+	a.scroll = newScrollback(inert, height)
 	a.searchOn = false
 	// A wheel-up can enter scrollback while the Ctrl-b prefix is armed (mouse
 	// events don't pass through onAttachedKey); disarm it so the first key

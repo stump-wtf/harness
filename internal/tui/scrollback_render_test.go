@@ -43,7 +43,7 @@ func scrollbackModel(w, h int) *Model {
 	cols, rows := m.attachViewport()
 	m.att = newAttachState(m.harnesses[0].Name, protocol.AttachRW, sessionBase, cols, rows)
 	m.peek = logsMsg{name: m.harnesses[0].Name, text: rawPTYLog}
-	m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
+	m.att.enterScrollback(m.peekLines(), m.scrollbackHeight(), "")
 	return m
 }
 
@@ -120,5 +120,43 @@ func TestDashboardPeekDoesNotEmitControlSequences(t *testing.T) {
 		if strings.Contains(frame, f.seq) {
 			t.Errorf("dashboard peek contains %s (%q)", f.name, f.seq)
 		}
+	}
+}
+
+// TestScrollbackIncludesCurrentFrame verifies that entering scrollback with a
+// rendered current frame appends the frame's content to the scrollback lines
+// (#50). This is what makes the bottom of scrollback show the faithful screen
+// state rather than garbled cursor-addressed repaint traffic.
+func TestScrollbackIncludesCurrentFrame(t *testing.T) {
+	w, h := 80, 24
+	fc := &fakeController{harnesses: sampleHarnesses(), profiles: sampleProfiles()}
+	m := New(Options{})
+	m.ctrl, m.attach = fc, &fakeAttach{}
+	m.conn = startOK
+	m.harnesses = fc.harnesses
+	m.profiles = fc.profiles
+	m.w, m.h = w, h
+	m.help.Width = w
+	m.mode = modeAttached
+	cols, rows := m.attachViewport()
+	m.att = newAttachState(m.harnesses[0].Name, protocol.AttachRW, sessionBase, cols, rows)
+	m.peek = logsMsg{name: m.harnesses[0].Name, text: "historical line\n"}
+
+	// Feed some content into the vtView so the rendered frame has something.
+	m.att.view.write([]byte("\x1b[32mVISIBLE-SENTINEL\x1b[0m"))
+	currentFrame := m.att.view.render()
+
+	m.att.enterScrollback(m.peekLines(), m.scrollbackHeight(), currentFrame)
+
+	// The scrollback should contain the sentinel from the rendered frame.
+	found := false
+	for _, ln := range m.att.scroll.lines {
+		if strings.Contains(ln, "VISIBLE-SENTINEL") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("scrollback missing current frame content (VISIBLE-SENTINEL)")
 	}
 }

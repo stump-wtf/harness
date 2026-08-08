@@ -81,7 +81,7 @@ func TestScrollbackDoesNotOverflow(t *testing.T) {
 		for i := 0; i < h*3; i++ {
 			lines = append(lines, "scrollback line content")
 		}
-		m.att.enterScrollback(lines, m.scrollbackHeight())
+		m.att.enterScrollback(lines, m.scrollbackHeight(), "")
 		got := strings.Split(m.viewAttached(), "\n")
 		if len(got) > h {
 			t.Errorf("%dx%d scrollback: %d lines overflow window height %d", w, h, len(got), h)
