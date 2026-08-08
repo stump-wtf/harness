@@ -99,7 +99,7 @@ type confirmState struct {
 // HarnessForm for TOML serialization.
 type formInputs struct {
 	name, cmd, prompt, model, args, workdir, envFile, delay, restart, backend, description string
-	enabled                                                                                bool
+	enabled, autoAccept                                                                    bool
 }
 
 // Model is the root Bubble Tea model.

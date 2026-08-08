@@ -226,6 +226,9 @@ func (m *Model) viewPeek(w, h int) string {
 	if sel.Model != "" {
 		summary = append(summary, m.theme.Faint().Render("model   ")+sel.Model)
 	}
+	if sel.AutoAccept {
+		summary = append(summary, m.theme.Faint().Render("yolo    ")+"auto_accept on")
+	}
 	summary = append(summary,
 		m.theme.Faint().Render("backend ")+orDefault(sel.Backend, "native"),
 		m.theme.Faint().Render("exit    ")+fmt.Sprintf("%d", sel.LastExitCode),

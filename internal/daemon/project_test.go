@@ -382,6 +382,30 @@ func TestHarnessFromWireModel(t *testing.T) {
 	}
 }
 
+// TestHarnessFromWireAutoAccept: the wire → core copier carries the additive
+// ProtoMinor 4 auto_accept field through the JSON encode/decode, so a prompt
+// harness's unattended mode survives project_up intact — the daemon folds the
+// vendor's yolo flag into the synthesized argv at spawn (issue #58), never
+// into Args.
+func TestHarnessFromWireAutoAccept(t *testing.T) {
+	ph := protocol.ProjectHarness{Name: "oneshot", Prompt: "do the thing", AutoAccept: true, Enabled: true}
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded protocol.ProjectHarness
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	h := harnessFromWire(decoded)
+	if !h.AutoAccept {
+		t.Error("AutoAccept = false, want it carried across the wire")
+	}
+	if h.Prompt != "do the thing" || h.Cmd != "" || h.Args != nil {
+		t.Errorf("Prompt/Cmd/Args = %q/%q/%v, want prompt-only with untouched args", h.Prompt, h.Cmd, h.Args)
+	}
+}
+
 // waitForState polls describe until the harness reports the wanted state.
 func waitForState(t *testing.T, c interface {
 	Describe(string) (protocol.HarnessInfo, error)

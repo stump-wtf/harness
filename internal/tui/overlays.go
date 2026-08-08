@@ -338,8 +338,8 @@ func (m *Model) onConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // --- helpers --------------------------------------------------------------
 
 // buildHarnessForm constructs the Huh form bound to fi (SPEC-0001 REQ "Harness
-// Form" schema: cmd/prompt/model/args/workdir/env_file/restart_delay/restart/
-// backend/description).
+// Form" schema: cmd/prompt/model/auto_accept/args/workdir/env_file/
+// restart_delay/restart/backend/description).
 func buildHarnessForm(fi *formInputs) *huh.Form {
 	return huh.NewForm(
 		huh.NewGroup(
@@ -347,6 +347,7 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 			huh.NewInput().Title("cmd").Value(&fi.cmd),
 			huh.NewInput().Title("prompt (agent one-shot; instead of cmd/args)").Value(&fi.prompt),
 			huh.NewInput().Title("model (agent model id; requires prompt)").Value(&fi.model),
+			huh.NewConfirm().Title("auto_accept (agent yolo mode; requires prompt)").Value(&fi.autoAccept),
 			huh.NewInput().Title("args (space-separated)").Value(&fi.args),
 			huh.NewInput().Title("workdir").Value(&fi.workdir),
 			huh.NewInput().Title("env_file").Value(&fi.envFile),

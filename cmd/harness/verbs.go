@@ -96,6 +96,9 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	if h.Model != "" {
 		t.Row("model", t.faintPlain(h.Model))
 	}
+	if h.AutoAccept {
+		t.Row("auto_accept", t.faintPlain("true"))
+	}
 	t.Row("backend", t.faintPlain(h.Backend))
 	t.Row("restarts", fmt.Sprintf("%d", h.RestartCount))
 	t.Row("last_exit", fmt.Sprintf("%d", h.LastExitCode))

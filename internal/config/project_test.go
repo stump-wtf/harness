@@ -416,6 +416,55 @@ func TestParseProject_ModelErrors(t *testing.T) {
 	}
 }
 
+// ---- Auto-accept parity (SPEC-0004 REQ "Project File Schema") -------------
+
+// TestParseProject_AutoAcceptHarness: the agent `auto_accept` unattended mode
+// means the same thing in a project file as in the global config (identical
+// field meanings, via the shared registerHarness): stored as config truth,
+// never desugared into args — the supervisor folds the vendor's yolo flag
+// into the synthesized argv at spawn (ADR-0011, issue #58).
+func TestParseProject_AutoAcceptHarness(t *testing.T) {
+	data := []byte(`
+[harness.agent]
+prompt = "summarize the day"
+auto_accept = true
+`)
+	proj, err := ParseProject(data, "/tmp/myrepo/harness.toml")
+	if err != nil {
+		t.Fatalf("ParseProject: %v", err)
+	}
+	h, ok := proj.Config.Harnesses["agent"]
+	if !ok {
+		t.Fatal("missing harness 'agent'")
+	}
+	if !h.AutoAccept {
+		t.Error("AutoAccept = false, want true")
+	}
+	if h.Cmd != "" || h.Args != nil {
+		t.Errorf("Cmd/Args = %q/%v, want empty (auto_accept must never be desugared into args)", h.Cmd, h.Args)
+	}
+}
+
+// TestParseProject_AutoAcceptErrors: the auto_accept validation rule holds in
+// project files too, with the same located-error contract as the global
+// parser.
+func TestParseProject_AutoAcceptErrors(t *testing.T) {
+	_, err := ParseProject([]byte("[harness.bad]\ncmd = \"echo\"\nauto_accept = true\n"), "/tmp/repo/harness.toml")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var cerr *Error
+	if !errors.As(err, &cerr) {
+		t.Fatalf("expected *Error, got %T: %v", err, err)
+	}
+	if want := `"auto_accept" requires "prompt"`; !strings.Contains(cerr.Msg, want) {
+		t.Errorf("message %q does not contain %q", cerr.Msg, want)
+	}
+	if cerr.Line <= 0 {
+		t.Errorf("expected positive source line, got %d", cerr.Line)
+	}
+}
+
 // ---- Discovery tests -----------------------------------------------------
 
 func TestDiscoverProject_FindsAncestorFile(t *testing.T) {

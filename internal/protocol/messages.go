@@ -23,7 +23,9 @@ const (
 	// (agent one-shot harnesses, ADR-0011) — additive only.
 	// ProtoMinor 3 added the model field on ProjectHarness and HarnessInfo
 	// (agent model selection, issue #57) — additive only.
-	ProtoMinor = 3
+	// ProtoMinor 4 added the auto_accept field on ProjectHarness and
+	// HarnessInfo (agent unattended mode, issue #58) — additive only.
+	ProtoMinor = 4
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -109,7 +111,12 @@ type ProjectHarness struct {
 	// Model mirrors the schema's agent `model` selection: set only alongside
 	// prompt (parse validation enforces it); the daemon folds it into the
 	// synthesized argv at spawn (ADR-0011, issue #57).
-	Model          string `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// AutoAccept mirrors the schema's agent `auto_accept` unattended mode: set
+	// only alongside prompt (parse validation enforces it); the daemon folds
+	// the vendor's yolo flag into the synthesized argv at spawn (ADR-0011,
+	// issue #58).
+	AutoAccept     bool   `json:"auto_accept,omitempty"`
 	Workdir        string `json:"workdir,omitempty"`
 	EnvFile        string `json:"env_file,omitempty"`
 	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
@@ -154,7 +161,11 @@ type HarnessInfo struct {
 	Prompt string `json:"prompt,omitempty"`
 	// Model is the agent model selection for a prompt harness, folded into the
 	// synthesized argv at spawn (issue #57). Empty for cmd harnesses.
-	Model       string `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// AutoAccept is the agent unattended/yolo mode for a prompt harness,
+	// folded into the synthesized argv at spawn (issue #58). Always false for
+	// cmd harnesses.
+	AutoAccept  bool   `json:"auto_accept,omitempty"`
 	Backend     string `json:"backend,omitempty"`
 	Description string `json:"description,omitempty"`
 	// Project is the harness's provenance: the owning project's name for a
