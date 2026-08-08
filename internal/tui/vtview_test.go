@@ -45,3 +45,28 @@ func TestVTViewResize(t *testing.T) {
 		t.Fatal("render broke after resize")
 	}
 }
+
+// TestVTViewCursorSeqReturnsCUP verifies cursorSeq emits a CUP (CSI row;col H)
+// sequence matching the emulator's tracked cursor position. This is what makes
+// the hardware cursor visible in attached mode (#48).
+func TestVTViewCursorSeqReturnsCUP(t *testing.T) {
+	v := newVTView(40, 10)
+	// Move cursor to row 5, col 12 (1-indexed in CUP).
+	v.write([]byte("\x1b[5;12H"))
+	seq := v.cursorSeq()
+	// CUP is \x1b[row;colH — the emulator tracks 0-indexed, CUP is 1-indexed.
+	want := "\x1b[5;12H"
+	if seq != want {
+		t.Errorf("cursorSeq = %q, want %q", seq, want)
+	}
+}
+
+// TestVTViewCursorSeqDefault verifies the cursor starts at 1;1 (home).
+func TestVTViewCursorSeqDefault(t *testing.T) {
+	v := newVTView(40, 10)
+	seq := v.cursorSeq()
+	want := "\x1b[1;1H"
+	if seq != want {
+		t.Errorf("cursorSeq on fresh view = %q, want %q", seq, want)
+	}
+}

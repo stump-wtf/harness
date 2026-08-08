@@ -267,7 +267,15 @@ func (m *Model) viewAttached() string {
 		body = m.att.view.render()
 	}
 	bar := m.viewStatusBar()
-	return body + "\n" + bar
+	out := body + "\n" + bar
+	// Park the hardware cursor where the emulator's cursor is so the user sees
+	// a visible cursor in attached mode (#48). The CUP sequence goes at the
+	// very end of the output so it doesn't disrupt Bubble Tea's text flow —
+	// it only moves the hardware cursor after all content is rendered.
+	if m.att.substate == substateInteractive {
+		out += m.att.view.cursorSeq()
+	}
+	return out
 }
 
 // viewStatusBar renders the 1-line bottom bar: logo chip · harness identity +

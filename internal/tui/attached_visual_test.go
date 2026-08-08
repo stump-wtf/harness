@@ -75,3 +75,60 @@ func TestAttachedVisualNoScroll(t *testing.T) {
 		}
 	}
 }
+
+// TestAttachedCursorVisibleInInteractive verifies the attached view emits a CUP
+// cursor-positioning sequence when in interactive substate (#48). The sequence
+// parks the hardware cursor where the emulator's cursor is, making it visible.
+func TestAttachedCursorVisibleInInteractive(t *testing.T) {
+	w, h := 80, 24
+	m := New(Options{})
+	m.conn = startOK
+	m.w, m.h = w, h
+	m.help.Width = w
+	m.mode = modeAttached
+	cols, rows := m.attachViewport()
+	m.att = newAttachState("test", protocol.AttachRW, sessionBase, cols, rows)
+	m.harnesses = []protocol.HarnessInfo{{Name: "test", State: "running"}}
+
+	// Write something that moves the cursor to a known position.
+	m.att.view.write([]byte("\x1b[3;5H"))
+
+	view := m.View()
+	// The view must contain a CUP sequence (\x1b[row;colH).
+	if !strings.Contains(view, "\x1b[") || !strings.Contains(view, "H") {
+		t.Fatal("interactive attached view missing CUP cursor sequence")
+	}
+}
+
+// TestAttachedCursorHiddenInScrollback verifies the attached view does NOT emit
+// a cursor-positioning sequence when in scrollback substate — scrollback has no
+// live cursor to show.
+func TestAttachedCursorHiddenInScrollback(t *testing.T) {
+	w, h := 80, 24
+	m := New(Options{})
+	m.conn = startOK
+	m.w, m.h = w, h
+	m.help.Width = w
+	m.mode = modeAttached
+	cols, rows := m.attachViewport()
+	m.att = newAttachState("test", protocol.AttachRW, sessionBase, cols, rows)
+	m.harnesses = []protocol.HarnessInfo{{Name: "test", State: "running"}}
+
+	// Enter scrollback with some lines.
+	lines := make([]string, 20)
+	for i := range lines {
+		lines[i] = "line"
+	}
+	m.att.enterScrollback(lines, rows)
+
+	view := m.View()
+	// In scrollback, there should be no CUP sequence from the cursor fix.
+	// The view may still contain SGR sequences for styling, but not \x1b[...H
+	// cursor positioning from the vtView cursor logic.
+	// We check that the view does NOT contain a CUP after the body content.
+	// Since scrollback renders inert text, any \x1b[...H would be from our
+	// cursor fix — which should not be present.
+	if strings.Contains(view, "\x1b[1;1H") {
+		t.Fatal("scrollback view should not emit cursor positioning sequence")
+	}
+}

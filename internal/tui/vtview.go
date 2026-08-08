@@ -9,6 +9,7 @@ package tui
 // (colors + cursor) reproduces faithfully.
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/x/vt"
@@ -99,4 +100,15 @@ func (v *vtView) render() string {
 func (v *vtView) cursor() (int, int) {
 	pos := v.term.CursorPosition()
 	return pos.X, pos.Y
+}
+
+// cursorSeq returns a CUP (Cursor Position) escape sequence that parks the
+// hardware cursor at the emulator's current position. The sequence uses
+// 1-indexed coordinates as required by the ANSI spec. This is what makes the
+// cursor visible in attached mode (#48): without it, vtView.cursor() tracks
+// the position internally but never surfaces it to the user's terminal.
+func (v *vtView) cursorSeq() string {
+	x, y := v.cursor()
+	// CUP is 1-indexed; the emulator tracks 0-indexed.
+	return fmt.Sprintf("\x1b[%d;%dH", y+1, x+1)
 }
