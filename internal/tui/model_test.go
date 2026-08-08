@@ -665,3 +665,27 @@ func TestShiftWheelKeepsScrollback(t *testing.T) {
 		t.Fatal("shift+wheel-up should enter scrollback like a plain wheel-up")
 	}
 }
+
+// TestWheelScrollbackDisarmsPrefix verifies an armed Ctrl-b prefix does not
+// survive a wheel-up into scrollback: the first key typed after exiting
+// scrollback must reach the PTY, not be intercepted as a prefix chord (which
+// would fire detach/start/restart on a plain keystroke).
+func TestWheelScrollbackDisarmsPrefix(t *testing.T) {
+	fx := newModelAttached(&fakeController{harnesses: sampleHarnesses()}, protocol.AttachRW)
+	m, fa := fx.m, fx.fa
+
+	_, _ = m.onKey(specialKey(tea.KeyCtrlB)) // arm the prefix
+	_, _ = m.onMouse(tea.MouseMsg{Type: tea.MouseWheelUp})
+	if m.att.substate != substateScrollback {
+		t.Fatal("wheel-up should enter scrollback")
+	}
+	if m.att.prefixArmed {
+		t.Fatal("entering scrollback must disarm the prefix")
+	}
+	_, _ = m.onKey(runeKey("q")) // exit scrollback
+	_, cmd := m.onKey(runeKey("d"))
+	drain(cmd)
+	if len(fa.inputs) != 1 || string(fa.inputs[0]) != "d" {
+		t.Fatalf("d after scrollback must be forwarded to the PTY, not dispatched as a chord, inputs=%v", fa.inputs)
+	}
+}
