@@ -26,6 +26,7 @@ type rawHarness struct {
 	Cmd          string   `toml:"cmd"`
 	Args         []string `toml:"args"`
 	Prompt       string   `toml:"prompt"`
+	Model        string   `toml:"model"`
 	Workdir      string   `toml:"workdir"`
 	EnvFile      string   `toml:"env_file"`
 	RestartDelay int      `toml:"restart_delay"`
@@ -308,10 +309,18 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		resolve = func(p string) string { return p }
 	}
 
+	args := rh.Args
+	model := strings.TrimSpace(rh.Model)
+	if model != "" {
+		// Governing: issue #57 (harness abstraction for agent CLIs).
+		args = append(args, "--model", model)
+	}
+
 	h := core.Harness{
 		Name:         name,
 		Cmd:          rh.Cmd,
-		Args:         rh.Args,
+		Args:         args,
+		Model:        model,
 		Prompt:       prompt,
 		Workdir:      resolve(rh.Workdir),
 		EnvFile:      resolve(rh.EnvFile),

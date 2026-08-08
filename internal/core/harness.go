@@ -89,6 +89,9 @@ type Harness struct {
 	// never passes through {workdir} arg expansion.
 	// Governing: ADR-0011; issue #56 (harness abstraction for agent CLIs).
 	Prompt string
+	// Model selects which AI model the agent CLI uses. Appended as
+	// --model <value> to args at parse time. Governing: issue #57.
+	Model string
 	// Workdir is the process working directory (may contain a leading ~).
 	Workdir string
 	// EnvFile is a file of KEY=VALUE pairs sourced before launch (ADR-0008;

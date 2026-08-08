@@ -395,3 +395,35 @@ func TestParsePromptErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestParseModelField(t *testing.T) {
+	src := "[harness.agent]\ncmd = \"crush\"\nargs = [\"run\", \"do stuff\"]\nmodel = \"claude-opus-5\"\n"
+	cfg, err := Parse([]byte(src), "test.toml")
+	if err != nil {
+		t.Fatalf("model field rejected: %v", err)
+	}
+	h := cfg.Harnesses["agent"]
+	if h.Model != "claude-opus-5" {
+		t.Errorf("Model = %q, want \"claude-opus-5\"", h.Model)
+	}
+	want := []string{"run", "do stuff", "--model", "claude-opus-5"}
+	if !reflect.DeepEqual(h.Args, want) {
+		t.Errorf("Args = %v, want %v", h.Args, want)
+	}
+}
+
+func TestParseModelEmpty(t *testing.T) {
+	src := "[harness.agent]\ncmd = \"echo\"\nargs = [\"hello\"]\n"
+	cfg, err := Parse([]byte(src), "test.toml")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	h := cfg.Harnesses["agent"]
+	if h.Model != "" {
+		t.Errorf("Model = %q, want empty", h.Model)
+	}
+	want := []string{"hello"}
+	if !reflect.DeepEqual(h.Args, want) {
+		t.Errorf("Args = %v, want %v", h.Args, want)
+	}
+}
