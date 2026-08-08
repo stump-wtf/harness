@@ -36,6 +36,7 @@ enabled = false
 # not respawn; set restart explicitly to opt back into supervision.
 [harness.deploy-check]
 prompt = "check the deployments and report anything unhealthy"
+model = "claude-opus-5"  # optional: which model the agent runs (requires prompt)
 workdir = "~/src/my-project"
 description = "one-shot agent run"
 enabled = false

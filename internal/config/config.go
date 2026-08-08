@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 
@@ -269,6 +270,25 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 			"harness %q: \"prompt\" and \"args\" are mutually exclusive (args configure a cmd; the agent argv is synthesized at spawn)", name)
 	}
 
+	// `model` is config truth only: stored on the harness and folded into the
+	// synthesized agent argv at spawn time (core.AgentCommand, ADR-0011),
+	// never desugared into args here — a parse-time flag corrupts the TOML
+	// round-trip (the form would re-persist synthesized args) and there is no
+	// vendor-agnostic place to inject a flag into an arbitrary cmd's argv, so
+	// `model` requires `prompt` (a cmd harness passes --model through args
+	// itself). Governing: issue #57 (add `model` field for model selection).
+	model := strings.TrimSpace(rh.Model)
+	switch {
+	case rh.Model != "" && model == "":
+		return newError(filename, line, "harness %q: \"model\" must not be blank", name)
+	case strings.ContainsFunc(model, unicode.IsSpace):
+		return newError(filename, line,
+			"harness %q: \"model\" must be a single token (model ids carry no whitespace)", name)
+	case model != "" && prompt == "":
+		return newError(filename, line,
+			"harness %q: \"model\" requires \"prompt\" (a cmd harness passes --model through its own args)", name)
+	}
+
 	backend := core.Backend(rh.Backend)
 	if rh.Backend == "" {
 		backend = core.BackendNative
@@ -309,17 +329,10 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		resolve = func(p string) string { return p }
 	}
 
-	args := rh.Args
-	model := strings.TrimSpace(rh.Model)
-	if model != "" {
-		// Governing: issue #57 (harness abstraction for agent CLIs).
-		args = append(args, "--model", model)
-	}
-
 	h := core.Harness{
 		Name:         name,
 		Cmd:          rh.Cmd,
-		Args:         args,
+		Args:         rh.Args,
 		Model:        model,
 		Prompt:       prompt,
 		Workdir:      resolve(rh.Workdir),

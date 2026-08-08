@@ -222,13 +222,15 @@ func (m *Model) viewPeek(w, h int) string {
 	if sel.Prompt != "" {
 		what = m.theme.Faint().Render("prompt  ") + sel.Prompt
 	}
-	summary := []string{
-		"",
-		what,
-		m.theme.Faint().Render("backend ") + orDefault(sel.Backend, "native"),
-		m.theme.Faint().Render("exit    ") + fmt.Sprintf("%d", sel.LastExitCode),
-		m.theme.Faint().Render("restarts") + fmt.Sprintf(" %d", sel.RestartCount),
+	summary := []string{"", what}
+	if sel.Model != "" {
+		summary = append(summary, m.theme.Faint().Render("model   ")+sel.Model)
 	}
+	summary = append(summary,
+		m.theme.Faint().Render("backend ")+orDefault(sel.Backend, "native"),
+		m.theme.Faint().Render("exit    ")+fmt.Sprintf("%d", sel.LastExitCode),
+		m.theme.Faint().Render("restarts")+fmt.Sprintf(" %d", sel.RestartCount),
+	)
 	if sel.PID > 0 {
 		summary = append(summary, m.theme.Faint().Render("pid     ")+fmt.Sprintf("%d", sel.PID))
 	}

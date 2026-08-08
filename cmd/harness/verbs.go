@@ -93,6 +93,9 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	} else {
 		t.Row("cmd", t.faintPlain(h.Cmd))
 	}
+	if h.Model != "" {
+		t.Row("model", t.faintPlain(h.Model))
+	}
 	t.Row("backend", t.faintPlain(h.Backend))
 	t.Row("restarts", fmt.Sprintf("%d", h.RestartCount))
 	t.Row("last_exit", fmt.Sprintf("%d", h.LastExitCode))

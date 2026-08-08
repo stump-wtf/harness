@@ -89,8 +89,14 @@ type Harness struct {
 	// never passes through {workdir} arg expansion.
 	// Governing: ADR-0011; issue #56 (harness abstraction for agent CLIs).
 	Prompt string
-	// Model selects which AI model the agent CLI uses. Appended as
-	// --model <value> to args at parse time. Governing: issue #57.
+	// Model selects which model the agent CLI runs a prompt harness with.
+	// Config truth only, and it requires Prompt (validation enforces it —
+	// there is no vendor-agnostic place to inject a flag into an arbitrary
+	// cmd's argv, so a cmd harness passes --model through its own Args): the
+	// supervisor folds the value into the synthesized agent argv at spawn time
+	// via AgentCommand, so it never rides Args and, like the prompt text, is
+	// exempt from {workdir} arg expansion.
+	// Governing: ADR-0011; issue #57 (add `model` field for model selection).
 	Model string
 	// Workdir is the process working directory (may contain a leading ~).
 	Workdir string
@@ -119,15 +125,20 @@ type Harness struct {
 	TmuxSocket string
 }
 
-// AgentCommand returns the argv a prompt harness spawns: the agent CLI plus
-// the prompt, verbatim, as a single argv element. Callers pass the prompt text
-// through untouched — it is instruction text, not a configured arg, so it is
-// exempt from the {workdir} placeholder expansion the supervisor applies to
-// Args.
+// AgentCommand returns the argv a prompt harness spawns: the agent CLI, the
+// optional --model selection (issue #57), then the prompt, verbatim, as the
+// FINAL argv element — the flag precedes the prompt so the instruction text
+// stays last. Callers pass both values through untouched: they are config
+// truth, not configured args, so neither goes through the {workdir}
+// placeholder expansion the supervisor applies to Args.
 // Governing: ADR-0011 — interim single-vendor synthesis; the SPEC-0006 adapter
 // registry replaces this call site.
-func AgentCommand(prompt string) (cmd string, args []string) {
-	return "crush", []string{"run", "--quiet", prompt}
+func AgentCommand(prompt, model string) (cmd string, args []string) {
+	args = []string{"run", "--quiet"}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	return "crush", append(args, prompt)
 }
 
 // QualifiedName returns the daemon-wide name a project-local harness registers
