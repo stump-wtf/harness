@@ -1,7 +1,7 @@
 package tui
 
 // Governing: SPEC-0001 REQ "Harness Form" — n/e open a Huh form over the harness
-// schema (cmd/prompt/args/workdir/env_file/restart_delay/restart/backend/
+// schema (cmd/prompt/model/args/workdir/env_file/restart_delay/restart/backend/
 // description/profile membership) that writes back to harness.toml (ADR-0006:
 // file is truth); e
 // pre-fills from the existing harness; then the daemon reloads and the harness
@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
@@ -28,7 +29,11 @@ type HarnessForm struct {
 	Cmd  string
 	// Prompt is the agent one-shot alternative to Cmd (ADR-0011): exactly one
 	// of the two is set, and Args belong to Cmd only (Validate enforces both).
-	Prompt       string
+	Prompt string
+	// Model is the agent model selection (issue #57): requires Prompt — a cmd
+	// harness passes --model through Args itself — and is a single token
+	// (Validate mirrors the parser on both).
+	Model        string
 	Args         []string
 	Workdir      string
 	EnvFile      string
@@ -61,6 +66,14 @@ func (f HarnessForm) Validate() error {
 	case promptSet && len(f.Args) > 0:
 		return fmt.Errorf("prompt and args are mutually exclusive")
 	}
+	if model := strings.TrimSpace(f.Model); model != "" {
+		if !promptSet {
+			return fmt.Errorf("model requires prompt (for a cmd harness, pass --model in args)")
+		}
+		if strings.ContainsFunc(model, unicode.IsSpace) {
+			return fmt.Errorf("model must be a single token (no whitespace)")
+		}
+	}
 	if f.Backend != "" && !core.Backend(f.Backend).Valid() {
 		return fmt.Errorf("backend must be native or tmux")
 	}
@@ -83,8 +96,12 @@ func (f HarnessForm) TOML() string {
 	if prompt != "" {
 		// Prompt harness: `prompt` replaces cmd/args entirely (Validate
 		// enforces the exclusivity; the daemon synthesizes the argv at spawn,
-		// ADR-0011).
+		// ADR-0011). `model` rides beside it as config truth — never as a
+		// synthesized --model arg (issue #57).
 		fmt.Fprintf(&b, "prompt = %s\n", strconv.Quote(prompt))
+		if model := strings.TrimSpace(f.Model); model != "" {
+			fmt.Fprintf(&b, "model = %s\n", strconv.Quote(model))
+		}
 	} else {
 		fmt.Fprintf(&b, "cmd = %s\n", strconv.Quote(f.Cmd))
 		if len(f.Args) > 0 {
@@ -154,6 +171,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 		name:        sel.Name,
 		cmd:         sel.Cmd,
 		prompt:      sel.Prompt,
+		model:       sel.Model,
 		backend:     orDefault(sel.Backend, string(core.BackendNative)),
 		description: sel.Description,
 		enabled:     sel.Enabled,
@@ -168,6 +186,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	}
 	fi.cmd = h.Cmd
 	fi.prompt = h.Prompt
+	fi.model = h.Model
 	fi.args = strings.Join(h.Args, " ")
 	fi.workdir = h.Workdir
 	fi.envFile = h.EnvFile
@@ -188,6 +207,7 @@ func (fi formInputs) toForm() HarnessForm {
 		Name:        strings.TrimSpace(fi.name),
 		Cmd:         strings.TrimSpace(fi.cmd),
 		Prompt:      strings.TrimSpace(fi.prompt),
+		Model:       strings.TrimSpace(fi.model),
 		Workdir:     strings.TrimSpace(fi.workdir),
 		EnvFile:     strings.TrimSpace(fi.envFile),
 		Restart:     strings.TrimSpace(fi.restart),

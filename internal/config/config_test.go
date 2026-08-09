@@ -395,3 +395,112 @@ func TestParsePromptErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestParseModelHarness covers the agent `model` selection (issue #57): the
+// model is stored as config truth on a prompt harness, and Args are NEVER
+// touched — no parse-time --model desugaring; the supervisor folds the value
+// into the synthesized argv at spawn (core.AgentCommand, ADR-0011).
+func TestParseModelHarness(t *testing.T) {
+	tests := []struct {
+		name      string
+		toml      string
+		wantModel string
+		wantCmd   string
+		wantArgs  []string
+	}{
+		{
+			name:      "model stored on a prompt harness, args untouched",
+			toml:      "[harness.agent]\nprompt = \"check deployments\"\nmodel = \"claude-opus-5\"\n",
+			wantModel: "claude-opus-5",
+		},
+		{
+			name:     "cmd harness without model keeps args verbatim",
+			toml:     "[harness.agent]\ncmd = \"echo\"\nargs = [\"hello\"]\n",
+			wantCmd:  "echo",
+			wantArgs: []string{"hello"},
+		},
+		{
+			name:      "surrounding whitespace is trimmed",
+			toml:      "[harness.agent]\nprompt = \"check deployments\"\nmodel = \" claude-opus-5 \"\n",
+			wantModel: "claude-opus-5",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tt.toml), "test.toml")
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			h, ok := cfg.Harnesses["agent"]
+			if !ok {
+				t.Fatalf("agent harness missing; order = %v", cfg.HarnessOrder)
+			}
+			if h.Model != tt.wantModel {
+				t.Errorf("Model = %q, want %q", h.Model, tt.wantModel)
+			}
+			if h.Cmd != tt.wantCmd {
+				t.Errorf("Cmd = %q, want %q", h.Cmd, tt.wantCmd)
+			}
+			if !reflect.DeepEqual(h.Args, tt.wantArgs) {
+				t.Errorf("Args = %v, want %v (model must never be desugared into args)", h.Args, tt.wantArgs)
+			}
+		})
+	}
+}
+
+// TestParseModelErrors is table-driven over the model validation rules with
+// the same located-error contract as TestParsePromptErrors: `model` requires
+// `prompt` (there is no vendor-agnostic injection point in an arbitrary cmd's
+// argv — a cmd harness passes --model through its own args), the value is a
+// single whitespace-free token, and a blank model is named as such.
+func TestParseModelErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		toml     string
+		wantLine int
+		wantSub  string
+	}{
+		{
+			name:     "model with cmd points at args",
+			toml:     "[harness.bad]\ncmd = \"crush\"\nargs = [\"run\"]\nmodel = \"claude-opus-5\"\n",
+			wantLine: 1,
+			wantSub:  `"model" requires "prompt"`,
+		},
+		{
+			name:     "whitespace-only model names the blank model",
+			toml:     "[harness.bad]\nprompt = \"hi\"\nmodel = \"   \"\n",
+			wantLine: 1,
+			wantSub:  `"model" must not be blank`,
+		},
+		{
+			name:     "internal whitespace is rejected",
+			toml:     "[harness.bad]\nprompt = \"hi\"\nmodel = \"claude opus 5\"\n",
+			wantLine: 1,
+			wantSub:  `"model" must be a single token`,
+		},
+		{
+			name:     "model alone still reports the missing cmd/prompt first",
+			toml:     "# header\n\n[harness.bad]\nmodel = \"claude-opus-5\"\n",
+			wantLine: 3,
+			wantSub:  `missing required key "cmd" (or set "prompt"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.toml), "test.toml")
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			var ce *Error
+			if !errors.As(err, &ce) {
+				t.Fatalf("error is %T, want *config.Error: %v", err, err)
+			}
+			if ce.LineNumber() != tt.wantLine {
+				t.Errorf("line = %d, want %d (err: %v)", ce.LineNumber(), tt.wantLine, ce)
+			}
+			if !strings.Contains(ce.Msg, tt.wantSub) {
+				t.Errorf("message %q does not contain %q", ce.Msg, tt.wantSub)
+			}
+		})
+	}
+}

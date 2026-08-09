@@ -355,6 +355,67 @@ func TestParseProject_PromptErrors(t *testing.T) {
 	}
 }
 
+// ---- Model parity (SPEC-0004 REQ "Project File Schema") -------------------
+
+// TestParseProject_ModelHarness: the agent `model` selection means the same
+// thing in a project file as in the global config (identical field meanings,
+// via the shared registerHarness): stored as config truth, never desugared
+// into args — the supervisor folds it into the synthesized argv at spawn
+// (ADR-0011, issue #57).
+func TestParseProject_ModelHarness(t *testing.T) {
+	data := []byte(`
+[harness.agent]
+prompt = "summarize the day"
+model = "claude-opus-5"
+`)
+	proj, err := ParseProject(data, "/tmp/myrepo/harness.toml")
+	if err != nil {
+		t.Fatalf("ParseProject: %v", err)
+	}
+	h, ok := proj.Config.Harnesses["agent"]
+	if !ok {
+		t.Fatal("missing harness 'agent'")
+	}
+	if h.Model != "claude-opus-5" {
+		t.Errorf("Model = %q, want %q", h.Model, "claude-opus-5")
+	}
+	if h.Cmd != "" || h.Args != nil {
+		t.Errorf("Cmd/Args = %q/%v, want empty (model must never be desugared into args)", h.Cmd, h.Args)
+	}
+	// The project bring-up default still applies to model-bearing harnesses.
+	if !h.Enabled {
+		t.Error("Enabled = false, want true (project bring-up default)")
+	}
+}
+
+// TestParseProject_ModelErrors: the model validation rules hold in project
+// files too, with the same located-error contract as the global parser.
+func TestParseProject_ModelErrors(t *testing.T) {
+	tests := []struct{ name, toml, wantSub string }{
+		{"model with cmd", "[harness.bad]\ncmd = \"echo\"\nmodel = \"m\"\n", `"model" requires "prompt"`},
+		{"blank model", "[harness.bad]\nprompt = \"hi\"\nmodel = \" \"\n", `"model" must not be blank`},
+		{"multi-token model", "[harness.bad]\nprompt = \"hi\"\nmodel = \"a b\"\n", `"model" must be a single token`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseProject([]byte(tt.toml), "/tmp/repo/harness.toml")
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			var cerr *Error
+			if !errors.As(err, &cerr) {
+				t.Fatalf("expected *Error, got %T: %v", err, err)
+			}
+			if !strings.Contains(cerr.Msg, tt.wantSub) {
+				t.Errorf("message %q does not contain %q", cerr.Msg, tt.wantSub)
+			}
+			if cerr.Line <= 0 {
+				t.Errorf("expected positive source line, got %d", cerr.Line)
+			}
+		})
+	}
+}
+
 // ---- Discovery tests -----------------------------------------------------
 
 func TestDiscoverProject_FindsAncestorFile(t *testing.T) {

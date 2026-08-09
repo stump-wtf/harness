@@ -359,6 +359,29 @@ func TestHarnessFromWirePrompt(t *testing.T) {
 	}
 }
 
+// TestHarnessFromWireModel: the wire → core copier carries the additive
+// ProtoMinor 3 model field through the JSON encode/decode, so a prompt
+// harness's model selection survives project_up intact — the daemon folds it
+// into the synthesized argv at spawn (issue #57), never into Args.
+func TestHarnessFromWireModel(t *testing.T) {
+	ph := protocol.ProjectHarness{Name: "oneshot", Prompt: "do the thing", Model: "claude-opus-5", Enabled: true}
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded protocol.ProjectHarness
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	h := harnessFromWire(decoded)
+	if h.Model != "claude-opus-5" {
+		t.Errorf("Model = %q, want it carried across the wire", h.Model)
+	}
+	if h.Prompt != "do the thing" || h.Cmd != "" || h.Args != nil {
+		t.Errorf("Prompt/Cmd/Args = %q/%q/%v, want prompt-only with untouched args", h.Prompt, h.Cmd, h.Args)
+	}
+}
+
 // waitForState polls describe until the harness reports the wanted state.
 func waitForState(t *testing.T, c interface {
 	Describe(string) (protocol.HarnessInfo, error)

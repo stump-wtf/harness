@@ -174,13 +174,16 @@ func expandArgs(args []string, workdir string) []string {
 
 // execArgv resolves the executable and argv spawn runs: the configured cmd
 // with {workdir}-expanded args, or — for a prompt harness (empty Cmd, ADR-0011
-// spawn-time synthesis) — the argv core.AgentCommand builds. The prompt text
-// is passed verbatim as one argv element: only configured args go through
-// expandArgs's {workdir} substitution, never the prompt — a prompt legitimately
-// containing "{workdir}" is instruction text, not a placeholder.
+// spawn-time synthesis) — the argv core.AgentCommand builds from the prompt
+// and the optional model selection. Prompt and model are passed verbatim:
+// only configured args go through expandArgs's {workdir} substitution, never
+// those two — a prompt legitimately containing "{workdir}" is instruction
+// text, not a placeholder. The cmd path ignores Model entirely (config
+// validation forbids the combination; a wire def carrying both spawns on its
+// configured argv alone).
 func execArgv(h core.Harness, workdir string) (string, []string) {
 	if h.Cmd == "" && h.Prompt != "" {
-		return core.AgentCommand(h.Prompt)
+		return core.AgentCommand(h.Prompt, h.Model)
 	}
 	return h.Cmd, expandArgs(h.Args, workdir)
 }

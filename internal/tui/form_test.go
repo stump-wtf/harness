@@ -159,6 +159,101 @@ func TestEditPromptHarnessRoundTrip(t *testing.T) {
 	}
 }
 
+// TestHarnessFormRoundTripModel: `n` can author a prompt harness with a model
+// selection — the form emits `model` beside `prompt` (config truth, never a
+// synthesized --model arg, issue #57) and the TOML re-parses into the same
+// harness with Cmd/Args still empty.
+func TestHarnessFormRoundTripModel(t *testing.T) {
+	f := HarnessForm{
+		Name:    "deploy-check",
+		Prompt:  "check the deployments and report anything unhealthy",
+		Model:   "claude-opus-5",
+		Backend: "native",
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatalf("valid prompt+model form rejected: %v", err)
+	}
+	body := f.TOML()
+	if !strings.Contains(body, "model = \"claude-opus-5\"") {
+		t.Fatalf("TOML missing model key:\n%s", body)
+	}
+	if strings.Contains(body, "cmd = ") || strings.Contains(body, "args = ") {
+		t.Fatalf("prompt+model harness TOML must not carry cmd/args:\n%s", body)
+	}
+	cfg, err := config.Parse([]byte(body), "harness.toml")
+	if err != nil {
+		t.Fatalf("config.Parse rejected form TOML: %v\n---\n%s", err, body)
+	}
+	h, ok := cfg.Harnesses["deploy-check"]
+	if !ok {
+		t.Fatalf("harness not present after parse; got %v", cfg.HarnessOrder)
+	}
+	if h.Model != "claude-opus-5" {
+		t.Errorf("Model = %q, want %q", h.Model, "claude-opus-5")
+	}
+	if h.Prompt != f.Prompt {
+		t.Errorf("Prompt = %q, want %q", h.Prompt, f.Prompt)
+	}
+	if h.Cmd != "" || h.Args != nil {
+		t.Errorf("Cmd/Args = %q/%v, want empty (model never desugars into args)", h.Cmd, h.Args)
+	}
+}
+
+// TestEditModelHarnessRoundTrip: editing a model-bearing prompt harness with
+// `e` and saving unchanged round-trips both keys losslessly — the pre-fill
+// sees the real fields (no synthesized args to re-persist) and the rewrite
+// emits them back, so args cannot grow and the model key cannot drop per edit
+// cycle.
+func TestEditModelHarnessRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.toml")
+	original := "[harness.deploy-check]\nprompt = \"check the deployments\"\nmodel = \"claude-opus-5\"\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sel := protocol.HarnessInfo{
+		Name:   "deploy-check",
+		Prompt: "check the deployments",
+		Model:  "claude-opus-5",
+	}
+	fi := editInputsFor(path, sel)
+	if fi.model != "claude-opus-5" {
+		t.Fatalf("model not pre-filled: %q", fi.model)
+	}
+	if fi.prompt != "check the deployments" {
+		t.Fatalf("prompt not pre-filled: %q", fi.prompt)
+	}
+	if fi.args != "" {
+		t.Fatalf("args pre-filled for a prompt+model harness: %q (synthesized flags must not surface)", fi.args)
+	}
+
+	// Save unchanged: the rewritten table must carry both keys and parse back
+	// to the identical harness.
+	form := fi.toForm()
+	if err := form.Validate(); err != nil {
+		t.Fatalf("unchanged edit failed validation: %v", err)
+	}
+	body := []byte(removeHarnessTOML(original, form.Name))
+	body = AppendHarness(body, form)
+	if !strings.Contains(string(body), "model = ") {
+		t.Fatalf("model key lost on save:\n%s", body)
+	}
+
+	cfg, err := config.Parse(body, "harness.toml")
+	if err != nil {
+		t.Fatalf("edited config did not parse: %v\n%s", err, body)
+	}
+	before, err := config.Parse([]byte(original), "harness.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Harnesses["deploy-check"], before.Harnesses["deploy-check"]) {
+		t.Errorf("unchanged edit not lossless:\n got %+v\nwant %+v",
+			cfg.Harnesses["deploy-check"], before.Harnesses["deploy-check"])
+	}
+}
+
 // TestEditPreservesOmittedFields is the regression guard for the SPEC-0001 REQ
 // "Harness Form" scenario "e SHALL pre-fill from the existing harness": editing a
 // harness must NOT drop the keys the daemon's HarnessInfo projection omits
@@ -270,6 +365,15 @@ func TestFormValidate(t *testing.T) {
 	}
 	if err := (HarnessForm{Name: "x", Prompt: "do the thing"}).Validate(); err != nil {
 		t.Errorf("prompt-only form should validate: %v", err)
+	}
+	if err := (HarnessForm{Name: "x", Cmd: "y", Model: "m"}).Validate(); err == nil {
+		t.Error("cmd+model should fail (model requires prompt)")
+	}
+	if err := (HarnessForm{Name: "x", Prompt: "p", Model: "a b"}).Validate(); err == nil {
+		t.Error("multi-token model should fail")
+	}
+	if err := (HarnessForm{Name: "x", Prompt: "p", Model: "claude-opus-5"}).Validate(); err != nil {
+		t.Errorf("prompt+model form should validate: %v", err)
 	}
 }
 

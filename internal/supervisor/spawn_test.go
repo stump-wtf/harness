@@ -94,6 +94,38 @@ func TestExecArgvPromptSynthesis(t *testing.T) {
 	}
 }
 
+// TestExecArgvPromptModelSynthesis pins the model flag's spawn-time placement
+// (issue #57): --model rides the synthesized agent argv BEFORE the prompt —
+// the prompt stays the final argv element — and the model value, like the
+// prompt, is exempt from the {workdir} placeholder expansion configured args
+// go through.
+func TestExecArgvPromptModelSynthesis(t *testing.T) {
+	h := core.Harness{Name: "agent", Prompt: "check {workdir} please", Model: "claude-{workdir}"}
+	name, args := execArgv(h, "/home/x")
+	if name != "crush" {
+		t.Errorf("cmd = %q, want crush", name)
+	}
+	want := []string{"run", "--quiet", "--model", "claude-{workdir}", "check {workdir} please"}
+	if !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (model before prompt, both unexpanded)", args, want)
+	}
+}
+
+// TestExecArgvCmdIgnoresModel: the cmd path never injects a model flag — there
+// is no vendor-agnostic injection point in an arbitrary argv, so config
+// validation forbids cmd+model, and a wire def carrying both spawns on its
+// configured argv alone.
+func TestExecArgvCmdIgnoresModel(t *testing.T) {
+	h := core.Harness{Name: "svc", Cmd: "run", Args: []string{"--dir", "{workdir}"}, Model: "claude-opus-5"}
+	name, args := execArgv(h, "/home/x")
+	if name != "run" {
+		t.Errorf("cmd = %q, want run", name)
+	}
+	if want := []string{"--dir", "/home/x"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (no synthesized --model on the cmd path)", args, want)
+	}
+}
+
 // TestExecArgvCmdUnchanged: a cmd harness keeps its configured argv, with
 // {workdir} expansion — synthesis only engages when Cmd is empty.
 func TestExecArgvCmdUnchanged(t *testing.T) {
