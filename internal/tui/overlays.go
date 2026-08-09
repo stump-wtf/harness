@@ -348,6 +348,7 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 			huh.NewInput().Title("prompt (agent one-shot; instead of cmd/args)").Value(&fi.prompt),
 			huh.NewInput().Title("model (agent model id; requires prompt)").Value(&fi.model),
 			huh.NewConfirm().Title("auto_accept (agent yolo mode; requires prompt)").Value(&fi.autoAccept),
+			huh.NewInput().Title("max_turns (agent turn budget; requires prompt; 0 = unlimited)").Value(&fi.maxTurns),
 			huh.NewInput().Title("args (space-separated)").Value(&fi.args),
 			huh.NewInput().Title("workdir").Value(&fi.workdir),
 			huh.NewInput().Title("env_file").Value(&fi.envFile),

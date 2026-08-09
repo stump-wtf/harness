@@ -114,6 +114,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		Prompt:       ph.Prompt,
 		Model:        ph.Model,
 		AutoAccept:   ph.AutoAccept,
+		MaxTurns:     ph.MaxTurns,
 		Workdir:      ph.Workdir,
 		EnvFile:      ph.EnvFile,
 		RestartDelay: time.Duration(ph.RestartDelayMs) * time.Millisecond,

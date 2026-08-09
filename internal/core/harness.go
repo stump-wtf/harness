@@ -5,7 +5,10 @@ package core
 // these parsed records). These are the core domain types every other package
 // (config, supervisor, protocol, tui) imports.
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // Backend selects how a harness's process is hosted: natively under the
 // daemon's own PTY (default), or via a tmux session (ADR-0003 escape hatch).
@@ -111,6 +114,17 @@ type Harness struct {
 	// Governing: ADR-0008; ADR-0011; issue #58 (add `auto_accept` field for
 	// unattended mode).
 	AutoAccept bool
+	// MaxTurns caps the number of agent iterations a prompt harness may run
+	// before the CLI stops, the budget guard for unattended one-shots. Config
+	// truth only, and it requires Prompt (validation enforces it — there is no
+	// vendor-agnostic place to inject a flag into an arbitrary cmd's argv, so
+	// a cmd harness passes --max-turns through its own Args): the supervisor
+	// folds the value into the synthesized agent argv at spawn time via
+	// AgentCommand, so it never rides Args. 0 means unset/unlimited (the flag
+	// is simply not emitted).
+	// Governing: ADR-0011; issue #59 (add `max_turns` field for budget
+	// capping).
+	MaxTurns int
 	// Workdir is the process working directory (may contain a leading ~).
 	Workdir string
 	// EnvFile is a file of KEY=VALUE pairs sourced before launch (ADR-0008;
@@ -138,23 +152,39 @@ type Harness struct {
 	TmuxSocket string
 }
 
+// AgentOpts carries the config-truth knobs a prompt harness folds into its
+// synthesized agent argv at spawn time. Every field stays verbatim — none are
+// {workdir} placeholders — and a cmd harness ignores them all (config
+// validation forbids the combinations; the wire def keeps them inert).
+type AgentOpts struct {
+	// Model selects the agent model, emitted as --model when non-empty.
+	Model string
+	// AutoAccept enables unattended/yolo mode, emitted as --yolo.
+	AutoAccept bool
+	// MaxTurns caps agent iterations, emitted as --max-turns when > 0.
+	MaxTurns int
+}
+
 // AgentCommand returns the argv a prompt harness spawns: the agent CLI, the
 // optional --model selection (issue #57), the optional --yolo unattended flag
-// (issue #58), then the prompt, verbatim, as the FINAL argv element — flags
-// precede the prompt so the instruction text stays last. Callers pass all
-// values through untouched: they are config truth, not configured args, so
-// none go through the {workdir} placeholder expansion the supervisor applies
-// to Args.
+// (issue #58), the optional --max-turns budget (issue #59), then the prompt,
+// verbatim, as the FINAL argv element — flags precede the prompt so the
+// instruction text stays last. Callers pass the opts through untouched: they
+// are config truth, not configured args, so none go through the {workdir}
+// placeholder expansion the supervisor applies to Args.
 // Governing: ADR-0011 — interim single-vendor synthesis; the SPEC-0006 adapter
-// registry replaces this call site (and maps auto-accept onto each vendor's
-// own flag).
-func AgentCommand(prompt, model string, autoAccept bool) (cmd string, args []string) {
+// registry replaces this call site (and maps auto-accept and the turn budget
+// onto each vendor's own flag).
+func AgentCommand(prompt string, opts AgentOpts) (cmd string, args []string) {
 	args = []string{"run", "--quiet"}
-	if model != "" {
-		args = append(args, "--model", model)
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
 	}
-	if autoAccept {
+	if opts.AutoAccept {
 		args = append(args, "--yolo")
+	}
+	if opts.MaxTurns > 0 {
+		args = append(args, "--max-turns", strconv.Itoa(opts.MaxTurns))
 	}
 	return "crush", append(args, prompt)
 }

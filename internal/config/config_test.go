@@ -620,3 +620,101 @@ func TestParseAutoAcceptErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestParseMaxTurnsHarness covers the agent `max_turns` turn-budget field
+// (issue #59): stored on the harness as config truth, never desugared into
+// args (a parse-time flag corrupts the TOML round-trip, and a prompt harness
+// wipes its args), and applied to a prompt one-shot at spawn via AgentCommand.
+// Like model/auto_accept it requires prompt — there is no vendor-agnostic
+// injection point in an arbitrary cmd's argv.
+func TestParseMaxTurnsHarness(t *testing.T) {
+	tests := []struct {
+		name         string
+		toml         string
+		wantMaxTurns int
+		wantCmd      string
+		wantArgs     []string
+		wantRestart  core.RestartPolicy
+	}{
+		{
+			name:         "max_turns stored on a prompt harness, args untouched",
+			toml:         "[harness.agent]\nprompt = \"check deployments\"\nmax_turns = 5\n",
+			wantMaxTurns: 5,
+			wantRestart:  core.RestartNo,
+		},
+		{
+			name:        "absent max_turns defaults to 0 (unlimited)",
+			toml:        "[harness.agent]\nprompt = \"check deployments\"\n",
+			wantRestart: core.RestartNo,
+		},
+		{
+			name:         "explicit zero is allowed and stays unlimited",
+			toml:         "[harness.agent]\nprompt = \"check deployments\"\nmax_turns = 0\n",
+			wantMaxTurns: 0,
+			wantRestart:  core.RestartNo,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tt.toml), "test.toml")
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			h, ok := cfg.Harnesses["agent"]
+			if !ok {
+				t.Fatalf("agent harness missing; order = %v", cfg.HarnessOrder)
+			}
+			if h.MaxTurns != tt.wantMaxTurns {
+				t.Errorf("MaxTurns = %d, want %d", h.MaxTurns, tt.wantMaxTurns)
+			}
+			if h.Args != nil {
+				t.Errorf("Args = %v, want nil (max_turns must never be desugared into args; a prompt harness carries empty argv)", h.Args)
+			}
+			if h.Restart != tt.wantRestart {
+				t.Errorf("Restart = %q, want %q", h.Restart, tt.wantRestart)
+			}
+		})
+	}
+}
+
+// TestParseMaxTurnsErrors: `max_turns` (when set) requires `prompt` and must
+// not be negative, with the same located-error contract as the model rules.
+func TestParseMaxTurnsErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		toml     string
+		wantLine int
+		wantSub  string
+	}{
+		{
+			name:     "max_turns with cmd points at args",
+			toml:     "[harness.bad]\ncmd = \"crush\"\nargs = [\"run\"]\nmax_turns = 5\n",
+			wantLine: 1,
+			wantSub:  `"max_turns" requires "prompt"`,
+		},
+		{
+			name:     "negative max_turns is rejected",
+			toml:     "[harness.bad]\nprompt = \"ok\"\nmax_turns = -1\n",
+			wantLine: 1,
+			wantSub:  `"max_turns" must not be negative`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.toml), "test.toml")
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			var ce *Error
+			if !errors.As(err, &ce) {
+				t.Fatalf("error is %T, want *config.Error: %v", err, err)
+			}
+			if ce.LineNumber() != tt.wantLine {
+				t.Errorf("line = %d, want %d (err: %v)", ce.LineNumber(), tt.wantLine, ce)
+			}
+			if !strings.Contains(ce.Msg, tt.wantSub) {
+				t.Errorf("message %q does not contain %q", ce.Msg, tt.wantSub)
+			}
+		})
+	}
+}
