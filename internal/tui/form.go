@@ -41,7 +41,12 @@ type HarnessForm struct {
 	// MaxTurns is the agent turn budget for a prompt harness (issue #59):
 	// requires Prompt — a cmd harness passes --max-turns through Args itself
 	// (Validate mirrors the parser). 0 means unset/unlimited.
-	MaxTurns     int
+	MaxTurns int
+	// Quiet is the headless single-flag for a prompt harness (issue #60): a
+	// one-shot runs quietly by default, and setting this false opts back into
+	// streaming output to an attach. False without Prompt is rejected
+	// (Validate mirrors the parser).
+	Quiet        bool
 	Args         []string
 	Workdir      string
 	EnvFile      string
@@ -54,7 +59,9 @@ type HarnessForm struct {
 
 // NewHarnessForm is a blank form for `n` with sane defaults (native backend).
 func NewHarnessForm() HarnessForm {
-	return HarnessForm{Backend: string(core.BackendNative)}
+	// A prompt one-shot is headless by default (issue #60); the form lets the
+	// user opt back into output by clearing Quiet before saving.
+	return HarnessForm{Backend: string(core.BackendNative), Quiet: true}
 }
 
 // Validate checks the minimum the daemon config parser requires (a name and
@@ -124,6 +131,11 @@ func (f HarnessForm) TOML() string {
 		}
 		if f.MaxTurns > 0 {
 			fmt.Fprintf(&b, "max_turns = %d\n", f.MaxTurns)
+		}
+		if !f.Quiet {
+			// Opt out of the headless one-shot default so the agent streams
+			// output to whoever attaches (issue #60).
+			b.WriteString("quiet = false\n")
 		}
 	} else {
 		fmt.Fprintf(&b, "cmd = %s\n", strconv.Quote(f.Cmd))
@@ -196,6 +208,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 		prompt:      sel.Prompt,
 		model:       sel.Model,
 		autoAccept:  sel.AutoAccept,
+		quiet:       sel.Quiet,
 		maxTurns:    strconv.Itoa(sel.MaxTurns),
 		backend:     orDefault(sel.Backend, string(core.BackendNative)),
 		description: sel.Description,
@@ -213,6 +226,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.prompt = h.Prompt
 	fi.model = h.Model
 	fi.autoAccept = h.AutoAccept
+	fi.quiet = h.Quiet
 	fi.maxTurns = strconv.Itoa(h.MaxTurns)
 	fi.args = strings.Join(h.Args, " ")
 	fi.workdir = h.Workdir
@@ -236,6 +250,7 @@ func (fi formInputs) toForm() HarnessForm {
 		Prompt:      strings.TrimSpace(fi.prompt),
 		Model:       strings.TrimSpace(fi.model),
 		AutoAccept:  fi.autoAccept,
+		Quiet:       fi.quiet,
 		Workdir:     strings.TrimSpace(fi.workdir),
 		EnvFile:     strings.TrimSpace(fi.envFile),
 		Restart:     strings.TrimSpace(fi.restart),

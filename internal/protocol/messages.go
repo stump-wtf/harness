@@ -121,7 +121,13 @@ type ProjectHarness struct {
 	// alongside prompt (parse validation enforces it); the daemon folds
 	// --max-turns into the synthesized argv at spawn (ADR-0011, issue #59).
 	// 0 means unset/unlimited.
-	MaxTurns       int    `json:"max_turns,omitempty"`
+	MaxTurns int `json:"max_turns,omitempty"`
+	// Quiet mirrors the schema's agent `quiet` headless switch: a *bool so an
+	// omitted key (nil = the headless one-shot default) is distinguishable from
+	// an explicit false (stream output to an attach). Set only alongside prompt
+	// (parse validation enforces it); the daemon folds --quiet into (or out of)
+	// the synthesized argv at spawn (ADR-0011, issue #60).
+	Quiet          *bool  `json:"quiet,omitempty"`
 	Workdir        string `json:"workdir,omitempty"`
 	EnvFile        string `json:"env_file,omitempty"`
 	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
@@ -173,7 +179,11 @@ type HarnessInfo struct {
 	AutoAccept bool `json:"auto_accept,omitempty"`
 	// MaxTurns is the agent turn budget for a prompt harness, folded into the
 	// synthesized argv at spawn (issue #59). Always 0 for cmd harnesses.
-	MaxTurns    int    `json:"max_turns,omitempty"`
+	MaxTurns int `json:"max_turns,omitempty"`
+	// Quiet is the agent headless switch for a prompt harness, folded into the
+	// synthesized argv at spawn (issue #60). Always true for prompt harnesses
+	// unless the config set quiet = false.
+	Quiet       bool   `json:"quiet,omitempty"`
 	Backend     string `json:"backend,omitempty"`
 	Description string `json:"description,omitempty"`
 	// Project is the harness's provenance: the owning project's name for a

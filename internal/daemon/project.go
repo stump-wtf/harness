@@ -107,6 +107,13 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 			restart = core.RestartNo
 		}
 	}
+
+	// Absent on the wire (or an older client) = the headless one-shot default;
+	// an explicit false opts into streaming output to an attach.
+	quiet := true
+	if ph.Quiet != nil {
+		quiet = *ph.Quiet
+	}
 	return core.Harness{
 		Name:         ph.Name,
 		Cmd:          ph.Cmd,
@@ -115,6 +122,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		Model:        ph.Model,
 		AutoAccept:   ph.AutoAccept,
 		MaxTurns:     ph.MaxTurns,
+		Quiet:        quiet,
 		Workdir:      ph.Workdir,
 		EnvFile:      ph.EnvFile,
 		RestartDelay: time.Duration(ph.RestartDelayMs) * time.Millisecond,
