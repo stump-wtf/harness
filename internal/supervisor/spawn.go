@@ -172,6 +172,19 @@ func expandArgs(args []string, workdir string) []string {
 	return out
 }
 
+// execArgv resolves the executable and argv spawn runs: the configured cmd
+// with {workdir}-expanded args, or — for a prompt harness (empty Cmd, ADR-0011
+// spawn-time synthesis) — the argv core.AgentCommand builds. The prompt text
+// is passed verbatim as one argv element: only configured args go through
+// expandArgs's {workdir} substitution, never the prompt — a prompt legitimately
+// containing "{workdir}" is instruction text, not a placeholder.
+func execArgv(h core.Harness, workdir string) (string, []string) {
+	if h.Cmd == "" && h.Prompt != "" {
+		return core.AgentCommand(h.Prompt)
+	}
+	return h.Cmd, expandArgs(h.Args, workdir)
+}
+
 // process is a live spawned harness: its PTY, the command handle (for signals
 // and reaping), and its OS pid.
 type process struct {
@@ -211,7 +224,8 @@ func spawn(h core.Harness, cols, rows int) (*process, error) {
 		return nil, fmt.Errorf("supervisor: allocate pty: %w", err)
 	}
 
-	cmd := exec.Command(h.Cmd, expandArgs(h.Args, workdir)...)
+	name, args := execArgv(h, workdir)
+	cmd := exec.Command(name, args...)
 	cmd.Dir = workdir
 	cmd.Env = env
 	// New session → child is a process-group leader (pgid == pid); a graceful
@@ -230,7 +244,7 @@ func spawn(h core.Harness, cols, rows int) (*process, error) {
 
 	if err := pty.Start(cmd); err != nil {
 		_ = pty.Close()
-		return nil, fmt.Errorf("supervisor: start %q: %w", h.Cmd, err)
+		return nil, fmt.Errorf("supervisor: start %q: %w", name, err)
 	}
 	return &process{pty: pty, cmd: cmd, pid: cmd.Process.Pid}, nil
 }

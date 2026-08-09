@@ -76,11 +76,19 @@ func (p RestartPolicy) ShouldRestart(code int) bool {
 type Harness struct {
 	// Name is the table name, unique across the config.
 	Name string
-	// Cmd is the executable to run (required).
+	// Cmd is the executable to run (required unless Prompt is set).
 	Cmd string
 	// Args are the command arguments; {workdir} placeholders are expanded at
 	// spawn time by the supervisor, not here.
 	Args []string
+	// Prompt is an agent one-shot instruction, the declarative alternative to
+	// Cmd: exactly one of the two is set (config validation enforces it, and
+	// Args belong to Cmd only). Cmd/Args stay EMPTY for a prompt harness — the
+	// supervisor synthesizes the agent argv at spawn time via AgentCommand, so
+	// the file remains the source of truth (ADR-0006) and the prompt text
+	// never passes through {workdir} arg expansion.
+	// Governing: ADR-0011; issue #56 (harness abstraction for agent CLIs).
+	Prompt string
 	// Workdir is the process working directory (may contain a leading ~).
 	Workdir string
 	// EnvFile is a file of KEY=VALUE pairs sourced before launch (ADR-0008;
@@ -92,7 +100,9 @@ type Harness struct {
 	// exits, mirroring Docker Compose's `restart` directive. Empty means
 	// "default" (always restart while enabled), preserving the daemon's
 	// historical behavior. Valid values: "no", "always", "unless-stopped",
-	// "on-failure".
+	// "on-failure". The config parsers normalize an omitted key to "always" —
+	// except for prompt harnesses, which default to "no": a one-shot agent run
+	// exiting 0 must not respawn (an explicit `restart = ...` still wins).
 	Restart RestartPolicy
 	// Backend selects the hosting strategy (default native, ADR-0003).
 	Backend Backend
@@ -104,6 +114,17 @@ type Harness struct {
 	// TmuxSocket names the tmux socket; inert unless Backend == tmux (ADR-0006
 	// keeps it for backward compatibility).
 	TmuxSocket string
+}
+
+// AgentCommand returns the argv a prompt harness spawns: the agent CLI plus
+// the prompt, verbatim, as a single argv element. Callers pass the prompt text
+// through untouched — it is instruction text, not a configured arg, so it is
+// exempt from the {workdir} placeholder expansion the supervisor applies to
+// Args.
+// Governing: ADR-0011 — interim single-vendor synthesis; the SPEC-0006 adapter
+// registry replaces this call site.
+func AgentCommand(prompt string) (cmd string, args []string) {
+	return "crush", []string{"run", "--quiet", prompt}
 }
 
 // QualifiedName returns the daemon-wide name a project-local harness registers

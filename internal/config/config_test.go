@@ -285,3 +285,113 @@ func TestParseInvalidRestartPolicy(t *testing.T) {
 		t.Errorf("message %q does not contain \"invalid restart policy\"", ce.Msg)
 	}
 }
+
+// TestParsePromptHarness covers the agent one-shot `prompt` field (ADR-0011):
+// the prompt is stored verbatim and Cmd/Args stay EMPTY — the supervisor
+// synthesizes the argv at spawn time, so parse must not desugar. An omitted
+// restart defaults to "no" (a one-shot exiting 0 must not respawn); an
+// explicit restart still wins.
+func TestParsePromptHarness(t *testing.T) {
+	tests := []struct {
+		name        string
+		toml        string
+		wantPrompt  string
+		wantRestart core.RestartPolicy
+	}{
+		{
+			name:        "prompt stored, restart defaults to no",
+			toml:        "[harness.agent]\nprompt = \"check deployments\"\n",
+			wantPrompt:  "check deployments",
+			wantRestart: core.RestartNo,
+		},
+		{
+			name:        "explicit restart overrides the one-shot default",
+			toml:        "[harness.agent]\nprompt = \"check deployments\"\nrestart = \"on-failure\"\n",
+			wantPrompt:  "check deployments",
+			wantRestart: core.RestartOnFailure,
+		},
+		{
+			name:        "surrounding whitespace is trimmed",
+			toml:        "[harness.agent]\nprompt = \"  check deployments \"\n",
+			wantPrompt:  "check deployments",
+			wantRestart: core.RestartNo,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tt.toml), "test.toml")
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			h, ok := cfg.Harnesses["agent"]
+			if !ok {
+				t.Fatalf("agent harness missing; order = %v", cfg.HarnessOrder)
+			}
+			if h.Prompt != tt.wantPrompt {
+				t.Errorf("Prompt = %q, want %q", h.Prompt, tt.wantPrompt)
+			}
+			if h.Cmd != "" || h.Args != nil {
+				t.Errorf("Cmd/Args = %q/%v, want empty (argv is synthesized at spawn, not parse)", h.Cmd, h.Args)
+			}
+			if h.Restart != tt.wantRestart {
+				t.Errorf("Restart = %q, want %q", h.Restart, tt.wantRestart)
+			}
+		})
+	}
+}
+
+// TestParsePromptErrors is table-driven over the prompt validation rules with
+// the same located-error contract as TestValidationErrors: exactly one of
+// cmd/prompt, args belong to cmd only, and a blank prompt is named as such
+// rather than reported as a missing cmd.
+func TestParsePromptErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		toml     string
+		wantLine int
+		wantSub  string
+	}{
+		{
+			name:     "prompt and cmd are mutually exclusive",
+			toml:     "[harness.bad]\ncmd = \"echo\"\nprompt = \"hello\"\n",
+			wantLine: 1,
+			wantSub:  `"prompt" and "cmd" are mutually exclusive`,
+		},
+		{
+			name:     "prompt and args are mutually exclusive",
+			toml:     "[harness.bad]\nprompt = \"hello\"\nargs = [\"run\"]\n",
+			wantLine: 1,
+			wantSub:  `"prompt" and "args" are mutually exclusive`,
+		},
+		{
+			name:     "neither cmd nor prompt mentions both options",
+			toml:     "# header\n\n[harness.empty]\ndescription = \"no cmd or prompt\"\n",
+			wantLine: 3,
+			wantSub:  `missing required key "cmd" (or set "prompt"`,
+		},
+		{
+			name:     "whitespace-only prompt names the blank prompt",
+			toml:     "[harness.blank]\nprompt = \"   \"\n",
+			wantLine: 1,
+			wantSub:  `"prompt" must not be blank`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.toml), "test.toml")
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			var ce *Error
+			if !errors.As(err, &ce) {
+				t.Fatalf("error is %T, want *config.Error: %v", err, err)
+			}
+			if ce.LineNumber() != tt.wantLine {
+				t.Errorf("line = %d, want %d (err: %v)", ce.LineNumber(), tt.wantLine, ce)
+			}
+			if !strings.Contains(ce.Msg, tt.wantSub) {
+				t.Errorf("message %q does not contain %q", ce.Msg, tt.wantSub)
+			}
+		})
+	}
+}

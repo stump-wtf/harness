@@ -99,14 +99,19 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 	}
 	restart := core.RestartPolicy(ph.Restart)
 	if ph.Restart == "" {
-		// Absent on the wire (or an older client) = the always-restart
-		// default, matching the config parsers' normalization.
+		// Absent on the wire (or an older client) = the config parsers'
+		// default: always-restart, except a prompt one-shot, which must not
+		// respawn after a successful run.
 		restart = core.RestartAlways
+		if ph.Prompt != "" {
+			restart = core.RestartNo
+		}
 	}
 	return core.Harness{
 		Name:         ph.Name,
 		Cmd:          ph.Cmd,
 		Args:         ph.Args,
+		Prompt:       ph.Prompt,
 		Workdir:      ph.Workdir,
 		EnvFile:      ph.EnvFile,
 		RestartDelay: time.Duration(ph.RestartDelayMs) * time.Millisecond,

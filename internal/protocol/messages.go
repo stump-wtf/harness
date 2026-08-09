@@ -19,7 +19,9 @@ const (
 	ProtoMajor = 1
 	// ProtoMinor 1 added the project compose ops (project_up/project_down,
 	// SPEC-0004) — additive only.
-	ProtoMinor = 1
+	// ProtoMinor 2 added the prompt field on ProjectHarness and HarnessInfo
+	// (agent one-shot harnesses, ADR-0011) — additive only.
+	ProtoMinor = 2
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -95,12 +97,16 @@ type ControlReq struct {
 // namespaces it to <project>/<name> at registration (SPEC-0004 REQ "Project
 // Naming And Namespacing"). Governing: ADR-0009 (project-scoped compose).
 type ProjectHarness struct {
-	Name           string   `json:"name"`
-	Cmd            string   `json:"cmd"`
-	Args           []string `json:"args,omitempty"`
-	Workdir        string   `json:"workdir,omitempty"`
-	EnvFile        string   `json:"env_file,omitempty"`
-	RestartDelayMs int64    `json:"restart_delay_ms,omitempty"`
+	Name string   `json:"name"`
+	Cmd  string   `json:"cmd"`
+	Args []string `json:"args,omitempty"`
+	// Prompt mirrors the schema's agent one-shot `prompt`: exactly one of
+	// cmd/prompt is set, and a prompt harness carries empty cmd/args — the
+	// daemon synthesizes its argv at spawn time (ADR-0011).
+	Prompt         string `json:"prompt,omitempty"`
+	Workdir        string `json:"workdir,omitempty"`
+	EnvFile        string `json:"env_file,omitempty"`
+	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
 	// Restart mirrors the schema's `restart` policy (core.RestartPolicy);
 	// empty means the always-restart default, matching an omitted key.
 	Restart     string `json:"restart,omitempty"`
@@ -136,8 +142,12 @@ type HarnessInfo struct {
 	ConfigChanged bool   `json:"config_changed,omitempty"`
 	PID           int    `json:"pid,omitempty"`
 	Cmd           string `json:"cmd,omitempty"`
-	Backend       string `json:"backend,omitempty"`
-	Description   string `json:"description,omitempty"`
+	// Prompt is the agent one-shot instruction for a prompt harness (Cmd is
+	// then empty; the argv is synthesized at spawn, ADR-0011). Clients show it
+	// where they would show cmd.
+	Prompt      string `json:"prompt,omitempty"`
+	Backend     string `json:"backend,omitempty"`
+	Description string `json:"description,omitempty"`
 	// Project is the harness's provenance: the owning project's name for a
 	// project-registered harness (its Name is then "<project>/<local>"), empty
 	// for a global-config harness. Lets `down`/`ps` scope correctly (SPEC-0004

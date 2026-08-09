@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/BurntSushi/toml"
 
@@ -251,72 +250,19 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 	}, nil
 }
 
-// addProjectHarness validates a raw harness table, resolves relative workdir
-// against the project root, and registers it on cfg.
+// addProjectHarness validates a raw harness table, resolves relative
+// workdir/env_file against the project root, and registers it on cfg. The
+// body is shared with the global parser (config.go registerHarness) so the
+// two schemas cannot drift — SPEC-0004 REQ "Project File Schema": identical
+// field meanings. Project semantics differ only in the two parameters: an
+// absent `enabled` key defaults to TRUE, because SPEC-0004 REQ "Bring Up"
+// requires the first `harness up` to register AND start each harness (the
+// spec's example project files carry no `enabled` key; an explicit
+// `enabled = false` is still honored, and the global config keeps its opt-in
+// default), and relative paths resolve against the project root (SPEC-0004).
 func addProjectHarness(cfg *core.Config, filename, name string, line int, rh rawHarness, projectRoot string) error {
-	if _, exists := cfg.Harnesses[name]; exists {
-		return newError(filename, line, "duplicate harness %q", name)
-	}
-	if strings.TrimSpace(rh.Cmd) == "" {
-		return newError(filename, line, "harness %q: missing required key \"cmd\"", name)
-	}
-
-	backend := core.Backend(rh.Backend)
-	if rh.Backend == "" {
-		backend = core.BackendNative
-	} else if !backend.Valid() {
-		return newError(filename, line,
-			"harness %q: invalid backend %q (want \"native\" or \"tmux\")", name, rh.Backend)
-	}
-
-	if rh.RestartDelay < 0 {
-		return newError(filename, line,
-			"harness %q: restart_delay must not be negative (got %d)", name, rh.RestartDelay)
-	}
-
-	restartPolicy := core.RestartPolicy(rh.Restart)
-	if !restartPolicy.Valid() {
-		return newError(filename, line,
-			"harness %q: invalid restart policy %q (want \"no\", \"always\", \"unless-stopped\", or \"on-failure\")",
-			name, rh.Restart)
-	}
-	if restartPolicy == "" {
-		restartPolicy = core.RestartAlways // omitted key = the documented default
-	}
-
-	// Project semantics differ from the global config here: an absent
-	// `enabled` key defaults to TRUE, because SPEC-0004 REQ "Bring Up"
-	// requires the first `harness up` to register AND start each harness (the
-	// spec's example project files carry no `enabled` key). An explicit
-	// `enabled = false` is still honored (register without starting). The
-	// global config keeps its opt-in default (config.go addHarness).
-	enabled := true
-	if rh.Enabled != nil {
-		enabled = *rh.Enabled
-	}
-
-	// Resolve relative workdir against the project root (SPEC-0004).
-	workdir := rh.Workdir
-	if workdir != "" && !filepath.IsAbs(workdir) && !strings.HasPrefix(workdir, "~") {
-		workdir = filepath.Join(projectRoot, workdir)
-	}
-
-	h := core.Harness{
-		Name:         name,
-		Cmd:          rh.Cmd,
-		Args:         rh.Args,
-		Workdir:      workdir,
-		EnvFile:      resolvePath(rh.EnvFile, projectRoot),
-		RestartDelay: time.Duration(rh.RestartDelay) * time.Second,
-		Restart:      restartPolicy,
-		Backend:      backend,
-		Description:  rh.Description,
-		Enabled:      enabled,
-		TmuxSocket:   rh.TmuxSocket,
-	}
-	cfg.Harnesses[name] = h
-	cfg.HarnessOrder = append(cfg.HarnessOrder, name)
-	return nil
+	return registerHarness(cfg, filename, name, line, rh, true,
+		func(p string) string { return resolvePath(p, projectRoot) })
 }
 
 // resolvePath resolves a path that may be relative (against base), may start

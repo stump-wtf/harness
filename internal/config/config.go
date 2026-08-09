@@ -25,6 +25,7 @@ import (
 type rawHarness struct {
 	Cmd          string   `toml:"cmd"`
 	Args         []string `toml:"args"`
+	Prompt       string   `toml:"prompt"`
 	Workdir      string   `toml:"workdir"`
 	EnvFile      string   `toml:"env_file"`
 	RestartDelay int      `toml:"restart_delay"`
@@ -224,9 +225,6 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 
 // addHarness validates a raw harness table and registers it on cfg.
 func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness) error {
-	if _, exists := cfg.Harnesses[name]; exists {
-		return newError(filename, line, "duplicate harness %q", name)
-	}
 	// "/" is reserved for the `<project>/<harness>` namespace: a (TOML-quoted)
 	// global name containing it could shadow or clobber a registered project
 	// harness. Governing: ADR-0009, SPEC-0004 REQ "Project Naming And
@@ -235,8 +233,39 @@ func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness
 		return newError(filename, line,
 			"harness %q: name must not contain \"/\" (reserved for project namespacing)", name)
 	}
-	if strings.TrimSpace(rh.Cmd) == "" {
-		return newError(filename, line, "harness %q: missing required key \"cmd\"", name)
+	// Global semantics: `enabled` defaults to false (autostart is opt-in) and
+	// workdir/env_file are stored verbatim.
+	return registerHarness(cfg, filename, name, line, rh, false, nil)
+}
+
+// registerHarness is the shared validate/normalize/register body behind the
+// global config's addHarness and the project file's addProjectHarness —
+// SPEC-0004 REQ "Project File Schema" requires identical field meanings, and
+// one body is how the two parsers cannot drift. The genuine deltas arrive as
+// parameters: defaultEnabled (global autostart is opt-in, project bring-up is
+// opt-out) and resolve, applied to workdir/env_file (project files resolve
+// relative paths against the project root; nil stores them verbatim).
+func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHarness, defaultEnabled bool, resolve func(string) string) error {
+	if _, exists := cfg.Harnesses[name]; exists {
+		return newError(filename, line, "duplicate harness %q", name)
+	}
+
+	// Exactly one of cmd/prompt defines what runs. A prompt harness stores
+	// only the prompt: its argv is synthesized at spawn time by the supervisor
+	// (core.AgentCommand, ADR-0011), never desugared here — the file stays the
+	// source of truth (ADR-0006).
+	cmd := strings.TrimSpace(rh.Cmd)
+	prompt := strings.TrimSpace(rh.Prompt)
+	switch {
+	case rh.Prompt != "" && prompt == "":
+		return newError(filename, line, "harness %q: \"prompt\" must not be blank", name)
+	case cmd == "" && prompt == "":
+		return newError(filename, line, "harness %q: missing required key \"cmd\" (or set \"prompt\" for agent one-shot mode)", name)
+	case cmd != "" && prompt != "":
+		return newError(filename, line, "harness %q: \"prompt\" and \"cmd\" are mutually exclusive", name)
+	case prompt != "" && len(rh.Args) > 0:
+		return newError(filename, line,
+			"harness %q: \"prompt\" and \"args\" are mutually exclusive (args configure a cmd; the agent argv is synthesized at spawn)", name)
 	}
 
 	backend := core.Backend(rh.Backend)
@@ -261,27 +290,42 @@ func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness
 	if restartPolicy == "" {
 		// Omitted key = the documented default. Normalizing here keeps one
 		// canonical in-memory spelling, so an explicit `restart = "always"`
-		// compares equal to the default everywhere downstream.
+		// compares equal to the default everywhere downstream. Prompt
+		// harnesses default to "no" instead: a one-shot agent run exiting 0
+		// must not respawn (an explicit `restart = ...` still wins).
 		restartPolicy = core.RestartAlways
+		if prompt != "" {
+			restartPolicy = core.RestartNo
+		}
 	}
 
-	enabled := false
+	enabled := defaultEnabled
 	if rh.Enabled != nil {
 		enabled = *rh.Enabled
+	}
+
+	if resolve == nil {
+		resolve = func(p string) string { return p }
 	}
 
 	h := core.Harness{
 		Name:         name,
 		Cmd:          rh.Cmd,
 		Args:         rh.Args,
-		Workdir:      rh.Workdir,
-		EnvFile:      rh.EnvFile,
+		Prompt:       prompt,
+		Workdir:      resolve(rh.Workdir),
+		EnvFile:      resolve(rh.EnvFile),
 		RestartDelay: time.Duration(rh.RestartDelay) * time.Second,
 		Restart:      restartPolicy,
 		Backend:      backend,
 		Description:  rh.Description,
 		Enabled:      enabled,
 		TmuxSocket:   rh.TmuxSocket,
+	}
+	if prompt != "" {
+		// Cmd/Args stay EMPTY for a prompt harness (spawn-time synthesis,
+		// ADR-0011) — also defensively squashing a whitespace-only cmd.
+		h.Cmd, h.Args = "", nil
 	}
 	cfg.Harnesses[name] = h
 	cfg.HarnessOrder = append(cfg.HarnessOrder, name)

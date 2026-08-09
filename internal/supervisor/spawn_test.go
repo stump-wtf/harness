@@ -6,8 +6,11 @@ package supervisor
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )
 
 func TestParseEnvFile(t *testing.T) {
@@ -72,6 +75,35 @@ func TestExpandArgsWorkdir(t *testing.T) {
 	}
 	if expandArgs(nil, "/x") != nil {
 		t.Error("nil args should expand to nil")
+	}
+}
+
+// TestExecArgvPromptSynthesis pins the ADR-0011 spawn-time synthesis: a
+// prompt harness (empty Cmd) execs core.AgentCommand's argv with the whole
+// multi-word prompt as ONE argv element, and the prompt text is exempt from
+// the {workdir} placeholder expansion configured args go through.
+func TestExecArgvPromptSynthesis(t *testing.T) {
+	h := core.Harness{Name: "agent", Prompt: "check the deployments in {workdir} please"}
+	name, args := execArgv(h, "/home/x")
+	if name != "crush" {
+		t.Errorf("cmd = %q, want crush", name)
+	}
+	want := []string{"run", "--quiet", "check the deployments in {workdir} please"}
+	if !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (prompt must stay one argv element, unexpanded)", args, want)
+	}
+}
+
+// TestExecArgvCmdUnchanged: a cmd harness keeps its configured argv, with
+// {workdir} expansion — synthesis only engages when Cmd is empty.
+func TestExecArgvCmdUnchanged(t *testing.T) {
+	h := core.Harness{Name: "svc", Cmd: "run", Args: []string{"--dir", "{workdir}"}}
+	name, args := execArgv(h, "/home/x")
+	if name != "run" {
+		t.Errorf("cmd = %q, want run", name)
+	}
+	if want := []string{"--dir", "/home/x"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q", args, want)
 	}
 }
 

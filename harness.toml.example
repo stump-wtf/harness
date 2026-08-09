@@ -29,6 +29,17 @@ workdir = "~/src/my-project"
 description = "long-running agent in ~/src/my-project"
 enabled = false
 
+# An agent one-shot: give the harness a prompt instead of a cmd and the
+# daemon synthesizes the agent invocation at spawn time (currently
+# `crush run --quiet <prompt>`). `prompt` is mutually exclusive with
+# `cmd`/`args`. One-shots default to restart = "no" — a completed run must
+# not respawn; set restart explicitly to opt back into supervision.
+[harness.deploy-check]
+prompt = "check the deployments and report anything unhealthy"
+workdir = "~/src/my-project"
+description = "one-shot agent run"
+enabled = false
+
 # A crash-looping example. The full restart_delay is seconds; the supervisor
 # honours it once a harness exits while still enabled.
 #

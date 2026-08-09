@@ -752,6 +752,34 @@ func TestWireHarnessesCarriesEnabledAndOrder(t *testing.T) {
 	}
 }
 
+// TestWireHarnessesCarriesPrompt: a prompt harness crosses the wire as
+// prompt-only — Prompt carried, Cmd/Args empty (the daemon synthesizes the
+// argv at spawn, ADR-0011) — and its parse-normalized restart="no" one-shot
+// default travels explicitly so the daemon never re-defaults it to always.
+func TestWireHarnessesCarriesPrompt(t *testing.T) {
+	dir := writeProjectDir(t, `[harness.oneshot]
+prompt = "summarize the day"
+enabled = false
+`)
+	proj, err := config.LoadProject(filepath.Join(dir, "harness.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := wireHarnesses(proj)
+	if len(wire) != 1 {
+		t.Fatalf("wireHarnesses len = %d, want 1", len(wire))
+	}
+	if wire[0].Prompt != "summarize the day" {
+		t.Errorf("Prompt = %q, want it carried onto the wire", wire[0].Prompt)
+	}
+	if wire[0].Cmd != "" || len(wire[0].Args) != 0 {
+		t.Errorf("Cmd/Args = %q/%v, want empty (spawn-time synthesis)", wire[0].Cmd, wire[0].Args)
+	}
+	if wire[0].Restart != "no" {
+		t.Errorf("Restart = %q, want %q (one-shot default made explicit by parse)", wire[0].Restart, "no")
+	}
+}
+
 // TestFilterProjectHarnesses filters on provenance, not name prefix.
 func TestFilterProjectHarnesses(t *testing.T) {
 	t.Parallel()

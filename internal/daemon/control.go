@@ -84,6 +84,7 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 	h, project, ok := c.srv.mgr.HarnessRecord(snap.Name)
 	if ok {
 		info.Cmd = h.Cmd
+		info.Prompt = h.Prompt
 		info.Backend = string(h.Backend)
 		info.Description = h.Description
 	}
