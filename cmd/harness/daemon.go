@@ -132,7 +132,10 @@ func runDaemon(args []string) {
 	signalDetached('o') // tell the waiting parent we're up
 
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
-	// tear down connections, stop harnesses, flush state.
+	// tear down connections, stop harnesses, flush state. SIGHUP triggers a
+	// graceful config reload (hot-reload harness.toml without stopping running
+	// processes), matching systemd's ExecReload contract so `systemctl reload`
+	// never kills the daemon or its children.
 	go srv.Serve()
 
 	// Optional remote access (ADR-0004/0008): the Wish SSH server hosts the same
@@ -142,8 +145,20 @@ func runDaemon(args []string) {
 	remoteSrv := startRemote(cfg.Server, *sshEnable, *sshListen, srv.SocketPath(), *configPath)
 
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	for {
+		s := <-sig
+		if s == syscall.SIGHUP {
+			log.Info("received SIGHUP, reloading config")
+			if err := mgr.ReloadFromFile(*configPath); err != nil {
+				log.Warn("config reload failed", "err", err)
+			} else {
+				log.Info("config reloaded")
+			}
+			continue
+		}
+		break
+	}
 
 	log.Info("shutting down")
 	if remoteSrv != nil {
