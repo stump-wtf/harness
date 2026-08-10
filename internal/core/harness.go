@@ -273,6 +273,25 @@ type Config struct {
 	ProfileOrder []string
 	// Server is the optional [server] remote-access configuration (ADR-0004).
 	Server ServerConfig
+	// Daemon is the optional [daemon] configuration (issue #98).
+	Daemon DaemonConfig
+}
+
+// DaemonConfig carries optional daemon-level settings ([daemon] table).
+type DaemonConfig struct {
+	// WatchConfig controls whether the daemon watches harness.toml and
+	// per-harness env files for changes and auto-reloads (issue #98). Default
+	// is true (watching on); set watch_config = false to opt out.
+	WatchConfig *bool
+}
+
+// WatchConfigEnabled reports whether config watching is enabled, defaulting
+// to true when the key is absent.
+func (d DaemonConfig) WatchConfigEnabled() bool {
+	if d.WatchConfig == nil {
+		return true
+	}
+	return *d.WatchConfig
 }
 
 // OrderedHarnesses returns the harnesses in file order.

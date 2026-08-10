@@ -7,6 +7,14 @@
 # Default location: $XDG_CONFIG_HOME/harness/harness.toml
 # (falls back to ~/.config/harness/harness.toml).
 
+# Optional daemon-level settings (issue #98).
+#
+# [daemon]
+# # watch_config controls whether the daemon watches this file for changes
+# # and auto-reloads. Default is true (on). Set to false to require an
+# # explicit `harness reload` or SIGHUP after config changes.
+# watch_config = true
+
 # Each harness is one supervised process. The new-style [harness.<name>]
 # form is preferred; a bare [name] table is supported for backward
 # compatibility (ADR-0006).
