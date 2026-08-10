@@ -1,6 +1,6 @@
 module gitea.stump.rocks/stump.wtf/harness
 
-go 1.23.0
+go 1.24.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -14,7 +14,7 @@ require (
 	github.com/charmbracelet/ssh v0.0.0-20250128164007-98fd5ae11894
 	github.com/charmbracelet/wish v1.4.7
 	github.com/charmbracelet/x/ansi v0.8.0
-	github.com/charmbracelet/x/term v0.2.1
+	github.com/charmbracelet/x/term v0.2.2
 	github.com/charmbracelet/x/vt v0.0.0-20250303101426-b1f1ddc4d49e
 	github.com/charmbracelet/x/xpty v0.1.2
 	github.com/fsnotify/fsnotify v1.10.1
@@ -51,6 +51,6 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/sys v0.36.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 )
