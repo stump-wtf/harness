@@ -117,6 +117,10 @@ func (a *attachState) enterScrollback(lines []string, height int) {
 	a.substate = substateScrollback
 	a.scroll = newScrollback(inertLines(lines), height)
 	a.searchOn = false
+	// A wheel-up can enter scrollback while the Ctrl-b prefix is armed (mouse
+	// events don't pass through onAttachedKey); disarm it so the first key
+	// typed after exiting scrollback isn't swallowed as a chord.
+	a.prefixArmed = false
 }
 
 // exitScrollback returns to the live view (q/Esc).

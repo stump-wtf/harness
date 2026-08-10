@@ -139,6 +139,16 @@ type Model struct {
 	search      textinput.Model
 	searchQuery string
 
+	// mouseReleased is set when shift+mouse released the TUI's mouse grab for
+	// native terminal text selection (#49). It lives on the Model — not on
+	// attachState — because the released state is a property of the user's
+	// terminal, which outlives any single attach session (hop and detach
+	// rebuild/drop attachState while the terminal stays mouse-off). Any key
+	// press, in any mode, substate, or overlay, re-enables mouse cell motion
+	// (onKey); no mouse event can re-enable it, because none arrive while
+	// reporting is off.
+	mouseReleased bool
+
 	// modes / overlays
 	mode    mode
 	overlay overlay

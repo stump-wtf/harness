@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -522,5 +523,169 @@ func TestPrefixChordHelp(t *testing.T) {
 	// The ? that opened help must not have leaked to the PTY.
 	if len(fa.inputs) != 1 {
 		t.Fatalf("prefixed ? must not be forwarded to the PTY, inputs=%v", fa.inputs)
+	}
+}
+
+// collectMsgs runs a tea.Cmd and returns every message it produces, flattening
+// tea.Batch sub-commands (drain discards them; these tests need the contents).
+func collectMsgs(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out []tea.Msg
+		for _, c := range batch {
+			out = append(out, collectMsgs(c)...)
+		}
+		return out
+	}
+	if msg == nil {
+		return nil
+	}
+	return []tea.Msg{msg}
+}
+
+// containsMsgLike reports whether msgs contains a message of the same type as
+// want (bubbletea's screen-control msg types are unexported, so compare types
+// via a reference command's output).
+func containsMsgLike(msgs []tea.Msg, want tea.Msg) bool {
+	for _, m := range msgs {
+		if fmt.Sprintf("%T", m) == fmt.Sprintf("%T", want) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestShiftMouseReleasesMouseGrab verifies shift+click in attached interactive
+// mode releases the TUI's mouse grab for native terminal text selection (#49):
+// tea.DisableMouse is actually emitted (not just bookkept), queued shift events
+// from the same gesture don't re-issue it, and the next key press re-enables
+// mouse cell motion while still forwarding the key to the PTY.
+func TestShiftMouseReleasesMouseGrab(t *testing.T) {
+	fx := newModelAttached(&fakeController{harnesses: sampleHarnesses()}, protocol.AttachRW)
+	m, fa := fx.m, fx.fa
+
+	// Shift+click releases the grab and emits tea.DisableMouse.
+	shiftClick := tea.MouseMsg{Type: tea.MouseLeft, Shift: true}
+	_, cmd := m.onMouse(shiftClick)
+	if !m.mouseReleased {
+		t.Fatal("shift+click should set mouseReleased=true")
+	}
+	if !containsMsgLike(collectMsgs(cmd), tea.DisableMouse()) {
+		t.Fatal("shift+click must emit tea.DisableMouse")
+	}
+
+	// A queued shift event from the same gesture must not re-issue the
+	// disable (the terminal keeps reporting until the escape lands).
+	_, cmd = m.onMouse(shiftClick)
+	if cmd != nil {
+		t.Fatal("shift+mouse while already released should be swallowed, not re-disable")
+	}
+
+	// The next key press re-enables mouse cell motion AND still reaches the
+	// PTY — the re-enable must not eat the keystroke.
+	_, cmd = m.onKey(runeKey("a"))
+	if m.mouseReleased {
+		t.Fatal("key press after shift-mouse should clear mouseReleased")
+	}
+	if !containsMsgLike(collectMsgs(cmd), tea.EnableMouseCellMotion()) {
+		t.Fatal("key press after shift-mouse must emit tea.EnableMouseCellMotion")
+	}
+	if len(fa.inputs) != 1 || string(fa.inputs[0]) != "a" {
+		t.Fatalf("the re-enabling key must still be forwarded to the PTY, inputs=%v", fa.inputs)
+	}
+}
+
+// TestShiftMouseReenableCoversScrollback verifies the re-enable is
+// router-level (#49): a key pressed while the model sits in the scrollback
+// substate — reachable via a queued non-shift wheel event after the release —
+// still restores the mouse grab rather than being swallowed by the substate's
+// early return.
+func TestShiftMouseReenableCoversScrollback(t *testing.T) {
+	fx := newModelAttached(&fakeController{harnesses: sampleHarnesses()}, protocol.AttachRW)
+	m := fx.m
+
+	_, _ = m.onMouse(tea.MouseMsg{Type: tea.MouseLeft, Shift: true})
+	// A buffered non-shift wheel event arrives before the disable lands and
+	// enters scrollback with the flag still set.
+	_, _ = m.onMouse(tea.MouseMsg{Type: tea.MouseWheelUp})
+	if m.att.substate != substateScrollback {
+		t.Fatal("wheel-up should enter scrollback")
+	}
+	// Any scrollback key must still re-enable the mouse.
+	_, cmd := m.onKey(runeKey("j"))
+	if m.mouseReleased {
+		t.Fatal("scrollback key press should clear mouseReleased")
+	}
+	if !containsMsgLike(collectMsgs(cmd), tea.EnableMouseCellMotion()) {
+		t.Fatal("scrollback key press must emit tea.EnableMouseCellMotion")
+	}
+}
+
+// TestNonShiftMouseDoesNotReleaseGrab verifies regular (non-shift) mouse events
+// keep the grab and their original behavior: a plain click emits nothing, and a
+// plain wheel-up still enters scrollback.
+func TestNonShiftMouseDoesNotReleaseGrab(t *testing.T) {
+	fx := newModelAttached(&fakeController{harnesses: sampleHarnesses()}, protocol.AttachRW)
+	m := fx.m
+
+	_, cmd := m.onMouse(tea.MouseMsg{Type: tea.MouseLeft})
+	if m.mouseReleased {
+		t.Fatal("non-shift click should not set mouseReleased")
+	}
+	if containsMsgLike(collectMsgs(cmd), tea.DisableMouse()) {
+		t.Fatal("non-shift click must not emit tea.DisableMouse")
+	}
+
+	_, _ = m.onMouse(tea.MouseMsg{Type: tea.MouseWheelUp})
+	if m.att.substate != substateScrollback {
+		t.Fatal("non-shift wheel-up should still enter scrollback")
+	}
+}
+
+// TestShiftWheelKeepsScrollback verifies shift+wheel is exempt from the
+// passthrough: it must keep entering scrollback (its pre-#49 behavior) rather
+// than silently killing the wheel — terminals set the shift bit on wheel
+// events too, and releasing the grab there buys nothing (alt screen has no
+// native scrollback to hand the wheel to).
+func TestShiftWheelKeepsScrollback(t *testing.T) {
+	fx := newModelAttached(&fakeController{harnesses: sampleHarnesses()}, protocol.AttachRW)
+	m := fx.m
+
+	_, cmd := m.onMouse(tea.MouseMsg{Type: tea.MouseWheelUp, Shift: true})
+	if m.mouseReleased {
+		t.Fatal("shift+wheel must not release the mouse grab")
+	}
+	if containsMsgLike(collectMsgs(cmd), tea.DisableMouse()) {
+		t.Fatal("shift+wheel must not emit tea.DisableMouse")
+	}
+	if m.att.substate != substateScrollback {
+		t.Fatal("shift+wheel-up should enter scrollback like a plain wheel-up")
+	}
+}
+
+// TestWheelScrollbackDisarmsPrefix verifies an armed Ctrl-b prefix does not
+// survive a wheel-up into scrollback: the first key typed after exiting
+// scrollback must reach the PTY, not be intercepted as a prefix chord (which
+// would fire detach/start/restart on a plain keystroke).
+func TestWheelScrollbackDisarmsPrefix(t *testing.T) {
+	fx := newModelAttached(&fakeController{harnesses: sampleHarnesses()}, protocol.AttachRW)
+	m, fa := fx.m, fx.fa
+
+	_, _ = m.onKey(specialKey(tea.KeyCtrlB)) // arm the prefix
+	_, _ = m.onMouse(tea.MouseMsg{Type: tea.MouseWheelUp})
+	if m.att.substate != substateScrollback {
+		t.Fatal("wheel-up should enter scrollback")
+	}
+	if m.att.prefixArmed {
+		t.Fatal("entering scrollback must disarm the prefix")
+	}
+	_, _ = m.onKey(runeKey("q")) // exit scrollback
+	_, cmd := m.onKey(runeKey("d"))
+	drain(cmd)
+	if len(fa.inputs) != 1 || string(fa.inputs[0]) != "d" {
+		t.Fatalf("d after scrollback must be forwarded to the PTY, not dispatched as a chord, inputs=%v", fa.inputs)
 	}
 }
