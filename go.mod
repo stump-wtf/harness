@@ -17,6 +17,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.1
 	github.com/charmbracelet/x/vt v0.0.0-20250303101426-b1f1ddc4d49e
 	github.com/charmbracelet/x/xpty v0.1.2
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/muesli/termenv v0.16.0
 	golang.org/x/crypto v0.36.0
 	golang.org/x/term v0.30.0

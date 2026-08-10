@@ -137,6 +137,22 @@ func runDaemon(args []string) {
 	)
 	signalDetached('o') // tell the waiting parent we're up
 
+	// Issue #98: watch the config directory for changes and auto-reload.
+	// Chezmoi (and czu on its timer) rewrite harness.toml via temp file +
+	// rename, so the watcher monitors the directory, not the inode. The
+	// opt-out is [daemon] watch_config = false.
+	var cfgWatcher *supervisor.ConfigWatcher
+	if cfg.Daemon.WatchConfigEnabled() {
+		cw, err := supervisor.NewConfigWatcher(mgr, *configPath)
+		if err != nil {
+			log.Warn("config watcher disabled (could not start)", "err", err)
+		} else {
+			cw.Start()
+			cfgWatcher = cw
+			log.Info("watching config for changes", "config", *configPath)
+		}
+	}
+
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
 	// tear down connections, stop harnesses, flush state. SIGHUP triggers a
 	// graceful config reload (hot-reload harness.toml without stopping running
@@ -167,6 +183,9 @@ func runDaemon(args []string) {
 	}
 
 	log.Info("shutting down")
+	if cfgWatcher != nil {
+		cfgWatcher.Close()
+	}
 	if remoteSrv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = remoteSrv.Shutdown(ctx)

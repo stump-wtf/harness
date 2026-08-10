@@ -48,6 +48,11 @@ type rawProfile struct {
 	Autostart   bool     `toml:"autostart"`
 }
 
+// rawDaemon mirrors the [daemon] table before validation.
+type rawDaemon struct {
+	WatchConfig *bool `toml:"watch_config"`
+}
+
 // rawServer mirrors the [server] table before validation (ADR-0004/0008 remote
 // access). authorized_keys accepts either bare key lines or [[server.key]]
 // sub-tables carrying a per-key read_only flag; both are merged.
@@ -143,7 +148,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 		line    int
 	}
 	var pending []pendingProfile
-	var serverSeen bool
+	var serverSeen, daemonSeen bool
 
 	for _, h := range headers {
 		switch {
@@ -151,6 +156,18 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 			continue // the namespace parent header itself
 		case len(h.parts) == 1 && h.parts[0] == "profile":
 			continue
+
+		case len(h.parts) == 1 && h.parts[0] == "daemon":
+			// The optional daemon-level config (issue #98: watch_config).
+			if daemonSeen {
+				return nil, newError(filename, h.line, "duplicate [daemon] table")
+			}
+			daemonSeen = true
+			var rd rawDaemon
+			if err := md.PrimitiveDecode(top["daemon"], &rd); err != nil {
+				return nil, newError(filename, h.line, "[daemon]: %v", err)
+			}
+			cfg.Daemon = core.DaemonConfig{WatchConfig: rd.WatchConfig}
 
 		case len(h.parts) == 1 && h.parts[0] == "server":
 			// The optional remote-access front door (ADR-0004/0008).
