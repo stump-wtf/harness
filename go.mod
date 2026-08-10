@@ -1,6 +1,6 @@
 module gitea.stump.rocks/stump.wtf/harness
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -16,7 +16,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.8.0
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/charmbracelet/x/vt v0.0.0-20250303101426-b1f1ddc4d49e
-	github.com/charmbracelet/x/xpty v0.1.2
+	github.com/charmbracelet/x/xpty v0.1.4
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/muesli/termenv v0.16.0
 	golang.org/x/crypto v0.36.0
@@ -30,7 +30,7 @@ require (
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
 	github.com/charmbracelet/keygen v0.5.3 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.13-0.20250311204145-2c3ea96c31dd // indirect
-	github.com/charmbracelet/x/conpty v0.1.0 // indirect
+	github.com/charmbracelet/x/conpty v0.2.0 // indirect
 	github.com/charmbracelet/x/errors v0.0.0-20240508181413-e8d8b6e2de86 // indirect
 	github.com/charmbracelet/x/exp/strings v0.0.0-20240722160745-212f7b056ed0 // indirect
 	github.com/charmbracelet/x/input v0.3.4 // indirect
@@ -51,6 +51,6 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56 // indirect
 	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 )
