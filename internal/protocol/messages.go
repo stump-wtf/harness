@@ -226,13 +226,14 @@ type ProjectDownData struct {
 
 // DaemonInfo is the daemon_info response payload.
 type DaemonInfo struct {
-	Version       string `json:"version"`
-	ProtoVersion  string `json:"proto_version"`
-	PID           int    `json:"pid"`
-	UptimeSeconds int64  `json:"uptime_seconds"`
-	Socket        string `json:"socket"`
-	Harnesses     int    `json:"harnesses"`
-	ActiveProfile string `json:"active_profile,omitempty"`
+	Version         string `json:"version"`
+	ProtoVersion    string `json:"proto_version"`
+	PID             int    `json:"pid"`
+	UptimeSeconds   int64  `json:"uptime_seconds"`
+	Socket          string `json:"socket"`
+	Harnesses       int    `json:"harnesses"`
+	ActiveProfile   string `json:"active_profile,omitempty"`
+	ProfileResolved *bool  `json:"profile_resolved,omitempty"` // #99: false when persisted profile is missing from config
 }
 
 // ---- Structured errors (SPEC-0002 REQ "Control Operations") --------------
