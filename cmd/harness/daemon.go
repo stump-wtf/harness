@@ -34,6 +34,7 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/daemon"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 	"gitea.stump.rocks/stump.wtf/harness/internal/remote"
+	"gitea.stump.rocks/stump.wtf/harness/internal/scheduler"
 	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
 )
 
@@ -126,6 +127,18 @@ func runDaemon(args []string) {
 	}
 	mgr.Autostart()
 
+	// Scheduled harnesses: cron-fired one-shot agent runs owned by the
+	// daemon (issue #66). At each firing the daemon starts the harness if
+	// it is not already running (overlapping firings are skipped).
+	sched := scheduler.New(func(name string) {
+		if snap, ok := mgr.Snapshot(name); ok && snap.State == core.StateRunning {
+			return // already running — skip this firing
+		}
+		mgr.Start(name)
+	})
+	sched.Apply(cfg)
+	sched.Start()
+
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
 		Registry:   reg,
@@ -160,6 +173,7 @@ func runDaemon(args []string) {
 		} else {
 			cw.Start()
 			cfgWatcher = cw
+			cw.OnReload(func() { sched.Apply(mgr.Config()) })
 			log.Info("watching config for changes", "config", *configPath)
 		}
 	}
@@ -186,6 +200,7 @@ func runDaemon(args []string) {
 			if err := mgr.ReloadFromFile(*configPath); err != nil {
 				log.Warn("config reload failed", "err", err)
 			} else {
+				sched.Apply(mgr.Config())
 				log.Info("config reloaded")
 			}
 			continue
@@ -197,6 +212,7 @@ func runDaemon(args []string) {
 	if cfgWatcher != nil {
 		cfgWatcher.Close()
 	}
+	sched.Close()
 	if remoteSrv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = remoteSrv.Shutdown(ctx)

@@ -63,6 +63,18 @@ workdir = "~/src/my-project"
 description = "one-shot agent run"
 enabled = false
 
+# A scheduled agent one-shot: the daemon fires it on a cron schedule. At each
+# firing the harness starts if it is not already running (overlapping firings
+# are skipped, not stacked). Requires `prompt`; is mutually exclusive with
+# `enabled = true`. The run exiting is terminal for that firing — restart
+# policy applies only to abnormal exit if configured.
+#
+# [harness.stumpcloud-sweep]
+# prompt = "check all StumpCloud services and report anything unhealthy"
+# auto_accept = true
+# schedule = "0 */6 * * *"   # every 6 hours
+# description = "scheduled sweep (every 6 hours)"
+
 # A crash-looping example. The full restart_delay is seconds; the supervisor
 # honours it once a harness exits while still enabled.
 #

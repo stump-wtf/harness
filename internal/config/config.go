@@ -39,6 +39,7 @@ type rawHarness struct {
 	Description  string   `toml:"description"`
 	Enabled      *bool    `toml:"enabled"`
 	TmuxSocket   string   `toml:"tmux_socket"`
+	Schedule     string   `toml:"schedule"`
 }
 
 // rawProfile mirrors a [profile.*] TOML table before validation.
@@ -408,6 +409,16 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		enabled = *rh.Enabled
 	}
 
+	schedule := strings.TrimSpace(rh.Schedule)
+	switch {
+	case schedule != "" && prompt == "":
+		return newError(filename, line,
+			"harness %q: \"schedule\" requires \"prompt\" (a scheduled harness is a one-shot agent run)", name)
+	case schedule != "" && enabled:
+		return newError(filename, line,
+			"harness %q: \"schedule\" and \"enabled = true\" are mutually exclusive (use one or the other)", name)
+	}
+
 	if resolve == nil {
 		resolve = func(p string) string { return p }
 	}
@@ -429,6 +440,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		Description:  rh.Description,
 		Enabled:      enabled,
 		TmuxSocket:   rh.TmuxSocket,
+		Schedule:     schedule,
 	}
 	if prompt != "" {
 		// Cmd/Args stay EMPTY for a prompt harness (spawn-time synthesis,

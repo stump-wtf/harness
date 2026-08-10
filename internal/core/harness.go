@@ -159,6 +159,14 @@ type Harness struct {
 	// TmuxSocket names the tmux socket; inert unless Backend == tmux (ADR-0006
 	// keeps it for backward compatibility).
 	TmuxSocket string
+	// Schedule is a cron expression that fires this harness on a cadence.
+	// At each firing the daemon starts the harness if it is not already
+	// running (an overlapping firing is skipped, not stacked). The run exiting
+	// is terminal for that firing; the restart policy applies only to abnormal
+	// exit if configured. Requires Prompt (a one-shot agent run is the use
+	// case) and is mutually exclusive with Enabled (autostart and schedule are
+	// distinct concerns). Governing: issue #66.
+	Schedule string
 }
 
 // AgentOpts carries the config-truth knobs a prompt harness folds into its
