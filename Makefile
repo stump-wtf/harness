@@ -13,6 +13,12 @@
 #   make VERSION=v0.1.0
 #   make BIN_DIR=/usr/local/bin install
 
+# Private module host: agent-trace lives on gitea.stump.rocks, not
+# proxy.golang.org, so go mod download needs GOPRIVATE in every environment
+# (local and CI). Exporting it here means CI's `make check` inherits it
+# without a workflow change (issue #87 / #94).
+export GOPRIVATE = gitea.stump.rocks/*
+
 GO        ?= go
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 BIN_DIR   ?= $(HOME)/.local/bin
