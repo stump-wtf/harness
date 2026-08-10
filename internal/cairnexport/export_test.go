@@ -398,3 +398,27 @@ func TestDurationMS(t *testing.T) {
 		t.Errorf("expected 0 for negative duration, got %d", got)
 	}
 }
+
+// classify.ActionOther is agent-trace's fallback for a tool it does not
+// recognise. It previously mapped to "write", which would state in a PUBLISHED
+// trace that an unknown (possibly read-only) tool modified the repo.
+func TestMapCategoryUnknownActionIsToolNotWrite(t *testing.T) {
+	sp := otel.Span{Attributes: map[string]string{
+		"agent.tool.action": classify.ActionOther,
+		"agent.tool.name":   "some-unrecognised-tool",
+	}}
+	if got := mapCategory(sp); got != "tool" {
+		t.Fatalf("unknown action must be reported as a generic tool span, got %q", got)
+	}
+}
+
+// A real edit still has to be a write — the fix above must not over-correct.
+func TestMapCategoryEditIsStillWrite(t *testing.T) {
+	sp := otel.Span{Attributes: map[string]string{
+		"agent.tool.action": classify.ActionEdit,
+		"agent.tool.name":   "Edit",
+	}}
+	if got := mapCategory(sp); got != "write" {
+		t.Fatalf("edit must remain a write, got %q", got)
+	}
+}

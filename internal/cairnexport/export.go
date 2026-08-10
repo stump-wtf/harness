@@ -74,14 +74,14 @@ func (e cairnError) Error() string { return string(e) }
 // spanRequest is the POST /v1/runs body shape for a single span. It mirrors
 // Cairn's internal/httpapi.spanRequest without importing the server package.
 type spanRequest struct {
-	SpanID       string          `json:"span_id"`
-	ParentSpanID string          `json:"parent_span_id,omitempty"`
-	Category     string          `json:"category"`
-	Name         string          `json:"name,omitempty"`
-	Tool         string          `json:"tool,omitempty"`
-	Args         json.RawMessage `json:"args,omitempty"`
-	StartOffsetMS int            `json:"start_offset_ms"`
-	DurationMS   int             `json:"duration_ms"`
+	SpanID        string          `json:"span_id"`
+	ParentSpanID  string          `json:"parent_span_id,omitempty"`
+	Category      string          `json:"category"`
+	Name          string          `json:"name,omitempty"`
+	Tool          string          `json:"tool,omitempty"`
+	Args          json.RawMessage `json:"args,omitempty"`
+	StartOffsetMS int             `json:"start_offset_ms"`
+	DurationMS    int             `json:"duration_ms"`
 }
 
 type runRequest struct {
@@ -141,12 +141,19 @@ func Export(ctx context.Context, trace otel.Trace, cfg ExportConfig) (*Result, e
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	// Bounded: this reads a response from a remote server into memory, and an
+	// unbounded ReadAll would let a misbehaving or hostile endpoint exhaust the
+	// daemon. 1 MiB is far more than a run-create response needs.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("cairnexport: read response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusCreated {
+	// 201 on create, 200 on update. This export is deliberately idempotent —
+	// otel.BuildTrace derives span IDs from the session key, so re-exporting the
+	// same trajectory is expected and Cairn updates in place. Accepting only 201
+	// would turn every successful re-export into an error.
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("cairnexport: Cairn returned %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -187,13 +194,13 @@ func buildRunRequest(trace otel.Trace, cfg ExportConfig) runRequest {
 
 	for _, sp := range trace.Spans {
 		sr := spanRequest{
-			SpanID:       sp.SpanID,
-			ParentSpanID: sp.ParentSpanID,
-			Category:     mapCategory(sp),
-			Name:         sp.Name,
-			Tool:         mapTool(sp),
+			SpanID:        sp.SpanID,
+			ParentSpanID:  sp.ParentSpanID,
+			Category:      mapCategory(sp),
+			Name:          sp.Name,
+			Tool:          mapTool(sp),
 			StartOffsetMS: offsetMS(sessionStart, sp.StartTime),
-			DurationMS:   durationMS(sp.StartTime, sp.EndTime),
+			DurationMS:    durationMS(sp.StartTime, sp.EndTime),
 		}
 		if args := mapArgs(sp); args != nil {
 			sr.Args = args
@@ -233,7 +240,7 @@ func mapCategory(sp otel.Span) string {
 	switch action {
 	case classify.ActionRead:
 		return "read"
-	case classify.ActionEdit, classify.ActionOther:
+	case classify.ActionEdit:
 		return "write"
 	case classify.ActionExec:
 		return "exec"
@@ -242,7 +249,11 @@ func mapCategory(sp otel.Span) string {
 	case classify.ActionVerify:
 		return "test"
 	default:
-		// A tool call with no recognized action is still a tool span.
+		// classify.ActionOther is the FALLBACK agent-trace assigns to a tool it
+		// does not recognise (classify/action.go), so it means "unknown", not
+		// "wrote something". Reporting it as a write would state, in a published
+		// trace, that an unrecognised read-only tool modified the repo. Unknown
+		// actions land here and are reported honestly as a generic tool span.
 		if _, hasTool := sp.Attributes["agent.tool.name"]; hasTool {
 			return "tool"
 		}
