@@ -8,8 +8,11 @@ package tui
 // ADR-0007 (scrollback), ADR-0008 (read-only attach).
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/harmonica"
+	"github.com/charmbracelet/x/ansi"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -113,14 +116,45 @@ func (a *attachState) animate() bool {
 // emulator, but this frozen view prints them straight at the user's terminal,
 // where they act rather than display. Doing it once at entry also means search
 // matches visible text rather than escape noise.
+//
+// The vtView's rendered output — a faithful reconstruction of the current
+// screen with colors and layout intact (#50) — is appended after the inert
+// historical lines so scrolling to the bottom shows the actual screen rather
+// than garbled cursor-addressed repaint traffic. The frame is derived here
+// from a.view (not passed in) so no entry point can forget it; it is rendered
+// without the painted guest cursor (a frozen view has no live cursor to
+// show), run through inertLines so the only-graphemes-and-SGR guarantee is
+// enforced structurally rather than inherited from render's implementation,
+// and stripped of trailing blank rows so a mostly-empty screen doesn't bury
+// the history under a page of padding. The historical lines above it still
+// include the raw bytes that painted the screen, so screen content appears
+// twice — once flattened, once faithful; that duplication is the price of
+// keeping the full history searchable until daemon-side snapshot scrollback
+// (ADR-0007) replaces this client-side interim.
 func (a *attachState) enterScrollback(lines []string, height int) {
 	a.substate = substateScrollback
-	a.scroll = newScrollback(inertLines(lines), height)
+	inert := inertLines(lines)
+	if a.view != nil {
+		frame := trimBlankTail(splitLines(a.view.renderNoCursor()))
+		inert = append(inert, inertLines(frame)...)
+	}
+	a.scroll = newScrollback(inert, height)
 	a.searchOn = false
 	// A wheel-up can enter scrollback while the Ctrl-b prefix is armed (mouse
 	// events don't pass through onAttachedKey); disarm it so the first key
 	// typed after exiting scrollback isn't swallowed as a chord.
 	a.prefixArmed = false
+}
+
+// trimBlankTail drops trailing lines with no visible content (spaces and
+// zero-width escapes only), so an appended frame contributes exactly the rows
+// the guest has drawn.
+func trimBlankTail(lines []string) []string {
+	n := len(lines)
+	for n > 0 && strings.TrimSpace(ansi.Strip(lines[n-1])) == "" {
+		n--
+	}
+	return lines[:n]
 }
 
 // exitScrollback returns to the live view (q/Esc).

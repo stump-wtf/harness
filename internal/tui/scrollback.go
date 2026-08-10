@@ -6,23 +6,35 @@ package tui
 // navigate matches "without disturbing the live harness", so search operates on
 // a frozen copy of the scrollback lines held client-side.
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/charmbracelet/x/ansi"
+)
 
 // scrollback holds a frozen copy of the harness's scrollback lines plus the
 // viewport/search cursor. It is created when the user enters the substate and
 // never mutates the live terminal — navigating it cannot touch the harness.
 type scrollback struct {
 	lines   []string
-	top     int // index of the first visible line
-	height  int // visible rows
+	plain   []string // lines with escapes stripped and lowercased, for search
+	top     int      // index of the first visible line
+	height  int      // visible rows
 	term    string
 	matches []int // line indices matching term, ascending
 	matchAt int   // index into matches of the current match
 }
 
-// newScrollback freezes lines into a scrollback view of the given height.
+// newScrollback freezes lines into a scrollback view of the given height. A
+// stripped, lowercased shadow copy is built once here so search matches the
+// text the user can see — never escape bytes, and never split by SGR runs —
+// and so the per-keystroke live-preview path allocates nothing.
 func newScrollback(lines []string, height int) *scrollback {
-	sb := &scrollback{lines: lines, height: height}
+	plain := make([]string, len(lines))
+	for i, ln := range lines {
+		plain[i] = strings.ToLower(ansi.Strip(ln))
+	}
+	sb := &scrollback{lines: lines, plain: plain, height: height}
 	sb.top = sb.maxTop() // enter at the bottom (most recent), like tmux copy-mode
 	return sb
 }
@@ -53,13 +65,22 @@ func (s *scrollback) search(term string) {
 	if term == "" {
 		return
 	}
-	for i, ln := range s.lines {
-		if strings.Contains(strings.ToLower(ln), strings.ToLower(term)) {
+	low := strings.ToLower(term)
+	for i, ln := range s.plain {
+		if strings.Contains(ln, low) {
 			s.matches = append(s.matches, i)
 		}
 	}
-	// Position on the first match from the top of the frozen buffer.
+	// Position on the first match at or after the current top — search moves
+	// forward from where the user is looking, not back to the oldest copy —
+	// falling back to the first match overall.
 	s.matchAt = 0
+	for i, line := range s.matches {
+		if line >= s.top {
+			s.matchAt = i
+			break
+		}
+	}
 	if len(s.matches) > 0 {
 		s.revealMatch()
 	}

@@ -13,28 +13,37 @@ func lines(n int) []string {
 // TestScrollbackSearch is the SPEC-0001 scenario "Searching history": entering a
 // term in scrollback makes the matches navigable (n/N cycle, wrapping) over the
 // frozen buffer — without touching the live harness (the buffer is a copy).
+// Search starts from the first match at or after the current top (the buffer
+// enters at the bottom), not the oldest match in the buffer.
 func TestScrollbackSearch(t *testing.T) {
 	buf := []string{"boot ok", "error: disk full", "retrying", "error: timeout", "done"}
-	sb := newScrollback(buf, 3)
+	sb := newScrollback(buf, 3) // enters at bottom: top = 2
 
 	sb.search("error")
 	if len(sb.matches) != 2 {
 		t.Fatalf("matches = %d, want 2", len(sb.matches))
 	}
-	if sb.currentMatchLine() != 1 {
-		t.Fatalf("first match line = %d, want 1", sb.currentMatchLine())
-	}
-	sb.nextMatch()
 	if sb.currentMatchLine() != 3 {
-		t.Fatalf("second match line = %d, want 3", sb.currentMatchLine())
+		t.Fatalf("first match line = %d, want 3 (first at/after top=2)", sb.currentMatchLine())
 	}
-	sb.nextMatch() // wraps back to the first
+	sb.nextMatch() // wraps around to the earlier match
 	if sb.currentMatchLine() != 1 {
-		t.Fatalf("wrapped match line = %d, want 1", sb.currentMatchLine())
+		t.Fatalf("second match line = %d, want 1", sb.currentMatchLine())
 	}
-	sb.prevMatch() // wraps to the last
+	sb.nextMatch() // wraps back
 	if sb.currentMatchLine() != 3 {
-		t.Fatalf("prev-wrap match line = %d, want 3", sb.currentMatchLine())
+		t.Fatalf("wrapped match line = %d, want 3", sb.currentMatchLine())
+	}
+	sb.prevMatch()
+	if sb.currentMatchLine() != 1 {
+		t.Fatalf("prev-wrap match line = %d, want 1", sb.currentMatchLine())
+	}
+
+	// From the top of the buffer the earliest match comes first.
+	sb.toTop()
+	sb.search("error")
+	if sb.currentMatchLine() != 1 {
+		t.Fatalf("search from top: match line = %d, want 1", sb.currentMatchLine())
 	}
 }
 

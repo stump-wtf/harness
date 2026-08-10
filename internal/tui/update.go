@@ -31,6 +31,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.attach != nil {
 				_ = m.attach.AttachResize(m.att.sessionID, cols, rows)
 			}
+			if m.att.scroll != nil {
+				// Scrollback geometry was frozen at entry; rebind it to the
+				// new window or the old height renders more rows than the
+				// window has and the alt-screen scrolls.
+				m.att.scroll.height = m.scrollbackHeight()
+				m.att.scroll.scrollBy(0) // re-clamp top against the new maxTop
+			}
 		}
 		// Attach-only mode: if we deferred the auto-attach because the window
 		// size wasn't known yet (m.w was 0 when onRefresh ran), retry now that
@@ -72,7 +79,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onEvent(msg)
 
 	case attachDataMsg:
-		if m.att != nil && msg.sessionID == m.att.sessionID && m.att.substate == substateInteractive {
+		// Feed the emulator in every substate: scrollback reads from its
+		// frozen copy, so writing through costs it nothing — while dropping
+		// the bytes would leave the live view stale (and missing partial
+		// escape sequences) when the user exits scrollback.
+		if m.att != nil && msg.sessionID == m.att.sessionID {
 			m.att.view.write(msg.data)
 		}
 		return m, waitForFrame(m.events)

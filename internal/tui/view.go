@@ -355,7 +355,11 @@ func (m *Model) viewScrollback() string {
 		// fix addressed, arriving from the content side instead.
 		ln := ansi.Truncate(sb.lines[i], m.w, "")
 		if i == sb.currentMatchLine() {
-			ln = m.theme.Selected().Render(ln)
+			// Strip the line's own escapes before highlighting: embedded SGR
+			// runs (dense in appended frame lines) would otherwise interrupt
+			// the Selected style mid-line, leaving the current match patchy or
+			// invisible. A solid highlight beats preserved colors here.
+			ln = m.theme.Selected().Render(ansi.Strip(ln))
 		}
 		lines = append(lines, ln)
 	}
@@ -365,7 +369,10 @@ func (m *Model) viewScrollback() string {
 	} else if sb.term != "" {
 		status = m.theme.Faint().Render(fmt.Sprintf("/%s  %d matches (n/N)", sb.term, len(sb.matches)))
 	}
-	return strings.Join(lines, "\n") + "\n" + status
+	// The status row must obey the same width clamp as the content lines: a
+	// long search term (or match echo) would wrap onto a second physical row
+	// and scroll the alt-screen.
+	return strings.Join(lines, "\n") + "\n" + ansi.Truncate(status, m.w, "")
 }
 
 // --- overlays -------------------------------------------------------------

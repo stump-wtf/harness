@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -31,6 +32,14 @@ const rawPTYLog = "\x1b[?1049h\x1b[2J\x1b[H" +
 // scrollbackModel returns an attached model frozen in the scrollback substate
 // over the raw log above — the state a mouse wheel-up drops you into.
 func scrollbackModel(w, h int) *Model {
+	return scrollbackModelWithScreen(w, h, rawPTYLog, "")
+}
+
+// scrollbackModelWithScreen is scrollbackModel with the peek history and the
+// live screen contents both under test control: screen is written into the
+// vtView before entering scrollback, so the appended frame is the one the
+// real entry paths capture.
+func scrollbackModelWithScreen(w, h int, peekText, screen string) *Model {
 	fc := &fakeController{harnesses: sampleHarnesses(), profiles: sampleProfiles()}
 	m := New(Options{})
 	m.ctrl, m.attach = fc, &fakeAttach{}
@@ -42,7 +51,10 @@ func scrollbackModel(w, h int) *Model {
 	m.mode = modeAttached
 	cols, rows := m.attachViewport()
 	m.att = newAttachState(m.harnesses[0].Name, protocol.AttachRW, sessionBase, cols, rows)
-	m.peek = logsMsg{name: m.harnesses[0].Name, text: rawPTYLog}
+	m.peek = logsMsg{name: m.harnesses[0].Name, text: peekText}
+	if screen != "" {
+		m.att.view.write([]byte(screen))
+	}
 	m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
 	return m
 }
@@ -120,5 +132,94 @@ func TestDashboardPeekDoesNotEmitControlSequences(t *testing.T) {
 		if strings.Contains(frame, f.seq) {
 			t.Errorf("dashboard peek contains %s (%q)", f.name, f.seq)
 		}
+	}
+}
+
+// TestScrollbackIncludesCurrentFrame verifies that entering scrollback appends
+// the rendered current screen to the scrollback lines (#50). This is what
+// makes the bottom of scrollback show the faithful screen state rather than
+// garbled cursor-addressed repaint traffic.
+func TestScrollbackIncludesCurrentFrame(t *testing.T) {
+	m := scrollbackModelWithScreen(80, 24, "historical line\n", "\x1b[32mVISIBLE-SENTINEL\x1b[0m")
+	if !strings.Contains(strings.Join(m.att.scroll.lines, "\n"), "VISIBLE-SENTINEL") {
+		t.Fatal("scrollback missing current frame content (VISIBLE-SENTINEL)")
+	}
+	// And it must actually be visible in the rendered view, not just stored.
+	if !strings.Contains(m.viewAttached(), "VISIBLE-SENTINEL") {
+		t.Fatal("rendered scrollback view missing current frame content")
+	}
+}
+
+// TestScrollbackTrimsBlankFrameRows: the appended frame contributes only the
+// rows the guest has drawn — a mostly-empty screen must not bury the history
+// under a page of blank padding (nor open scrollback on an empty page).
+func TestScrollbackTrimsBlankFrameRows(t *testing.T) {
+	m := scrollbackModelWithScreen(80, 24, "historical line\n", "one line of output")
+	sb := m.att.scroll
+	if n := len(sb.lines); n != 2 {
+		t.Fatalf("scrollback has %d lines, want 2 (history + 1 drawn frame row)", n)
+	}
+	if !strings.Contains(m.viewAttached(), "historical line") {
+		t.Fatal("entry page hides the history behind blank frame padding")
+	}
+}
+
+// TestScrollbackSearchMatchesVisibleText: search must match what the user can
+// see on the appended frame — words split by SGR style runs are still found,
+// and escape bytes are never matched (#50 follow-up; enterScrollback's
+// documented guarantee).
+func TestScrollbackSearchMatchesVisibleText(t *testing.T) {
+	m := scrollbackModelWithScreen(80, 24, "historical line\n", "ER\x1b[31mROR\x1b[0m happened")
+	sb := m.att.scroll
+	sb.search("error")
+	if len(sb.matches) != 1 {
+		t.Fatalf("search(\"error\") over a style-split ERROR: %d matches, want 1", len(sb.matches))
+	}
+	sb.search("0m") // raw escape bytes must be unmatchable
+	if len(sb.matches) != 0 {
+		t.Fatalf("search(\"0m\") matched %d lines via escape bytes, want 0", len(sb.matches))
+	}
+}
+
+// TestScrollbackResizeReclamps: a window resize during scrollback must rebind
+// the frozen viewport geometry, or the old height renders more rows than the
+// window has and the alt-screen scrolls.
+func TestScrollbackResizeReclamps(t *testing.T) {
+	m := scrollbackModelWithScreen(80, 40, strings.Repeat("history line\n", 60), "screen content")
+	_, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if got, want := m.att.scroll.height, m.scrollbackHeight(); got != want {
+		t.Fatalf("scroll height after resize = %d, want %d", got, want)
+	}
+	if got := len(strings.Split(m.viewAttached(), "\n")); got > 24 {
+		t.Fatalf("scrollback view is %d lines after shrink to 24 — the alt-screen scrolls", got)
+	}
+}
+
+// TestAttachDataFlowsDuringScrollback: bytes arriving while frozen in
+// scrollback must still feed the emulator — the frozen view reads from its
+// copy, and dropping them would resume a stale live view on exit.
+func TestAttachDataFlowsDuringScrollback(t *testing.T) {
+	m := scrollbackModelWithScreen(80, 24, "history\n", "before")
+	_, _ = m.Update(attachDataMsg{sessionID: sessionBase, data: []byte(" LIVE-BYTES")})
+	m.att.exitScrollback()
+	if !strings.Contains(m.viewAttached(), "LIVE-BYTES") {
+		t.Fatal("bytes received during scrollback were dropped; live view resumed stale")
+	}
+}
+
+// TestScrollbackEntryDropsForeignPeek: after a hop the peek can still belong
+// to the previous harness; its history must not be stitched under this
+// harness's frame as if it were ours.
+func TestScrollbackEntryDropsForeignPeek(t *testing.T) {
+	m := scrollbackModelWithScreen(80, 24, "historical line\n", "screen content")
+	m.att.exitScrollback()
+	m.peek = logsMsg{name: "some-other-harness", text: "foreign history\n"}
+	m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
+	joined := strings.Join(m.att.scroll.lines, "\n")
+	if strings.Contains(joined, "foreign history") {
+		t.Fatal("scrollback stitched another harness's peek under this harness's frame")
+	}
+	if !strings.Contains(joined, "screen content") {
+		t.Fatal("scrollback lost the current frame when dropping a foreign peek")
 	}
 }
