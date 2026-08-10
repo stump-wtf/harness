@@ -55,8 +55,16 @@ func (v *vtView) write(p []byte) {
 // suitable for embedding in a Bubble Tea view. Each cell emits an SGR sequence
 // only when the style changes (compact), and every line resets attributes at
 // its end so a truncated line can't bleed color into the chrome around it.
+//
+// The emulator's cursor is painted into the grid as a reverse-video cell
+// (#48): Bubble Tea owns the hardware cursor — it hides it for the program's
+// lifetime and re-parks it after every flush — so the only way to show the
+// guest cursor is to draw it as cell content. The guest's DECTCEM state is
+// respected: a program that hides its cursor (\x1b[?25l) gets no painted
+// cursor either.
 func (v *vtView) render() string {
 	w, h := v.term.Width(), v.term.Height()
+	cur := v.term.Screen().Cursor()
 	var lines []string
 	for y := 0; y < h; y++ {
 		var b strings.Builder
@@ -67,12 +75,28 @@ func (v *vtView) render() string {
 				skip--
 				continue
 			}
+			atCursor := !cur.Hidden && x == cur.X && y == cur.Y
 			cell := v.term.Cell(x, y)
 			if cell == nil {
-				b.WriteByte(' ')
+				if atCursor {
+					b.WriteString("\x1b[0m\x1b[7m \x1b[0m")
+					// The reset above invalidated the tracked run; force the
+					// next styled cell to restate its sequence.
+					prevSeq = "\x00"
+				} else {
+					b.WriteByte(' ')
+				}
 				continue
 			}
-			if seq := cell.Style.Sequence(); seq != prevSeq {
+			if atCursor {
+				// Cursor cell: the cell's own style plus reverse video,
+				// closed immediately so the inversion can't bleed.
+				b.WriteString("\x1b[0m")
+				if seq := cell.Style.Sequence(); seq != "" {
+					b.WriteString(seq)
+				}
+				b.WriteString("\x1b[7m")
+			} else if seq := cell.Style.Sequence(); seq != prevSeq {
 				b.WriteString("\x1b[0m")
 				if seq != "" {
 					b.WriteString(seq)
@@ -88,15 +112,13 @@ func (v *vtView) render() string {
 					skip = cell.Width - 1
 				}
 			}
+			if atCursor {
+				b.WriteString("\x1b[0m")
+				prevSeq = "\x00"
+			}
 		}
 		b.WriteString("\x1b[0m")
 		lines = append(lines, b.String())
 	}
 	return strings.Join(lines, "\n")
-}
-
-// cursor returns the emulator's current cursor position (col, row), 0-indexed.
-func (v *vtView) cursor() (int, int) {
-	pos := v.term.CursorPosition()
-	return pos.X, pos.Y
 }
