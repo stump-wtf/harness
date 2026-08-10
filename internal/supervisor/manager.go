@@ -182,25 +182,16 @@ func (m *Manager) Restore() error {
 	m.activeProfile = ps.ActiveProfile
 
 	// Issue #99: detect a persisted profile name that no longer resolves.
-	// The daemon must not silently start nothing — fall back to the autostart
-	// profile so the intended set comes up, and flag it for doctor.
+	// Only the flag is set here — the fallback itself happens in the restore
+	// loop below, because that loop is what actually decides each harness's
+	// intent and would otherwise overwrite anything seeded at this point.
 	if ps.ActiveProfile != "" {
 		if _, ok := m.cfg.Profiles[ps.ActiveProfile]; !ok {
 			m.profileUnresolved = true
-			fallback := m.autostartProfileName()
-			if fallback != "" {
-				// Seed autostart intent for harnesses that were not already
-				// restored from state.json so Autostart() brings them up.
-				for name := range autostart {
-					if s, ok := m.supervisors[name]; ok && !s.Snapshot().Enabled {
-						s.Restore(true, 0, 0, time.Time{})
-					}
-				}
-			} else {
-				// No autostart profile either; still flag it so doctor warns.
-			}
 		}
 	}
+	unresolved := m.profileUnresolved
+	hasAutostartProfile := m.autostartProfileName() != ""
 
 	sups := make(map[string]*Supervisor, len(m.supervisors))
 	for k, v := range m.supervisors {
@@ -209,13 +200,23 @@ func (m *Manager) Restore() error {
 	m.mu.Unlock()
 
 	for name, s := range sups {
-		if pr, ok := ps.Harnesses[name]; ok {
-			var last time.Time
-			if pr.LastExitAt != nil {
-				last = *pr.LastExitAt
-			}
+		pr, inState := ps.Harnesses[name]
+		var last time.Time
+		if inState && pr.LastExitAt != nil {
+			last = *pr.LastExitAt
+		}
+		switch {
+		case unresolved && hasAutostartProfile && autostart[name]:
+			// The persisted profile is gone, so the persisted per-harness
+			// intent it produced cannot be trusted either — a member recorded
+			// as disabled was most likely disabled BY that profile, not by the
+			// operator. Autostart membership wins, which is the whole point of
+			// the fallback: the daemon must not come up having started nothing.
+			// Counters are preserved so restart history is not lost (#99).
+			s.Restore(true, pr.RestartCount, pr.LastExitCode, last)
+		case inState:
 			s.Restore(pr.Enabled, pr.RestartCount, pr.LastExitCode, last)
-		} else if autostart[name] {
+		case autostart[name]:
 			s.Restore(true, 0, 0, time.Time{})
 		}
 	}

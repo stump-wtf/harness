@@ -407,3 +407,101 @@ func TestManagerReloadResolvesProfile(t *testing.T) {
 		t.Fatal("expected ProfileResolved() == true after reload reintroduces profile")
 	}
 }
+
+// TestManagerRestorePhantomProfileOverridesPersistedDisabled is the case the
+// original #99 fix missed. Its sibling test seeds an EMPTY Harnesses map, so
+// every harness takes the pre-existing `autostart[name]` branch and the test
+// passes with the phantom-profile logic removed entirely.
+//
+// The realistic shape is the opposite: state.json carries per-harness entries,
+// and the members of the now-vanished profile are recorded as DISABLED —
+// because that profile is what disabled them. If persisted intent wins there,
+// the daemon still comes up having started nothing, which is exactly the bug.
+func TestManagerRestorePhantomProfileOverridesPersistedDisabled(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+
+	cfg := managerCfg(shHarness("alpha", "while true; do sleep 0.02; done", 0))
+
+	data, err := json.Marshal(persistedState{
+		Version:       stateSchemaVersion,
+		ActiveProfile: "everything", // phantom: absent from cfg
+		Harnesses: map[string]persistedHarness{
+			// Disabled by the profile that no longer exists.
+			"alpha": {Enabled: false, RestartCount: 3, LastExitCode: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(cfg, ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    filepath.Join(dir, "logs"),
+	})
+	t.Cleanup(m.Close)
+
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if m.ProfileResolved() {
+		t.Fatal("expected ProfileResolved() == false for a phantom profile")
+	}
+
+	// Restart history must survive the override — the fallback changes intent,
+	// not the harness's recorded past.
+	if snap, _ := m.Snapshot("alpha"); snap.RestartCount != 3 {
+		t.Errorf("RestartCount = %d, want 3 preserved across the fallback", snap.RestartCount)
+	}
+
+	m.Autostart()
+	waitFor(t, 3*time.Second, "phantom-profile fallback starts an autostart member recorded as disabled", func() bool {
+		snap, _ := m.Snapshot("alpha")
+		return snap.State == core.StateRunning
+	})
+}
+
+// TestManagerRestoreResolvedProfileKeepsPersistedIntent is the guard on the
+// other side: when the profile DOES resolve, a harness the operator stopped
+// must stay stopped. The fallback is scoped to the unresolved case only.
+func TestManagerRestoreResolvedProfileKeepsPersistedIntent(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+
+	cfg := managerCfg(shHarness("alpha", "while true; do sleep 0.02; done", 0))
+
+	data, err := json.Marshal(persistedState{
+		Version:       stateSchemaVersion,
+		ActiveProfile: "default", // exists in managerCfg, and is autostart
+		Harnesses: map[string]persistedHarness{
+			"alpha": {Enabled: false}, // operator stopped it
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(cfg, ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    filepath.Join(dir, "logs"),
+	})
+	t.Cleanup(m.Close)
+
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if !m.ProfileResolved() {
+		t.Fatal("expected ProfileResolved() == true")
+	}
+	if snap, _ := m.Snapshot("alpha"); snap.Enabled {
+		t.Error("a deliberately stopped harness must stay stopped when the profile resolves")
+	}
+}
