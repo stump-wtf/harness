@@ -1,12 +1,20 @@
 package supervisor
 
-// Governing: issue #98 — watch harness.toml and per-harness env files for
-// changes and auto-reload. The watcher watches the config DIRECTORY (not the
-// inode) because chezmoi writes via temp file + rename, which changes the
-// inode. A debounce coalesces the burst of writes a rendering tool makes.
+// Governing: issue #98 — watch harness.toml for changes and auto-reload. The
+// watcher watches the config DIRECTORY (not the inode) because chezmoi writes
+// via temp file + rename, which changes the inode. A debounce coalesces the
+// burst of writes a rendering tool makes.
+//
+// Per-harness env files are NOT watched yet, though the issue mentions them.
+// The directory is already watched, so extending to them is a matter of
+// widening the basename filter — but an env-file change is only picked up on
+// respawn (the supervisor reads it at spawn), so reloading on one would need
+// a decision about whether to bounce running harnesses. That belongs in its
+// own change rather than riding along here.
 
 import (
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -143,42 +151,51 @@ func (cw *ConfigWatcher) reload() {
 
 // diffConfig returns a human-readable summary of what changed between two
 // configs. Used for logging so the operator can see what the watcher did.
-func diffConfig(old, new *core.Config) []string {
+func diffConfig(oldCfg, newCfg *core.Config) []string {
 	var changes []string
 
 	// Added harnesses.
-	for _, name := range new.HarnessOrder {
-		if _, ok := old.Harnesses[name]; !ok {
+	for _, name := range newCfg.HarnessOrder {
+		if _, ok := oldCfg.Harnesses[name]; !ok {
 			changes = append(changes, "added harness "+name)
 		}
 	}
 	// Removed harnesses.
-	for _, name := range old.HarnessOrder {
-		if _, ok := new.Harnesses[name]; !ok {
+	for _, name := range oldCfg.HarnessOrder {
+		if _, ok := newCfg.Harnesses[name]; !ok {
 			changes = append(changes, "removed harness "+name)
 		}
 	}
-	// Changed harnesses (definition diff).
-	for _, name := range new.HarnessOrder {
-		oldH, ok := old.Harnesses[name]
+	// Changed harnesses. Reuses harnessDefEqual — the comparator the reload
+	// path itself uses — rather than a second hand-written field list. A
+	// separate list drifts: this one already omitted args, model, auto_accept,
+	// quiet and max_turns, so the most common edits reloaded silently, which
+	// is the exact failure this feature exists to end.
+	for _, name := range newCfg.HarnessOrder {
+		oldH, ok := oldCfg.Harnesses[name]
 		if !ok {
 			continue
 		}
-		newH := new.Harnesses[name]
-		if oldH.Cmd != newH.Cmd || oldH.Prompt != newH.Prompt ||
-			oldH.Workdir != newH.Workdir || oldH.EnvFile != newH.EnvFile ||
-			oldH.Backend != newH.Backend || oldH.Restart != newH.Restart {
+		if !harnessDefEqual(oldH, newCfg.Harnesses[name]) {
 			changes = append(changes, "changed harness "+name)
 		}
 	}
-	// Profile changes.
-	for _, name := range new.ProfileOrder {
-		if _, ok := old.Profiles[name]; !ok {
+	// Profile changes, including membership: a czu delivery that only moves a
+	// harness between profiles changes what autostarts, so logging nothing
+	// would be the same silence in a different place.
+	for _, name := range newCfg.ProfileOrder {
+		oldP, ok := oldCfg.Profiles[name]
+		if !ok {
 			changes = append(changes, "added profile "+name)
+			continue
+		}
+		newP := newCfg.Profiles[name]
+		if !slices.Equal(oldP.Harnesses, newP.Harnesses) || oldP.Autostart != newP.Autostart {
+			changes = append(changes, "changed profile "+name)
 		}
 	}
-	for _, name := range old.ProfileOrder {
-		if _, ok := new.Profiles[name]; !ok {
+	for _, name := range oldCfg.ProfileOrder {
+		if _, ok := newCfg.Profiles[name]; !ok {
 			changes = append(changes, "removed profile "+name)
 		}
 	}

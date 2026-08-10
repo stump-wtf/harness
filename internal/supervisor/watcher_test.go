@@ -215,3 +215,55 @@ func loadTestConfig(path string) (*core.Config, error) {
 		ProfileOrder: []string{"default"},
 	}, nil
 }
+
+// TestDiffConfigCatchesFieldsTheHandRolledListMissed guards the change that
+// pointed diffConfig at harnessDefEqual. The original list compared six fields
+// (cmd, prompt, workdir, env_file, backend, restart), so an edit to args or to
+// any of the agent fields reloaded with no log line at all — silence, in the
+// feature whose stated purpose is ending silence.
+func TestDiffConfigCatchesFieldsTheHandRolledListMissed(t *testing.T) {
+	base := func() *core.Harness {
+		return &core.Harness{Name: "alpha", Cmd: "sh", Args: []string{"-c", "sleep 1"}}
+	}
+	tests := []struct {
+		name   string
+		mutate func(*core.Harness)
+	}{
+		{"args", func(h *core.Harness) { h.Args = []string{"-c", "sleep 2"} }},
+		{"model", func(h *core.Harness) { h.Cmd, h.Prompt, h.Model = "", "go", "claude-opus-5" }},
+		{"auto_accept", func(h *core.Harness) { h.Cmd, h.Prompt, h.AutoAccept = "", "go", true }},
+		{"max_turns", func(h *core.Harness) { h.Cmd, h.Prompt, h.MaxTurns = "", "go", 5 }},
+		{"quiet", func(h *core.Harness) { h.Cmd, h.Prompt, h.Quiet = "", "go", true }},
+		{"restart_delay", func(h *core.Harness) { h.RestartDelay = 9 }},
+		{"description", func(h *core.Harness) { h.Description = "changed" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldH, newH := base(), base()
+			tt.mutate(newH)
+			oldCfg := &core.Config{Harnesses: map[string]core.Harness{"alpha": *oldH}, HarnessOrder: []string{"alpha"}}
+			newCfg := &core.Config{Harnesses: map[string]core.Harness{"alpha": *newH}, HarnessOrder: []string{"alpha"}}
+			if got := diffConfig(oldCfg, newCfg); len(got) == 0 {
+				t.Errorf("a change to %s produced no log line", tt.name)
+			}
+		})
+	}
+}
+
+// TestDiffConfigDetectsProfileMembership: moving a harness between profiles
+// changes what autostarts, so it has to show up in the reload log.
+func TestDiffConfigDetectsProfileMembership(t *testing.T) {
+	mk := func(members ...string) *core.Config {
+		return &core.Config{
+			Harnesses:    map[string]core.Harness{},
+			Profiles:     map[string]core.Profile{"work": {Name: "work", Harnesses: members, Autostart: true}},
+			ProfileOrder: []string{"work"},
+		}
+	}
+	if got := diffConfig(mk("alpha"), mk("alpha", "beta")); len(got) == 0 {
+		t.Error("adding a member to a profile produced no log line")
+	}
+	if got := diffConfig(mk("alpha"), mk("alpha")); len(got) != 0 {
+		t.Errorf("an unchanged config produced %v, want no changes", got)
+	}
+}
