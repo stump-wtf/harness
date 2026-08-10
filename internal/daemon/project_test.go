@@ -429,6 +429,36 @@ func TestHarnessFromWireMaxTurns(t *testing.T) {
 	}
 }
 
+// TestHarnessFromWireQuiet carries the proto's *bool quiet through the JSON
+// encode/decode so a prompt harness's headless switch survives project_up.
+// An omitted quiet (older client, or a prompt harness that didn't set it)
+// must keep the headless default (Quiet=true); an explicit false opts back
+// into streaming output.
+func TestHarnessFromWireQuiet(t *testing.T) {
+	// Omitted quiet on the wire => headless default true.
+	ph := protocol.ProjectHarness{Name: "oneshot", Prompt: "do the thing"}
+	h := harnessFromWire(ph)
+	if !h.Quiet {
+		t.Error("Quiet = false, want the headless default (true) when quiet is omitted")
+	}
+
+	// Explicit quiet=false survives the wire as false.
+	quiet := false
+	ph = protocol.ProjectHarness{Name: "oneshot", Prompt: "do the thing", Quiet: &quiet}
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded protocol.ProjectHarness
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	out := harnessFromWire(decoded)
+	if out.Quiet {
+		t.Error("Quiet = true, want false (explicit quiet=false must survive the wire)")
+	}
+}
+
 // waitForState polls describe until the harness reports the wanted state.
 func waitForState(t *testing.T, c interface {
 	Describe(string) (protocol.HarnessInfo, error)

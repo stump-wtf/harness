@@ -114,6 +114,15 @@ type Harness struct {
 	// Governing: ADR-0008; ADR-0011; issue #58 (add `auto_accept` field for
 	// unattended mode).
 	AutoAccept bool
+	// Quiet controls whether a prompt one-shot runs headless (no interactive
+	// output — the default, matching the synthesized argv's --quiet). Config
+	// truth only, and it requires Prompt when explicitly set (validation
+	// enforces it): set `quiet = false` on a prompt harness to have the agent
+	// stream its output to whoever attaches. The field never rides Args — a
+	// cmd harness passes its tool's own tone flag through Args (issue #60).
+	// Governing: ADR-0011; issue #60 (add `quiet` field for headless output
+	// suppression).
+	Quiet bool
 	// MaxTurns caps the number of agent iterations a prompt harness may run
 	// before the CLI stops, the budget guard for unattended one-shots. Config
 	// truth only, and it requires Prompt (validation enforces it — there is no
@@ -157,6 +166,9 @@ type Harness struct {
 // {workdir} placeholders — and a cmd harness ignores them all (config
 // validation forbids the combinations; the wire def keeps them inert).
 type AgentOpts struct {
+	// Quiet runs the one-shot headless (no interactive output); emitted as
+	// --quiet when true. The default for a prompt one-shot.
+	Quiet bool
 	// Model selects the agent model, emitted as --model when non-empty.
 	Model string
 	// AutoAccept enables unattended/yolo mode, emitted as --yolo.
@@ -176,7 +188,10 @@ type AgentOpts struct {
 // registry replaces this call site (and maps auto-accept and the turn budget
 // onto each vendor's own flag).
 func AgentCommand(prompt string, opts AgentOpts) (cmd string, args []string) {
-	args = []string{"run", "--quiet"}
+	args = []string{"run"}
+	if opts.Quiet {
+		args = append(args, "--quiet")
+	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}

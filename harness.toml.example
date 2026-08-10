@@ -46,6 +46,11 @@ auto_accept = true
 # budget guard for unattended one-shots (requires `prompt`; a cmd harness
 # passes its tool's flag through `args`). 0 or omitted means unlimited.
 max_turns = 20
+# quiet runs the one-shot headless (suppresses agent output). It is the
+# default for a prompt harness, so set quiet = false to have the agent stream
+# its output to whatever attaches instead. Requires `prompt`; a cmd harness
+# passes its tool's own tone flag through `args`.
+# quiet = false
 workdir = "~/src/my-project"
 description = "one-shot agent run"
 enabled = false

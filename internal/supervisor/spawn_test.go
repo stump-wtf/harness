@@ -83,7 +83,7 @@ func TestExpandArgsWorkdir(t *testing.T) {
 // multi-word prompt as ONE argv element, and the prompt text is exempt from
 // the {workdir} placeholder expansion configured args go through.
 func TestExecArgvPromptSynthesis(t *testing.T) {
-	h := core.Harness{Name: "agent", Prompt: "check the deployments in {workdir} please"}
+	h := core.Harness{Name: "agent", Prompt: "check the deployments in {workdir} please", Quiet: true}
 	name, args := execArgv(h, "/home/x")
 	if name != "crush" {
 		t.Errorf("cmd = %q, want crush", name)
@@ -100,7 +100,7 @@ func TestExecArgvPromptSynthesis(t *testing.T) {
 // prompt, is exempt from the {workdir} placeholder expansion configured args
 // go through.
 func TestExecArgvPromptModelSynthesis(t *testing.T) {
-	h := core.Harness{Name: "agent", Prompt: "check {workdir} please", Model: "claude-{workdir}"}
+	h := core.Harness{Name: "agent", Prompt: "check {workdir} please", Model: "claude-{workdir}", Quiet: true}
 	name, args := execArgv(h, "/home/x")
 	if name != "crush" {
 		t.Errorf("cmd = %q, want crush", name)
@@ -132,7 +132,7 @@ func TestExecArgvCmdIgnoresModel(t *testing.T) {
 // element — and, like prompt and model, it never passes through {workdir}
 // expansion.
 func TestExecArgvPromptAutoAcceptSynthesis(t *testing.T) {
-	h := core.Harness{Name: "agent", Prompt: "check deployments", Model: "claude-opus-5", AutoAccept: true}
+	h := core.Harness{Name: "agent", Prompt: "check deployments", Model: "claude-opus-5", AutoAccept: true, Quiet: true}
 	name, args := execArgv(h, "/home/x")
 	if name != "crush" {
 		t.Errorf("cmd = %q, want crush", name)
@@ -143,7 +143,7 @@ func TestExecArgvPromptAutoAcceptSynthesis(t *testing.T) {
 	}
 
 	// Without a model the flag still precedes the prompt.
-	h = core.Harness{Name: "agent", Prompt: "check deployments", AutoAccept: true}
+	h = core.Harness{Name: "agent", Prompt: "check deployments", AutoAccept: true, Quiet: true}
 	_, args = execArgv(h, "/home/x")
 	want = []string{"run", "--quiet", "--yolo", "check deployments"}
 	if !slices.Equal(args, want) {
@@ -156,7 +156,7 @@ func TestExecArgvPromptAutoAcceptSynthesis(t *testing.T) {
 // the prompt, and a 0/unset budget emits no flag at all (the "unlimited"
 // default, so a prompt one-shot is not silently capped).
 func TestExecArgvPromptMaxTurnsSynthesis(t *testing.T) {
-	h := core.Harness{Name: "agent", Prompt: "check deployments", MaxTurns: 8}
+	h := core.Harness{Name: "agent", Prompt: "check deployments", MaxTurns: 8, Quiet: true}
 	name, args := execArgv(h, "/home/x")
 	if name != "crush" {
 		t.Errorf("cmd = %q, want crush", name)
@@ -166,14 +166,14 @@ func TestExecArgvPromptMaxTurnsSynthesis(t *testing.T) {
 	}
 
 	// Budget 0 (unset/unlimited) emits no flag.
-	h = core.Harness{Name: "agent", Prompt: "check deployments", MaxTurns: 0}
+	h = core.Harness{Name: "agent", Prompt: "check deployments", MaxTurns: 0, Quiet: true}
 	_, args = execArgv(h, "/home/x")
 	if want := []string{"run", "--quiet", "check deployments"}; !slices.Equal(args, want) {
 		t.Errorf("args = %q, want %q (no --max-turns when budget is 0)", args, want)
 	}
 
 	// It stacks with the other options in a stable flag order.
-	h = core.Harness{Name: "agent", Prompt: "check", Model: "claude-opus-5", AutoAccept: true, MaxTurns: 3}
+	h = core.Harness{Name: "agent", Prompt: "check", Model: "claude-opus-5", AutoAccept: true, MaxTurns: 3, Quiet: true}
 	_, args = execArgv(h, "/home/x")
 	if want := []string{"run", "--quiet", "--model", "claude-opus-5", "--yolo", "--max-turns", "3", "check"}; !slices.Equal(args, want) {
 		t.Errorf("args = %q, want %q (model, yolo, then max-turns, prompt last)", args, want)
@@ -192,6 +192,28 @@ func TestExecArgvCmdIgnoresMaxTurns(t *testing.T) {
 	}
 	if want := []string{"--dir", "/home/x"}; !slices.Equal(args, want) {
 		t.Errorf("args = %q, want %q (no synthesized --max-turns on the cmd path)", args, want)
+	}
+}
+
+// TestExecArgvPromptQuietToggle pins the headless switch's spawn-time effect
+// (issue #60): a prompt one-shot is quiet by default (--quiet emitted), and
+// `quiet = false` drops it so the agent streams output to whoever attaches.
+func TestExecArgvPromptQuietToggle(t *testing.T) {
+	// Default quiet: the --quiet flag is emitted.
+	h := core.Harness{Name: "agent", Prompt: "check deployments", Quiet: true}
+	name, args := execArgv(h, "/home/x")
+	if name != "crush" {
+		t.Errorf("cmd = %q, want crush", name)
+	}
+	if want := []string{"run", "--quiet", "check deployments"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (quiet default keeps --quiet)", args, want)
+	}
+
+	// quiet=false: no --quiet, so the agent streams output.
+	h = core.Harness{Name: "agent", Prompt: "check deployments", Quiet: false}
+	_, args = execArgv(h, "/home/x")
+	if want := []string{"run", "check deployments"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (quiet=false drops --quiet)", args, want)
 	}
 }
 

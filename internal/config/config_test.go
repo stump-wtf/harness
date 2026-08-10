@@ -718,3 +718,94 @@ func TestParseMaxTurnsErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestParseQuietHarness covers the agent `quiet` headless switch (issue #60):
+// a prompt one-shot is quiet by default, `quiet = false` opts back into
+// streaming output to an attach, and a cmd harness (no prompt) never routes
+// through AgentCommand so its quiet is simply false/inert.
+func TestParseQuietHarness(t *testing.T) {
+	tests := []struct {
+		name      string
+		toml      string
+		wantQuiet bool
+	}{
+		{
+			name:      "prompt harness defaults to quiet",
+			toml:      "[harness.agent]\nprompt = \"check deployments\"\n",
+			wantQuiet: true,
+		},
+		{
+			name:      "explicit quiet keeps the default",
+			toml:      "[harness.agent]\nprompt = \"check deployments\"\nquiet = true\n",
+			wantQuiet: true,
+		},
+		{
+			name:      "explicit quiet=false streams output to an attach",
+			toml:      "[harness.agent]\nprompt = \"check deployments\"\nquiet = false\n",
+			wantQuiet: false,
+		},
+		{
+			name:      "cmd harness is inert (no prompt/no synthesis)",
+			toml:      "[harness.agent]\ncmd = \"echo\"\nargs = [\"hi\"]\n",
+			wantQuiet: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tt.toml), "test.toml")
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			h, ok := cfg.Harnesses["agent"]
+			if !ok {
+				t.Fatalf("agent harness missing; order = %v", cfg.HarnessOrder)
+			}
+			if h.Quiet != tt.wantQuiet {
+				t.Errorf("Quiet = %v, want %v", h.Quiet, tt.wantQuiet)
+			}
+		})
+	}
+}
+
+// TestParseQuietErrors: an explicitly-set `quiet` requires `prompt` — quiet is
+// synthesized into (or out of) the agent argv at spawn, which a cmd harness
+// does not have, so it must pass its tool's tone flag through its own args.
+func TestParseQuietErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		toml     string
+		wantLine int
+		wantSub  string
+	}{
+		{
+			name:     "quiet=false with cmd points at args",
+			toml:     "[harness.bad]\ncmd = \"crush\"\nargs = [\"run\"]\nquiet = false\n",
+			wantLine: 1,
+			wantSub:  `"quiet" requires "prompt"`,
+		},
+		{
+			name:     "explicit quiet=true with cmd also rejected",
+			toml:     "[harness.bad]\ncmd = \"echo\"\nquiet = true\n",
+			wantLine: 1,
+			wantSub:  `"quiet" requires "prompt"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.toml), "test.toml")
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			var ce *Error
+			if !errors.As(err, &ce) {
+				t.Fatalf("error is %T, want *config.Error: %v", err, err)
+			}
+			if ce.LineNumber() != tt.wantLine {
+				t.Errorf("line = %d, want %d (err: %v)", ce.LineNumber(), tt.wantLine, ce)
+			}
+			if !strings.Contains(ce.Msg, tt.wantSub) {
+				t.Errorf("message %q does not contain %q", ce.Msg, tt.wantSub)
+			}
+		})
+	}
+}

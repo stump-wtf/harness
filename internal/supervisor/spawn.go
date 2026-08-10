@@ -187,6 +187,7 @@ func execArgv(h core.Harness, workdir string) (string, []string) {
 			Model:      h.Model,
 			AutoAccept: h.AutoAccept,
 			MaxTurns:   h.MaxTurns,
+			Quiet:      h.Quiet,
 		})
 	}
 	return h.Cmd, expandArgs(h.Args, workdir)

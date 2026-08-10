@@ -371,6 +371,7 @@ func harnessDefEqual(a, b core.Harness) bool {
 		a.Model == b.Model &&
 		a.AutoAccept == b.AutoAccept &&
 		a.MaxTurns == b.MaxTurns &&
+		a.Quiet == b.Quiet &&
 		a.Workdir == b.Workdir &&
 		a.EnvFile == b.EnvFile &&
 		a.RestartDelay == b.RestartDelay &&

@@ -30,6 +30,7 @@ type rawHarness struct {
 	Model        string   `toml:"model"`
 	AutoAccept   bool     `toml:"auto_accept"`
 	MaxTurns     *int     `toml:"max_turns"`
+	Quiet        *bool    `toml:"quiet"`
 	Workdir      string   `toml:"workdir"`
 	EnvFile      string   `toml:"env_file"`
 	RestartDelay int      `toml:"restart_delay"`
@@ -330,6 +331,30 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		maxTurns = *rh.MaxTurns
 	}
 
+	// `quiet` is config truth only, same contract as `model`/`auto_accept`: a
+	// prompt one-shot runs headless by default, and this field opts OUT of
+	// that (quiet = false lets the agent stream output to whoever attaches).
+	// Normalized via *bool so an omitted key (nil = the headless default) is
+	// distinguishable from an explicit `quiet = false`. Since it routes
+	// through the synthesized agent argv (core.AgentCommand), an
+	// explicitly-set quiet requires `prompt` — a cmd harness passes its
+	// tool's own tone flag through args rather than relying on injection into
+	// an arbitrary argv.
+	// Governing: issue #60 (add `quiet` field for headless output
+	// suppression).
+	quiet := false
+	if prompt != "" {
+		// A prompt one-shot is headless by default.
+		quiet = true
+	}
+	if rh.Quiet != nil {
+		if prompt == "" {
+			return newError(filename, line,
+				"harness %q: \"quiet\" requires \"prompt\" (a cmd harness passes its tool's tone flag through its own args)", name)
+		}
+		quiet = *rh.Quiet
+	}
+
 	backend := core.Backend(rh.Backend)
 	if rh.Backend == "" {
 		backend = core.BackendNative
@@ -378,6 +403,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		MaxTurns:     maxTurns,
 		Model:        model,
 		Prompt:       prompt,
+		Quiet:        quiet,
 		Workdir:      resolve(rh.Workdir),
 		EnvFile:      resolve(rh.EnvFile),
 		RestartDelay: time.Duration(rh.RestartDelay) * time.Second,
