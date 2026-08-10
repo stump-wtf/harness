@@ -225,7 +225,11 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 	t.Row("socket", t.faintPlain(di.Socket))
 	t.Row("harnesses", fmt.Sprintf("%d", di.Harnesses))
 	if di.ActiveProfile != "" {
-		t.Row("profile", t.accentBold(di.ActiveProfile))
+		profileLabel := di.ActiveProfile
+		if di.ProfileResolved != nil && !*di.ProfileResolved {
+			profileLabel = fmt.Sprintf("%s (unresolved)", di.ActiveProfile)
+		}
+		t.Row("profile", t.accentBold(profileLabel))
 	}
 	return t.Flush()
 }

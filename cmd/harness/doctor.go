@@ -162,6 +162,20 @@ func runDoctor(o verbOpts) int {
 	// --- Check 4: harnesses in healthy state -------------------------------
 	// Governing: SPEC-0003 (the state model and its healthy/degraded/failed
 	// tiers drive the per-row level here).
+	//
+	// Issue #99: the active profile may be unresolved (persisted in state.json
+	// but no longer in config). This is a warning, not a hard failure — the
+	// daemon falls back to autostart — but it must be surfaced because the
+	// daemon started a different set than the operator might expect.
+	if di.ActiveProfile != "" && di.ProfileResolved != nil && !*di.ProfileResolved {
+		rows = append(rows, check{
+			name:   "profile",
+			level:  cliui.LevelWarn,
+			detail: fmt.Sprintf("active profile %q not in config (fell back to autostart)", di.ActiveProfile),
+			hint:   "run `harness use-profile <name>` to select a valid profile",
+		})
+	}
+
 	hs, err := c.List()
 	switch {
 	case err != nil:

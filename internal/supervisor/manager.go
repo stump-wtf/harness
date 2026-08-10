@@ -65,11 +65,12 @@ type Manager struct {
 	dropExtraOut func(name string)
 	sizeFor      func(name string) (int, int)
 
-	mu            sync.Mutex
-	cfg           *core.Config
-	supervisors   map[string]*Supervisor
-	order         []string
-	activeProfile string
+	mu                sync.Mutex
+	cfg               *core.Config
+	supervisors       map[string]*Supervisor
+	order             []string
+	activeProfile     string
+	profileUnresolved bool // persisted active profile is missing from config (#99)
 
 	// projects tracks every registered (ephemeral) project by name, and
 	// provenance maps a registered harness's full name to its owning project
@@ -164,8 +165,12 @@ func (m *Manager) markDirty() {
 
 // Restore loads state.json and seeds each supervisor's persisted intent and
 // counters (ADR-0007). Harnesses absent from state.json fall back to config
-// autostart membership (ADR-0006) as their initial intent. Returns any
-// state.json read/parse error (the caller may choose to proceed with defaults).
+// autostart membership (ADR-0006) as their initial intent.
+//
+// If the persisted active profile no longer exists in config (issue #99) — a
+// normal chezmoi rename — the daemon resolves it to the autostart=true profile,
+// and tracks the unresolved state so doctor can surface it. The caller should
+// check ProfileResolved() and log a warning.
 func (m *Manager) Restore() error {
 	ps, err := loadState(m.statePath)
 	if err != nil {
@@ -175,6 +180,28 @@ func (m *Manager) Restore() error {
 
 	m.mu.Lock()
 	m.activeProfile = ps.ActiveProfile
+
+	// Issue #99: detect a persisted profile name that no longer resolves.
+	// The daemon must not silently start nothing — fall back to the autostart
+	// profile so the intended set comes up, and flag it for doctor.
+	if ps.ActiveProfile != "" {
+		if _, ok := m.cfg.Profiles[ps.ActiveProfile]; !ok {
+			m.profileUnresolved = true
+			fallback := m.autostartProfileName()
+			if fallback != "" {
+				// Seed autostart intent for harnesses that were not already
+				// restored from state.json so Autostart() brings them up.
+				for name := range autostart {
+					if s, ok := m.supervisors[name]; ok && !s.Snapshot().Enabled {
+						s.Restore(true, 0, 0, time.Time{})
+					}
+				}
+			} else {
+				// No autostart profile either; still flag it so doctor warns.
+			}
+		}
+	}
+
 	sups := make(map[string]*Supervisor, len(m.supervisors))
 	for k, v := range m.supervisors {
 		sups[k] = v
@@ -264,6 +291,16 @@ func (m *Manager) Config() *core.Config {
 // <dir>/<name>.log to service the logs control op.
 func (m *Manager) LogDir() string { return m.logCfg.Dir }
 
+// ProfileResolved reports whether the active profile name resolves to a real
+// profile in the current config (issue #99). False means the persisted profile
+// was renamed or removed upstream (e.g. by a chezmoi config delivery) and the
+// daemon fell back to the autostart profile.
+func (m *Manager) ProfileResolved() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.profileUnresolved
+}
+
 // ActiveProfile returns the currently active profile name, if any (ADR-0006).
 func (m *Manager) ActiveProfile() string {
 	m.mu.Lock()
@@ -275,6 +312,7 @@ func (m *Manager) ActiveProfile() string {
 // (enables) every member harness, the "hop into a configuration" gesture
 // (ADR-0006). Returns false if the profile is unknown. Non-members are left
 // untouched — switching does not stop harnesses out from under other work.
+// Choosing a profile clears any prior unresolved state (#99).
 func (m *Manager) UseProfile(name string) bool {
 	m.mu.Lock()
 	p, ok := m.cfg.Profiles[name]
@@ -284,6 +322,7 @@ func (m *Manager) UseProfile(name string) bool {
 	}
 	members := append([]string(nil), p.Harnesses...)
 	m.activeProfile = name
+	m.profileUnresolved = false
 	m.mu.Unlock()
 
 	for _, hn := range members {
@@ -332,6 +371,13 @@ func (m *Manager) Reload(newCfg *core.Config) {
 	m.mu.Lock()
 	old := m.supervisors
 	m.cfg = newCfg
+	// Re-evaluate the active profile against the new config (#99): a reload
+	// may have introduced the profile back (resolving the flag) or removed it
+	// (setting the flag). Either way, keep profileUnresolved in sync.
+	if m.activeProfile != "" {
+		_, ok := m.cfg.Profiles[m.activeProfile]
+		m.profileUnresolved = !ok
+	}
 	// Stop + drop removed harnesses (global provenance only).
 	var removed []*Supervisor
 	newOrder := make([]string, 0, len(newCfg.HarnessOrder))
@@ -555,4 +601,16 @@ func autostartSet(cfg *core.Config) map[string]bool {
 		set[name] = true
 	}
 	return set
+}
+
+// autostartProfileName returns the name of the first profile with
+// autostart = true, or "" if none exists. Used as the fallback when the
+// persisted active profile is missing from config (issue #99).
+func (m *Manager) autostartProfileName() string {
+	for _, name := range m.cfg.ProfileOrder {
+		if m.cfg.Profiles[name].Autostart {
+			return name
+		}
+	}
+	return ""
 }

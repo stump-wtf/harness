@@ -107,6 +107,12 @@ func runDaemon(args []string) {
 	if err := mgr.Restore(); err != nil {
 		log.Warn("restore state failed (continuing with config defaults)", "err", err)
 	}
+	if !mgr.ProfileResolved() {
+		log.Warn("active profile not found in config; fell back to autostart profile",
+			"profile", mgr.ActiveProfile(),
+			"hint", "run `harness use-profile <name>` to choose a valid profile",
+		)
+	}
 	mgr.Autostart()
 
 	srv := daemon.NewServer(daemon.Options{

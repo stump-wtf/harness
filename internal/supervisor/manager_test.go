@@ -5,6 +5,7 @@ package supervisor
 // (persisted intent + restart counts restored on daemon restart; log tee).
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -257,4 +258,152 @@ func TestLogTeeCapturesOutput(t *testing.T) {
 		data, err := os.ReadFile(logPath)
 		return err == nil && strings.Contains(string(data), "HELLO_HARNESS")
 	})
+}
+
+// ---- Issue #99: phantom profile detection and autostart fallback ----------
+
+// TestManagerRestoreWithPhantomProfile verifies that a persisted active profile
+// absent from the current config is detected (ProfileResolved() == false), and
+// that the daemon falls back to the autostart profile so harnesses actually
+// start. This is the exact scenario from the bug report: a chezmoi rename
+// leaves state.json pointing at a profile name that no longer exists, and the
+// daemon silently starts nothing while reporting perfect health.
+func TestManagerRestoreWithPhantomProfile(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	logDir := filepath.Join(dir, "logs")
+
+	cfg := managerCfg(shHarness("alpha", "while true; do sleep 0.02; done", 0))
+
+	// Simulate a state.json from a prior daemon where "everything" was the
+	// active profile — a profile that no longer exists in cfg.
+	phantomState := persistedState{
+		Version:       stateSchemaVersion,
+		ActiveProfile: "everything", // not in cfg
+		Harnesses:     map[string]persistedHarness{},
+		// Deliberately no per-harness entries: the harnesses were managed by
+		// the phantom profile and their names may have changed. The daemon
+		// must fall back to the autostart set, not to nothing.
+	}
+	data, err := json.Marshal(phantomState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(cfg, ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    logDir,
+	})
+	t.Cleanup(m.Close)
+
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The daemon must detect the phantom profile.
+	if m.ProfileResolved() {
+		t.Fatal("expected ProfileResolved() == false for a persisted profile not in config")
+	}
+
+	// The daemon must NOT silently start nothing — the autostart fallback
+	// should have seeded intent for the autostart profile members.
+	m.Autostart()
+	waitFor(t, 3*time.Second, "autostart fallback brings up harnesses", func() bool {
+		snap, _ := m.Snapshot("alpha")
+		return snap.State == core.StateRunning
+	})
+}
+
+// TestManagerProfileResolvedAfterUseProfile verifies that choosing a valid
+// profile clears the unresolved flag (#99 recovery path).
+func TestManagerProfileResolvedAfterUseProfile(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	logDir := filepath.Join(dir, "logs")
+
+	cfg := managerCfg(shHarness("beta", "while true; do sleep 0.02; done", 0))
+
+	phantomState := persistedState{
+		Version:       stateSchemaVersion,
+		ActiveProfile: "ghost",
+		Harnesses:     map[string]persistedHarness{},
+	}
+	data, _ := json.Marshal(phantomState)
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(cfg, ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    logDir,
+	})
+	t.Cleanup(m.Close)
+
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if m.ProfileResolved() {
+		t.Fatal("expected unresolved before use-profile")
+	}
+
+	// Choosing a real profile resolves it.
+	if !m.UseProfile("default") {
+		t.Fatal("use-profile default failed")
+	}
+	if !m.ProfileResolved() {
+		t.Fatal("expected ProfileResolved() == true after use-profile")
+	}
+}
+
+// TestManagerReloadResolvesProfile verifies that a config reload which
+// reintroduces the missing profile name clears the unresolved flag (#99
+// interaction with hot reload).
+func TestManagerReloadResolvesProfile(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	logDir := filepath.Join(dir, "logs")
+
+	cfg := managerCfg(shHarness("gamma", "while true; do sleep 0.02; done", 0))
+
+	phantomState := persistedState{
+		Version:       stateSchemaVersion,
+		ActiveProfile: "returned",
+		Harnesses:     map[string]persistedHarness{},
+	}
+	data, _ := json.Marshal(phantomState)
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(cfg, ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    logDir,
+	})
+	t.Cleanup(m.Close)
+
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if m.ProfileResolved() {
+		t.Fatal("expected unresolved before reload")
+	}
+
+	// Reload a config that includes the "returned" profile.
+	newCfg := managerCfg(shHarness("gamma", "while true; do sleep 0.02; done", 0))
+	newCfg.Profiles["returned"] = core.Profile{
+		Name:      "returned",
+		Harnesses: []string{"gamma"},
+	}
+	newCfg.ProfileOrder = append(newCfg.ProfileOrder, "returned")
+
+	m.Reload(newCfg)
+	if !m.ProfileResolved() {
+		t.Fatal("expected ProfileResolved() == true after reload reintroduces profile")
+	}
 }

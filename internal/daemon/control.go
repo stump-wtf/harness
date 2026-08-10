@@ -200,6 +200,7 @@ func (c *conn) opReload(req protocol.ControlReq) {
 
 // opDaemonInfo returns daemon metadata.
 func (c *conn) opDaemonInfo() protocol.DaemonInfo {
+	resolved := c.srv.mgr.ProfileResolved()
 	return protocol.DaemonInfo{
 		Version:       c.srv.version,
 		ProtoVersion:  protocol.ProtoVersion,
@@ -208,8 +209,9 @@ func (c *conn) opDaemonInfo() protocol.DaemonInfo {
 		Socket:        c.srv.socketPath,
 		// The registered count — globals plus project harnesses — so the
 		// number agrees with what list returns (SPEC-0004; ADR-0009).
-		Harnesses:     c.srv.mgr.HarnessCount(),
-		ActiveProfile: c.srv.mgr.ActiveProfile(),
+		Harnesses:       c.srv.mgr.HarnessCount(),
+		ActiveProfile:   c.srv.mgr.ActiveProfile(),
+		ProfileResolved: &resolved,
 	}
 }
 
