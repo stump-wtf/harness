@@ -116,7 +116,12 @@ type ProjectHarness struct {
 	// only alongside prompt (parse validation enforces it); the daemon folds
 	// the vendor's yolo flag into the synthesized argv at spawn (ADR-0011,
 	// issue #58).
-	AutoAccept     bool   `json:"auto_accept,omitempty"`
+	AutoAccept bool `json:"auto_accept,omitempty"`
+	// MaxTurns mirrors the schema's agent `max_turns` budget: set only
+	// alongside prompt (parse validation enforces it); the daemon folds
+	// --max-turns into the synthesized argv at spawn (ADR-0011, issue #59).
+	// 0 means unset/unlimited.
+	MaxTurns       int    `json:"max_turns,omitempty"`
 	Workdir        string `json:"workdir,omitempty"`
 	EnvFile        string `json:"env_file,omitempty"`
 	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
@@ -165,7 +170,10 @@ type HarnessInfo struct {
 	// AutoAccept is the agent unattended/yolo mode for a prompt harness,
 	// folded into the synthesized argv at spawn (issue #58). Always false for
 	// cmd harnesses.
-	AutoAccept  bool   `json:"auto_accept,omitempty"`
+	AutoAccept bool `json:"auto_accept,omitempty"`
+	// MaxTurns is the agent turn budget for a prompt harness, folded into the
+	// synthesized argv at spawn (issue #59). Always 0 for cmd harnesses.
+	MaxTurns    int    `json:"max_turns,omitempty"`
 	Backend     string `json:"backend,omitempty"`
 	Description string `json:"description,omitempty"`
 	// Project is the harness's provenance: the owning project's name for a

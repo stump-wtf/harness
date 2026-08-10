@@ -42,6 +42,10 @@ model = "claude-opus-5"  # optional: which model the agent runs (requires prompt
 # prompts — only enable it for trusted, headless runs. Requires `prompt`; a
 # cmd harness passes its tool's own flag through `args` instead.
 auto_accept = true
+# max_turns caps how many iterations the agent may run before it stops — the
+# budget guard for unattended one-shots (requires `prompt`; a cmd harness
+# passes its tool's flag through `args`). 0 or omitted means unlimited.
+max_turns = 20
 workdir = "~/src/my-project"
 description = "one-shot agent run"
 enabled = false

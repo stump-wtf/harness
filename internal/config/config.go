@@ -29,6 +29,7 @@ type rawHarness struct {
 	Prompt       string   `toml:"prompt"`
 	Model        string   `toml:"model"`
 	AutoAccept   bool     `toml:"auto_accept"`
+	MaxTurns     *int     `toml:"max_turns"`
 	Workdir      string   `toml:"workdir"`
 	EnvFile      string   `toml:"env_file"`
 	RestartDelay int      `toml:"restart_delay"`
@@ -306,6 +307,29 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 			"harness %q: \"auto_accept\" requires \"prompt\" (a cmd harness passes its tool's flag through its own args)", name)
 	}
 
+	// `max_turns` is config truth only, same contract as `model` and
+	// `auto_accept`: stored on the harness and folded into the synthesized
+	// agent argv at spawn time (core.AgentCommand, ADR-0011) as a --max-turns
+	// budget, never desugared into args here — a parse-time flag corrupts the
+	// TOML round-trip (the form would re-persist synthesized args) and there
+	// is no vendor-agnostic place to inject a flag into an arbitrary cmd's
+	// argv, so `max_turns` requires `prompt` (a cmd harness passes its tool's
+	// flag through its own args). 0 means unset/unlimited — the flag is not
+	// emitted.
+	// Governing: issue #59 (add `max_turns` field for budget capping).
+	maxTurns := 0
+	if rh.MaxTurns != nil {
+		if *rh.MaxTurns < 0 {
+			return newError(filename, line,
+				"harness %q: \"max_turns\" must not be negative (got %d)", name, *rh.MaxTurns)
+		}
+		if prompt == "" {
+			return newError(filename, line,
+				"harness %q: \"max_turns\" requires \"prompt\" (a cmd harness passes --max-turns through its own args)", name)
+		}
+		maxTurns = *rh.MaxTurns
+	}
+
 	backend := core.Backend(rh.Backend)
 	if rh.Backend == "" {
 		backend = core.BackendNative
@@ -351,6 +375,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		Cmd:          rh.Cmd,
 		Args:         rh.Args,
 		AutoAccept:   rh.AutoAccept,
+		MaxTurns:     maxTurns,
 		Model:        model,
 		Prompt:       prompt,
 		Workdir:      resolve(rh.Workdir),

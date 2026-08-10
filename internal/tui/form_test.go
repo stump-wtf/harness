@@ -343,6 +343,85 @@ func TestEditAutoAcceptHarnessRoundTrip(t *testing.T) {
 	}
 }
 
+// TestHarnessFormRoundTripMaxTurns: `n` can author a turn-budgeted prompt
+// harness — the form emits `max_turns = <n>` beside `prompt` (config truth,
+// never a synthesized --max-turns arg, issue #59) and the TOML re-parses into
+// the same harness with Cmd/Args still empty.
+func TestHarnessFormRoundTripMaxTurns(t *testing.T) {
+	f := HarnessForm{
+		Name:     "deploy-check",
+		Prompt:   "check the deployments and report anything unhealthy",
+		MaxTurns: 7,
+		Backend:  "native",
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatalf("valid prompt+max_turns form rejected: %v", err)
+	}
+	body := f.TOML()
+	if !strings.Contains(body, "max_turns = 7") {
+		t.Fatalf("TOML missing max_turns key:\n%s", body)
+	}
+	if strings.Contains(body, "cmd = ") || strings.Contains(body, "args = ") {
+		t.Fatalf("prompt+max_turns harness TOML must not carry cmd/args:\n%s", body)
+	}
+	cfg, err := config.Parse([]byte(body), "harness.toml")
+	if err != nil {
+		t.Fatalf("config.Parse rejected form TOML: %v\n---\n%s", err, body)
+	}
+	h, ok := cfg.Harnesses["deploy-check"]
+	if !ok {
+		t.Fatalf("harness not present after parse; got %v", cfg.HarnessOrder)
+	}
+	if h.MaxTurns != 7 {
+		t.Errorf("MaxTurns = %d, want 7", h.MaxTurns)
+	}
+	if h.Cmd != "" || h.Args != nil {
+		t.Errorf("Cmd/Args = %q/%v, want empty (max_turns never desugars into args)", h.Cmd, h.Args)
+	}
+}
+
+// TestEditMaxTurnsHarnessRoundTrip: editing a turn-budgeted prompt harness
+// with `e` and saving unchanged round-trips the key losslessly — the pre-fill
+// sees the real field (no synthesized --max-turns arg to re-persist) and the
+// rewrite emits it back, so args cannot grow and the max_turns key cannot
+// drop per edit cycle.
+func TestEditMaxTurnsHarnessRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.toml")
+	original := "[harness.deploy-check]\nprompt = \"check the deployments\"\nmax_turns = 7\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sel := protocol.HarnessInfo{
+		Name:     "deploy-check",
+		Prompt:   "check the deployments",
+		MaxTurns: 7,
+	}
+	fi := editInputsFor(path, sel)
+	if fi.maxTurns != "7" {
+		t.Fatalf("max_turns not pre-filled: %q, want \"7\"", fi.maxTurns)
+	}
+	if fi.args != "" {
+		t.Fatalf("args pre-filled for a prompt harness: %q (synthesized flags must not surface)", fi.args)
+	}
+
+	// Save unchanged: the rewritten table must carry the key and parse back to
+	// the identical harness.
+	form := fi.toForm()
+	if form.MaxTurns != 7 {
+		t.Fatalf("toForm MaxTurns = %d, want 7", form.MaxTurns)
+	}
+	if err := form.Validate(); err != nil {
+		t.Fatalf("unchanged edit failed validation: %v", err)
+	}
+	body := []byte(removeHarnessTOML(original, form.Name))
+	body = AppendHarness(body, form)
+	if !strings.Contains(string(body), "max_turns = 7") {
+		t.Fatalf("max_turns key lost on save:\n%s", body)
+	}
+}
+
 // TestEditPreservesOmittedFields is the regression guard for the SPEC-0001 REQ
 // "Harness Form" scenario "e SHALL pre-fill from the existing harness": editing a
 // harness must NOT drop the keys the daemon's HarnessInfo projection omits

@@ -406,6 +406,29 @@ func TestHarnessFromWireAutoAccept(t *testing.T) {
 	}
 }
 
+// TestHarnessFromWireMaxTurns carries the ProtoMinor max_turns budget through
+// the JSON encode/decode, so a prompt harness's turn cap survives project_up
+// intact — the daemon folds --max-turns into the synthesized argv at spawn
+// (issue #59), never into Args.
+func TestHarnessFromWireMaxTurns(t *testing.T) {
+	ph := protocol.ProjectHarness{Name: "oneshot", Prompt: "do the thing", MaxTurns: 12, Enabled: true}
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded protocol.ProjectHarness
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	h := harnessFromWire(decoded)
+	if h.MaxTurns != 12 {
+		t.Errorf("MaxTurns = %d, want it carried across the wire as 12", h.MaxTurns)
+	}
+	if h.Prompt != "do the thing" || h.Cmd != "" || h.Args != nil {
+		t.Errorf("Prompt/Cmd/Args = %q/%q/%v, want prompt-only with untouched args", h.Prompt, h.Cmd, h.Args)
+	}
+}
+
 // waitForState polls describe until the harness reports the wanted state.
 func waitForState(t *testing.T, c interface {
 	Describe(string) (protocol.HarnessInfo, error)

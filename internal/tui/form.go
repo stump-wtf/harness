@@ -37,7 +37,11 @@ type HarnessForm struct {
 	// AutoAccept is the agent unattended/yolo mode (issue #58): requires
 	// Prompt — a cmd harness passes its tool's flag through Args itself
 	// (Validate mirrors the parser).
-	AutoAccept   bool
+	AutoAccept bool
+	// MaxTurns is the agent turn budget for a prompt harness (issue #59):
+	// requires Prompt — a cmd harness passes --max-turns through Args itself
+	// (Validate mirrors the parser). 0 means unset/unlimited.
+	MaxTurns     int
 	Args         []string
 	Workdir      string
 	EnvFile      string
@@ -81,6 +85,12 @@ func (f HarnessForm) Validate() error {
 	if f.AutoAccept && !promptSet {
 		return fmt.Errorf("auto_accept requires prompt (for a cmd harness, pass the tool's flag in args)")
 	}
+	if f.MaxTurns < 0 {
+		return fmt.Errorf("max_turns must not be negative")
+	}
+	if f.MaxTurns > 0 && !promptSet {
+		return fmt.Errorf("max_turns requires prompt (for a cmd harness, pass --max-turns in args)")
+	}
 	if f.Backend != "" && !core.Backend(f.Backend).Valid() {
 		return fmt.Errorf("backend must be native or tmux")
 	}
@@ -103,14 +113,17 @@ func (f HarnessForm) TOML() string {
 	if prompt != "" {
 		// Prompt harness: `prompt` replaces cmd/args entirely (Validate
 		// enforces the exclusivity; the daemon synthesizes the argv at spawn,
-		// ADR-0011). `model` and `auto_accept` ride beside it as config
-		// truth — never as synthesized args (issues #57, #58).
+		// ADR-0011). `model`, `auto_accept`, and `max_turns` ride beside it as
+		// config truth — never as synthesized args (issues #57, #58, #59).
 		fmt.Fprintf(&b, "prompt = %s\n", strconv.Quote(prompt))
 		if model := strings.TrimSpace(f.Model); model != "" {
 			fmt.Fprintf(&b, "model = %s\n", strconv.Quote(model))
 		}
 		if f.AutoAccept {
 			b.WriteString("auto_accept = true\n")
+		}
+		if f.MaxTurns > 0 {
+			fmt.Fprintf(&b, "max_turns = %d\n", f.MaxTurns)
 		}
 	} else {
 		fmt.Fprintf(&b, "cmd = %s\n", strconv.Quote(f.Cmd))
@@ -183,6 +196,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 		prompt:      sel.Prompt,
 		model:       sel.Model,
 		autoAccept:  sel.AutoAccept,
+		maxTurns:    strconv.Itoa(sel.MaxTurns),
 		backend:     orDefault(sel.Backend, string(core.BackendNative)),
 		description: sel.Description,
 		enabled:     sel.Enabled,
@@ -199,6 +213,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.prompt = h.Prompt
 	fi.model = h.Model
 	fi.autoAccept = h.AutoAccept
+	fi.maxTurns = strconv.Itoa(h.MaxTurns)
 	fi.args = strings.Join(h.Args, " ")
 	fi.workdir = h.Workdir
 	fi.envFile = h.EnvFile
@@ -233,6 +248,9 @@ func (fi formInputs) toForm() HarnessForm {
 	}
 	if d, err := strconv.Atoi(strings.TrimSpace(fi.delay)); err == nil {
 		f.RestartDelay = d
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(fi.maxTurns)); err == nil {
+		f.MaxTurns = n
 	}
 	return f
 }

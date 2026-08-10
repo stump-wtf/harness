@@ -151,6 +151,50 @@ func TestExecArgvPromptAutoAcceptSynthesis(t *testing.T) {
 	}
 }
 
+// TestExecArgvPromptMaxTurnsSynthesis pins the turn-budget flag's spawn-time
+// placement (issue #59): --max-turns rides the synthesized agent argv before
+// the prompt, and a 0/unset budget emits no flag at all (the "unlimited"
+// default, so a prompt one-shot is not silently capped).
+func TestExecArgvPromptMaxTurnsSynthesis(t *testing.T) {
+	h := core.Harness{Name: "agent", Prompt: "check deployments", MaxTurns: 8}
+	name, args := execArgv(h, "/home/x")
+	if name != "crush" {
+		t.Errorf("cmd = %q, want crush", name)
+	}
+	if want := []string{"run", "--quiet", "--max-turns", "8", "check deployments"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (--max-turns before the prompt)", args, want)
+	}
+
+	// Budget 0 (unset/unlimited) emits no flag.
+	h = core.Harness{Name: "agent", Prompt: "check deployments", MaxTurns: 0}
+	_, args = execArgv(h, "/home/x")
+	if want := []string{"run", "--quiet", "check deployments"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (no --max-turns when budget is 0)", args, want)
+	}
+
+	// It stacks with the other options in a stable flag order.
+	h = core.Harness{Name: "agent", Prompt: "check", Model: "claude-opus-5", AutoAccept: true, MaxTurns: 3}
+	_, args = execArgv(h, "/home/x")
+	if want := []string{"run", "--quiet", "--model", "claude-opus-5", "--yolo", "--max-turns", "3", "check"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (model, yolo, then max-turns, prompt last)", args, want)
+	}
+}
+
+// TestExecArgvCmdIgnoresMaxTurns: the cmd path never injects a --max-turns
+// flag — there is no vendor-agnostic injection point in an arbitrary argv, so
+// config validation forbids cmd+max_turns, and a wire def carrying both spawns
+// on its configured argv alone.
+func TestExecArgvCmdIgnoresMaxTurns(t *testing.T) {
+	h := core.Harness{Name: "svc", Cmd: "run", Args: []string{"--dir", "{workdir}"}, MaxTurns: 5}
+	name, args := execArgv(h, "/home/x")
+	if name != "run" {
+		t.Errorf("cmd = %q, want run", name)
+	}
+	if want := []string{"--dir", "/home/x"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (no synthesized --max-turns on the cmd path)", args, want)
+	}
+}
+
 // TestExecArgvCmdIgnoresAutoAccept: the cmd path never injects a yolo flag —
 // there is no vendor-agnostic injection point in an arbitrary argv, so config
 // validation forbids cmd+auto_accept, and a wire def carrying both spawns on
