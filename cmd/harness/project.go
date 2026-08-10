@@ -229,6 +229,7 @@ func wireHarnesses(proj *config.Project) []protocol.ProjectHarness {
 			Args:           h.Args,
 			Prompt:         h.Prompt,
 			Model:          h.Model,
+			AutoAccept:     h.AutoAccept,
 			Workdir:        h.Workdir,
 			EnvFile:        h.EnvFile,
 			RestartDelayMs: h.RestartDelay.Milliseconds(),

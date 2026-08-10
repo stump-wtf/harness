@@ -369,6 +369,7 @@ func harnessDefEqual(a, b core.Harness) bool {
 		slices.Equal(a.Args, b.Args) &&
 		a.Prompt == b.Prompt &&
 		a.Model == b.Model &&
+		a.AutoAccept == b.AutoAccept &&
 		a.Workdir == b.Workdir &&
 		a.EnvFile == b.EnvFile &&
 		a.RestartDelay == b.RestartDelay &&

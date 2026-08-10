@@ -504,3 +504,119 @@ func TestParseModelErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestParseAutoAcceptHarness covers the agent `auto_accept` unattended mode
+// (issue #58): the flag is stored as config truth on a prompt harness, and
+// Args are NEVER touched — no parse-time --yolo desugaring; the supervisor
+// folds the vendor's flag into the synthesized argv at spawn
+// (core.AgentCommand, ADR-0011).
+func TestParseAutoAcceptHarness(t *testing.T) {
+	tests := []struct {
+		name           string
+		toml           string
+		wantAutoAccept bool
+		wantCmd        string
+		wantArgs       []string
+		wantRestart    core.RestartPolicy
+	}{
+		{
+			name:           "auto_accept stored on a prompt harness, args untouched",
+			toml:           "[harness.agent]\nprompt = \"check deployments\"\nauto_accept = true\n",
+			wantAutoAccept: true,
+			wantRestart:    core.RestartNo,
+		},
+		{
+			// The motivating one-shot use case (issue #58): auto_accept
+			// requires prompt, and a prompt harness inherits the "no" restart
+			// default — so an unattended run exiting 0 must NOT respawn into
+			// repeated billed yolo runs. An explicit `restart = ...` still
+			// wins.
+			name:           "auto_accept prompt harness defaults to restart no",
+			toml:           "[harness.agent]\nprompt = \"summarize the day\"\nauto_accept = true\n",
+			wantAutoAccept: true,
+			wantRestart:    core.RestartNo,
+		},
+		{
+			name:        "absent auto_accept defaults to false",
+			toml:        "[harness.agent]\ncmd = \"echo\"\nargs = [\"hello\"]\n",
+			wantCmd:     "echo",
+			wantArgs:    []string{"hello"},
+			wantRestart: core.RestartAlways,
+		},
+		{
+			name:        "explicit false is allowed on a cmd harness",
+			toml:        "[harness.agent]\ncmd = \"echo\"\nargs = [\"hello\"]\nauto_accept = false\n",
+			wantCmd:     "echo",
+			wantArgs:    []string{"hello"},
+			wantRestart: core.RestartAlways,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tt.toml), "test.toml")
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			h, ok := cfg.Harnesses["agent"]
+			if !ok {
+				t.Fatalf("agent harness missing; order = %v", cfg.HarnessOrder)
+			}
+			if h.AutoAccept != tt.wantAutoAccept {
+				t.Errorf("AutoAccept = %v, want %v", h.AutoAccept, tt.wantAutoAccept)
+			}
+			if h.Cmd != tt.wantCmd {
+				t.Errorf("Cmd = %q, want %q", h.Cmd, tt.wantCmd)
+			}
+			if !reflect.DeepEqual(h.Args, tt.wantArgs) {
+				t.Errorf("Args = %v, want %v (auto_accept must never be desugared into args)", h.Args, tt.wantArgs)
+			}
+			if h.Restart != tt.wantRestart {
+				t.Errorf("Restart = %q, want %q", h.Restart, tt.wantRestart)
+			}
+		})
+	}
+}
+
+// TestParseAutoAcceptErrors: `auto_accept = true` requires `prompt` with the
+// same located-error contract as the model rules — there is no vendor-agnostic
+// injection point in an arbitrary cmd's argv, so a cmd harness passes its
+// tool's flag through its own args.
+func TestParseAutoAcceptErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		toml     string
+		wantLine int
+		wantSub  string
+	}{
+		{
+			name:     "auto_accept with cmd points at args",
+			toml:     "[harness.bad]\ncmd = \"crush\"\nargs = [\"run\"]\nauto_accept = true\n",
+			wantLine: 1,
+			wantSub:  `"auto_accept" requires "prompt"`,
+		},
+		{
+			name:     "auto_accept alone still reports the missing cmd/prompt first",
+			toml:     "# header\n\n[harness.bad]\nauto_accept = true\n",
+			wantLine: 3,
+			wantSub:  `missing required key "cmd" (or set "prompt"`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.toml), "test.toml")
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			var ce *Error
+			if !errors.As(err, &ce) {
+				t.Fatalf("error is %T, want *config.Error: %v", err, err)
+			}
+			if ce.LineNumber() != tt.wantLine {
+				t.Errorf("line = %d, want %d (err: %v)", ce.LineNumber(), tt.wantLine, ce)
+			}
+			if !strings.Contains(ce.Msg, tt.wantSub) {
+				t.Errorf("message %q does not contain %q", ce.Msg, tt.wantSub)
+			}
+		})
+	}
+}

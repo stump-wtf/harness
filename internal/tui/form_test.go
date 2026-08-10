@@ -254,6 +254,95 @@ func TestEditModelHarnessRoundTrip(t *testing.T) {
 	}
 }
 
+// TestHarnessFormRoundTripAutoAccept: `n` can author an unattended prompt
+// harness — the form emits `auto_accept = true` beside `prompt` (config truth,
+// never a synthesized --yolo arg, issue #58) and the TOML re-parses into the
+// same harness with Cmd/Args still empty.
+func TestHarnessFormRoundTripAutoAccept(t *testing.T) {
+	f := HarnessForm{
+		Name:       "deploy-check",
+		Prompt:     "check the deployments and report anything unhealthy",
+		AutoAccept: true,
+		Backend:    "native",
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatalf("valid prompt+auto_accept form rejected: %v", err)
+	}
+	body := f.TOML()
+	if !strings.Contains(body, "auto_accept = true") {
+		t.Fatalf("TOML missing auto_accept key:\n%s", body)
+	}
+	if strings.Contains(body, "cmd = ") || strings.Contains(body, "args = ") {
+		t.Fatalf("prompt+auto_accept harness TOML must not carry cmd/args:\n%s", body)
+	}
+	cfg, err := config.Parse([]byte(body), "harness.toml")
+	if err != nil {
+		t.Fatalf("config.Parse rejected form TOML: %v\n---\n%s", err, body)
+	}
+	h, ok := cfg.Harnesses["deploy-check"]
+	if !ok {
+		t.Fatalf("harness not present after parse; got %v", cfg.HarnessOrder)
+	}
+	if !h.AutoAccept {
+		t.Error("AutoAccept = false, want true")
+	}
+	if h.Cmd != "" || h.Args != nil {
+		t.Errorf("Cmd/Args = %q/%v, want empty (auto_accept never desugars into args)", h.Cmd, h.Args)
+	}
+}
+
+// TestEditAutoAcceptHarnessRoundTrip: editing an unattended prompt harness
+// with `e` and saving unchanged round-trips both keys losslessly — the
+// pre-fill sees the real fields (no synthesized args to re-persist) and the
+// rewrite emits them back, so args cannot grow and the auto_accept key cannot
+// drop per edit cycle.
+func TestEditAutoAcceptHarnessRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.toml")
+	original := "[harness.deploy-check]\nprompt = \"check the deployments\"\nauto_accept = true\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sel := protocol.HarnessInfo{
+		Name:       "deploy-check",
+		Prompt:     "check the deployments",
+		AutoAccept: true,
+	}
+	fi := editInputsFor(path, sel)
+	if !fi.autoAccept {
+		t.Fatal("auto_accept not pre-filled")
+	}
+	if fi.args != "" {
+		t.Fatalf("args pre-filled for an unattended prompt harness: %q (synthesized flags must not surface)", fi.args)
+	}
+
+	// Save unchanged: the rewritten table must carry both keys and parse back
+	// to the identical harness.
+	form := fi.toForm()
+	if err := form.Validate(); err != nil {
+		t.Fatalf("unchanged edit failed validation: %v", err)
+	}
+	body := []byte(removeHarnessTOML(original, form.Name))
+	body = AppendHarness(body, form)
+	if !strings.Contains(string(body), "auto_accept = true") {
+		t.Fatalf("auto_accept key lost on save:\n%s", body)
+	}
+
+	cfg, err := config.Parse(body, "harness.toml")
+	if err != nil {
+		t.Fatalf("edited config did not parse: %v\n%s", err, body)
+	}
+	before, err := config.Parse([]byte(original), "harness.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Harnesses["deploy-check"], before.Harnesses["deploy-check"]) {
+		t.Errorf("unchanged edit not lossless:\n got %+v\nwant %+v",
+			cfg.Harnesses["deploy-check"], before.Harnesses["deploy-check"])
+	}
+}
+
 // TestEditPreservesOmittedFields is the regression guard for the SPEC-0001 REQ
 // "Harness Form" scenario "e SHALL pre-fill from the existing harness": editing a
 // harness must NOT drop the keys the daemon's HarnessInfo projection omits
@@ -374,6 +463,12 @@ func TestFormValidate(t *testing.T) {
 	}
 	if err := (HarnessForm{Name: "x", Prompt: "p", Model: "claude-opus-5"}).Validate(); err != nil {
 		t.Errorf("prompt+model form should validate: %v", err)
+	}
+	if err := (HarnessForm{Name: "x", Cmd: "y", AutoAccept: true}).Validate(); err == nil {
+		t.Error("cmd+auto_accept should fail (auto_accept requires prompt)")
+	}
+	if err := (HarnessForm{Name: "x", Prompt: "p", AutoAccept: true}).Validate(); err != nil {
+		t.Errorf("prompt+auto_accept form should validate: %v", err)
 	}
 }
 

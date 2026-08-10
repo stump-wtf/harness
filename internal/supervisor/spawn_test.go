@@ -126,6 +126,46 @@ func TestExecArgvCmdIgnoresModel(t *testing.T) {
 	}
 }
 
+// TestExecArgvPromptAutoAcceptSynthesis pins the yolo flag's spawn-time
+// placement (issue #58): --yolo rides the synthesized agent argv after the
+// optional --model and BEFORE the prompt — the prompt stays the final argv
+// element — and, like prompt and model, it never passes through {workdir}
+// expansion.
+func TestExecArgvPromptAutoAcceptSynthesis(t *testing.T) {
+	h := core.Harness{Name: "agent", Prompt: "check deployments", Model: "claude-opus-5", AutoAccept: true}
+	name, args := execArgv(h, "/home/x")
+	if name != "crush" {
+		t.Errorf("cmd = %q, want crush", name)
+	}
+	want := []string{"run", "--quiet", "--model", "claude-opus-5", "--yolo", "check deployments"}
+	if !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (--yolo after --model, prompt last)", args, want)
+	}
+
+	// Without a model the flag still precedes the prompt.
+	h = core.Harness{Name: "agent", Prompt: "check deployments", AutoAccept: true}
+	_, args = execArgv(h, "/home/x")
+	want = []string{"run", "--quiet", "--yolo", "check deployments"}
+	if !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q", args, want)
+	}
+}
+
+// TestExecArgvCmdIgnoresAutoAccept: the cmd path never injects a yolo flag —
+// there is no vendor-agnostic injection point in an arbitrary argv, so config
+// validation forbids cmd+auto_accept, and a wire def carrying both spawns on
+// its configured argv alone.
+func TestExecArgvCmdIgnoresAutoAccept(t *testing.T) {
+	h := core.Harness{Name: "svc", Cmd: "run", Args: []string{"--dir", "{workdir}"}, AutoAccept: true}
+	name, args := execArgv(h, "/home/x")
+	if name != "run" {
+		t.Errorf("cmd = %q, want run", name)
+	}
+	if want := []string{"--dir", "/home/x"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (no synthesized --yolo on the cmd path)", args, want)
+	}
+}
+
 // TestExecArgvCmdUnchanged: a cmd harness keeps its configured argv, with
 // {workdir} expansion — synthesis only engages when Cmd is empty.
 func TestExecArgvCmdUnchanged(t *testing.T) {

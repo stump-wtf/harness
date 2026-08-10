@@ -806,6 +806,32 @@ enabled = false
 	}
 }
 
+// TestWireHarnessesCarriesAutoAccept: a prompt harness's unattended mode
+// crosses the wire (additive ProtoMinor 4 field) with Cmd/Args still empty —
+// the daemon folds --yolo into the synthesized argv at spawn (ADR-0011, issue
+// #58), so no client ever re-persists a synthesized flag.
+func TestWireHarnessesCarriesAutoAccept(t *testing.T) {
+	dir := writeProjectDir(t, `[harness.oneshot]
+prompt = "summarize the day"
+auto_accept = true
+enabled = false
+`)
+	proj, err := config.LoadProject(filepath.Join(dir, "harness.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := wireHarnesses(proj)
+	if len(wire) != 1 {
+		t.Fatalf("wireHarnesses len = %d, want 1", len(wire))
+	}
+	if !wire[0].AutoAccept {
+		t.Error("AutoAccept = false, want it carried onto the wire")
+	}
+	if wire[0].Cmd != "" || len(wire[0].Args) != 0 {
+		t.Errorf("Cmd/Args = %q/%v, want empty (spawn-time synthesis)", wire[0].Cmd, wire[0].Args)
+	}
+}
+
 // TestFilterProjectHarnesses filters on provenance, not name prefix.
 func TestFilterProjectHarnesses(t *testing.T) {
 	t.Parallel()

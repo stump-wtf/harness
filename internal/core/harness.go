@@ -98,6 +98,19 @@ type Harness struct {
 	// exempt from {workdir} arg expansion.
 	// Governing: ADR-0011; issue #57 (add `model` field for model selection).
 	Model string
+	// AutoAccept enables unattended/yolo mode for a prompt harness, bypassing
+	// the agent CLI's permission prompts. Config truth only, and it requires
+	// Prompt (validation enforces it — there is no vendor-agnostic place to
+	// inject a flag into an arbitrary cmd's argv, so a cmd harness passes its
+	// tool's flag through its own Args): the supervisor folds the vendor's
+	// yolo flag into the synthesized agent argv at spawn time via
+	// AgentCommand, so it never rides Args.
+	// WARNING: this bypasses ALL of the agent's permission prompts — ADR-0008
+	// names an unattended yolo agent reachable over network attach as the top
+	// threat — so it belongs only on trusted, headless runs.
+	// Governing: ADR-0008; ADR-0011; issue #58 (add `auto_accept` field for
+	// unattended mode).
+	AutoAccept bool
 	// Workdir is the process working directory (may contain a leading ~).
 	Workdir string
 	// EnvFile is a file of KEY=VALUE pairs sourced before launch (ADR-0008;
@@ -126,17 +139,22 @@ type Harness struct {
 }
 
 // AgentCommand returns the argv a prompt harness spawns: the agent CLI, the
-// optional --model selection (issue #57), then the prompt, verbatim, as the
-// FINAL argv element — the flag precedes the prompt so the instruction text
-// stays last. Callers pass both values through untouched: they are config
-// truth, not configured args, so neither goes through the {workdir}
-// placeholder expansion the supervisor applies to Args.
+// optional --model selection (issue #57), the optional --yolo unattended flag
+// (issue #58), then the prompt, verbatim, as the FINAL argv element — flags
+// precede the prompt so the instruction text stays last. Callers pass all
+// values through untouched: they are config truth, not configured args, so
+// none go through the {workdir} placeholder expansion the supervisor applies
+// to Args.
 // Governing: ADR-0011 — interim single-vendor synthesis; the SPEC-0006 adapter
-// registry replaces this call site.
-func AgentCommand(prompt, model string) (cmd string, args []string) {
+// registry replaces this call site (and maps auto-accept onto each vendor's
+// own flag).
+func AgentCommand(prompt, model string, autoAccept bool) (cmd string, args []string) {
 	args = []string{"run", "--quiet"}
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	if autoAccept {
+		args = append(args, "--yolo")
 	}
 	return "crush", append(args, prompt)
 }

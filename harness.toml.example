@@ -37,6 +37,11 @@ enabled = false
 [harness.deploy-check]
 prompt = "check the deployments and report anything unhealthy"
 model = "claude-opus-5"  # optional: which model the agent runs (requires prompt)
+# auto_accept runs the agent unattended (currently crush's --yolo flag,
+# synthesized at spawn). WARNING: this bypasses ALL of the agent's permission
+# prompts — only enable it for trusted, headless runs. Requires `prompt`; a
+# cmd harness passes its tool's own flag through `args` instead.
+auto_accept = true
 workdir = "~/src/my-project"
 description = "one-shot agent run"
 enabled = false
