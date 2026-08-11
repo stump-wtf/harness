@@ -209,9 +209,10 @@ func (c *conn) opDaemonInfo() protocol.DaemonInfo {
 		Socket:        c.srv.socketPath,
 		// The registered count — globals plus project harnesses — so the
 		// number agrees with what list returns (SPEC-0004; ADR-0009).
-		Harnesses:       c.srv.mgr.HarnessCount(),
-		ActiveProfile:   c.srv.mgr.ActiveProfile(),
-		ProfileResolved: &resolved,
+		Harnesses:        c.srv.mgr.HarnessCount(),
+		ActiveProfile:    c.srv.mgr.ActiveProfile(),
+		ProfileResolved:  &resolved,
+		DormantAutostart: c.srv.mgr.DormantAutostart(),
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -553,5 +554,122 @@ func TestManagerRestoreResolvedProfileKeepsPersistedIntent(t *testing.T) {
 	}
 	if snap, _ := m.Snapshot("alpha"); snap.Enabled {
 		t.Error("a deliberately stopped harness must stay stopped when the profile resolves")
+	}
+	// …and that silence is exactly what needs reporting: config says
+	// autostart = true, the harness never comes up, and nothing else says why.
+	if got := m.DormantAutostart(); !slices.Equal(got, []string{"alpha"}) {
+		t.Errorf("DormantAutostart() = %v, want [alpha]", got)
+	}
+}
+
+// A member the operator never stopped is absent from state.json, gets restored
+// enabled, and must NOT be reported as dormant.
+func TestManagerDormantAutostartEmptyWhenNothingSuppressed(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+
+	cfg := managerCfg(shHarness("alpha", "while true; do sleep 0.02; done", 0))
+
+	data, err := json.Marshal(persistedState{
+		Version:       stateSchemaVersion,
+		ActiveProfile: "default",
+		Harnesses:     map[string]persistedHarness{"alpha": {Enabled: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(cfg, ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    filepath.Join(dir, "logs"),
+	})
+	t.Cleanup(m.Close)
+
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.DormantAutostart(); len(got) != 0 {
+		t.Errorf("DormantAutostart() = %v, want empty", got)
+	}
+}
+
+// The #99 fallback overrides persisted intent to enabled, so a member caught by
+// it is started and must not also be reported dormant — that would tell the
+// operator to start something already running.
+func TestManagerDormantAutostartExcludesPhantomProfileFallback(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+
+	cfg := managerCfg(shHarness("alpha", "while true; do sleep 0.02; done", 0))
+
+	data, err := json.Marshal(persistedState{
+		Version:       stateSchemaVersion,
+		ActiveProfile: "gone", // renamed away upstream → unresolved (#99)
+		Harnesses:     map[string]persistedHarness{"alpha": {Enabled: false}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(cfg, ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    filepath.Join(dir, "logs"),
+	})
+	t.Cleanup(m.Close)
+
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if snap, _ := m.Snapshot("alpha"); !snap.Enabled {
+		t.Fatal("the #99 fallback should have forced alpha enabled")
+	}
+	if got := m.DormantAutostart(); len(got) != 0 {
+		t.Errorf("DormantAutostart() = %v, want empty (fallback already started it)", got)
+	}
+}
+
+// Starting the harness is the documented fix, so the report must stop naming it.
+func TestManagerStartClearsDormantAutostart(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+
+	cfg := managerCfg(shHarness("alpha", "while true; do sleep 0.02; done", 0))
+
+	data, err := json.Marshal(persistedState{
+		Version:       stateSchemaVersion,
+		ActiveProfile: "default",
+		Harnesses:     map[string]persistedHarness{"alpha": {Enabled: false}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(cfg, ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    filepath.Join(dir, "logs"),
+	})
+	t.Cleanup(m.Close)
+
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.DormantAutostart(); len(got) != 1 {
+		t.Fatalf("precondition: DormantAutostart() = %v, want [alpha]", got)
+	}
+	m.Start("alpha")
+	if got := m.DormantAutostart(); len(got) != 0 {
+		t.Errorf("DormantAutostart() = %v, want empty after start", got)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -111,6 +112,16 @@ func runDaemon(args []string) {
 		log.Warn("active profile not found in config; fell back to autostart profile",
 			"profile", mgr.ActiveProfile(),
 			"hint", "run `harness use-profile <name>` to choose a valid profile",
+		)
+	}
+	// Persisted intent beats autostart membership on purpose (an operator stop
+	// must survive a restart), but without this the daemon comes up having
+	// silently ignored `autostart = true` — config says one thing, `harness list`
+	// shows another, and doctor calls the set healthy.
+	if dormant := mgr.DormantAutostart(); len(dormant) > 0 {
+		log.Warn("autostart profile members left down by persisted intent",
+			"harnesses", strings.Join(dormant, ", "),
+			"hint", "run `harness start <name>` to re-enable (it persists across restarts)",
 		)
 	}
 	mgr.Autostart()

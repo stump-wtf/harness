@@ -234,6 +234,11 @@ type DaemonInfo struct {
 	Harnesses       int    `json:"harnesses"`
 	ActiveProfile   string `json:"active_profile,omitempty"`
 	ProfileResolved *bool  `json:"profile_resolved,omitempty"` // #99: false when persisted profile is missing from config
+	// DormantAutostart lists harnesses an autostart profile asks for that
+	// state.json restored disabled, so the daemon left them down. Empty/absent
+	// is healthy. Clients surface it so `autostart = true` next to a harness
+	// that never starts is not silent.
+	DormantAutostart []string `json:"dormant_autostart,omitempty"`
 }
 
 // ---- Structured errors (SPEC-0002 REQ "Control Operations") --------------

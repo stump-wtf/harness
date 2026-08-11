@@ -72,6 +72,14 @@ type Manager struct {
 	activeProfile     string
 	profileUnresolved bool // persisted active profile is missing from config (#99)
 
+	// dormantAutostart names harnesses that an autostart profile asks for but
+	// that state.json restored as disabled, so the daemon deliberately did NOT
+	// start them. Persisted intent wins on purpose — an operator `harness stop`
+	// must survive a daemon restart — but the result is a config that says
+	// "autostart" next to a harness that never comes up, with nothing said about
+	// it. Recorded here so boot can log it and doctor can show it.
+	dormantAutostart []string
+
 	// projects tracks every registered (ephemeral) project by name, and
 	// provenance maps a registered harness's full name to its owning project
 	// ("" / absent = global config) so `down`/`ps` scope correctly and a global
@@ -199,11 +207,21 @@ func (m *Manager) Restore() error {
 	}
 	m.mu.Unlock()
 
+	var dormant []string
 	for name, s := range sups {
 		pr, inState := ps.Harnesses[name]
 		var last time.Time
 		if inState && pr.LastExitAt != nil {
 			last = *pr.LastExitAt
+		}
+		// An autostart member restored as disabled will not be started by
+		// Autostart(), and no existing signal says so: `harness list` shows it
+		// stopped, doctor calls the set healthy, and the config still reads
+		// `autostart = true`. Collect it so both can speak up. This is only the
+		// plain inState case — the #99 fallback above overrides intent to true,
+		// so it is never dormant.
+		if inState && !pr.Enabled && autostart[name] && !(unresolved && hasAutostartProfile) {
+			dormant = append(dormant, name)
 		}
 		switch {
 		case unresolved && hasAutostartProfile && autostart[name]:
@@ -220,6 +238,13 @@ func (m *Manager) Restore() error {
 			s.Restore(true, 0, 0, time.Time{})
 		}
 	}
+
+	// Stable order so the warning and doctor row don't reshuffle between boots
+	// (sups is a map).
+	slices.Sort(dormant)
+	m.mu.Lock()
+	m.dormantAutostart = dormant
+	m.mu.Unlock()
 	return nil
 }
 
@@ -237,9 +262,22 @@ func (m *Manager) Autostart() {
 func (m *Manager) Start(name string) bool {
 	if s := m.get(name); s != nil {
 		s.Start()
+		// Starting it IS the fix for a dormant autostart member, so stop
+		// reporting it — otherwise boot's warning and doctor's row outlive the
+		// condition they describe, until the next restore.
+		m.clearDormant(name)
 		return true
 	}
 	return false
+}
+
+// clearDormant drops name from the dormant-autostart list.
+func (m *Manager) clearDormant(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dormantAutostart = slices.DeleteFunc(m.dormantAutostart, func(n string) bool {
+		return n == name
+	})
 }
 
 // Stop gracefully stops a single harness and clears its enabled intent.
@@ -302,6 +340,18 @@ func (m *Manager) ProfileResolved() bool {
 	return !m.profileUnresolved
 }
 
+// DormantAutostart returns the harnesses an autostart profile asks for that
+// state.json restored as disabled, so Autostart() left them down. Empty is the
+// healthy case. Persisted intent beating config is deliberate (an operator stop
+// must survive a restart), but it is silent — this is what lets boot log it and
+// doctor surface it, instead of the operator reading `autostart = true` next to
+// a harness that never starts.
+func (m *Manager) DormantAutostart() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.dormantAutostart...)
+}
+
 // ActiveProfile returns the currently active profile name, if any (ADR-0006).
 func (m *Manager) ActiveProfile() string {
 	m.mu.Lock()
@@ -324,6 +374,11 @@ func (m *Manager) UseProfile(name string) bool {
 	members := append([]string(nil), p.Harnesses...)
 	m.activeProfile = name
 	m.profileUnresolved = false
+	// Every member is about to be enabled below, so no member can still be a
+	// dormant autostart entry.
+	m.dormantAutostart = slices.DeleteFunc(m.dormantAutostart, func(n string) bool {
+		return slices.Contains(members, n)
+	})
 	m.mu.Unlock()
 
 	for _, hn := range members {

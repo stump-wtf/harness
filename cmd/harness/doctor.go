@@ -40,11 +40,16 @@ type check struct {
 // doctorResult is the JSON shape emitted when --json is set. One object per
 // check plus an aggregate summary. Scripts can consume this with jq.
 type doctorResult struct {
-	Config  checkResult   `json:"config"`
-	Daemon  *checkResult  `json:"daemon,omitempty"`
-	Version *checkResult  `json:"version,omitempty"`
-	Harness *checkResult  `json:"harness,omitempty"`
-	Summary summaryResult `json:"summary"`
+	Config  checkResult  `json:"config"`
+	Daemon  *checkResult `json:"daemon,omitempty"`
+	Version *checkResult `json:"version,omitempty"`
+	Harness *checkResult `json:"harness,omitempty"`
+	// Profile (#99) and Autostart are conditional rows: present only when the
+	// condition fires. Both already counted toward the summary tally, but had no
+	// object here, so `--json` reported `warned: 1` with nothing to point at.
+	Profile   *checkResult  `json:"profile,omitempty"`
+	Autostart *checkResult  `json:"autostart,omitempty"`
+	Summary   summaryResult `json:"summary"`
 }
 
 type checkResult struct {
@@ -176,6 +181,20 @@ func runDoctor(o verbOpts) int {
 		})
 	}
 
+	// An autostart profile member that state.json restored disabled is never
+	// started, and every other signal reads healthy: `harness list` shows it
+	// stopped like any deliberate stop, the harnesses row below counts it
+	// healthy, and the config still says `autostart = true`. Warn, don't fail —
+	// persisted intent winning is correct, it just has to be visible.
+	if len(di.DormantAutostart) > 0 {
+		rows = append(rows, check{
+			name:   "autostart",
+			level:  cliui.LevelWarn,
+			detail: fmt.Sprintf("%d autostart member(s) left down by persisted intent: %s", len(di.DormantAutostart), strings.Join(di.DormantAutostart, ", ")),
+			hint:   "run `harness start <name>` to re-enable (persists across restarts)",
+		})
+	}
+
 	hs, err := c.List()
 	switch {
 	case err != nil:
@@ -280,6 +299,12 @@ func emitDoctorJSON(w io.Writer, rows []check) {
 		case "harnesses":
 			c := cr
 			res.Harness = &c
+		case "profile":
+			c := cr
+			res.Profile = &c
+		case "autostart":
+			c := cr
+			res.Autostart = &c
 		}
 	}
 	res.Summary = summaryResult{Passed: pass, Warned: warn, Failed: fail}
