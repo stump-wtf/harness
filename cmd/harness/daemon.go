@@ -129,15 +129,32 @@ func runDaemon(args []string) {
 
 	// Scheduled harnesses: cron-fired one-shot agent runs owned by the
 	// daemon (issue #66). At each firing the daemon starts the harness if
-	// it is not already running (overlapping firings are skipped).
+	// it is not already running (overlapping firings are skipped, not
+	// stacked). "Running" here means any state with a live or in-transition
+	// process: starting, running, degraded, and stopping all skip — a firing
+	// must never spawn a second copy or flip enabled intent mid-stop.
+	// Stopped, failed, and restarting fire (a fresh scheduled attempt clears
+	// a failed latch via Start's normal path).
 	sched := scheduler.New(func(name string) {
-		if snap, ok := mgr.Snapshot(name); ok && snap.State == core.StateRunning {
-			return // already running — skip this firing
+		if snap, ok := mgr.Snapshot(name); ok {
+			switch snap.State {
+			case core.StateStarting, core.StateRunning, core.StateDegraded, core.StateStopping:
+				log.Debug("schedule fired but harness is active; skipping", "harness", name, "state", snap.State)
+				return
+			}
 		}
-		mgr.Start(name)
+		log.Info("schedule fired", "harness", name)
+		if !mgr.Start(name) {
+			log.Warn("schedule fired for unknown harness", "harness", name)
+		}
 	})
 	sched.Apply(cfg)
 	sched.Start()
+	// Re-apply schedules after every successful config reload, whichever
+	// path triggered it: SIGHUP, the config watcher, or the daemon's reload
+	// control op all funnel through Manager.Reload. Registered before any of
+	// those sources is live.
+	mgr.SetReloadHook(func() { sched.Apply(mgr.Config()) })
 
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
@@ -173,7 +190,6 @@ func runDaemon(args []string) {
 		} else {
 			cw.Start()
 			cfgWatcher = cw
-			cw.OnReload(func() { sched.Apply(mgr.Config()) })
 			log.Info("watching config for changes", "config", *configPath)
 		}
 	}
@@ -200,7 +216,6 @@ func runDaemon(args []string) {
 			if err := mgr.ReloadFromFile(*configPath); err != nil {
 				log.Warn("config reload failed", "err", err)
 			} else {
-				sched.Apply(mgr.Config())
 				log.Info("config reloaded")
 			}
 			continue

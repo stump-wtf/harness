@@ -32,7 +32,6 @@ type ConfigWatcher struct {
 	manager    *Manager
 	configDir  string
 	configBase string
-	onReload   func()
 	done       chan struct{}
 	wg         sync.WaitGroup
 }
@@ -65,10 +64,6 @@ func (cw *ConfigWatcher) Start() {
 	cw.wg.Add(1)
 	go cw.loop()
 }
-
-// OnReload sets a callback invoked after a successful auto-reload. The daemon
-// uses it to re-apply scheduled harness entries against the new config.
-func (cw *ConfigWatcher) OnReload(fn func()) { cw.onReload = fn }
 
 // Close stops the watcher and waits for the goroutine to exit.
 func (cw *ConfigWatcher) Close() {
@@ -151,9 +146,6 @@ func (cw *ConfigWatcher) reload() {
 		log.Info("config auto-reloaded", "changes", changes)
 	} else {
 		log.Debug("config reload triggered but no effective changes")
-	}
-	if cw.onReload != nil {
-		cw.onReload()
 	}
 }
 

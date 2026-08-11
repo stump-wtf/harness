@@ -64,6 +64,10 @@ type Manager struct {
 	extraOutFor  func(name string) io.Writer
 	dropExtraOut func(name string)
 	sizeFor      func(name string) (int, int)
+	// reloadHook, when set, runs after every successful Reload regardless of
+	// which path triggered it (SIGHUP, watcher, reload control op). Set once
+	// at daemon boot via SetReloadHook (issue #66).
+	reloadHook func()
 
 	mu                sync.Mutex
 	cfg               *core.Config
@@ -511,6 +515,11 @@ func (m *Manager) Reload(newCfg *core.Config) {
 		s.Start()
 	}
 	m.markDirty()
+	// Invoked outside m.mu: the hook (scheduler re-apply) reads Config(),
+	// which takes the lock.
+	if m.reloadHook != nil {
+		m.reloadHook()
+	}
 }
 
 // addSupervisorLocked adds a supervisor without appending order (callers
