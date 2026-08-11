@@ -103,6 +103,56 @@ func TestManagerPersistsAndRestoresIntent(t *testing.T) {
 	}
 }
 
+// The mirror of the test above, for the case it never covered: a harness that is
+// still RUNNING when the daemon goes down. Shutdown must not be read as intent.
+//
+// cmdShutdown used to set enabled=false on every live harness, and Close() ends
+// with a Save(), so a clean daemon restart — a systemd restart for a new binary,
+// a reboot, anything — persisted enabled=false and the next Autostart() started
+// nothing. Only harnesses actually in use were affected; an already-stopped one
+// kept its intent. The daemon cannot know why it is being stopped and must not
+// guess: intent changes only through Start/Stop/UseProfile.
+func TestManagerShutdownPreservesRunningIntent(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	logDir := filepath.Join(dir, "logs")
+
+	cfg := managerCfg(shHarness("survivor", "while true; do sleep 0.02; done", 0))
+
+	m1 := NewManager(cfg, ManagerOptions{Policy: fastPolicy(), StatePath: statePath, LogDir: logDir})
+	if err := m1.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	m1.Autostart()
+	waitFor(t, 3*time.Second, "harness reaches running", func() bool {
+		snap, _ := m1.Snapshot("survivor")
+		return snap.State == core.StateRunning
+	})
+	// Close() is the real shutdown path: Shutdown() per supervisor, then the
+	// final durable Save(). No Stop() — nobody asked for this to stop.
+	m1.Close()
+
+	// The daemon comes back on the same state.json.
+	m2 := NewManager(cfg, ManagerOptions{Policy: fastPolicy(), StatePath: statePath, LogDir: logDir})
+	t.Cleanup(m2.Close)
+	if err := m2.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	snap, ok := m2.Snapshot("survivor")
+	if !ok {
+		t.Fatal("harness missing after restore")
+	}
+	if !snap.Enabled {
+		t.Fatal("a daemon restart cleared intent: a running harness must restore enabled=true")
+	}
+	// The consequence that actually bit: it has to come back up.
+	m2.Autostart()
+	waitFor(t, 3*time.Second, "harness autostarts after the daemon restart", func() bool {
+		s, _ := m2.Snapshot("survivor")
+		return s.State == core.StateRunning
+	})
+}
+
 // ---- SPEC-0003 REQ "Lifecycle Events" ------------------------------------
 
 func TestManagerEmitsLifecycleEvents(t *testing.T) {

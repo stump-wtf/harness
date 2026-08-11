@@ -297,9 +297,25 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 			_, _ = s.proc.pty.Write(c.input)
 		}
 	case cmdShutdown:
+		// Shutdown must NOT touch `enabled`. The daemon cannot tell why it is
+		// going down — `systemctl stop`, a restart for a new binary, a reboot —
+		// and it should not try: how it is supervised is not its business. Intent
+		// changes only through the operator verbs (Start/Stop/UseProfile).
+		//
+		// This used to set enabled = false here, and Close() ends with a Save(),
+		// so every clean daemon restart persisted enabled=false for every
+		// RUNNING harness. Restore() then read that false, Autostart() started
+		// nothing, and doctor reported the set healthy — a binary upgrade
+		// silently decommissioned the agents it was upgrading, and only the ones
+		// actually in use (an already-stopped harness kept its intent).
+		//
+		// Nothing is lost by dropping it: this runs on the actor goroutine, and
+		// gracefulStop consumes the exit off exitCh itself, so onProcessGone —
+		// the only restart-on-exit path — is unreachable for the duration. The
+		// restart timer is cancelled just above, and the loop returns right
+		// after, so no respawn can be armed either.
 		s.cancelRestartTimer()
 		if s.hasProcess() {
-			s.enabled = false
 			s.gracefulStop()
 		}
 		s.closeLog()
