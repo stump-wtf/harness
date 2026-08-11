@@ -2,7 +2,6 @@ package scheduler
 
 import (
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
@@ -11,8 +10,7 @@ import (
 // TestSchedulerApplyNoSchedules verifies Apply with no scheduled harnesses
 // registers nothing.
 func TestSchedulerApplyNoSchedules(t *testing.T) {
-	var fired int32
-	s := New(func(string) { atomic.AddInt32(&fired, 1) })
+	s := New(func(string) {})
 	defer s.Close()
 
 	cfg := &core.Config{
@@ -30,8 +28,7 @@ func TestSchedulerApplyNoSchedules(t *testing.T) {
 
 // TestSchedulerApplyWithSchedule verifies a scheduled harness gets an entry.
 func TestSchedulerApplyWithSchedule(t *testing.T) {
-	var fired int32
-	s := New(func(string) { atomic.AddInt32(&fired, 1) })
+	s := New(func(string) {})
 	defer s.Close()
 
 	cfg := &core.Config{
@@ -48,7 +45,8 @@ func TestSchedulerApplyWithSchedule(t *testing.T) {
 }
 
 // TestSchedulerInvalidScheduleSkipped verifies an invalid cron expression is
-// skipped without error.
+// skipped without error (defense in depth: config validation rejects these at
+// parse time, so the scheduler only logs).
 func TestSchedulerInvalidScheduleSkipped(t *testing.T) {
 	s := New(func(string) {})
 	defer s.Close()
@@ -95,16 +93,79 @@ func TestSchedulerReapplyRemovesEntry(t *testing.T) {
 	}
 }
 
+// TestSchedulerReapplyKeepsUnchangedEntry verifies an unchanged schedule
+// survives a re-Apply with the SAME cron entry — the reconcile must not
+// rebuild it, or interval schedules (@every N) would restart their countdown
+// on every config reload and could starve forever under periodic rewrites.
+func TestSchedulerReapplyKeepsUnchangedEntry(t *testing.T) {
+	s := New(func(string) {})
+	defer s.Close()
+
+	cfg := &core.Config{
+		Harnesses: map[string]core.Harness{
+			"a": {Name: "a", Prompt: "test", Schedule: "@every 6h"},
+		},
+		HarnessOrder: []string{"a"},
+	}
+	s.Apply(cfg)
+	first, ok := s.entries["a"]
+	if !ok {
+		t.Fatal("entry not registered")
+	}
+
+	s.Apply(cfg) // unchanged config: entry must be preserved, not rebuilt
+	second, ok := s.entries["a"]
+	if !ok {
+		t.Fatal("entry lost on re-Apply")
+	}
+	if first.id != second.id {
+		t.Errorf("unchanged entry was rebuilt: id %d -> %d", first.id, second.id)
+	}
+}
+
+// TestSchedulerReapplyReplacesChangedEntry verifies a changed spec re-registers
+// the entry under the new schedule.
+func TestSchedulerReapplyReplacesChangedEntry(t *testing.T) {
+	s := New(func(string) {})
+	defer s.Close()
+
+	cfg := &core.Config{
+		Harnesses: map[string]core.Harness{
+			"a": {Name: "a", Prompt: "test", Schedule: "0 */6 * * *"},
+		},
+		HarnessOrder: []string{"a"},
+	}
+	s.Apply(cfg)
+	first := s.entries["a"]
+
+	changed := &core.Config{
+		Harnesses: map[string]core.Harness{
+			"a": {Name: "a", Prompt: "test", Schedule: "0 */3 * * *"},
+		},
+		HarnessOrder: []string{"a"},
+	}
+	s.Apply(changed)
+	second, ok := s.entries["a"]
+	if !ok {
+		t.Fatal("entry lost after spec change")
+	}
+	if second.spec != "0 */3 * * *" {
+		t.Errorf("spec = %q, want %q", second.spec, "0 */3 * * *")
+	}
+	if first.id == second.id {
+		t.Error("changed entry kept its old cron registration")
+	}
+}
+
 // TestSchedulerFiresCallback verifies the scheduler actually fires the start
-// callback on schedule (using a fast interval for testing).
+// callback on schedule (using a fast interval for testing). fired is closed
+// exactly once — the callback may legitimately fire again before Close.
 func TestSchedulerFiresCallback(t *testing.T) {
-	var fired int64
-	var wg sync.WaitGroup
-	wg.Add(1)
+	fired := make(chan struct{})
+	var once sync.Once
 	s := New(func(name string) {
 		if name == "worker" {
-			atomic.AddInt64(&fired, 1)
-			wg.Done()
+			once.Do(func() { close(fired) })
 		}
 	})
 
@@ -118,8 +179,5 @@ func TestSchedulerFiresCallback(t *testing.T) {
 	s.Start()
 	defer s.Close()
 
-	wg.Wait()
-	if atomic.LoadInt64(&fired) < 1 {
-		t.Error("expected at least 1 firing")
-	}
+	<-fired
 }
