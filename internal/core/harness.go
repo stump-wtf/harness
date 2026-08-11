@@ -163,9 +163,12 @@ type Harness struct {
 	// At each firing the daemon starts the harness if it is not already
 	// running (an overlapping firing is skipped, not stacked). The run exiting
 	// is terminal for that firing; the restart policy applies only to abnormal
-	// exit if configured. Requires Prompt (a one-shot agent run is the use
-	// case) and is mutually exclusive with Enabled (autostart and schedule are
-	// distinct concerns). Governing: issue #66.
+	// exit if configured (validation rejects "always"/"unless-stopped" here).
+	// Requires Prompt (a one-shot agent run is the use case) and is mutually
+	// exclusive with Enabled and with profile membership (autostart and
+	// schedule are distinct concerns). Global config only — project files
+	// reject it. Governing: issue #66; ADR-0006 (schema); ADR-0011 (prompt
+	// one-shot); SPEC-0003 (enabled-intent model the exclusion carves against).
 	Schedule string
 }
 

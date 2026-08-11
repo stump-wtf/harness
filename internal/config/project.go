@@ -261,6 +261,14 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 // `enabled = false` is still honored, and the global config keeps its opt-in
 // default), and relative paths resolve against the project root (SPEC-0004).
 func addProjectHarness(cfg *core.Config, filename, name string, line int, rh rawHarness, projectRoot string) error {
+	// Schedules are daemon-owned and only reconciled from the global config
+	// (issue #66): project harnesses never enter the daemon's config view, so
+	// a project schedule could never fire — reject it loudly rather than
+	// letting it validate and then silently evaporate at the wire.
+	if strings.TrimSpace(rh.Schedule) != "" {
+		return newError(filename, line,
+			"harness %q: \"schedule\" is not supported in project files (define scheduled harnesses in the daemon's harness.toml)", name)
+	}
 	return registerHarness(cfg, filename, name, line, rh, true,
 		func(p string) string { return resolvePath(p, projectRoot) })
 }
