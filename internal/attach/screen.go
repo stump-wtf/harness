@@ -19,7 +19,7 @@ import (
 // position. The result is self-contained — a client that writes these bytes to
 // its terminal ends up with a pixel-faithful copy of the harness screen, which
 // is exactly the "correct before any live bytes arrive" guarantee (SPEC-0002).
-func renderScreen(t *vt.Terminal) []byte {
+func renderScreen(t vt.Terminal) []byte {
 	w, h := t.Width(), t.Height()
 	var b bytes.Buffer
 	// Reset attributes, clear the whole screen, home the cursor.
@@ -36,14 +36,14 @@ func renderScreen(t *vt.Terminal) []byte {
 				skip--
 				continue
 			}
-			cell := t.Cell(x, y)
+			cell := t.CellAt(x, y)
 			if cell == nil {
 				b.WriteByte(' ')
 				continue
 			}
 			// Emit an SGR sequence only when the style changes from the
 			// previous cell, keeping the repaint compact.
-			if seq := cell.Style.Sequence(); seq != prevSeq {
+			if seq := cell.Style.String(); seq != prevSeq {
 				b.WriteString(seq)
 				prevSeq = seq
 			}

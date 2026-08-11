@@ -92,3 +92,33 @@ func TestVTViewRenderRespectsHiddenCursor(t *testing.T) {
 		t.Fatal("hidden cursor must not be painted")
 	}
 }
+
+// TestVTViewCursorVisibilityTracksEmulator pins the DECTCEM shadow state
+// (vtView.cursorHidden) to what the emulator actually does. x/vt's Terminal
+// interface has no reader for the hidden flag, so the only failure mode that
+// matters is the shadow drifting out of sync — most sharply after a full reset,
+// which restores the cursor without flipping (and therefore without announcing)
+// Cursor.Hidden.
+func TestVTViewCursorVisibilityTracksEmulator(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		in    string
+		paint bool
+	}{
+		{"visible by default", "", true},
+		{"hidden by DECTCEM reset", "\x1b[?25l", false},
+		{"shown again by DECTCEM set", "\x1b[?25l\x1b[?25h", true},
+		{"full reset re-shows the cursor", "\x1b[?25l\x1bc", true},
+		{"hidden survives a full reset that re-hides", "\x1bc\x1b[?25l", false},
+		{"alt screen enter keeps hidden state", "\x1b[?25l\x1b[?1049h", false},
+		{"alt screen exit restores main screen state", "\x1b[?1049h\x1b[?25l\x1b[?1049l", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newVTView(40, 10)
+			v.write([]byte(tc.in))
+			if got := strings.Contains(v.render(), "\x1b[7m"); got != tc.paint {
+				t.Errorf("cursor painted = %v, want %v", got, tc.paint)
+			}
+		})
+	}
+}

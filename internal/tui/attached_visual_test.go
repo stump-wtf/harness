@@ -17,18 +17,18 @@ import (
 // assert the ON-SCREEN result (wrap, scroll, truncation), which the pre-render
 // string alone can't show: an over-wide line here wraps and scrolls the grid,
 // just like a real terminal.
-func emulate(view string, w, h int) *vt.Terminal {
-	term := vt.NewTerminal(w, h)
+func emulate(view string, w, h int) vt.Terminal {
+	term := vt.NewEmulator(w, h)
 	term.Write([]byte(strings.ReplaceAll(view, "\n", "\r\n")))
 	return term
 }
 
 // rowText reads row y of the emulator grid as a string (trailing blanks
 // trimmed).
-func rowText(term *vt.Terminal, y, w int) string {
+func rowText(term vt.Terminal, y, w int) string {
 	var b strings.Builder
 	for x := 0; x < w; x++ {
-		c := term.Cell(x, y)
+		c := term.CellAt(x, y)
 		if c == nil || c.String() == "" {
 			b.WriteByte(' ')
 		} else {

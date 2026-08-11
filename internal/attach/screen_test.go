@@ -12,7 +12,7 @@ import (
 )
 
 func TestRenderScreenReproducesContent(t *testing.T) {
-	term := vt.NewTerminal(20, 5)
+	term := vt.NewEmulator(20, 5)
 	_, _ = term.Write([]byte("first line\r\nsecond line"))
 
 	out := renderScreen(term)

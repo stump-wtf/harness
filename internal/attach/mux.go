@@ -41,7 +41,7 @@ type Mux struct {
 	onInput  func(p []byte)
 
 	mu       sync.Mutex
-	term     *vt.Terminal
+	term     vt.Terminal
 	ring     *ring
 	sessions map[*Session]struct{}
 
@@ -65,7 +65,7 @@ func newMux(name string, ringLines int, onResize func(cols, rows int), onInput f
 		name:     name,
 		onResize: onResize,
 		onInput:  onInput,
-		term:     vt.NewTerminal(defaultCols, defaultRows),
+		term:     vt.NewEmulator(defaultCols, defaultRows),
 		ring:     newRing(ringLines),
 		cols:     defaultCols,
 		rows:     defaultRows,
