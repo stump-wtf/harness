@@ -89,7 +89,7 @@ func TestPeekPaneFillsHeightBudget(t *testing.T) {
 
 		var b strings.Builder
 		for i := range 400 {
-			fmt.Fprintf(&b, "tail-%03d\n", i)
+			fmt.Fprintf(&b, "tail-%03d\r\n", i)
 		}
 		m.peek = logsMsg{name: m.harnesses[0].Name, text: b.String()}
 
