@@ -29,10 +29,14 @@ import (
 // tab-separated don't run together — and rather than being kept, since a tab's
 // rendered width depends on the terminal's stops, which would put the line's
 // measured width at odds with its printed width.
-func inertText(line string) string {
+//
+// initialState carries the parser state from a preceding line so that escape
+// payloads split across line boundaries (DCS/sixel, OSC, APC) are fully
+// suppressed rather than having their continuation bytes emitted as text.
+func inertText(line string, initialState byte) (string, byte) {
 	var (
 		b      strings.Builder
-		state  byte
+		state  = initialState
 		styled bool
 		rest   = line
 	)
@@ -58,14 +62,17 @@ func inertText(line string) string {
 	if styled {
 		b.WriteString("\x1b[0m")
 	}
-	return b.String()
+	return b.String(), state
 }
 
-// inertLines applies inertText to a slice, returning a new slice.
+// inertLines applies inertText to a slice, threading parser state across line
+// boundaries so escape payloads split by ring.Write's newline split are fully
+// suppressed (issue #146).
 func inertLines(lines []string) []string {
 	out := make([]string, len(lines))
+	var state byte
 	for i, ln := range lines {
-		out[i] = inertText(ln)
+		out[i], state = inertText(ln, state)
 	}
 	return out
 }
