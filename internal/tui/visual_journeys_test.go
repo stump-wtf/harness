@@ -129,6 +129,44 @@ func journeys() []journey {
 			m.att = nil
 			return m
 		}},
+		{name: "dashboard-many-harnesses", build: func(w, h int) *Model {
+			m := baseModel(w, h)
+			var many []protocol.HarnessInfo
+			for i := 0; i < 200; i++ {
+				many = append(many, protocol.HarnessInfo{
+					Name:  fmt.Sprintf("harness-%03d", i),
+					State: "running",
+				})
+			}
+			m.harnesses = many
+			return m
+		}},
+		{name: "dashboard-model-set", build: func(w, h int) *Model {
+			m := baseModel(w, h)
+			m.harnesses[0].Model = "claude-opus-5"
+			m.harnesses[0].AutoAccept = true
+			m.harnesses[0].PID = 41143
+			return m
+		}},
+		{name: "dashboard-degraded-many", build: func(w, h int) *Model {
+			m := baseModel(w, h)
+			var many []protocol.HarnessInfo
+			for i := 0; i < 57; i++ {
+				st := "running"
+				flapping := false
+				if i%3 == 0 {
+					st = "degraded"
+					flapping = true
+				}
+				many = append(many, protocol.HarnessInfo{
+					Name:     fmt.Sprintf("harness-%03d", i),
+					State:    st,
+					Flapping: flapping,
+				})
+			}
+			m.harnesses = many
+			return m
+		}},
 	}
 }
 
@@ -186,6 +224,94 @@ func TestNewFormFitsShortTerminals(t *testing.T) {
 			for i, ln := range lines {
 				if lw := lipgloss.Width(ln); lw > w {
 					t.Errorf("editing=%v %dx%d: row %d width %d exceeds width %d", editing, w, h, i, lw, w)
+				}
+			}
+		}
+	}
+}
+
+// TestDashboardViewNeverExceedsHeight is the direct invariant for issue #144:
+// View() must return at most m.h lines for every dashboard state. This is the
+// whole ticket — assert it directly across a matrix of harness counts,
+// terminal sizes, chrome combinations, and summary field variations.
+func TestDashboardViewNeverExceedsHeight(t *testing.T) {
+	harnessCounts := []int{1, 10, 57, 200}
+	termSizes := [][2]int{{80, 24}, {120, 45}, {200, 80}}
+	type chrome struct {
+		banner bool
+		status bool
+		search bool
+	}
+	chromes := []chrome{
+		{false, false, false},
+		{true, false, false},
+		{false, true, false},
+		{false, false, true},
+		{true, true, false},
+	}
+	type summaryVariant struct {
+		model      bool
+		autoAccept bool
+		degraded   bool
+	}
+	summaries := []summaryVariant{
+		{false, false, false},
+		{true, false, false},
+		{true, true, false},
+		{false, false, true},
+		{true, true, true},
+	}
+
+	for _, hc := range harnessCounts {
+		for _, sz := range termSizes {
+			for _, ch := range chromes {
+				for _, sv := range summaries {
+					w, h := sz[0], sz[1]
+					m := baseModel(w, h)
+
+					var harnesses []protocol.HarnessInfo
+					for i := 0; i < hc; i++ {
+						st := "running"
+						flapping := false
+						if sv.degraded && i%3 == 0 {
+							st = "degraded"
+							flapping = true
+						}
+						hi := protocol.HarnessInfo{
+							Name:     fmt.Sprintf("h-%03d", i),
+							State:    st,
+							Flapping: flapping,
+						}
+						if sv.model && i == 0 {
+							hi.Model = "claude-opus-5"
+						}
+						if sv.autoAccept && i == 0 {
+							hi.AutoAccept = true
+						}
+						if i == 0 {
+							hi.PID = 12345
+						}
+						harnesses = append(harnesses, hi)
+					}
+					m.harnesses = harnesses
+
+					if ch.banner {
+						m.banner = "daemon restarted"
+					}
+					if ch.status {
+						m.status = "started h-000"
+					}
+					if ch.search {
+						m.openSearch()
+					}
+
+					view := m.View()
+					lines := strings.Split(view, "\n")
+					if len(lines) > h {
+						t.Errorf("hc=%d %dx%d banner=%v status=%v search=%v model=%v yolo=%v degraded=%v: %d rows > %d",
+							hc, w, h, ch.banner, ch.status, ch.search, sv.model, sv.autoAccept, sv.degraded,
+							len(lines), h)
+					}
 				}
 			}
 		}

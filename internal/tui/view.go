@@ -153,6 +153,17 @@ func (m *Model) viewList(w, h int) string {
 			lines = append(lines, "   "+m.theme.StateStyle(core.StateDegraded).Render(flappingDetail(hnfo)))
 		}
 	}
+	// Clamp content to the box interior: Box().Height(h) is a minimum, not a
+	// maximum — lipgloss pads but never truncates. Without this clamp an
+	// over-tall list pushes JoinHorizontal to pad the peek column with blank
+	// lines, making the list pane appear empty (issue #144 trigger A).
+	maxContent := h - 2 // top + bottom border
+	if maxContent < 1 {
+		maxContent = 1
+	}
+	if len(lines) > maxContent {
+		lines = lines[:maxContent]
+	}
 	return m.theme.Box().Width(paneInner(w)).Height(h).Render(strings.Join(lines, "\n"))
 }
 
@@ -208,13 +219,6 @@ func (m *Model) viewPeek(w, h int) string {
 	// harness that clears the screen or homes the cursor would otherwise do it
 	// to the cockpit drawn around this box, not to its own text.
 	tailLines := inertLines(splitLines(tail))
-	maxLines := h - 8
-	if maxLines < 1 {
-		maxLines = 1
-	}
-	if len(tailLines) > maxLines {
-		tailLines = tailLines[len(tailLines)-maxLines:]
-	}
 
 	// A prompt harness carries no configured cmd — surface the prompt, what
 	// the user actually wrote (ADR-0011 spawn-time synthesis).
@@ -236,6 +240,19 @@ func (m *Model) viewPeek(w, h int) string {
 	)
 	if sel.PID > 0 {
 		summary = append(summary, m.theme.Faint().Render("pid     ")+fmt.Sprintf("%d", sel.PID))
+	}
+
+	// Derive the tail budget from the actual summary length rather than a
+	// hard-coded constant. The summary is 5–8 lines depending on optional
+	// fields; a fixed `- 8` overflows when model or auto_accept are set
+	// (issue #144 trigger B). Layout: head(1) + blank(1) + tail + blank(1) +
+	// summary + box borders(2) must fit in h.
+	maxLines := h - 2 - 1 - 1 - 1 - len(summary) // borders + head + blank-before-tail + blank-before-summary
+	if maxLines < 1 {
+		maxLines = 1
+	}
+	if len(tailLines) > maxLines {
+		tailLines = tailLines[len(tailLines)-maxLines:]
 	}
 
 	content := head + "\n\n" + strings.Join(tailLines, "\n") + "\n" + strings.Join(summary, "\n")
