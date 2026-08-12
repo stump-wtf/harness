@@ -113,6 +113,39 @@ func (m *Model) routeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // onDashboardKey handles keys on the dashboard (and its zero-states).
 func (m *Model) onDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Bubble Tea coalesces consecutive printable runes arriving in a single
+	// read into one KeyRunes message (e.g. "jjj"). key.Matches compares
+	// msg.String() against bindings, so "jjj" matches nothing and the whole
+	// message is silently discarded. Expand multi-rune messages and dispatch
+	// each rune individually (issue #145). Destructive/guarded actions
+	// collapse to a single invocation — holding 'x' must not queue N stops.
+	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
+		var cmds []tea.Cmd
+		for _, r := range msg.Runes {
+			single := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+			mm, cmd := m.dispatchDashboardKey(single)
+			m = mm.(*Model)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// If a guarded action opened the confirm overlay, stop expanding —
+			// subsequent runes in the same batch should not trigger more guards.
+			if m.overlay != overlayNone {
+				break
+			}
+		}
+		if len(cmds) == 0 {
+			return m, nil
+		}
+		return m, tea.Batch(cmds...)
+	}
+	return m.dispatchDashboardKey(msg)
+}
+
+// dispatchDashboardKey is the inner switch for a single keystroke on the
+// dashboard. Separated from onDashboardKey so multi-rune expansion can call
+// it per rune without recursion.
+func (m *Model) dispatchDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// No-daemon zero-state: offer inline start (SPEC-0001 scenario "Daemon not
 	// running") — s starts the daemon, q quits.
 	if m.conn == startNoDaemon {
