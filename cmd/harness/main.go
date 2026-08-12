@@ -56,14 +56,7 @@ func main() {
 		// caller passed before the subcommand. Guard the slice — bare
 		// `harness daemon` (no sub) is allowed and means `start`.
 		rest := gfs.Args()[1:] // drop the "daemon" token
-		var sub string
-		var daemonArgs []string
-		if len(rest) > 0 {
-			sub = rest[0]
-			if len(rest) > 1 {
-				daemonArgs = rest[1:]
-			}
-		}
+		sub, daemonArgs := parseDaemonArgs(rest)
 		switch sub {
 		case "", "run", "start":
 			runDaemon(daemonArgs)
@@ -131,6 +124,38 @@ func parseInterleaved(fs *flag.FlagSet, args []string) string {
 		args = fs.Args()[1:]
 	}
 	return name
+}
+
+// daemonSubcommands lists the tokens recognized as daemon subcommands. Used
+// by parseDaemonArgs to distinguish `daemon --socket X stop` (flag + sub)
+// from `daemon --socket X` (flag only, implicit start).
+var daemonSubcommands = map[string]bool{
+	"start": true, "run": true, "stop": true, "status": true,
+	"help": true, "-h": true, "--help": true,
+}
+
+// parseDaemonArgs splits the args after `daemon` into a subcommand and the
+// remaining daemon flags. It scans for a known subcommand token; if none is
+// found but the first arg starts with `-`, the implicit subcommand is ""
+// (meaning start) and all args are forwarded as daemon flags. A bare
+// `daemon` (no args) also means "start".
+func parseDaemonArgs(rest []string) (sub string, daemonArgs []string) {
+	if len(rest) == 0 {
+		return "", nil
+	}
+	for i, arg := range rest {
+		if daemonSubcommands[arg] {
+			sub = arg
+			daemonArgs = make([]string, 0, len(rest)-1)
+			daemonArgs = append(daemonArgs, rest[:i]...)
+			daemonArgs = append(daemonArgs, rest[i+1:]...)
+			return sub, daemonArgs
+		}
+	}
+	if strings.HasPrefix(rest[0], "-") {
+		return "", rest
+	}
+	return rest[0], rest[1:]
 }
 
 // verbOpts carries the resolved flags/positionals for a verb.
