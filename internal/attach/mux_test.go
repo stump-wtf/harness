@@ -238,6 +238,56 @@ func TestBackpressureCoalesce(t *testing.T) {
 	}
 }
 
+// TestWriteForwardsAutoAnsweredQueries is the regression test for
+// stump.wtf/harness#142: the vt emulator auto-answers certain queries it sees
+// in the child's own output (DECRQM mode reports, cursor position reports) by
+// writing the reply into its own internal pipe. Write() must never block
+// draining that reply — nearly every Bubble Tea app sends exactly this query
+// (CSI ?2026$p, the synchronized-output-mode probe) in its first frame, so a
+// blocked drain here froze crush/claude solid on every single spawn.
+func TestWriteForwardsAutoAnsweredQueries(t *testing.T) {
+	var mu sync.Mutex
+	var got [][]byte
+	onInput := func(p []byte) {
+		mu.Lock()
+		got = append(got, append([]byte(nil), p...))
+		mu.Unlock()
+	}
+	m := newMux("h", 100, nil, onInput)
+
+	done := make(chan struct{})
+	go func() {
+		m.Write([]byte("\x1b[?2026$p")) // DECRQM: report synchronized-output mode
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Write blocked answering a DECRQM query (harness#142 regression)")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 1 {
+		t.Fatalf("onInput calls = %d, want 1 (the DECRPM reply)", len(got))
+	}
+	if !bytes.Contains(got[0], []byte("?2026;")) || !bytes.HasSuffix(got[0], []byte("$y")) {
+		t.Fatalf("reply = %q, want a DECRPM report for mode 2026", got[0])
+	}
+}
+
 // resizeRecorder captures the onResize callback the Mux fires to drive the real
 // PTY (smallest-attached-wins, ADR-0003). It's the seam a real terminal sees.
 type resizeRecorder struct {

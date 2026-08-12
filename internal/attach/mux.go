@@ -61,7 +61,7 @@ type Mux struct {
 // smallest-attached-wins size changes (to resize the real PTY); onInput
 // delivers read-write attach keystrokes to the PTY. Either may be nil.
 func newMux(name string, ringLines int, onResize func(cols, rows int), onInput func(p []byte)) *Mux {
-	return &Mux{
+	m := &Mux{
 		name:     name,
 		onResize: onResize,
 		onInput:  onInput,
@@ -70,6 +70,44 @@ func newMux(name string, ringLines int, onResize func(cols, rows int), onInput f
 		cols:     defaultCols,
 		rows:     defaultRows,
 		sessions: make(map[*Session]struct{}),
+	}
+	go m.pumpReplies()
+	return m
+}
+
+// pumpReplies drains synthesized replies the vt emulator writes back when it
+// auto-answers a query the child sent it — DECRQM mode reports (CSI ? Ps $ p,
+// e.g. the ?2026 synchronized-output probe nearly every Bubble Tea app sends
+// in its first frame), cursor position reports, and the like — and forwards
+// them through onInput, the same seam a read-write attach session's real
+// keystrokes already use to reach the child's PTY. A real terminal delivers
+// query replies and typed input on the same channel; this is that channel's
+// other producer.
+//
+// x/vt synthesizes these replies by writing into an internal io.Pipe and
+// expects the caller to drain it via Read (Emulator.Read). That pipe is
+// unbuffered: a write blocks until something reads the paired end. Without
+// this goroutine, nothing ever does — so the first query the child emits
+// blocks Write() forever, and Write() is exactly what readOutput's io.Copy
+// calls on every byte the child writes to its terminal. That stops draining
+// the real PTY, which backpressures the child's own stdout writes solid,
+// with the OS process still alive — invisible to a liveness check like
+// `harness list` (stump.wtf/harness#142).
+//
+// Runs for the Mux's lifetime — nothing currently calls Close on the
+// emulator (Registry.Remove deliberately doesn't; see its doc comment), so in
+// practice this loop never returns. Accepted: unlike the deadlock it fixes,
+// the cost is one parked goroutine per Mux, not a frozen production agent.
+func (m *Mux) pumpReplies() {
+	buf := make([]byte, 4096)
+	for {
+		n, err := m.term.Read(buf)
+		if n > 0 && m.onInput != nil {
+			m.onInput(append([]byte(nil), buf[:n]...))
+		}
+		if err != nil {
+			return
+		}
 	}
 }
 

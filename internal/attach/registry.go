@@ -89,6 +89,16 @@ func (r *Registry) SizeFor(name string) (int, int) { return r.Mux(name).Size() }
 // without bound (SPEC-0004 REQ "Tear Down"; ADR-0009). Sessions still attached
 // keep their now-quiescent Mux until they detach; a later re-registration gets
 // a brand-new one.
+//
+// Deliberately does NOT close the dropped Mux's emulator: that would stop its
+// pumpReplies goroutine, but x/vt's Emulator guards Read/Close with a plain
+// bool (no mutex, no atomic) — calling Close from here races Read on
+// pumpReplies' own goroutine under -race (confirmed; not our field to fix).
+// The tradeoff is one goroutine (and its Mux) parked forever in a blocked
+// Read per project harness ever torn down — small, bounded by how often
+// projects actually churn, and nowhere near as bad as the deadlock this
+// goroutine exists to fix — against a genuine data race. See
+// stump.wtf/harness#142.
 func (r *Registry) Remove(name string) {
 	r.mu.Lock()
 	delete(r.muxes, name)
