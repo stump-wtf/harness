@@ -147,11 +147,70 @@ func (m *Model) viewList(w, h int) string {
 		return m.theme.Box().Width(paneInner(w)).Height(h).Render(strings.Join(lines, "\n"))
 	}
 
-	for i, hnfo := range v {
-		lines = append(lines, m.renderRow(hnfo, i == m.sel, w-2))
-		if isDegraded(hnfo) {
-			lines = append(lines, "   "+m.theme.StateStyle(core.StateDegraded).Render(flappingDetail(hnfo)))
+	// Viewport: render only the window [listOffset..] that fits within the
+	// box interior. The title + blank line consume 2 rows; borders consume 2
+	// more. Reserve 1 row for a scroll indicator when needed.
+	maxContent := h - 2             // box borders
+	contentBudget := maxContent - 2 // title + blank after title
+
+	offset := m.listOffset
+	if offset < 0 || offset >= len(v) {
+		offset = 0
+	}
+
+	// Determine if we need a scroll indicator before rendering, so we can
+	// reserve its row in the budget.
+	needsIndicator := offset > 0 || len(v) > maxInt(1, contentBudget)
+	if needsIndicator {
+		contentBudget--
+	}
+	if contentBudget < 1 {
+		contentBudget = 1
+	}
+
+	var rendered int
+	lastRenderedIdx := offset - 1
+	for i := offset; i < len(v); i++ {
+		rowLines := 1
+		if isDegraded(v[i]) {
+			rowLines = 2
 		}
+		if rendered+rowLines > contentBudget {
+			break // don't half-render a degraded row
+		}
+		lines = append(lines, m.renderRow(v[i], i == m.sel, w-2))
+		rendered++
+		if isDegraded(v[i]) {
+			lines = append(lines, "   "+m.theme.StateStyle(core.StateDegraded).Render(flappingDetail(v[i])))
+			rendered++
+		}
+		lastRenderedIdx = i
+	}
+
+	// Scroll indicators: ↑N / ↓N counts when content extends beyond the
+	// viewport (SPEC-0001 "state legibility over decoration").
+	aboveHarnesses := offset
+	belowHarnesses := len(v) - lastRenderedIdx - 1
+	if aboveHarnesses > 0 || belowHarnesses > 0 {
+		indicator := ""
+		if aboveHarnesses > 0 {
+			indicator += fmt.Sprintf("↑%d", aboveHarnesses)
+		}
+		if belowHarnesses > 0 {
+			if indicator != "" {
+				indicator += " "
+			}
+			indicator += fmt.Sprintf("↓%d", belowHarnesses)
+		}
+		lines = append(lines, m.theme.Faint().Render(indicator))
+	}
+
+	// Clamp to box interior (issue #144 invariant).
+	if maxContent < 1 {
+		maxContent = 1
+	}
+	if len(lines) > maxContent {
+		lines = lines[:maxContent]
 	}
 	// Clamp content to the box interior. Box().Height(h) sets content height
 	// (the border is drawn outside it and is already paid for by bodyHeight's

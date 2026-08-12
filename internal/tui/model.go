@@ -134,6 +134,7 @@ type Model struct {
 
 	// dashboard
 	sel         int
+	listOffset  int // scroll offset into visible() for the list viewport (#148)
 	showAll     bool
 	peek        logsMsg
 	search      textinput.Model
@@ -273,6 +274,67 @@ func (m *Model) clampSel() {
 		return
 	}
 	m.sel = clamp(m.sel, 0, n-1)
+}
+
+// scrollListToSel adjusts listOffset so the selected row is visible within
+// the list pane's height budget. It accounts for degraded rows occupying two
+// lines. Called after every selection change and after the visible list
+// changes (search filter, profile switch, state refresh).
+func (m *Model) scrollListToSel() {
+	v := m.visible()
+	if len(v) == 0 {
+		m.listOffset = 0
+		return
+	}
+	body := m.bodyHeight()
+	// Match viewList's budget: box borders(2) + title(1) + blank(1) + indicator?(1).
+	contentRows := body - 2 - 2 - 1 // always reserve indicator row
+	if contentRows < 1 {
+		contentRows = 1
+	}
+
+	// Compute rendered-line position of a harness index.
+	rowOf := func(idx int) int {
+		r := 0
+		for i := 0; i < idx && i < len(v); i++ {
+			r++
+			if isDegraded(v[i]) {
+				r++
+			}
+		}
+		return r
+	}
+	selRow := rowOf(m.sel)
+	selHeight := 1
+	if isDegraded(v[m.sel]) {
+		selHeight = 2
+	}
+
+	curOffsetRow := rowOf(m.listOffset)
+
+	if selRow < curOffsetRow {
+		m.listOffset = m.sel
+	} else if selRow+selHeight > curOffsetRow+contentRows {
+		// Find the offset that puts sel at the bottom of the viewport.
+		targetTop := selRow + selHeight - contentRows
+		// Binary search for the harness index whose row matches targetTop.
+		lo, hi := 0, m.sel
+		for lo < hi {
+			mid := (lo + hi) / 2
+			if rowOf(mid) < targetTop {
+				lo = mid + 1
+			} else {
+				hi = mid
+			}
+		}
+		m.listOffset = lo
+	}
+	if m.listOffset >= len(v) {
+		m.listOffset = len(v) - 1
+	}
+	if m.listOffset < 0 {
+		m.listOffset = 0
+	}
 }
 
 // startReadLoop spins up the single frame dispatch goroutine on the events/
