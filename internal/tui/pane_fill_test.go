@@ -117,7 +117,7 @@ func TestDashboardPanesLeaveNoTrailingBlankRows(t *testing.T) {
 	}
 	m.peek = logsMsg{name: m.harnesses[0].Name, text: b.String()}
 
-	lines := strings.Split(m.View(), "\n")
+	lines := strings.Split(m.View().Content, "\n")
 	bottom := -1
 	for i, ln := range lines {
 		if strings.Contains(ln, "╰") {

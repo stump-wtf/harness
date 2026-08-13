@@ -1,13 +1,14 @@
 package tui
 
 import (
-	"fmt"
 	"os"
 	"sync"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
@@ -109,8 +110,26 @@ func (f *fakeAttach) Close() error         { return nil }
 
 // --- key helpers ---------------------------------------------------------
 
-func runeKey(s string) tea.KeyMsg         { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
-func specialKey(t tea.KeyType) tea.KeyMsg { return tea.KeyMsg{Type: t} }
+// runeKey builds a printable keystroke. Bubble Tea v2 carries the characters
+// in Text (v1 used Runes), and coalesces a burst of them into one message —
+// which is exactly what the multi-rune expansion in onDashboardKey handles.
+func runeKey(s string) tea.KeyPressMsg {
+	k := tea.KeyPressMsg{Text: s}
+	if r := []rune(s); len(r) > 0 {
+		k.Code = r[0]
+	}
+	return k
+}
+
+// specialKey builds a non-printable keystroke from a v2 key code
+// (tea.KeyEnter, tea.KeyPgUp, …). Text stays empty, as it does on a real one.
+func specialKey(code rune) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code} }
+
+// ctrlKey builds a Ctrl-modified keystroke. v2 dropped the KeyCtrlA..Z key
+// types in favour of a modifier on the base key.
+func ctrlKey(code rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: code, Mod: tea.ModCtrl}
+}
 
 // drain runs a tea.Cmd (if non-nil) and returns its message, recursively
 // executing any batched sub-commands (tea.Batch wraps them in a BatchMsg the
@@ -193,7 +212,7 @@ func TestSkipConfirmSetting(t *testing.T) {
 // TestCopyYanksSelectedName verifies the copy verb (y) emits an OSC52
 // clipboard write for the selected harness's name and reports it back via the
 // status line. Mouse-drag selection is unavailable while the TUI holds the
-// mouse (WithMouseCellMotion), so the explicit copy key is how a name leaves
+// mouse (MouseModeCellMotion), so the explicit copy key is how a name leaves
 // the cockpit. The OSC52 write itself goes to stderr and is a no-op in the
 // test environment; we assert on the resulting copyResultMsg.
 func TestCopyYanksSelectedName(t *testing.T) {
@@ -273,7 +292,7 @@ func TestPrefixChordDetach(t *testing.T) {
 	m.att = newAttachState("crush-signal", protocol.AttachRW, 1, 80, 24)
 
 	// First key: Ctrl-b — should arm the prefix, NOT detach yet.
-	m.onKey(specialKey(tea.KeyCtrlB))
+	m.onKey(ctrlKey('b'))
 	if !m.att.prefixArmed {
 		t.Fatal("Ctrl-b should arm the prefix")
 	}
@@ -512,7 +531,7 @@ func TestPrefixChordHelp(t *testing.T) {
 	}
 
 	// Ctrl-b ? opens the keymap overlay.
-	m.onKey(specialKey(tea.KeyCtrlB))
+	m.onKey(ctrlKey('b'))
 	if !m.att.prefixArmed {
 		t.Fatal("Ctrl-b should arm the prefix")
 	}
@@ -526,72 +545,66 @@ func TestPrefixChordHelp(t *testing.T) {
 	}
 }
 
-// collectMsgs runs a tea.Cmd and returns every message it produces, flattening
-// tea.Batch sub-commands (drain discards them; these tests need the contents).
-func collectMsgs(cmd tea.Cmd) []tea.Msg {
-	if cmd == nil {
-		return nil
-	}
-	msg := cmd()
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		var out []tea.Msg
-		for _, c := range batch {
-			out = append(out, collectMsgs(c)...)
-		}
-		return out
-	}
-	if msg == nil {
-		return nil
-	}
-	return []tea.Msg{msg}
+// mouseGrabbed reports whether the model is currently asking the terminal for
+// mouse reporting. Under Bubble Tea v2 that is a field on the rendered View
+// rather than an Enable/Disable command, so the grab is asserted by rendering a
+// frame — which is also what the terminal actually acts on.
+func mouseGrabbed(m *Model) bool {
+	return m.View().MouseMode == tea.MouseModeCellMotion
 }
 
-// containsMsgLike reports whether msgs contains a message of the same type as
-// want (bubbletea's screen-control msg types are unexported, so compare types
-// via a reference command's output).
-func containsMsgLike(msgs []tea.Msg, want tea.Msg) bool {
-	for _, m := range msgs {
-		if fmt.Sprintf("%T", m) == fmt.Sprintf("%T", want) {
-			return true
-		}
-	}
-	return false
+// shiftClick is a shift-held left click; shiftWheelUp / wheelUp are wheel
+// events. v2 splits mouse events into one message type per kind.
+func shiftClick() tea.MouseClickMsg {
+	return tea.MouseClickMsg{Button: tea.MouseLeft, Mod: tea.ModShift}
+}
+func click() tea.MouseClickMsg { return tea.MouseClickMsg{Button: tea.MouseLeft} }
+func wheelUp() tea.MouseWheelMsg {
+	return tea.MouseWheelMsg{Button: tea.MouseWheelUp}
+}
+func shiftWheelUp() tea.MouseWheelMsg {
+	return tea.MouseWheelMsg{Button: tea.MouseWheelUp, Mod: tea.ModShift}
 }
 
 // TestShiftMouseReleasesMouseGrab verifies shift+click in attached interactive
 // mode releases the TUI's mouse grab for native terminal text selection (#49):
-// tea.DisableMouse is actually emitted (not just bookkept), queued shift events
-// from the same gesture don't re-issue it, and the next key press re-enables
-// mouse cell motion while still forwarding the key to the PTY.
+// the rendered frame stops requesting mouse reporting, repeated shift events
+// from the same gesture keep it released, and the next key press restores the
+// grab while still forwarding the key to the PTY.
 func TestShiftMouseReleasesMouseGrab(t *testing.T) {
 	fx := newModelAttached(&fakeController{harnesses: sampleHarnesses()}, protocol.AttachRW)
 	m, fa := fx.m, fx.fa
 
-	// Shift+click releases the grab and emits tea.DisableMouse.
-	shiftClick := tea.MouseMsg{Type: tea.MouseLeft, Shift: true}
-	_, cmd := m.onMouse(shiftClick)
+	if !mouseGrabbed(m) {
+		t.Fatal("the TUI should hold the mouse grab before any shift gesture")
+	}
+
+	// Shift+click releases the grab — the next frame stops asking for mouse
+	// reporting, which is what hands selection back to the terminal.
+	_, _ = m.onMouse(shiftClick())
 	if !m.mouseReleased {
 		t.Fatal("shift+click should set mouseReleased=true")
 	}
-	if !containsMsgLike(collectMsgs(cmd), tea.DisableMouse()) {
-		t.Fatal("shift+click must emit tea.DisableMouse")
+	if mouseGrabbed(m) {
+		t.Fatal("shift+click must release the mouse grab")
 	}
 
-	// A queued shift event from the same gesture must not re-issue the
-	// disable (the terminal keeps reporting until the escape lands).
-	_, cmd = m.onMouse(shiftClick)
-	if cmd != nil {
-		t.Fatal("shift+mouse while already released should be swallowed, not re-disable")
+	// A queued shift event from the same gesture keeps it released rather than
+	// flapping the mode back on.
+	_, _ = m.onMouse(shiftClick())
+	if mouseGrabbed(m) {
+		t.Fatal("shift+mouse while already released must keep the grab released")
 	}
 
-	// The next key press re-enables mouse cell motion AND still reaches the
-	// PTY — the re-enable must not eat the keystroke.
-	_, cmd = m.onKey(runeKey("a"))
+	// The next key press restores the grab AND still reaches the PTY — the
+	// recovery must not eat the keystroke.
+	_, cmd := m.onKey(runeKey("a"))
+	drain(cmd) // the PTY write is deferred into the returned Cmd
 	if m.mouseReleased {
 		t.Fatal("key press after shift-mouse should clear mouseReleased")
 	}
-	if !containsMsgLike(collectMsgs(cmd), tea.EnableMouseCellMotion()) {
-		t.Fatal("key press after shift-mouse must emit tea.EnableMouseCellMotion")
+	if !mouseGrabbed(m) {
+		t.Fatal("key press after shift-mouse must restore the mouse grab")
 	}
 	if len(fa.inputs) != 1 || string(fa.inputs[0]) != "a" {
 		t.Fatalf("the re-enabling key must still be forwarded to the PTY, inputs=%v", fa.inputs)
@@ -607,20 +620,20 @@ func TestShiftMouseReenableCoversScrollback(t *testing.T) {
 	fx := newModelAttached(&fakeController{harnesses: sampleHarnesses()}, protocol.AttachRW)
 	m := fx.m
 
-	_, _ = m.onMouse(tea.MouseMsg{Type: tea.MouseLeft, Shift: true})
-	// A buffered non-shift wheel event arrives before the disable lands and
+	_, _ = m.onMouse(shiftClick())
+	// A buffered non-shift wheel event arrives while the grab is released and
 	// enters scrollback with the flag still set.
-	_, _ = m.onMouse(tea.MouseMsg{Type: tea.MouseWheelUp})
+	_, _ = m.onMouse(wheelUp())
 	if m.att.substate != substateScrollback {
 		t.Fatal("wheel-up should enter scrollback")
 	}
-	// Any scrollback key must still re-enable the mouse.
-	_, cmd := m.onKey(runeKey("j"))
+	// Any scrollback key must still restore the mouse grab.
+	_, _ = m.onKey(runeKey("j"))
 	if m.mouseReleased {
 		t.Fatal("scrollback key press should clear mouseReleased")
 	}
-	if !containsMsgLike(collectMsgs(cmd), tea.EnableMouseCellMotion()) {
-		t.Fatal("scrollback key press must emit tea.EnableMouseCellMotion")
+	if !mouseGrabbed(m) {
+		t.Fatal("scrollback key press must restore the mouse grab")
 	}
 }
 
@@ -631,15 +644,15 @@ func TestNonShiftMouseDoesNotReleaseGrab(t *testing.T) {
 	fx := newModelAttached(&fakeController{harnesses: sampleHarnesses()}, protocol.AttachRW)
 	m := fx.m
 
-	_, cmd := m.onMouse(tea.MouseMsg{Type: tea.MouseLeft})
+	_, _ = m.onMouse(click())
 	if m.mouseReleased {
 		t.Fatal("non-shift click should not set mouseReleased")
 	}
-	if containsMsgLike(collectMsgs(cmd), tea.DisableMouse()) {
-		t.Fatal("non-shift click must not emit tea.DisableMouse")
+	if !mouseGrabbed(m) {
+		t.Fatal("non-shift click must not release the mouse grab")
 	}
 
-	_, _ = m.onMouse(tea.MouseMsg{Type: tea.MouseWheelUp})
+	_, _ = m.onMouse(wheelUp())
 	if m.att.substate != substateScrollback {
 		t.Fatal("non-shift wheel-up should still enter scrollback")
 	}
@@ -654,12 +667,12 @@ func TestShiftWheelKeepsScrollback(t *testing.T) {
 	fx := newModelAttached(&fakeController{harnesses: sampleHarnesses()}, protocol.AttachRW)
 	m := fx.m
 
-	_, cmd := m.onMouse(tea.MouseMsg{Type: tea.MouseWheelUp, Shift: true})
+	_, _ = m.onMouse(shiftWheelUp())
 	if m.mouseReleased {
 		t.Fatal("shift+wheel must not release the mouse grab")
 	}
-	if containsMsgLike(collectMsgs(cmd), tea.DisableMouse()) {
-		t.Fatal("shift+wheel must not emit tea.DisableMouse")
+	if !mouseGrabbed(m) {
+		t.Fatal("shift+wheel must not release the mouse grab")
 	}
 	if m.att.substate != substateScrollback {
 		t.Fatal("shift+wheel-up should enter scrollback like a plain wheel-up")
@@ -674,8 +687,8 @@ func TestWheelScrollbackDisarmsPrefix(t *testing.T) {
 	fx := newModelAttached(&fakeController{harnesses: sampleHarnesses()}, protocol.AttachRW)
 	m, fa := fx.m, fx.fa
 
-	_, _ = m.onKey(specialKey(tea.KeyCtrlB)) // arm the prefix
-	_, _ = m.onMouse(tea.MouseMsg{Type: tea.MouseWheelUp})
+	_, _ = m.onKey(ctrlKey('b')) // arm the prefix
+	_, _ = m.onMouse(wheelUp())
 	if m.att.substate != substateScrollback {
 		t.Fatal("wheel-up should enter scrollback")
 	}
@@ -690,7 +703,7 @@ func TestWheelScrollbackDisarmsPrefix(t *testing.T) {
 	}
 }
 
-// TestMultiRuneKeyExpansion verifies that coalesced KeyRunes messages are
+// TestMultiRuneKeyExpansion verifies that coalesced multi-rune key messages are
 // expanded and dispatched per rune on the dashboard (issue #145). Holding 'j'
 // delivers "jjj" in one read; the selection must advance by 3, not 0.
 func TestMultiRuneKeyExpansion(t *testing.T) {
@@ -786,5 +799,49 @@ func TestMultiRuneSearchOverlayNotDoubleExpanded(t *testing.T) {
 	m = model.(*Model)
 	if got := m.search.Value(); got != "hello" {
 		t.Errorf("search input after multi-rune 'hello' = %q, want %q", got, "hello")
+	}
+}
+
+// TestBackgroundColorMsgSwitchesTheme verifies the day/night theme follows the
+// terminal's reported background (SPEC-0001 REQ "State Presentation"). Lip Gloss
+// v2 resolves a light/dark pair eagerly instead of deferring to a renderer, so
+// the palette is only correct if the Model rebuilds it when Bubble Tea answers
+// the tea.RequestBackgroundColor issued in Init. Over SSH this is the *client's*
+// background, which a server-side probe could never see (ADR-0008).
+func TestBackgroundColorMsgSwitchesTheme(t *testing.T) {
+	m := New(Options{})
+	if !m.theme.IsDark() {
+		t.Fatal("a fresh Model should default to the night theme")
+	}
+	nightGlyph := m.theme.RenderGlyph(core.StateRunning)
+
+	// A white background reports light.
+	m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#ffffff")})
+	if m.theme.IsDark() {
+		t.Fatal("a light terminal background should select the day theme")
+	}
+	if dayGlyph := m.theme.RenderGlyph(core.StateRunning); dayGlyph == nightGlyph {
+		t.Errorf("day and night themes rendered identically (%q) — the palette did not switch", dayGlyph)
+	}
+
+	// And back to dark.
+	m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#000000")})
+	if !m.theme.IsDark() {
+		t.Fatal("a dark terminal background should select the night theme")
+	}
+}
+
+// TestViewDeclaresTerminalFeatures verifies the Model asks for the alt screen
+// and mouse reporting on every frame. Bubble Tea v2 removed the WithAltScreen /
+// WithMouseCellMotion program options in favour of these View fields, so if the
+// View stopped declaring them the cockpit would render inline over the user's
+// scrollback and lose wheel scrolling entirely.
+func TestViewDeclaresTerminalFeatures(t *testing.T) {
+	v := baseModel(80, 24).View()
+	if !v.AltScreen {
+		t.Error("the cockpit must render in the alternate screen buffer")
+	}
+	if v.MouseMode != tea.MouseModeCellMotion {
+		t.Errorf("MouseMode = %v, want MouseModeCellMotion", v.MouseMode)
 	}
 }

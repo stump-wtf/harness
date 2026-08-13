@@ -19,11 +19,11 @@ import (
 	"os"
 	"path/filepath"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/ssh"
-	"github.com/charmbracelet/wish"
-	"github.com/charmbracelet/wish/activeterm"
-	bm "github.com/charmbracelet/wish/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/ssh"
+	"charm.land/wish/v2"
+	"charm.land/wish/v2/activeterm"
+	bm "charm.land/wish/v2/bubbletea"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
@@ -119,9 +119,11 @@ func New(opts Options) (*Server, error) {
 		return true
 	}
 
-	// Each session hosts the SAME TUI Model as a local client of the socket,
-	// with a per-session renderer so colorprofile degrades to the remote
-	// client's actual terminal (ADR-0004/0008). A read-only key opens attaches
+	// Each session hosts the SAME TUI Model as a local client of the socket.
+	// Bubble Tea v2 detects the remote client's color profile and background
+	// itself from the session's environment and terminal replies, so
+	// colorprofile degradation is automatic where v1 needed a per-session
+	// renderer wired in here (ADR-0004/0008). A read-only key opens attaches
 	// as protocol.AttachRO via tui.Options.ReadOnly.
 	//
 	// This mirrors wish's bubbletea middleware (window-resize bridge + quit on
@@ -135,18 +137,16 @@ func New(opts Options) (*Server, error) {
 	teaMiddleware := func(next ssh.Handler) ssh.Handler {
 		return func(sess ssh.Session) {
 			ro, _ := sess.Context().Value(roContextKey).(bool)
-			renderer := bm.MakeRenderer(sess)
 			m := tui.New(tui.Options{
 				Socket:     opts.Socket,
 				ConfigPath: opts.ConfigPath,
 				Version:    opts.Version,
-				Renderer:   renderer,
 				ReadOnly:   ro,
 			})
-			popts := append([]tea.ProgramOption{
-				tea.WithAltScreen(), tea.WithMouseCellMotion(),
-			}, bm.MakeOptions(sess)...)
-			p := tea.NewProgram(m, popts...)
+			// Alt screen and mouse reporting are declared by the Model's View
+			// under Bubble Tea v2, so only the session's I/O wiring is passed
+			// as program options here.
+			p := tea.NewProgram(m, bm.MakeOptions(sess)...)
 
 			_, winCh, _ := sess.Pty()
 			ctx, cancel := context.WithCancel(sess.Context())

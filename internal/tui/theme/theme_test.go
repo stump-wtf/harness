@@ -1,29 +1,23 @@
 package theme
 
 import (
-	"io"
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"github.com/charmbracelet/colorprofile"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )
 
-// asciiTheme is a theme whose renderer degrades to a monochrome (Ascii)
-// profile — the SPEC-0001 "monochrome terminal or degraded SSH client" case.
+// asciiTheme is a theme pinned to a monochrome (Ascii) profile — the SPEC-0001
+// "monochrome terminal or degraded SSH client" case.
 func asciiTheme() *Theme {
-	r := lipgloss.NewRenderer(io.Discard)
-	r.SetColorProfile(termenv.Ascii)
-	return New(r, DefaultPalette())
+	return New(colorprofile.Ascii, true, DefaultPalette())
 }
 
 // trueColorTheme renders at full 24-bit — SGR sequences present.
 func trueColorTheme() *Theme {
-	r := lipgloss.NewRenderer(io.Discard)
-	r.SetColorProfile(termenv.TrueColor)
-	return New(r, DefaultPalette())
+	return New(colorprofile.TrueColor, true, DefaultPalette())
 }
 
 // TestStateGlyphPairedWithColor verifies SPEC-0001 REQ "State Presentation":
@@ -96,20 +90,21 @@ func TestColorProfileDegradation(t *testing.T) {
 // legible across 24-bit, 256, 16-color, AND mono terminals — the glyph + label
 // survive every colorprofile degradation, so meaning never rides on color alone.
 func TestAllProfilesLegible(t *testing.T) {
-	profiles := map[string]termenv.Profile{
-		"truecolor": termenv.TrueColor,
-		"ansi256":   termenv.ANSI256,
-		"ansi16":    termenv.ANSI,
-		"mono":      termenv.Ascii,
+	profiles := map[string]colorprofile.Profile{
+		"truecolor": colorprofile.TrueColor,
+		"ansi256":   colorprofile.ANSI256,
+		"ansi16":    colorprofile.ANSI,
+		"mono":      colorprofile.Ascii,
 	}
+	backgrounds := map[string]bool{"night": true, "day": false}
 	for pname, p := range profiles {
-		r := lipgloss.NewRenderer(io.Discard)
-		r.SetColorProfile(p)
-		th := New(r, DefaultPalette())
-		for _, s := range core.States {
-			out := th.RenderState(s)
-			if !strings.Contains(out, s.Glyph()) || !strings.Contains(out, string(s)) {
-				t.Errorf("profile %s, state %q: rendered %q lost glyph or label", pname, s, out)
+		for bname, isDark := range backgrounds {
+			th := New(p, isDark, DefaultPalette())
+			for _, s := range core.States {
+				out := th.RenderState(s)
+				if !strings.Contains(out, s.Glyph()) || !strings.Contains(out, string(s)) {
+					t.Errorf("profile %s, %s theme, state %q: rendered %q lost glyph or label", pname, bname, s, out)
+				}
 			}
 		}
 	}

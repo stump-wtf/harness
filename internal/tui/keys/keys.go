@@ -10,7 +10,7 @@
 // (Bubbles help/key).
 package keys
 
-import "github.com/charmbracelet/bubbles/key"
+import "charm.land/bubbles/v2/key"
 
 // KeyMap is the complete binding registry. Every interactive action in the TUI
 // resolves through exactly one field here — nothing matches a raw string — so
@@ -84,7 +84,7 @@ func Default() KeyMap {
 		Logs:    key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "logs")),
 		// Copy yanks the selected harness name to the system clipboard (OSC52).
 		// Mouse-drag selection is unavailable while the TUI holds the mouse
-		// (WithMouseCellMotion), so an explicit copy key is how you grab a name
+		// (MouseModeCellMotion), so an explicit copy key is how you grab a name
 		// out of the cockpit.
 		Copy: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy name")),
 

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/key"
+	"charm.land/bubbles/v2/key"
 )
 
 // hasKey reports whether a binding is triggered by key string s.

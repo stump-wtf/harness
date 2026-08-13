@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/log"
+	"charm.land/log/v2"
 	"github.com/fsnotify/fsnotify"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"

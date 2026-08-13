@@ -15,12 +15,13 @@ package main
 
 import (
 	"fmt"
+	"image/color"
 	"io"
 	"os"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"golang.org/x/term"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
@@ -104,14 +105,14 @@ func useColorFor(w io.Writer) bool {
 }
 
 // palette is the shared design palette, looked up once.
-func palette() theme.Palette { return theme.Default().Palette }
+func palette() theme.Colors { return theme.Default().Colors() }
 
 // Table is a tabular renderer with bold headers, separator rules, and
 // ANSI-aware column alignment. The zero value is not usable; use NewTable.
 type Table struct {
 	w         io.Writer
 	colored   bool
-	pal       theme.Palette
+	pal       theme.Colors
 	width     int        // cell-content budget for this table (resolved from writer's TTY size)
 	headers   []string   // raw header labels; column count + fit/truncate policy key off these
 	rows      []tableRow // queued rows (raw, unwrapped cells; laid out in Flush)
@@ -674,7 +675,7 @@ func (t *Table) dimItalic(s string) string {
 // the eye to its state at a glance, like running/degraded/failed do; the
 // glyph (○ vs ✖) still distinguishes it from failed. Mirrors
 // theme.stateColor so the CLI and TUI never diverge.
-func stateColor(s core.State, pal theme.Palette) lipgloss.AdaptiveColor {
+func stateColor(s core.State, pal theme.Colors) color.Color {
 	switch s {
 	case core.StateRunning:
 		return pal.Mint

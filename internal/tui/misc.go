@@ -11,20 +11,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 )
 
 // keyToBytes encodes a keystroke into the bytes a PTY expects, so attached
 // interactive input forwards faithfully (SPEC-0001 scenario "Driving a live
 // agent"). It covers the common control keys and arrow escapes; printable runes
 // pass through verbatim.
-func keyToBytes(msg tea.KeyMsg) []byte {
-	switch msg.Type {
-	case tea.KeyRunes:
-		return []byte(string(msg.Runes))
-	case tea.KeySpace:
-		return []byte{' '}
+func keyToBytes(msg tea.KeyPressMsg) []byte {
+	// Ctrl+A..Ctrl+Z map to 0x01..0x1a. Bubble Tea v2 dropped the KeyCtrlA..Z
+	// key types and models Ctrl as a modifier on the base key instead; match
+	// Ctrl alone (not Ctrl+Alt, etc.) to keep v1's exact behaviour.
+	if msg.Mod == tea.ModCtrl && msg.Code >= 'a' && msg.Code <= 'z' {
+		return []byte{byte(msg.Code - 'a' + 1)}
+	}
+	switch msg.Code {
 	case tea.KeyEnter:
 		return []byte{'\r'}
 	case tea.KeyTab:
@@ -33,7 +35,7 @@ func keyToBytes(msg tea.KeyMsg) []byte {
 		return []byte{0x7f}
 	case tea.KeyDelete:
 		return []byte("\x1b[3~")
-	case tea.KeyEsc:
+	case tea.KeyEscape:
 		return []byte{0x1b}
 	case tea.KeyUp:
 		return []byte("\x1b[A")
@@ -52,9 +54,11 @@ func keyToBytes(msg tea.KeyMsg) []byte {
 	case tea.KeyPgDown:
 		return []byte("\x1b[6~")
 	}
-	// Ctrl+A..Ctrl+Z map to 0x01..0x1a.
-	if msg.Type >= tea.KeyCtrlA && msg.Type <= tea.KeyCtrlZ {
-		return []byte{byte(msg.Type - tea.KeyCtrlA + 1)}
+	// Printable characters (space included) pass through verbatim. Text is
+	// populated only for keys that produce printable output, so this is v1's
+	// KeyRunes/KeySpace pair collapsed into one case.
+	if msg.Text != "" {
+		return []byte(msg.Text)
 	}
 	return nil
 }

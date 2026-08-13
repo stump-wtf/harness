@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -25,7 +25,7 @@ func baseModel(w, h int) *Model {
 	m.harnesses = fc.harnesses
 	m.profiles = fc.profiles
 	m.w, m.h = w, h
-	m.help.Width = w
+	m.help.SetWidth(w)
 	return m
 }
 
@@ -183,7 +183,7 @@ func TestVisualJourneysFit(t *testing.T) {
 	for _, j := range journeys() {
 		for _, s := range sizes {
 			w, h := s[0], s[1]
-			view := j.build(w, h).View()
+			view := j.build(w, h).View().Content
 			lines := strings.Split(view, "\n")
 
 			// Width: no rendered line may exceed the terminal width.
@@ -216,7 +216,7 @@ func TestNewFormFitsShortTerminals(t *testing.T) {
 			w, h := s[0], s[1]
 			m := baseModel(w, h)
 			m.openForm(editing)
-			view := m.View()
+			view := m.View().Content
 			lines := strings.Split(view, "\n")
 			if len(lines) > h {
 				t.Errorf("editing=%v %dx%d: form overlay %d rows exceed height %d", editing, w, h, len(lines), h)
@@ -305,7 +305,7 @@ func TestDashboardViewNeverExceedsHeight(t *testing.T) {
 						m.openSearch()
 					}
 
-					view := m.View()
+					view := m.View().Content
 					lines := strings.Split(view, "\n")
 					if len(lines) > h {
 						t.Errorf("hc=%d %dx%d banner=%v status=%v search=%v model=%v yolo=%v degraded=%v: %d rows > %d",

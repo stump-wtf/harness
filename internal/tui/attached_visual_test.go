@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/vt"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -51,7 +51,7 @@ func TestAttachedVisualNoScroll(t *testing.T) {
 		m := New(Options{})
 		m.conn = startOK
 		m.w, m.h = w, h
-		m.help.Width = w
+		m.help.SetWidth(w)
 		m.mode = modeAttached
 		cols, rows := m.attachViewport()
 		m.att = newAttachState("crush", protocol.AttachRW, sessionBase, cols, rows)
@@ -62,7 +62,7 @@ func TestAttachedVisualNoScroll(t *testing.T) {
 		sentinel := "TOP-ROW-SENTINEL"
 		m.att.view.write([]byte("\x1b[42m" + sentinel + strings.Repeat(" ", w-len(sentinel)) + "\x1b[0m"))
 
-		term := emulate(m.View(), w, h)
+		term := emulate(m.View().Content, w, h)
 
 		if top := rowText(term, 0, w); !strings.Contains(top, sentinel) {
 			t.Errorf("%dx%d: top row scrolled away (grid scrolled) — got %q", w, h, top)
@@ -93,7 +93,7 @@ func TestAttachedCursorPaintedInInteractive(t *testing.T) {
 	// Park the guest cursor at a known position: CUP row 3, col 5 → cell (4, 2).
 	m.att.view.write([]byte("\x1b[3;5H"))
 
-	view := m.View()
+	view := m.View().Content
 	lines := strings.Split(view, "\n")
 
 	// The cursor cell must be painted on body row 2 and nowhere else.
@@ -126,7 +126,7 @@ func TestAttachedCursorPaintedInInteractive(t *testing.T) {
 func TestAttachedCursorNotPaintedInScrollback(t *testing.T) {
 	m := scrollbackModelWithScreen(80, 24, rawPTYLog,
 		"output line\r\noutput line\r\nshell$ ")
-	view := m.View()
+	view := m.View().Content
 	if strings.Contains(view, "\x1b[7m") {
 		t.Error("scrollback frame paints a cursor cell")
 	}

@@ -7,7 +7,7 @@ package tui
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )

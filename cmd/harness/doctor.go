@@ -20,7 +20,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"

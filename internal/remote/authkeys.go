@@ -13,7 +13,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/ssh"
+	"charm.land/ssh"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )

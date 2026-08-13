@@ -12,6 +12,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/colorprofile"
+
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 )
@@ -173,16 +175,17 @@ func TestLevelGlyph(t *testing.T) {
 
 func TestLevelColor(t *testing.T) {
 	t.Parallel()
-	pal := DefaultPalette()
-	// Just verify each level returns a distinct color (non-empty).
+	pal := DefaultColors()
+	// Just verify each level returns a distinct, non-empty color.
 	seen := map[string]bool{}
 	for _, lvl := range []Level{LevelError, LevelWarn, LevelInfo, LevelSuccess} {
 		c := lvl.Color(pal)
-		key := c.Dark + c.Light
-		if key == "" {
+		if c == nil {
 			t.Errorf("level %v has empty color", lvl)
+			continue
 		}
-		seen[key] = true
+		r, g, b, _ := c.RGBA()
+		seen[fmt.Sprintf("%d/%d/%d", r, g, b)] = true
 	}
 	// Expect at least 3 distinct colors (info/success might share family).
 	if len(seen) < 3 {
@@ -190,9 +193,13 @@ func TestLevelColor(t *testing.T) {
 	}
 }
 
-// DefaultPalette returns the design-system palette for tests that need it
-// without importing the theme package directly.
-func DefaultPalette() (p theme.Palette) { return theme.DefaultPalette() }
+// DefaultColors returns the design-system palette resolved at full colour for
+// tests that need it. The profile is pinned rather than detected: under `go
+// test` stdout is not a terminal, so a detected theme would degrade every token
+// to nil and the distinctness assertion would be vacuous.
+func DefaultColors() theme.Colors {
+	return theme.New(colorprofile.TrueColor, true, theme.DefaultPalette()).Colors()
+}
 
 func TestPrinterReportStyled(t *testing.T) {
 	t.Parallel()
