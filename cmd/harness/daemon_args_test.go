@@ -77,6 +77,24 @@ func TestParseDaemonArgs(t *testing.T) {
 			wantSub:    "-h",
 			wantDAArgs: nil,
 		},
+		{
+			name:       "flag value equal to subcommand name not misread as verb",
+			args:       []string{"--log-file", "stop"},
+			wantSub:    "",
+			wantDAArgs: []string{"--log-file", "stop"},
+		},
+		{
+			name:       "flag value equal to subcommand name with equals form",
+			args:       []string{"--log-file=stop"},
+			wantSub:    "",
+			wantDAArgs: []string{"--log-file=stop"},
+		},
+		{
+			name:       "flag with value then real subcommand",
+			args:       []string{"--config", "/tmp/h.toml", "stop"},
+			wantSub:    "stop",
+			wantDAArgs: []string{"--config", "/tmp/h.toml"},
+		},
 	}
 
 	for _, tt := range tests {
