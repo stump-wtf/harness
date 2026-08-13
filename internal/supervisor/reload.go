@@ -21,3 +21,11 @@ func (m *Manager) ReloadFromFile(path string) error {
 	m.Reload(cfg)
 	return nil
 }
+
+// SetReloadHook registers a callback invoked after every successful Reload,
+// whichever path triggered it (SIGHUP, the config watcher, or the daemon's
+// reload control op — they all funnel through Reload). The daemon uses it to
+// re-apply scheduled harness entries against the new config (issue #66). Set
+// it once during daemon boot, before any reload source is live; it is not
+// synchronized for later replacement.
+func (m *Manager) SetReloadHook(fn func()) { m.reloadHook = fn }

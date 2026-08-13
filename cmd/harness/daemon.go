@@ -34,6 +34,7 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/daemon"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 	"gitea.stump.rocks/stump.wtf/harness/internal/remote"
+	"gitea.stump.rocks/stump.wtf/harness/internal/scheduler"
 	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
 )
 
@@ -126,6 +127,35 @@ func runDaemon(args []string) {
 	}
 	mgr.Autostart()
 
+	// Scheduled harnesses: cron-fired one-shot agent runs owned by the
+	// daemon (issue #66). At each firing the daemon starts the harness if
+	// it is not already running (overlapping firings are skipped, not
+	// stacked). "Running" here means any state with a live or in-transition
+	// process: starting, running, degraded, and stopping all skip — a firing
+	// must never spawn a second copy or flip enabled intent mid-stop.
+	// Stopped, failed, and restarting fire (a fresh scheduled attempt clears
+	// a failed latch via Start's normal path).
+	sched := scheduler.New(func(name string) {
+		if snap, ok := mgr.Snapshot(name); ok {
+			switch snap.State {
+			case core.StateStarting, core.StateRunning, core.StateDegraded, core.StateStopping:
+				log.Debug("schedule fired but harness is active; skipping", "harness", name, "state", snap.State)
+				return
+			}
+		}
+		log.Info("schedule fired", "harness", name)
+		if !mgr.Start(name) {
+			log.Warn("schedule fired for unknown harness", "harness", name)
+		}
+	})
+	sched.Apply(cfg)
+	sched.Start()
+	// Re-apply schedules after every successful config reload, whichever
+	// path triggered it: SIGHUP, the config watcher, or the daemon's reload
+	// control op all funnel through Manager.Reload. Registered before any of
+	// those sources is live.
+	mgr.SetReloadHook(func() { sched.Apply(mgr.Config()) })
+
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
 		Registry:   reg,
@@ -197,6 +227,7 @@ func runDaemon(args []string) {
 	if cfgWatcher != nil {
 		cfgWatcher.Close()
 	}
+	sched.Close()
 	if remoteSrv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = remoteSrv.Shutdown(ctx)

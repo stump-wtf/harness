@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/BurntSushi/toml"
+	"github.com/robfig/cron/v3"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )
@@ -39,6 +40,7 @@ type rawHarness struct {
 	Description  string   `toml:"description"`
 	Enabled      *bool    `toml:"enabled"`
 	TmuxSocket   string   `toml:"tmux_socket"`
+	Schedule     string   `toml:"schedule"`
 }
 
 // rawProfile mirrors a [profile.*] TOML table before validation.
@@ -235,9 +237,18 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 	// Validate profile membership now that all harnesses are registered.
 	for _, pp := range pending {
 		for _, member := range pp.profile.Harnesses {
-			if _, ok := cfg.Harnesses[member]; !ok {
+			h, ok := cfg.Harnesses[member]
+			if !ok {
 				return nil, newError(filename, pp.line,
 					"profile %q references unknown harness %q", pp.profile.Name, member)
+			}
+			// A scheduled harness must not be profile-startable: profile
+			// autostart (and use-profile) would fire the one-shot outside its
+			// schedule, the exact coupling the enabled exclusion forbids
+			// (issue #66).
+			if h.Schedule != "" {
+				return nil, newError(filename, pp.line,
+					"profile %q includes scheduled harness %q (\"schedule\" and profile membership are mutually exclusive)", pp.profile.Name, member)
 			}
 		}
 	}
@@ -408,6 +419,33 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		enabled = *rh.Enabled
 	}
 
+	// Schedule marks a daemon-owned cron one-shot (issue #66; ADR-0011 prompt
+	// harness; the enabled exclusion carves against SPEC-0003's intent model).
+	schedule := strings.TrimSpace(rh.Schedule)
+	switch {
+	case rh.Schedule != "" && schedule == "":
+		return newError(filename, line,
+			"harness %q: \"schedule\" must not be blank", name)
+	case schedule != "" && prompt == "":
+		return newError(filename, line,
+			"harness %q: \"schedule\" requires \"prompt\" (a scheduled harness is a one-shot agent run)", name)
+	case schedule != "" && enabled:
+		return newError(filename, line,
+			"harness %q: \"schedule\" and \"enabled = true\" are mutually exclusive (use one or the other)", name)
+	case schedule != "" && (restartPolicy == core.RestartAlways || restartPolicy == core.RestartUnlessStopped):
+		return newError(filename, line,
+			"harness %q: \"schedule\" requires restart policy \"no\" or \"on-failure\" (a scheduled run must be allowed to finish; %q respawns it after a clean exit)", name, restartPolicy)
+	}
+	if schedule != "" {
+		// Validate the cron expression eagerly, like every sibling field: a
+		// typo must fail the load with a located error, not silently never
+		// fire (the scheduler's own parse at apply time is defense in depth).
+		if _, err := cron.ParseStandard(schedule); err != nil {
+			return newError(filename, line,
+				"harness %q: invalid \"schedule\" %q: %v", name, schedule, err)
+		}
+	}
+
 	if resolve == nil {
 		resolve = func(p string) string { return p }
 	}
@@ -429,6 +467,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		Description:  rh.Description,
 		Enabled:      enabled,
 		TmuxSocket:   rh.TmuxSocket,
+		Schedule:     schedule,
 	}
 	if prompt != "" {
 		// Cmd/Args stay EMPTY for a prompt harness (spawn-time synthesis,
