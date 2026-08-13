@@ -25,22 +25,25 @@ import (
 // Enabled is a pointer so we can tell "absent" (default false) from an explicit
 // value without ambiguity.
 type rawHarness struct {
-	Cmd          string   `toml:"cmd"`
-	Args         []string `toml:"args"`
-	Prompt       string   `toml:"prompt"`
-	Model        string   `toml:"model"`
-	AutoAccept   bool     `toml:"auto_accept"`
-	MaxTurns     *int     `toml:"max_turns"`
-	Quiet        *bool    `toml:"quiet"`
-	Workdir      string   `toml:"workdir"`
-	EnvFile      string   `toml:"env_file"`
-	RestartDelay int      `toml:"restart_delay"`
-	Restart      string   `toml:"restart"`
-	Backend      string   `toml:"backend"`
-	Description  string   `toml:"description"`
-	Enabled      *bool    `toml:"enabled"`
-	TmuxSocket   string   `toml:"tmux_socket"`
-	Schedule     string   `toml:"schedule"`
+	Cmd               string   `toml:"cmd"`
+	Args              []string `toml:"args"`
+	Prompt            string   `toml:"prompt"`
+	Model             string   `toml:"model"`
+	AutoAccept        bool     `toml:"auto_accept"`
+	MaxTurns          *int     `toml:"max_turns"`
+	Quiet             *bool    `toml:"quiet"`
+	Workdir           string   `toml:"workdir"`
+	EnvFile           string   `toml:"env_file"`
+	RestartDelay      int      `toml:"restart_delay"`
+	Restart           string   `toml:"restart"`
+	Backend           string   `toml:"backend"`
+	Description       string   `toml:"description"`
+	Enabled           *bool    `toml:"enabled"`
+	TmuxSocket        string   `toml:"tmux_socket"`
+	Schedule          string   `toml:"schedule"`
+	Agent             string   `toml:"agent"`
+	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
+	MCPAllow          []string `toml:"mcp_allow"`
 }
 
 // rawProfile mirrors a [profile.*] TOML table before validation.
@@ -478,6 +481,31 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		// ADR-0011) — also defensively squashing a whitespace-only cmd.
 		h.Cmd, h.Args = "", nil
 	}
+
+	// SPEC-0006 REQ "Adapter Selection": validate the agent key against the
+	// known adapter names. The adapter registry lives in internal/adapter;
+	// to avoid an import cycle (config → adapter → core), the known names
+	// are duplicated here as a literal set. New adapters MUST be added to
+	// both places.
+	if rh.Agent != "" {
+		switch rh.Agent {
+		case "claude-code", "crush", "codex", "generic":
+		default:
+			return newError(filename, line,
+				"harness %q: unknown agent %q (want one of: claude-code, crush, codex, generic)",
+				name, rh.Agent)
+		}
+	}
+
+	// SPEC-0005 REQ "Capability Scoping": mcp_allow defaults to ["read"].
+	mcpAllow := rh.MCPAllow
+	if mcpAllow == nil {
+		mcpAllow = []string{"read"}
+	}
+
+	h.Agent = rh.Agent
+	h.HarvestTrajectory = rh.HarvestTrajectory != nil && *rh.HarvestTrajectory
+	h.MCPAllow = mcpAllow
 	cfg.Harnesses[name] = h
 	cfg.HarnessOrder = append(cfg.HarnessOrder, name)
 	return nil

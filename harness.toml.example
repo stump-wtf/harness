@@ -78,6 +78,30 @@ enabled = false
 # schedule = "0 */6 * * *"   # every 6 hours
 # description = "scheduled sweep (every 6 hours)"
 
+# Agent adapters (ADR-0011, SPEC-0006): the `agent` key selects which adapter
+# the harness resolves to. When omitted, the daemon infers it from the cmd
+# basename (e.g. "claude" -> "claude-code", "crush" -> "crush"). An unrecognized
+# tool resolves to "generic" (no projection, scrollback-only trajectory).
+# Valid values: "claude-code", "crush", "codex", "generic".
+#
+# agent = "claude-code"
+
+# Trajectory harvesting (SPEC-0006 REQ "Harvest Opt-In"): expose this harness's
+# session transcripts read-only through the facade (list_trajectories /
+# get_trajectory). Defaults to false - a transcript may contain secrets the
+# harnessed program printed itself (ADR-0008), so exposure is opt-in.
+#
+# harvest_trajectory = true
+
+# MCP facade capability scope (SPEC-0005 REQ "Capability Scoping"): the
+# operations this harness is permitted to invoke through the MCP facade.
+# Defaults to ["read"] (read-only facade tools like harness_list,
+# list_trajectories). Include "write" to permit harness_start/stop/restart
+# through the facade. Global config only - project files reject this key so a
+# cloned repository cannot grant itself write authority over the fleet.
+#
+# mcp_allow = ["read", "write"]
+
 # A crash-looping example. The full restart_delay is seconds; the supervisor
 # honours it once a harness exits while still enabled.
 #

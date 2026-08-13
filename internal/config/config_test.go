@@ -42,6 +42,7 @@ func TestParseZshHarnessdExample(t *testing.T) {
 		Restart:      core.RestartAlways, // defaulted, not present in the file
 		Backend:      core.BackendNative, // defaulted, not present in the file
 		Enabled:      false,              // defaulted
+		MCPAllow:     []string{"read"},   // defaulted (SPEC-0005)
 	}
 	if !reflect.DeepEqual(h, want) {
 		t.Errorf("harness mismatch:\n got %+v\nwant %+v", h, want)
@@ -807,5 +808,151 @@ func TestParseQuietErrors(t *testing.T) {
 				t.Errorf("message %q does not contain %q", ce.Msg, tt.wantSub)
 			}
 		})
+	}
+}
+
+// --- SPEC-0006 REQ "Adapter Selection" ---
+
+func TestParseAgentExplicit(t *testing.T) {
+	src := `[harness.agent]
+cmd = "my-wrapper"
+agent = "claude-code"
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := cfg.Harnesses["agent"]
+	if h.Agent != "claude-code" {
+		t.Fatalf("agent = %q, want claude-code", h.Agent)
+	}
+}
+
+func TestParseAgentUnknown(t *testing.T) {
+	src := `[harness.agent]
+cmd = "claude"
+agent = "nonexistent"
+`
+	_, err := Parse([]byte(src), "t.toml")
+	if err == nil {
+		t.Fatal("expected error for unknown agent, got nil")
+	}
+	var ce *Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("error is %T, want *config.Error: %v", err, err)
+	}
+	if !strings.Contains(ce.Msg, "unknown agent") {
+		t.Errorf("message %q does not contain 'unknown agent'", ce.Msg)
+	}
+	if !strings.Contains(ce.Msg, "nonexistent") {
+		t.Errorf("message %q does not contain 'nonexistent'", ce.Msg)
+	}
+}
+
+func TestParseAgentGenericExplicit(t *testing.T) {
+	src := `[harness.tool]
+cmd = "custom-tool"
+agent = "generic"
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := cfg.Harnesses["tool"]
+	if h.Agent != "generic" {
+		t.Fatalf("agent = %q, want generic", h.Agent)
+	}
+}
+
+// --- SPEC-0006 REQ "Harvest Opt-In" ---
+
+func TestParseHarvestTrajectoryDefault(t *testing.T) {
+	src := `[harness.agent]
+cmd = "claude"
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := cfg.Harnesses["agent"]
+	if h.HarvestTrajectory {
+		t.Fatal("harvest_trajectory should default to false")
+	}
+}
+
+func TestParseHarvestTrajectoryTrue(t *testing.T) {
+	src := `[harness.agent]
+cmd = "claude"
+harvest_trajectory = true
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := cfg.Harnesses["agent"]
+	if !h.HarvestTrajectory {
+		t.Fatal("harvest_trajectory should be true")
+	}
+}
+
+func TestParseHarvestTrajectoryFalse(t *testing.T) {
+	src := `[harness.agent]
+cmd = "claude"
+harvest_trajectory = false
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := cfg.Harnesses["agent"]
+	if h.HarvestTrajectory {
+		t.Fatal("harvest_trajectory should be false")
+	}
+}
+
+// --- SPEC-0005 REQ "Capability Scoping" ---
+
+func TestParseMCPAllowDefault(t *testing.T) {
+	src := `[harness.agent]
+cmd = "claude"
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := cfg.Harnesses["agent"]
+	if !reflect.DeepEqual(h.MCPAllow, []string{"read"}) {
+		t.Fatalf("mcp_allow = %v, want [read]", h.MCPAllow)
+	}
+}
+
+func TestParseMCPAllowWrite(t *testing.T) {
+	src := `[harness.agent]
+cmd = "claude"
+mcp_allow = ["read", "write"]
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := cfg.Harnesses["agent"]
+	if !reflect.DeepEqual(h.MCPAllow, []string{"read", "write"}) {
+		t.Fatalf("mcp_allow = %v, want [read write]", h.MCPAllow)
+	}
+}
+
+func TestParseMCPAllowEmpty(t *testing.T) {
+	// An explicit empty list is allowed (no tools permitted through facade).
+	src := `[harness.agent]
+cmd = "claude"
+mcp_allow = []
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := cfg.Harnesses["agent"]
+	if len(h.MCPAllow) != 0 {
+		t.Fatalf("mcp_allow = %v, want empty", h.MCPAllow)
 	}
 }
