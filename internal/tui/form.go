@@ -1,8 +1,8 @@
 package tui
 
 // Governing: SPEC-0001 REQ "Harness Form" — n/e open a Huh form over the harness
-// schema (cmd/prompt/model/auto_accept/args/workdir/env_file/restart_delay/
-// restart/backend/description/profile membership) that writes back to
+// schema (cmd/prompt/model/auto_accept/schedule/args/workdir/env_file/
+// restart_delay/restart/backend/description/profile membership) that writes back to
 // harness.toml (ADR-0006: file is truth); e
 // pre-fills from the existing harness; then the daemon reloads and the harness
 // appears on the dashboard. This file owns the schema<->TOML serialization; the
@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/robfig/cron/v3"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
@@ -46,7 +48,14 @@ type HarnessForm struct {
 	// one-shot runs quietly by default, and setting this false opts back into
 	// streaming output to an attach. False without Prompt is rejected
 	// (Validate mirrors the parser).
-	Quiet        bool
+	Quiet bool
+	// Schedule is the daemon-owned cron expression for a scheduled one-shot
+	// (issue #66): requires Prompt, and is mutually exclusive with Enabled and
+	// with a respawning restart policy (Validate mirrors the parser on all
+	// three). Carried through the form so an edit round-trips it — the save
+	// path rewrites the whole table, so a field the form drops is a schedule
+	// silently deleted from harness.toml.
+	Schedule     string
 	Args         []string
 	Workdir      string
 	EnvFile      string
@@ -107,6 +116,24 @@ func (f HarnessForm) Validate() error {
 	if !core.RestartPolicy(f.Restart).Valid() {
 		return fmt.Errorf("restart must be no, always, unless-stopped, or on-failure")
 	}
+	// Mirror the parser's `schedule` rules (issue #66, config.registerHarness).
+	// The save path writes harness.toml before the daemon ever sees it, so a
+	// combination the parser rejects would leave the file unparseable on disk —
+	// every later reload fails until it is hand-edited.
+	if schedule := strings.TrimSpace(f.Schedule); schedule != "" {
+		if !promptSet {
+			return fmt.Errorf("schedule requires prompt (a scheduled harness is a one-shot agent run)")
+		}
+		if f.Enabled {
+			return fmt.Errorf("schedule and enabled are mutually exclusive")
+		}
+		if r := core.RestartPolicy(f.Restart); r == core.RestartAlways || r == core.RestartUnlessStopped {
+			return fmt.Errorf("schedule requires restart no or on-failure (%s respawns the one-shot after a clean exit)", r)
+		}
+		if _, err := cron.ParseStandard(schedule); err != nil {
+			return fmt.Errorf("invalid schedule %q: %v", schedule, err)
+		}
+	}
 	return nil
 }
 
@@ -136,6 +163,12 @@ func (f HarnessForm) TOML() string {
 			// Opt out of the headless one-shot default so the agent streams
 			// output to whoever attaches (issue #60).
 			b.WriteString("quiet = false\n")
+		}
+		if schedule := strings.TrimSpace(f.Schedule); schedule != "" {
+			// The daemon fires this one-shot on a cron cadence (issue #66).
+			// Prompt-only, like the knobs above: Validate rejects a schedule
+			// without a prompt, so this branch is the only place it can appear.
+			fmt.Fprintf(&b, "schedule = %s\n", strconv.Quote(schedule))
 		}
 	} else {
 		fmt.Fprintf(&b, "cmd = %s\n", strconv.Quote(f.Cmd))
@@ -228,6 +261,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.autoAccept = h.AutoAccept
 	fi.quiet = h.Quiet
 	fi.maxTurns = strconv.Itoa(h.MaxTurns)
+	fi.schedule = h.Schedule
 	fi.args = strings.Join(h.Args, " ")
 	fi.workdir = h.Workdir
 	fi.envFile = h.EnvFile
@@ -251,6 +285,7 @@ func (fi formInputs) toForm() HarnessForm {
 		Model:       strings.TrimSpace(fi.model),
 		AutoAccept:  fi.autoAccept,
 		Quiet:       fi.quiet,
+		Schedule:    strings.TrimSpace(fi.schedule),
 		Workdir:     strings.TrimSpace(fi.workdir),
 		EnvFile:     strings.TrimSpace(fi.envFile),
 		Restart:     strings.TrimSpace(fi.restart),

@@ -422,6 +422,126 @@ func TestEditMaxTurnsHarnessRoundTrip(t *testing.T) {
 	}
 }
 
+// TestHarnessFormRoundTripSchedule: a scheduled prompt harness (issue #66)
+// serializes its cron expression and re-parses into the same schedule.
+func TestHarnessFormRoundTripSchedule(t *testing.T) {
+	f := HarnessForm{
+		Name:     "stumpcloud-sweep",
+		Prompt:   "check all services and report anything unhealthy",
+		Schedule: "0 */6 * * *",
+		Restart:  "no",
+		Backend:  "native",
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatalf("valid prompt+schedule form rejected: %v", err)
+	}
+	body := f.TOML()
+	if !strings.Contains(body, `schedule = "0 */6 * * *"`) {
+		t.Fatalf("TOML missing schedule key:\n%s", body)
+	}
+	cfg, err := config.Parse([]byte(body), "harness.toml")
+	if err != nil {
+		t.Fatalf("config.Parse rejected form TOML: %v\n---\n%s", err, body)
+	}
+	h, ok := cfg.Harnesses["stumpcloud-sweep"]
+	if !ok {
+		t.Fatalf("harness not present after parse; got %v", cfg.HarnessOrder)
+	}
+	if h.Schedule != "0 */6 * * *" {
+		t.Errorf("Schedule = %q, want %q", h.Schedule, "0 */6 * * *")
+	}
+}
+
+// TestHarnessFormValidateScheduleRules pins that the form mirrors the parser's
+// `schedule` constraints (issue #66). The save path writes harness.toml BEFORE
+// the daemon parses it, so a combination Validate lets through would leave the
+// file unparseable on disk and every later reload failing.
+func TestHarnessFormValidateScheduleRules(t *testing.T) {
+	base := func() HarnessForm {
+		return HarnessForm{
+			Name:     "sweep",
+			Prompt:   "check things",
+			Schedule: "0 */6 * * *",
+			Restart:  "no",
+			Backend:  "native",
+		}
+	}
+	tests := []struct {
+		name string
+		bend func(*HarnessForm)
+	}{
+		{"schedule without prompt", func(f *HarnessForm) { f.Prompt = ""; f.Cmd = "sleep 1" }},
+		{"schedule with enabled", func(f *HarnessForm) { f.Enabled = true }},
+		{"schedule with restart always", func(f *HarnessForm) { f.Restart = "always" }},
+		{"schedule with restart unless-stopped", func(f *HarnessForm) { f.Restart = "unless-stopped" }},
+		{"invalid cron", func(f *HarnessForm) { f.Schedule = "not-a-cron" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := base()
+			tc.bend(&f)
+			if err := f.Validate(); err == nil {
+				t.Fatalf("Validate accepted %s; the daemon parser rejects it, so the save would corrupt harness.toml", tc.name)
+			}
+		})
+	}
+}
+
+// TestEditScheduledHarnessRoundTrip is the regression guard for the field this
+// PR added: the edit save path deletes the whole `[harness.<name>]` table and
+// re-renders it from the form, so a `schedule` the form does not carry is a
+// recurring job silently deleted from harness.toml on the next unrelated edit.
+func TestEditScheduledHarnessRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.toml")
+	original := strings.Join([]string{
+		"[harness.stumpcloud-sweep]",
+		`prompt = "check all services and report anything unhealthy"`,
+		"auto_accept = true",
+		`schedule = "0 */6 * * *"`,
+		`description = "scheduled sweep"`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The daemon's HarnessInfo projection carries no Schedule, so the pre-fill
+	// must come from the file (ADR-0006 file-is-truth).
+	sel := protocol.HarnessInfo{
+		Name:        "stumpcloud-sweep",
+		Prompt:      "check all services and report anything unhealthy",
+		AutoAccept:  true,
+		Description: "scheduled sweep",
+	}
+	fi := editInputsFor(path, sel)
+	if fi.schedule != "0 */6 * * *" {
+		t.Fatalf("schedule not pre-filled from file: %q", fi.schedule)
+	}
+
+	// Edit only the description, as a user would, and save.
+	fi.description = "scheduled sweep (every 6h)"
+	form := fi.toForm()
+	if form.Schedule != "0 */6 * * *" {
+		t.Fatalf("toForm Schedule = %q, want %q", form.Schedule, "0 */6 * * *")
+	}
+	if err := form.Validate(); err != nil {
+		t.Fatalf("edit failed validation: %v", err)
+	}
+	body := []byte(removeHarnessTOML(original, form.Name))
+	body = AppendHarness(body, form)
+	if !strings.Contains(string(body), `schedule = "0 */6 * * *"`) {
+		t.Fatalf("schedule key lost on save (the cron job would silently stop firing):\n%s", body)
+	}
+	cfg, err := config.Parse(body, "harness.toml")
+	if err != nil {
+		t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
+	}
+	if got := cfg.Harnesses["stumpcloud-sweep"].Schedule; got != "0 */6 * * *" {
+		t.Errorf("Schedule after round-trip = %q, want %q", got, "0 */6 * * *")
+	}
+}
+
 // TestEditPreservesOmittedFields is the regression guard for the SPEC-0001 REQ
 // "Harness Form" scenario "e SHALL pre-fill from the existing harness": editing a
 // harness must NOT drop the keys the daemon's HarnessInfo projection omits
