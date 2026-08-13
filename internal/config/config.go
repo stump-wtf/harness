@@ -419,8 +419,12 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		enabled = *rh.Enabled
 	}
 
-	// Schedule marks a daemon-owned cron one-shot (issue #66; ADR-0011 prompt
-	// harness; the enabled exclusion carves against SPEC-0003's intent model).
+	// Schedule marks a daemon-owned cron one-shot. The exclusions below are
+	// load-bearing, not defensive: they are what lets a key on [harness.*]
+	// stay unambiguous where ADR-0013 originally wanted a [job.*] table kind.
+	// Governing: ADR-0013; SPEC-0008 REQ "Schedule Key", REQ "Schedule
+	// Exclusions"; issue #66; ADR-0011 (prompt harness; the enabled exclusion
+	// carves against SPEC-0003's intent model).
 	schedule := strings.TrimSpace(rh.Schedule)
 	switch {
 	case rh.Schedule != "" && schedule == "":

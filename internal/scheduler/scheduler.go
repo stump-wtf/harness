@@ -1,7 +1,10 @@
 // Package scheduler fires harnesses on a cron schedule.
 //
-// Governing: issue #66; ADR-0006 (harness.toml is the source of truth the
-// entries reconcile against); ADR-0011 (the scheduled unit is a prompt
+// Governing: ADR-0013 (daemon-owned cron; `schedule` on [harness.*] rather
+// than a [job.*] table kind); SPEC-0008 REQ "Firing And Overlap", REQ "Schedule
+// Reconciliation On Reload", REQ "Scheduler Fault Isolation"; issue #66;
+// ADR-0006 (harness.toml is the source of truth the entries reconcile
+// against); ADR-0011 (the scheduled unit is a prompt
 // one-shot). A scheduled harness is a one-shot agent run that the daemon
 // owns: at each cron firing the daemon starts the harness if it is not
 // already running (an overlapping firing is skipped, not stacked). The run

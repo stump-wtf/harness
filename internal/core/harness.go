@@ -167,7 +167,9 @@ type Harness struct {
 	// Requires Prompt (a one-shot agent run is the use case) and is mutually
 	// exclusive with Enabled and with profile membership (autostart and
 	// schedule are distinct concerns). Global config only — project files
-	// reject it. Governing: issue #66; ADR-0006 (schema); ADR-0011 (prompt
+	// reject it. Governing: ADR-0013 (the decision to express this as a key on
+	// [harness.*] rather than a [job.*] table); SPEC-0008 REQ "Schedule Key",
+	// REQ "Schedule Exclusions"; issue #66; ADR-0006 (schema); ADR-0011 (prompt
 	// one-shot); SPEC-0003 (enabled-intent model the exclusion carves against).
 	Schedule string
 }

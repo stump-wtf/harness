@@ -127,8 +127,9 @@ func runDaemon(args []string) {
 	}
 	mgr.Autostart()
 
-	// Scheduled harnesses: cron-fired one-shot agent runs owned by the
-	// daemon (issue #66). At each firing the daemon starts the harness if
+	// Scheduled harnesses: cron-fired one-shot agent runs owned by the daemon.
+	// Governing: ADR-0013; SPEC-0008 REQ "Firing And Overlap"; issue #66.
+	// At each firing the daemon starts the harness if
 	// it is not already running (overlapping firings are skipped, not
 	// stacked). "Running" here means any state with a live or in-transition
 	// process: starting, running, degraded, and stopping all skip — a firing
