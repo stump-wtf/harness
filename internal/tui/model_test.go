@@ -772,3 +772,19 @@ func TestMultiRuneAttachedPassthrough(t *testing.T) {
 		t.Errorf("PTY write = %q, want %q", fa.inputs[0], "hello")
 	}
 }
+
+// TestMultiRuneSearchOverlayNotDoubleExpanded verifies that multi-rune
+// keystrokes sent to the search overlay (or any overlay with a textinput) are
+// NOT expanded per-rune. The overlay path routes through onOverlayKey, not
+// onDashboardKey, so textinput/huh receive the intact message. Double-expanding
+// here would turn "hello" into "hhheeellllllooo" (issue #145 routing check).
+func TestMultiRuneSearchOverlayNotDoubleExpanded(t *testing.T) {
+	m := baseModel(120, 40)
+	m.openSearch()
+
+	model, _ := m.onKey(runeKey("hello"))
+	m = model.(*Model)
+	if got := m.search.Value(); got != "hello" {
+		t.Errorf("search input after multi-rune 'hello' = %q, want %q", got, "hello")
+	}
+}

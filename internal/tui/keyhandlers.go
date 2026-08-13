@@ -124,7 +124,9 @@ func (m *Model) onDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		for _, r := range msg.Runes {
 			single := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
 			mm, cmd := m.dispatchDashboardKey(single)
-			m = mm.(*Model)
+			if mv, ok := mm.(*Model); ok {
+				m = mv
+			}
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
