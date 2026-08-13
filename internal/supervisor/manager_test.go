@@ -267,7 +267,165 @@ func TestManagerReloadAddsAndRemovesHarnesses(t *testing.T) {
 	}
 }
 
+// ---- Issue #150: reload autostarts newly-introduced enabled harnesses -----
+
+// TestReloadAutostartsNewEnabledHarness verifies Option A: a harness newly
+// introduced by a reload that has config autostart membership (enabled=true
+// or autostart profile member) gets runtime intent set and is started.
+func TestReloadAutostartsNewEnabledHarness(t *testing.T) {
+	cfg := managerCfg(shHarness("existing", "while true; do sleep 0.02; done", 0))
+	m := newTestManager(t, cfg)
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	m.Autostart()
+
+	// Add a new harness with enabled=true via reload.
+	newH := shHarness("newenabled", "while true; do sleep 0.02; done", 0)
+	newH.Enabled = true
+	newCfg := managerCfg(
+		shHarness("existing", "while true; do sleep 0.02; done", 0),
+		newH,
+	)
+	m.Reload(newCfg)
+
+	snap, ok := m.Snapshot("newenabled")
+	if !ok {
+		t.Fatal("newly-added harness missing after reload")
+	}
+	if !snap.Enabled {
+		t.Error("newly-added enabled harness should have runtime intent=true after reload")
+	}
+	// Give it a moment to actually start.
+	time.Sleep(100 * time.Millisecond)
+	snap, _ = m.Snapshot("newenabled")
+	if snap.State != core.StateRunning {
+		t.Errorf("newly-added enabled harness state=%v, want running", snap.State)
+	}
+}
+
+// TestReloadDoesNotOverrideExplicitStop verifies that reloading does not
+// restart a harness the user explicitly stopped (265e42a / 2dfa8fc invariant).
+func TestReloadDoesNotOverrideExplicitStop(t *testing.T) {
+	h := shHarness("stoppable", "while true; do sleep 0.02; done", 0)
+	h.Enabled = true
+	cfg := managerCfg(h)
+	m := newTestManager(t, cfg)
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	m.Autostart()
+	time.Sleep(100 * time.Millisecond)
+
+	// Explicitly stop it.
+	m.Stop("stoppable")
+	time.Sleep(100 * time.Millisecond)
+
+	// Reload with the same config — must NOT restart it.
+	m.Reload(cfg)
+	time.Sleep(100 * time.Millisecond)
+
+	snap, ok := m.Snapshot("stoppable")
+	if !ok {
+		t.Fatal("harness missing after reload")
+	}
+	if snap.Enabled {
+		t.Error("explicitly stopped harness should still have intent=false after reload")
+	}
+	if snap.State == core.StateRunning {
+		t.Error("explicitly stopped harness should not be running after reload")
+	}
+}
+
+// TestReloadNewDisabledHarnessStaysStopped verifies that a newly-introduced
+// harness without autostart membership stays stopped after reload.
+func TestReloadNewDisabledHarnessStaysStopped(t *testing.T) {
+	cfg := managerCfg(shHarness("existing", "while true; do sleep 0.02; done", 0))
+	m := newTestManager(t, cfg)
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	m.Autostart()
+
+	// Add a new harness with enabled=false (not in autostart set since
+	// managerCfg puts all harnesses in the default autostart profile, so
+	// we need a config without it in the profile).
+	newCfg := &core.Config{
+		Harnesses: map[string]core.Harness{
+			"existing": shHarness("existing", "while true; do sleep 0.02; done", 0),
+			"newdisabled": {
+				Name:    "newdisabled",
+				Cmd:     "sh",
+				Args:    []string{"-c", "while true; do sleep 0.02; done"},
+				Backend: core.BackendNative,
+				Enabled: false,
+			},
+		},
+		HarnessOrder: []string{"existing", "newdisabled"},
+		Profiles: map[string]core.Profile{
+			"default": {Name: "default", Harnesses: []string{"existing"}, Autostart: true},
+		},
+		ProfileOrder: []string{"default"},
+	}
+	m.Reload(newCfg)
+	time.Sleep(100 * time.Millisecond)
+
+	snap, ok := m.Snapshot("newdisabled")
+	if !ok {
+		t.Fatal("newly-added disabled harness missing after reload")
+	}
+	if snap.Enabled {
+		t.Error("disabled harness should not have runtime intent=true")
+	}
+	if snap.State == core.StateRunning {
+		t.Error("disabled harness should not be running")
+	}
+}
+
 // ---- ADR-0006: hot reload keeps last-good config on parse error ----------
+
+// TestReloadReIntroducedHarnessAutostarts pins the edge case from PR #157
+// review: a harness that was present at boot, explicitly stopped (persisted
+// Enabled=false), removed from config, then re-added with enabled=true via
+// reload, is treated as newly-introduced and autostarts. Config re-introduction
+// deliberately wins over stale persisted intent (ADR-0014).
+func TestReloadReIntroducedHarnessAutostarts(t *testing.T) {
+	h := shHarness("reintro", "while true; do sleep 0.02; done", 0)
+	h.Enabled = true
+	cfg := managerCfg(h)
+	m := newTestManager(t, cfg)
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	m.Autostart()
+	time.Sleep(100 * time.Millisecond)
+
+	// Explicitly stop it — persisted intent becomes Enabled=false.
+	m.Stop("reintro")
+	time.Sleep(100 * time.Millisecond)
+
+	// Remove from config and reload — harness is dropped.
+	emptyCfg := managerCfg()
+	m.Reload(emptyCfg)
+	if _, ok := m.Snapshot("reintro"); ok {
+		t.Fatal("harness should be gone after removal reload")
+	}
+
+	// Re-add with enabled=true — should autostart despite stale persisted state.
+	m.Reload(cfg)
+	time.Sleep(100 * time.Millisecond)
+
+	snap, ok := m.Snapshot("reintro")
+	if !ok {
+		t.Fatal("re-introduced harness missing after reload")
+	}
+	if !snap.Enabled {
+		t.Error("re-introduced enabled harness should have runtime intent=true (ADR-0014: config re-introduction wins over stale persisted intent)")
+	}
+	if snap.State != core.StateRunning {
+		t.Errorf("re-introduced enabled harness state=%v, want running", snap.State)
+	}
+}
 
 func TestReloadFromFileKeepsLastGoodOnParseError(t *testing.T) {
 	cfg := managerCfg(shHarness("good", "while true; do sleep 0.02; done", 0))

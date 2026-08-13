@@ -476,6 +476,20 @@ func (m *Manager) Reload(newCfg *core.Config) {
 	for _, h := range toAdd {
 		m.addSupervisorLocked(h, false)
 	}
+	// Option A (issue #150): a harness newly introduced by this reload that
+	// has config autostart membership gets runtime intent set and is started,
+	// exactly as if the daemon had booted with it present. Pre-existing
+	// harnesses keep their persisted intent — an explicit `harness stop` is
+	// never undone by an unrelated reload (265e42a / 2dfa8fc invariant).
+	autostart := autostartSet(newCfg)
+	var newAutostart []*Supervisor
+	for _, h := range toAdd {
+		if autostart[h.Name] {
+			if s := m.supervisors[h.Name]; s != nil {
+				newAutostart = append(newAutostart, s)
+			}
+		}
+	}
 	// Keep project harnesses in the render order, after the globals, preserving
 	// their existing relative order (ADR-0009: registration order).
 	for _, name := range m.order {
@@ -491,6 +505,10 @@ func (m *Manager) Reload(newCfg *core.Config) {
 	}
 	for _, a := range toApply {
 		a.s.ApplyConfig(a.h)
+	}
+	// Start newly-introduced autostart harnesses outside the lock (Start blocks).
+	for _, s := range newAutostart {
+		s.Start()
 	}
 	m.markDirty()
 }
