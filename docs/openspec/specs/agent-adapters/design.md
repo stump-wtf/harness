@@ -48,11 +48,17 @@ project root and provenance, and publishes trajectories through SPEC-0005.
 ### One adapter answering three questions
 
 **Choice**: A single interface — skills-from, skills-to, trajectory-at —
-implemented by `claude-code`, `crush`, `codex`, and `generic`.
+implemented by `claude-code`, `crush`, `codex`, and `generic`. The trajectory
+half delegates to [agent-trace](https://gitea.stump.rocks/stump.wtf/agent-trace)
+(`tail` package for session parsing, `classify` for action taxonomy, `otel` for
+span conversion); the skill-projection half remains harness-internal.
 
 **Rationale**: Skill discovery and trajectory discovery are the same question
 about the same tool. Two interfaces would mean two registries, two selection
-mechanisms, and two things to update when a tool moves a directory.
+mechanisms, and two things to update when a tool moves a directory. Delegating
+trajectory parsing to agent-trace avoids carrying per-tool JSONL parsers in
+this codebase while keeping the adapter interface as the single point of
+integration.
 
 **Alternatives considered**:
 

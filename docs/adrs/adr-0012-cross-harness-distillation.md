@@ -61,11 +61,18 @@ gate in a human — and because the cross-project
 threshold is not a heuristic but the actual definition of the thing being
 captured.
 
-### The signal: repetition across projects
+### The signal: classified actions across projects
 
-Detection clusters on **literal error strings and repeated failed tool calls** —
-greppable, cross-harness comparable, no model required. The promotion gate is
-scope, and Harness already tracks per-harness project provenance:
+Detection clusters on **classified tool-call actions from
+[agent-trace](https://gitea.stump.rocks/stump.wtf/agent-trace)'s `classify`
+package** as the primary signal, supplemented by literal error strings.
+`classify.BuildEvent` categorizes every tool call into a semantic action
+(`search`, `read`, `edit`, `exec`, `verify`) with file targets — a structured
+taxonomy that is far richer for pattern detection than raw string matching.
+Two harnesses in different projects both hitting repeated `exec` → `verify`
+→ `edit` sequences on test files is a learnable pattern; two harnesses
+emitting the same stderr line may be noise. The promotion gate is scope, and
+Harness already tracks per-harness project provenance:
 
 | Recurs in | Is | Goes to |
 | --- | --- | --- |
@@ -81,7 +88,8 @@ Not a daemon subsystem. An ordinary supervised process that wakes on its own
 schedule and:
 
 1. **Reads** trajectories via the ADR-0010 facade (read-only tools).
-2. **Clusters** by error string, grouped by project provenance. No LLM.
+2. **Clusters** by classified action sequence (agent-trace `classify.Action`)
+   and error string, grouped by project provenance. No LLM.
 3. **Authors** — the single LLM step, producing whichever artifact the gate
    chose: the context-file change proposed in a single-project PR, or
    `SKILL.md` with the `description` given the most care because it is the
