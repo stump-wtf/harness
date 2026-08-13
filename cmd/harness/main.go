@@ -11,6 +11,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -56,22 +57,15 @@ func main() {
 		// caller passed before the subcommand. Guard the slice — bare
 		// `harness daemon` (no sub) is allowed and means `start`.
 		rest := gfs.Args()[1:] // drop the "daemon" token
-		var sub string
-		var daemonArgs []string
-		if len(rest) > 0 {
-			sub = rest[0]
-			if len(rest) > 1 {
-				daemonArgs = rest[1:]
-			}
-		}
+		sub, daemonArgs := parseDaemonArgs(rest)
 		switch sub {
 		case "", "run", "start":
 			runDaemon(daemonArgs)
 		case "stop":
-			opts := verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut}
+			opts := resolveDaemonOpts(daemonArgs, *socket, *configPath, *jsonOut)
 			os.Exit(cliui.Fatal(cmdStopDaemon(opts)))
 		case "status":
-			opts := verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut}
+			opts := resolveDaemonOpts(daemonArgs, *socket, *configPath, *jsonOut)
 			if err := withClient(opts, nil, cmdDaemonInfo); err != nil {
 				os.Exit(cliui.Fatal(err))
 			}
@@ -131,6 +125,74 @@ func parseInterleaved(fs *flag.FlagSet, args []string) string {
 		args = fs.Args()[1:]
 	}
 	return name
+}
+
+// daemonSubcommands lists the tokens recognized as daemon subcommands. Used
+// by parseDaemonArgs to distinguish `daemon --socket X stop` (flag + sub)
+// from `daemon --socket X` (flag only, implicit start).
+var daemonSubcommands = map[string]bool{
+	"start": true, "run": true, "stop": true, "status": true,
+	"help": true, "-h": true, "--help": true,
+}
+
+// resolveDaemonOpts parses the daemon-level flags (--socket, --config, --json)
+// from daemonArgs — the flags parseDaemonArgs extracted from before/after the
+// subcommand token — falling back to the global flag set's values for any flag
+// not present. This ensures `harness daemon --socket X stop` connects to X,
+// not the default socket the global flag set resolved.
+func resolveDaemonOpts(daemonArgs []string, fallbackSocket, fallbackConfig string, fallbackJSON bool) verbOpts {
+	fs := flag.NewFlagSet("daemon-opts", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	socket := fs.String("socket", fallbackSocket, "")
+	configPath := fs.String("config", fallbackConfig, "")
+	jsonOut := fs.Bool("json", fallbackJSON, "")
+	_ = fs.Parse(daemonArgs)
+	return verbOpts{socket: *socket, configPath: *configPath, json: *jsonOut}
+}
+
+// daemonFlagValues lists daemon flags that consume a following argument (i.e.
+// not boolean flags). Used by parseDaemonArgs to skip flag values when scanning
+// for the subcommand token, so `--log-file stop` isn't misread as the verb.
+var daemonFlagValues = map[string]bool{
+	"-config": true, "--config": true,
+	"-socket": true, "--socket": true,
+	"-scrollback": true, "--scrollback": true,
+	"-ssh-listen": true, "--ssh-listen": true,
+	"-log-level": true, "--log-level": true,
+	"-log-file": true, "--log-file": true,
+}
+
+// parseDaemonArgs splits the args after `daemon` into a subcommand and the
+// remaining daemon flags. It scans for a known subcommand token, skipping flag
+// values so `--log-file stop` isn't misread as the verb; if none is found but
+// the first arg starts with `-`, the implicit subcommand is "" (meaning start)
+// and all args are forwarded as daemon flags. A bare `daemon` (no args) also
+// means "start".
+func parseDaemonArgs(rest []string) (sub string, daemonArgs []string) {
+	if len(rest) == 0 {
+		return "", nil
+	}
+	skipNext := false
+	for i, arg := range rest {
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if daemonSubcommands[arg] {
+			sub = arg
+			daemonArgs = make([]string, 0, len(rest)-1)
+			daemonArgs = append(daemonArgs, rest[:i]...)
+			daemonArgs = append(daemonArgs, rest[i+1:]...)
+			return sub, daemonArgs
+		}
+		if daemonFlagValues[arg] {
+			skipNext = true
+		}
+	}
+	if strings.HasPrefix(rest[0], "-") {
+		return "", rest
+	}
+	return rest[0], rest[1:]
 }
 
 // verbOpts carries the resolved flags/positionals for a verb.
