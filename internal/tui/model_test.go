@@ -689,3 +689,102 @@ func TestWheelScrollbackDisarmsPrefix(t *testing.T) {
 		t.Fatalf("d after scrollback must be forwarded to the PTY, not dispatched as a chord, inputs=%v", fa.inputs)
 	}
 }
+
+// TestMultiRuneKeyExpansion verifies that coalesced KeyRunes messages are
+// expanded and dispatched per rune on the dashboard (issue #145). Holding 'j'
+// delivers "jjj" in one read; the selection must advance by 3, not 0.
+func TestMultiRuneKeyExpansion(t *testing.T) {
+	fc := &fakeController{harnesses: sampleHarnesses()}
+	m := New(Options{})
+	m.ctrl = fc
+	m.harnesses = fc.harnesses
+	m.w, m.h = 120, 40
+	m.conn = startOK
+	m.sel = 0
+
+	// "jjj" in one message → selection advances by 3.
+	model, _ := m.onKey(runeKey("jjj"))
+	m = model.(*Model)
+	if m.sel != 3 {
+		t.Errorf("sel after 'jjj' = %d, want 3", m.sel)
+	}
+
+	// "kkk" → back 3.
+	model, _ = m.onKey(runeKey("kkk"))
+	m = model.(*Model)
+	if m.sel != 0 {
+		t.Errorf("sel after 'kkk' = %d, want 0", m.sel)
+	}
+
+	// Mixed: "jjk" → net +1.
+	model, _ = m.onKey(runeKey("jjk"))
+	m = model.(*Model)
+	if m.sel != 1 {
+		t.Errorf("sel after 'jjk' = %d, want 1", m.sel)
+	}
+
+	// Unbound rune in the middle: "jqj" → q is unbound on dashboard, j+j = +2.
+	model, _ = m.onKey(runeKey("jqj"))
+	m = model.(*Model)
+	if m.sel != 3 {
+		t.Errorf("sel after 'jqj' = %d, want 3", m.sel)
+	}
+}
+
+// TestMultiRuneGuardedActionCollapses verifies that a multi-rune message
+// containing a destructive key opens the confirm overlay only once — holding
+// 'x' must not queue N stop confirmations (issue #145 AC: guarded actions).
+func TestMultiRuneGuardedActionCollapses(t *testing.T) {
+	fc := &fakeController{harnesses: sampleHarnesses()}
+	m := New(Options{})
+	m.ctrl = fc
+	m.harnesses = fc.harnesses
+	m.w, m.h = 120, 40
+	m.conn = startOK
+	m.sel = 0
+
+	// "xxx" → confirm overlay opens once, no additional dispatches.
+	model, _ := m.onKey(runeKey("xxx"))
+	m = model.(*Model)
+	if m.overlay != overlayConfirm {
+		t.Fatalf("overlay = %v, want overlayConfirm", m.overlay)
+	}
+}
+
+// TestMultiRuneAttachedPassthrough verifies that in attached interactive
+// substate, a multi-rune KeyMsg forwards all runes in a single PTY write —
+// typing "hello" into an agent must not become five separate writes.
+func TestMultiRuneAttachedPassthrough(t *testing.T) {
+	fa := &fakeAttach{}
+	m := baseModel(120, 40)
+	m.mode = modeAttached
+	m.att = newAttachState("crush-signal", protocol.AttachRW, sessionBase, 80, 24)
+	m.attach = fa
+
+	model, cmd := m.onKey(runeKey("hello"))
+	m = model.(*Model)
+	drain(cmd)
+
+	if len(fa.inputs) != 1 {
+		t.Fatalf("expected 1 PTY write, got %d: %v", len(fa.inputs), fa.inputs)
+	}
+	if string(fa.inputs[0]) != "hello" {
+		t.Errorf("PTY write = %q, want %q", fa.inputs[0], "hello")
+	}
+}
+
+// TestMultiRuneSearchOverlayNotDoubleExpanded verifies that multi-rune
+// keystrokes sent to the search overlay (or any overlay with a textinput) are
+// NOT expanded per-rune. The overlay path routes through onOverlayKey, not
+// onDashboardKey, so textinput/huh receive the intact message. Double-expanding
+// here would turn "hello" into "hhheeellllllooo" (issue #145 routing check).
+func TestMultiRuneSearchOverlayNotDoubleExpanded(t *testing.T) {
+	m := baseModel(120, 40)
+	m.openSearch()
+
+	model, _ := m.onKey(runeKey("hello"))
+	m = model.(*Model)
+	if got := m.search.Value(); got != "hello" {
+		t.Errorf("search input after multi-rune 'hello' = %q, want %q", got, "hello")
+	}
+}
