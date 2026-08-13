@@ -1,5 +1,6 @@
 gitea.stump.rocks/stump.wtf/agent-trace v0.0.0-20260813193411-4920746f77c6 h1:Q6yLViM+vts8GXR2hK92DG+mYRm1x8HNhMtvYow00i4=
 gitea.stump.rocks/stump.wtf/agent-trace v0.0.0-20260813193411-4920746f77c6/go.mod h1:RnA2BTv+9mvawlTZf2jfWx8V2uYSu5zAp4KZWghaNzo=
+gitea.stump.rocks/stump.wtf/agent-trace v0.0.0-20260813200936-4097b19199e9/go.mod h1:RnA2BTv+9mvawlTZf2jfWx8V2uYSu5zAp4KZWghaNzo=
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
 github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/MakeNowJust/heredoc v1.0.0 h1:cXCdzVdstXyiTqTvfqk9SDHpKNjxuom+DOlyEeQ4pzQ=
@@ -52,6 +53,8 @@ github.com/charmbracelet/x/termios v0.1.1 h1:o3Q2bT8eqzGnGPOYheoYS8eEleT5ZVNYNy8
 github.com/charmbracelet/x/termios v0.1.1/go.mod h1:rB7fnv1TgOPOyyKRJ9o+AsTU/vK5WHJ2ivHeut/Pcwo=
 github.com/charmbracelet/x/vt v0.0.0-20260803091719-3755ebad01b1 h1:iS4IE3G9sjxjESAxhtIe2xxzrlLct83b7De0KlJDunE=
 github.com/charmbracelet/x/vt v0.0.0-20260803091719-3755ebad01b1/go.mod h1:u1LOIABor9JqY54oZdktK3TCRrgzP6tzHrDYx1nd3wY=
+github.com/charmbracelet/x/vt v0.0.0-20260813141921-f091cedeaf78 h1:CIlgdpAf3PLGkv6Z+tISRNe6cnFoHVnjXtBWzo/NLAU=
+github.com/charmbracelet/x/vt v0.0.0-20260813141921-f091cedeaf78/go.mod h1:u1LOIABor9JqY54oZdktK3TCRrgzP6tzHrDYx1nd3wY=
 github.com/charmbracelet/x/windows v0.2.2 h1:IofanmuvaxnKHuV04sC0eBy/smG6kIKrWG2/jYn2GuM=
 github.com/charmbracelet/x/windows v0.2.2/go.mod h1:/8XtdKZzedat74NQFn0NGlGL4soHB0YQZrETF96h75k=
 github.com/charmbracelet/x/xpty v0.1.4 h1:4jaW7u+8AHQMxesiVc+zUMsspu7GyDwtJO+gy/tFtW4=
