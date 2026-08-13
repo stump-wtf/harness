@@ -10,11 +10,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/ansifold"
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
@@ -128,8 +130,13 @@ func cmdLogs(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(ld)
 	}
-	fmt.Print(ld.Text)
-	if len(ld.Text) > 0 && ld.Text[len(ld.Text)-1] != '\n' {
+	// The tail is raw PTY output. Make it inert before printing so escape
+	// payloads (DCS/sixel, OSC, cursor addressing) don't act on the user's
+	// terminal (#146 — acceptance criteria require no payload bytes reach
+	// `harness logs`).
+	text := strings.Join(ansifold.Lines(strings.Split(ld.Text, "\n")), "\n")
+	fmt.Print(text)
+	if len(text) > 0 && text[len(text)-1] != '\n' {
 		fmt.Println()
 	}
 	return nil
@@ -141,22 +148,29 @@ func followLogs(c *client.Client, o verbOpts) error {
 	if err != nil {
 		return err
 	}
-	fmt.Print(ld.Text)
-	prev := ld.Text
+	prev := inertLogText(ld.Text)
+	fmt.Print(prev)
 	for {
 		time.Sleep(time.Second)
 		ld, err := c.Logs(o.name, o.lines*4)
 		if err != nil {
 			return err
 		}
-		if len(ld.Text) > len(prev) && hasSuffixOverlap(ld.Text, prev) {
-			fmt.Print(ld.Text[len(prev):])
-		} else if ld.Text != prev {
+		cur := inertLogText(ld.Text)
+		if len(cur) > len(prev) && hasSuffixOverlap(cur, prev) {
+			fmt.Print(cur[len(prev):])
+		} else if cur != prev {
 			// Rotation/truncation broke continuity; reprint the whole tail.
-			fmt.Print(ld.Text)
+			fmt.Print(cur)
 		}
-		prev = ld.Text
+		prev = cur
 	}
+}
+
+// inertLogText filters raw PTY bytes from the daemon log through ansifold so
+// escape payloads are suppressed in `harness logs` output (#146).
+func inertLogText(raw string) string {
+	return strings.Join(ansifold.Lines(strings.Split(raw, "\n")), "\n")
 }
 
 // hasSuffixOverlap reports whether cur begins with prev (the common streaming
