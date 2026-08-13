@@ -153,6 +153,19 @@ func (m *Model) viewList(w, h int) string {
 			lines = append(lines, "   "+m.theme.StateStyle(core.StateDegraded).Render(flappingDetail(hnfo)))
 		}
 	}
+	// Clamp content to the box interior. Box().Height(h) sets content height
+	// (the border is drawn outside it and is already paid for by bodyHeight's
+	// header/footer over-reservation). Without this clamp an over-tall list
+	// pushes JoinHorizontal to pad the peek column with blank lines, making the
+	// list pane appear empty (issue #144 trigger A). With the clamp at exactly
+	// h, every row that fits is shown (issue #144 under-fill regression).
+	maxContent := h
+	if maxContent < 1 {
+		maxContent = 1
+	}
+	if len(lines) > maxContent {
+		lines = lines[:maxContent]
+	}
 	return m.theme.Box().Width(paneInner(w)).Height(h).Render(strings.Join(lines, "\n"))
 }
 
@@ -208,13 +221,6 @@ func (m *Model) viewPeek(w, h int) string {
 	// harness that clears the screen or homes the cursor would otherwise do it
 	// to the cockpit drawn around this box, not to its own text.
 	tailLines := inertLines(splitLines(tail))
-	maxLines := h - 8
-	if maxLines < 1 {
-		maxLines = 1
-	}
-	if len(tailLines) > maxLines {
-		tailLines = tailLines[len(tailLines)-maxLines:]
-	}
 
 	// A prompt harness carries no configured cmd — surface the prompt, what
 	// the user actually wrote (ADR-0011 spawn-time synthesis).
@@ -236,6 +242,22 @@ func (m *Model) viewPeek(w, h int) string {
 	)
 	if sel.PID > 0 {
 		summary = append(summary, m.theme.Faint().Render("pid     ")+fmt.Sprintf("%d", sel.PID))
+	}
+
+	// Derive the tail budget from the actual summary length rather than a
+	// hard-coded constant. The summary is 5–8 lines depending on optional
+	// fields; a fixed `- 8` overflows when model or auto_accept are set
+	// (issue #144 trigger B). Layout within the content height h: head(1) +
+	// blank(1) + tail(N) + summary(len(summary)). summary[0] is "" which
+	// provides the blank separator before the summary body, so no extra row
+	// is reserved. Box borders are drawn outside Height(h) and are already
+	// paid for by bodyHeight's header/footer over-reservation.
+	maxLines := h - 2 - len(summary) // head + blank-before-tail
+	if maxLines < 1 {
+		maxLines = 1
+	}
+	if len(tailLines) > maxLines {
+		tailLines = tailLines[len(tailLines)-maxLines:]
 	}
 
 	content := head + "\n\n" + strings.Join(tailLines, "\n") + "\n" + strings.Join(summary, "\n")
