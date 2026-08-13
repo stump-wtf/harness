@@ -161,3 +161,41 @@ func (v *vtView) renderScreen(paintCursor bool) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// peekCache memoizes the vt-emulator replay of the peek tail so viewPeek
+// doesn't rebuild it on every frame. The replay is invalidated when the tail
+// text changes (new peek fetch) or when the pane dimensions change (resize).
+type peekCache struct {
+	tailHash uint64 // FNV-1a of the tail text; zero means empty
+	cols     int
+	rows     int
+	screen   string // last renderNoCursor output
+}
+
+// render returns the cached screen for the given tail and dimensions, or
+// rebuilds it by replaying the tail through a fresh vt emulator.
+func (pc *peekCache) render(tail string, cols, rows int) string {
+	h := fnvHash(tail)
+	if pc.screen != "" && pc.tailHash == h && pc.cols == cols && pc.rows == rows {
+		return pc.screen
+	}
+	pv := newVTView(cols, rows)
+	pv.write([]byte(tail))
+	pc.tailHash = h
+	pc.cols = cols
+	pc.rows = rows
+	pc.screen = pv.renderNoCursor()
+	return pc.screen
+}
+
+// fnvHash is a cheap non-cryptographic hash for cache invalidation.
+func fnvHash(s string) uint64 {
+	const offset uint64 = 14695981039346656037
+	const prime uint64 = 1099511628211
+	h := offset
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= prime
+	}
+	return h
+}

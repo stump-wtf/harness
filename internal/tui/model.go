@@ -137,6 +137,7 @@ type Model struct {
 	listOffset  int // scroll offset into visible() for the list viewport (#148)
 	showAll     bool
 	peek        logsMsg
+	peekCache   peekCache
 	search      textinput.Model
 	searchQuery string
 

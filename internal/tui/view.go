@@ -279,10 +279,6 @@ func (m *Model) viewPeek(w, h int) string {
 	if m.peek.name != sel.Name {
 		tail = ""
 	}
-	// The tail is raw PTY output. Make it inert before it reaches the pane: a
-	// harness that clears the screen or homes the cursor would otherwise do it
-	// to the cockpit drawn around this box, not to its own text.
-	tailLines := inertLines(splitLines(tail))
 
 	// A prompt harness carries no configured cmd — surface the prompt, what
 	// the user actually wrote (ADR-0011 spawn-time synthesis).
@@ -307,17 +303,23 @@ func (m *Model) viewPeek(w, h int) string {
 	}
 
 	// Derive the tail budget from the actual summary length rather than a
-	// hard-coded constant. The summary is 5–8 lines depending on optional
-	// fields; a fixed `- 8` overflows when model or auto_accept are set
-	// (issue #144 trigger B). Layout within the content height h: head(1) +
-	// blank(1) + tail(N) + summary(len(summary)). summary[0] is "" which
-	// provides the blank separator before the summary body, so no extra row
-	// is reserved. Box borders are drawn outside Height(h) and are already
-	// paid for by bodyHeight's header/footer over-reservation.
+	// hard-coded constant (issue #144 trigger B). Layout within the content
+	// height h: head(1) + blank(1) + tail(N) + summary(len(summary)).
 	maxLines := h - 2 - len(summary) // head + blank-before-tail
 	if maxLines < 1 {
 		maxLines = 1
 	}
+
+	// Render the peek through a client-side vt emulator so full-screen TUIs
+	// show their current screen rather than a transcript of every repaint
+	// (issue #147). The emulator replays the raw PTY bytes and we render its
+	// cell grid via renderNoCursor — inert by construction. The emulator is
+	// sized to the pane; the guest's PTY dimensions aren't known here, but a
+	// full-screen guest reflows on resize. Cached via peekCache so the replay
+	// only fires when the tail or dimensions change.
+	peekCols := paneInner(w)
+	screenStr := m.peekCache.render(tail, peekCols, maxLines+1)
+	tailLines := trimBlankTail(splitLines(screenStr))
 	if len(tailLines) > maxLines {
 		tailLines = tailLines[len(tailLines)-maxLines:]
 	}
