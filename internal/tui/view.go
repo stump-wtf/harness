@@ -148,9 +148,10 @@ func (m *Model) viewList(w, h int) string {
 	}
 
 	// Viewport: render only the window [listOffset..] that fits within the
-	// box interior. The title + blank line consume 2 rows; borders consume 2
-	// more. Reserve 1 row for a scroll indicator when needed.
-	maxContent := h - 2             // box borders
+	// box interior. Box().Height(h) sets content height; the border is drawn
+	// outside it and is already paid for by bodyHeight's header/footer
+	// over-reservation. The title + blank line consume 2 rows.
+	maxContent := h
 	contentBudget := maxContent - 2 // title + blank after title
 
 	offset := m.listOffset
@@ -158,9 +159,24 @@ func (m *Model) viewList(w, h int) string {
 		offset = 0
 	}
 
+	// Count rendered lines (degraded rows take 2) to compare against the
+	// budget — comparing harness count to row budget is wrong when degraded
+	// rows are present (issue #148 "rows vs harnesses").
+	renderedLinesOf := func(endIdx int) int {
+		n := 2 // title + blank
+		for i := offset; i < endIdx && i < len(v); i++ {
+			n++
+			if isDegraded(v[i]) {
+				n++
+			}
+		}
+		return n
+	}
+	totalRenderedLines := renderedLinesOf(len(v))
+
 	// Determine if we need a scroll indicator before rendering, so we can
 	// reserve its row in the budget.
-	needsIndicator := offset > 0 || len(v) > maxInt(1, contentBudget)
+	needsIndicator := offset > 0 || totalRenderedLines > maxContent
 	if needsIndicator {
 		contentBudget--
 	}
@@ -206,19 +222,6 @@ func (m *Model) viewList(w, h int) string {
 	}
 
 	// Clamp to box interior (issue #144 invariant).
-	if maxContent < 1 {
-		maxContent = 1
-	}
-	if len(lines) > maxContent {
-		lines = lines[:maxContent]
-	}
-	// Clamp content to the box interior. Box().Height(h) sets content height
-	// (the border is drawn outside it and is already paid for by bodyHeight's
-	// header/footer over-reservation). Without this clamp an over-tall list
-	// pushes JoinHorizontal to pad the peek column with blank lines, making the
-	// list pane appear empty (issue #144 trigger A). With the clamp at exactly
-	// h, every row that fits is shown (issue #144 under-fill regression).
-	maxContent := h
 	if maxContent < 1 {
 		maxContent = 1
 	}

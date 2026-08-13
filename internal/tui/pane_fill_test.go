@@ -62,7 +62,10 @@ var harnessRowRe = regexp.MustCompile(`h-\d{3}`)
 func TestListPaneFillsHeightBudget(t *testing.T) {
 	for _, h := range []int{24, 45, 80} {
 		m := manyHarnessModel(160, h, 500)
-		want := m.bodyHeight() - 2 // title + blank
+		// With viewport scrolling (#154), one row is reserved for the scroll
+		// indicator (↑N ↓N) when content overflows — which it does at 500
+		// harnesses at every tested height.
+		want := m.bodyHeight() - 2 - 1 // title + blank + indicator
 		got := len(harnessRowRe.FindAllString(m.viewList(60, m.bodyHeight()), -1))
 		if got != want {
 			t.Errorf("h=%d: list rendered %d harness rows, want %d (%d rows of pane wasted)",

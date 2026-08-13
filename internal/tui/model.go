@@ -287,8 +287,10 @@ func (m *Model) scrollListToSel() {
 		return
 	}
 	body := m.bodyHeight()
-	// Match viewList's budget: box borders(2) + title(1) + blank(1) + indicator?(1).
-	contentRows := body - 2 - 2 - 1 // always reserve indicator row
+	// Match viewList's budget: content height(h) - title(1) - blank(1) - indicator?(1).
+	// Borders are drawn outside Height(h) and already paid for by bodyHeight's
+	// header/footer over-reservation (no border subtraction here).
+	contentRows := body - 2 - 1 // always reserve indicator row
 	if contentRows < 1 {
 		contentRows = 1
 	}
