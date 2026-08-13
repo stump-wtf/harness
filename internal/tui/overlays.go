@@ -114,6 +114,7 @@ func (m *Model) runVerb(verb, target string) (tea.Model, tea.Cmd) {
 	case "edit":
 		if i := selectByName(m.visible(), target); i >= 0 {
 			m.sel = i
+			m.scrollListToSel()
 		}
 		return m.openForm(true)
 	case "new":
@@ -125,6 +126,7 @@ func (m *Model) runVerb(verb, target string) (tea.Model, tea.Cmd) {
 	case "describe", "logs":
 		if i := selectByName(m.visible(), target); i >= 0 {
 			m.sel = i
+			m.scrollListToSel()
 		}
 		return m, m.peekCmd()
 	case "reload":

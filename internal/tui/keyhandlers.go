@@ -411,6 +411,10 @@ func (m *Model) hopTo(direction int) tea.Cmd {
 	}
 	next := hopIndex(cur, len(v), direction)
 	m.sel = next
+	// Keep the list viewport in sync even though the hop lands in attached
+	// mode: detaching returns to a dashboard whose selection would otherwise
+	// sit outside the rendered window until the next refresh tick.
+	m.scrollListToSel()
 	// Refresh the peek for the hopped-to harness so a subsequent scrollback
 	// entry has this harness's history rather than none (peekLines drops a
 	// mismatched peek).
