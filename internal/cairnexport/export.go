@@ -264,7 +264,7 @@ func mapCategory(sp otel.Span) string {
 // mapTool extracts the tool name from a span's attributes. Reason/prompt spans
 // carry no tool — only tool-call and subagent spans do.
 func mapTool(sp otel.Span) string {
-	if tool := sp.Attributes["agent.tool.name"]; tool != "" {
+	if tool, ok := sp.Attributes["agent.tool.name"].(string); ok && tool != "" {
 		return tool
 	}
 	if sp.Attributes["agent.event.type"] == "subagent" {

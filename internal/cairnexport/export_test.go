@@ -403,7 +403,7 @@ func TestDurationMS(t *testing.T) {
 // recognise. It previously mapped to "write", which would state in a PUBLISHED
 // trace that an unknown (possibly read-only) tool modified the repo.
 func TestMapCategoryUnknownActionIsToolNotWrite(t *testing.T) {
-	sp := otel.Span{Attributes: map[string]string{
+	sp := otel.Span{Attributes: map[string]any{
 		"agent.tool.action": classify.ActionOther,
 		"agent.tool.name":   "some-unrecognised-tool",
 	}}
@@ -414,7 +414,7 @@ func TestMapCategoryUnknownActionIsToolNotWrite(t *testing.T) {
 
 // A real edit still has to be a write — the fix above must not over-correct.
 func TestMapCategoryEditIsStillWrite(t *testing.T) {
-	sp := otel.Span{Attributes: map[string]string{
+	sp := otel.Span{Attributes: map[string]any{
 		"agent.tool.action": classify.ActionEdit,
 		"agent.tool.name":   "Edit",
 	}}
