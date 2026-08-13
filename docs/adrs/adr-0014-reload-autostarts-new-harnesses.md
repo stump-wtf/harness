@@ -48,3 +48,11 @@ a new unit eligible for autostart without disturbing already-stopped units.
   (via `enabled` or profile membership) is started.
 - The invariant from `265e42a` / `2dfa8fc` is preserved: pre-existing
   harnesses' intent is never modified by reload.
+- **Config re-introduction wins over stale persisted intent.** A harness that
+  was removed from the config, then re-added by a later reload, is treated as
+  "newly-introduced" — its autostart membership determines whether it starts,
+  even if `state.json` records a prior `Enabled=false` from an explicit stop
+  before the removal. Removing a harness from the config is itself a strong
+  signal; re-adding it with `enabled=true` is the operator saying "I want this
+  running again." This matches systemd: re-adding a unit file and reloading
+  starts it per the unit's `[Install]` section, regardless of prior state.
