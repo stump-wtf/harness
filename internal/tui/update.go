@@ -191,6 +191,7 @@ func (m *Model) onRefresh(msg refreshMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.clampSel()
+	m.scrollListToSel()
 	cmds := []tea.Cmd{m.peekCmd(), m.maybeStartSpinner()}
 	// `harness attach <name>`: first successful refresh after connect — find
 	// the named harness and auto-attach. But ONLY if we already know the
@@ -233,6 +234,7 @@ func (m *Model) onReloadResult(msg reloadResultMsg) (tea.Model, tea.Cmd) {
 	m.banner = ""
 	m.harnesses = msg.harnesses
 	m.clampSel()
+	m.scrollListToSel()
 	return m, fetchState(m.ctrl)
 }
 
@@ -248,6 +250,7 @@ func (m *Model) onProfileSwitch(msg profileSwitchMsg) (tea.Model, tea.Cmd) {
 		m.status = "started " + joinNames(msg.toStart)
 	}
 	m.clampSel()
+	m.scrollListToSel()
 	return m, fetchState(m.ctrl)
 }
 

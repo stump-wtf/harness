@@ -114,6 +114,7 @@ func (m *Model) runVerb(verb, target string) (tea.Model, tea.Cmd) {
 	case "edit":
 		if i := selectByName(m.visible(), target); i >= 0 {
 			m.sel = i
+			m.scrollListToSel()
 		}
 		return m.openForm(true)
 	case "new":
@@ -125,6 +126,7 @@ func (m *Model) runVerb(verb, target string) (tea.Model, tea.Cmd) {
 	case "describe", "logs":
 		if i := selectByName(m.visible(), target); i >= 0 {
 			m.sel = i
+			m.scrollListToSel()
 		}
 		return m, m.peekCmd()
 	case "reload":
@@ -156,16 +158,19 @@ func (m *Model) onSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.searchQuery = ""
 		m.closeOverlay()
 		m.clampSel()
+		m.scrollListToSel()
 		return m, nil
 	case tea.KeyEnter:
 		m.closeOverlay()
 		m.clampSel()
+		m.scrollListToSel()
 		return m, m.peekCmd()
 	}
 	var cmd tea.Cmd
 	m.search, cmd = m.search.Update(msg)
 	m.searchQuery = m.search.Value()
 	m.sel = 0
+	m.listOffset = 0
 	return m, cmd
 }
 

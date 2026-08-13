@@ -147,19 +147,81 @@ func (m *Model) viewList(w, h int) string {
 		return m.theme.Box().Width(paneInner(w)).Height(h).Render(strings.Join(lines, "\n"))
 	}
 
-	for i, hnfo := range v {
-		lines = append(lines, m.renderRow(hnfo, i == m.sel, w-2))
-		if isDegraded(hnfo) {
-			lines = append(lines, "   "+m.theme.StateStyle(core.StateDegraded).Render(flappingDetail(hnfo)))
-		}
-	}
-	// Clamp content to the box interior. Box().Height(h) sets content height
-	// (the border is drawn outside it and is already paid for by bodyHeight's
-	// header/footer over-reservation). Without this clamp an over-tall list
-	// pushes JoinHorizontal to pad the peek column with blank lines, making the
-	// list pane appear empty (issue #144 trigger A). With the clamp at exactly
-	// h, every row that fits is shown (issue #144 under-fill regression).
+	// Viewport: render only the window [listOffset..] that fits within the
+	// box interior. Box().Height(h) sets content height; the border is drawn
+	// outside it and is already paid for by bodyHeight's header/footer
+	// over-reservation. The title + blank line consume 2 rows.
 	maxContent := h
+	contentBudget := maxContent - 2 // title + blank after title
+
+	offset := m.listOffset
+	if offset < 0 || offset >= len(v) {
+		offset = 0
+	}
+
+	// Count rendered lines (degraded rows take 2) to compare against the
+	// budget — comparing harness count to row budget is wrong when degraded
+	// rows are present (issue #148 "rows vs harnesses").
+	renderedLinesOf := func(endIdx int) int {
+		n := 2 // title + blank
+		for i := offset; i < endIdx && i < len(v); i++ {
+			n++
+			if isDegraded(v[i]) {
+				n++
+			}
+		}
+		return n
+	}
+	totalRenderedLines := renderedLinesOf(len(v))
+
+	// Determine if we need a scroll indicator before rendering, so we can
+	// reserve its row in the budget.
+	needsIndicator := offset > 0 || totalRenderedLines > maxContent
+	if needsIndicator {
+		contentBudget--
+	}
+	if contentBudget < 1 {
+		contentBudget = 1
+	}
+
+	var rendered int
+	lastRenderedIdx := offset - 1
+	for i := offset; i < len(v); i++ {
+		rowLines := 1
+		if isDegraded(v[i]) {
+			rowLines = 2
+		}
+		if rendered+rowLines > contentBudget {
+			break // don't half-render a degraded row
+		}
+		lines = append(lines, m.renderRow(v[i], i == m.sel, w-2))
+		rendered++
+		if isDegraded(v[i]) {
+			lines = append(lines, "   "+m.theme.StateStyle(core.StateDegraded).Render(flappingDetail(v[i])))
+			rendered++
+		}
+		lastRenderedIdx = i
+	}
+
+	// Scroll indicators: ↑N / ↓N counts when content extends beyond the
+	// viewport (SPEC-0001 "state legibility over decoration").
+	aboveHarnesses := offset
+	belowHarnesses := len(v) - lastRenderedIdx - 1
+	if aboveHarnesses > 0 || belowHarnesses > 0 {
+		indicator := ""
+		if aboveHarnesses > 0 {
+			indicator += fmt.Sprintf("↑%d", aboveHarnesses)
+		}
+		if belowHarnesses > 0 {
+			if indicator != "" {
+				indicator += " "
+			}
+			indicator += fmt.Sprintf("↓%d", belowHarnesses)
+		}
+		lines = append(lines, m.theme.Faint().Render(indicator))
+	}
+
+	// Clamp to box interior (issue #144 invariant).
 	if maxContent < 1 {
 		maxContent = 1
 	}

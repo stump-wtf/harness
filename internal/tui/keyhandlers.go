@@ -183,6 +183,7 @@ func (m *Model) dispatchDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.ShowAll):
 		m.showAll = !m.showAll
 		m.clampSel()
+		m.scrollListToSel()
 		return m, m.peekCmd()
 	case key.Matches(msg, m.keys.Up):
 		m.moveSel(-1)
@@ -192,10 +193,12 @@ func (m *Model) dispatchDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.peekCmd()
 	case key.Matches(msg, m.keys.Top):
 		m.sel = 0
+		m.scrollListToSel()
 		return m, m.peekCmd()
 	case key.Matches(msg, m.keys.Bot):
 		m.sel = len(m.visible()) - 1
 		m.clampSel()
+		m.scrollListToSel()
 		return m, m.peekCmd()
 	case key.Matches(msg, m.keys.Attach):
 		if sel, ok := m.selectedHarness(); ok {
@@ -228,6 +231,7 @@ func (m *Model) dispatchDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) moveSel(delta int) {
 	m.sel += delta
 	m.clampSel()
+	m.scrollListToSel()
 }
 
 // guardedAction either opens a confirm dialog (destructive) or performs the
@@ -407,6 +411,10 @@ func (m *Model) hopTo(direction int) tea.Cmd {
 	}
 	next := hopIndex(cur, len(v), direction)
 	m.sel = next
+	// Keep the list viewport in sync even though the hop lands in attached
+	// mode: detaching returns to a dashboard whose selection would otherwise
+	// sit outside the rendered window until the next refresh tick.
+	m.scrollListToSel()
 	// Refresh the peek for the hopped-to harness so a subsequent scrollback
 	// entry has this harness's history rather than none (peekLines drops a
 	// mismatched peek).
