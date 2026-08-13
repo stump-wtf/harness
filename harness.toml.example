@@ -14,6 +14,14 @@
 # # and auto-reloads. Default is true (on). Set to false to require an
 # # explicit `harness reload` or SIGHUP after config changes.
 # watch_config = true
+#
+# # otel_endpoint is the OTLP/HTTP URL the daemon ships agent traces to.
+# # Any OTLP-compatible endpoint works: Honeycomb, Tempo, Jaeger, Grafana,
+# # or a Cairn instance exposing an OTLP endpoint. The daemon builds OTel
+# # traces from harvested sessions (harvest_trajectory = true) and POSTs
+# # them as standard OTLP JSON to <endpoint>/v1/traces. Harness does not
+# # know or care what is on the other end.
+# otel_endpoint = "https://cairn.stump.wtf"
 
 # Each harness is one supervised process. The new-style [harness.<name>]
 # form is preferred; a bare [name] table is supported for backward

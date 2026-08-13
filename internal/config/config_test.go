@@ -956,3 +956,44 @@ mcp_allow = []
 		t.Fatalf("mcp_allow = %v, want empty", h.MCPAllow)
 	}
 }
+
+// --- otel_endpoint (daemon-level) ---
+
+func TestParseOTelEndpoint(t *testing.T) {
+	src := `[daemon]
+otel_endpoint = "https://cairn.stump.wtf"
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Daemon.OTelEndpoint != "https://cairn.stump.wtf" {
+		t.Fatalf("otel_endpoint = %q, want https://cairn.stump.wtf", cfg.Daemon.OTelEndpoint)
+	}
+}
+
+func TestParseOTelEndpointTrimmed(t *testing.T) {
+	src := `[daemon]
+otel_endpoint = "  https://tempo.example.com  "
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Daemon.OTelEndpoint != "https://tempo.example.com" {
+		t.Fatalf("otel_endpoint = %q, want trimmed URL", cfg.Daemon.OTelEndpoint)
+	}
+}
+
+func TestParseOTelEndpointAbsent(t *testing.T) {
+	src := `[daemon]
+watch_config = false
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.Daemon.OTelEndpoint != "" {
+		t.Fatalf("otel_endpoint = %q, want empty", cfg.Daemon.OTelEndpoint)
+	}
+}

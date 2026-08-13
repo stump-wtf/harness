@@ -55,7 +55,8 @@ type rawProfile struct {
 
 // rawDaemon mirrors the [daemon] table before validation.
 type rawDaemon struct {
-	WatchConfig *bool `toml:"watch_config"`
+	WatchConfig  *bool  `toml:"watch_config"`
+	OTelEndpoint string `toml:"otel_endpoint"`
 }
 
 // rawServer mirrors the [server] table before validation (ADR-0004/0008 remote
@@ -172,7 +173,10 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 			if err := md.PrimitiveDecode(top["daemon"], &rd); err != nil {
 				return nil, newError(filename, h.line, "[daemon]: %v", err)
 			}
-			cfg.Daemon = core.DaemonConfig{WatchConfig: rd.WatchConfig}
+			cfg.Daemon = core.DaemonConfig{
+				WatchConfig:  rd.WatchConfig,
+				OTelEndpoint: strings.TrimSpace(rd.OTelEndpoint),
+			}
 
 		case len(h.parts) == 1 && h.parts[0] == "server":
 			// The optional remote-access front door (ADR-0004/0008).

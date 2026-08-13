@@ -42,7 +42,7 @@ func TestAllowedReadForEveryHarness(t *testing.T) {
 	// SPEC-0005 REQ "Capability Scoping": read tools available to every
 	// harness regardless of mcp_allow.
 	tests := []struct {
-		name    string
+		name     string
 		mcpAllow []string
 	}{
 		{"default nil", nil},

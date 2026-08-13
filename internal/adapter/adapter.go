@@ -53,7 +53,7 @@ type Adapter interface {
 // and dispatches on it without understanding any entry — the same pattern as
 // the backend registry (ADR-0003).
 type Registry struct {
-	entries  map[string]Adapter
+	entries map[string]Adapter
 	// inference maps a cmd basename to an adapter name, for zero-config
 	// selection when the `agent` key is absent (SPEC-0006 REQ "Adapter
 	// Selection": "inferred from cmd").
