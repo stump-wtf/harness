@@ -267,6 +267,48 @@ func TestManagerReloadAddsAndRemovesHarnesses(t *testing.T) {
 	}
 }
 
+// TestReloadHookInvokedOnEveryReloadPath verifies the reload hook fires after
+// a successful Reload — the single choke point behind SIGHUP, the config
+// watcher, and the daemon's reload control op (issue #66: the scheduler
+// re-applies entries here, so a path that skipped it would run stale
+// schedules) — and does NOT fire when a reload fails parse.
+func TestReloadHookInvokedOnEveryReloadPath(t *testing.T) {
+	cfg := managerCfg(shHarness("keep", "while true; do sleep 0.02; done", 0))
+	m := newTestManager(t, cfg)
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	m.SetReloadHook(func() { calls++ })
+
+	m.Reload(managerCfg(shHarness("keep", "while true; do sleep 0.02; done", 0)))
+	if calls != 1 {
+		t.Fatalf("hook calls after Reload = %d, want 1", calls)
+	}
+
+	good := filepath.Join(t.TempDir(), "good.toml")
+	if err := os.WriteFile(good, []byte("[harness.keep]\ncmd = \"sleep 1\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ReloadFromFile(good); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("hook calls after ReloadFromFile = %d, want 2", calls)
+	}
+
+	bad := filepath.Join(t.TempDir(), "bad.toml")
+	if err := os.WriteFile(bad, []byte("[harness.oops\ncmd = \"x\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.ReloadFromFile(bad); err == nil {
+		t.Fatal("expected a parse error from malformed TOML")
+	}
+	if calls != 2 {
+		t.Fatalf("hook must not fire on a failed reload; calls = %d, want 2", calls)
+	}
+}
+
 // ---- Issue #150: reload autostarts newly-introduced enabled harnesses -----
 
 // TestReloadAutostartsNewEnabledHarness verifies Option A: a harness newly
