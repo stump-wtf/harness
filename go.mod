@@ -3,7 +3,7 @@ module gitea.stump.rocks/stump.wtf/harness
 go 1.26.5
 
 require (
-	gitea.stump.rocks/stump.wtf/agent-trace cab425a41c29
+	gitea.stump.rocks/stump.wtf/agent-trace v0.0.0-20260813215706-cab425a41c29
 	github.com/BurntSushi/toml v1.6.0
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1
 	github.com/charmbracelet/bubbles v0.20.0
