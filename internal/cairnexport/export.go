@@ -23,9 +23,9 @@ import (
 	"net/http"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/agent-trace/classify"
-	"gitea.stump.rocks/stump.wtf/agent-trace/otel"
-	"gitea.stump.rocks/stump.wtf/agent-trace/tail"
+	"github.com/stump-wtf/agent-trace/classify"
+	"github.com/stump-wtf/agent-trace/otel"
+	"github.com/stump-wtf/agent-trace/tail"
 )
 
 // DefaultTimeout caps a single export HTTP request.

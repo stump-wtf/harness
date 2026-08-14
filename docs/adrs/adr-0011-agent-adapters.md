@@ -231,7 +231,7 @@ flowchart TD
 ## Implementation Note: agent-trace
 
 The trajectory-discovery half of this ADR is implemented by
-[agent-trace](https://gitea.stump.rocks/stump.wtf/agent-trace)
+[agent-trace](https://github.com/stump-wtf/agent-trace)
 (`stump.wtf/agent-trace`), an external Go library extracted from
 [cosmtrek/mindwalk](https://github.com/cosmtrek/mindwalk). Its three packages
 map onto this ADR's concerns:

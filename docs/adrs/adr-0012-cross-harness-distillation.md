@@ -64,7 +64,7 @@ captured.
 ### The signal: classified actions across projects
 
 Detection clusters on **classified tool-call actions from
-[agent-trace](https://gitea.stump.rocks/stump.wtf/agent-trace)'s `classify`
+[agent-trace](https://github.com/stump-wtf/agent-trace)'s `classify`
 package** as the primary signal, supplemented by literal error strings.
 `classify.BuildEvent` categorizes every tool call into a semantic action
 (`search`, `read`, `edit`, `exec`, `verify`) with file targets — a structured

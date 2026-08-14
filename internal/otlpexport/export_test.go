@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/agent-trace/classify"
-	"gitea.stump.rocks/stump.wtf/agent-trace/otel"
-	"gitea.stump.rocks/stump.wtf/agent-trace/tail"
+	"github.com/stump-wtf/agent-trace/classify"
+	"github.com/stump-wtf/agent-trace/otel"
+	"github.com/stump-wtf/agent-trace/tail"
 )
 
 // testTrace returns a minimal deterministic trace for testing.

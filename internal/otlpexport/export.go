@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/agent-trace/otel"
+	"github.com/stump-wtf/agent-trace/otel"
 )
 
 // DefaultTimeout caps a single export HTTP request.
@@ -171,7 +171,7 @@ func buildOTLPJSON(trace otel.Trace) ([]byte, error) {
 			},
 			ScopeSpans: []otlpScopeSpans{{
 				Scope: otlpScope{
-					Name:    "gitea.stump.rocks/stump.wtf/agent-trace",
+					Name:    "github.com/stump-wtf/agent-trace",
 					Version: "1",
 				},
 				Spans: spans,

@@ -146,7 +146,7 @@ operations (`list_trajectories`, `get_trajectory`) and MUST NOT write to, alter,
 or delete a tool's trajectory.
 
 **Implementation note:** Trajectory parsing is delegated to
-[agent-trace](https://gitea.stump.rocks/stump.wtf/agent-trace) (`tail` package),
+[agent-trace](https://github.com/stump-wtf/agent-trace) (`tail` package),
 which ships per-agent JSONL parsers for Claude Code, Codex, Crush, OpenCode,
 and Pi. Harness maps its adapter identities onto agent-trace's adapters;
 `generic` reports no native trajectory regardless of agent-trace's coverage.

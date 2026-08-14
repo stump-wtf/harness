@@ -18,8 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gitea.stump.rocks/stump.wtf/agent-trace/tail"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/agent-trace/tail"
 )
 
 // ErrUnknownAdapter is returned when a harness names an adapter that does not
