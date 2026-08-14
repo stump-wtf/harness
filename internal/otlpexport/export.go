@@ -102,7 +102,7 @@ type otlpTrace struct {
 }
 
 type otlpResourceSpans struct {
-	Resource   otlpResource  `json:"resource"`
+	Resource   otlpResource     `json:"resource"`
 	ScopeSpans []otlpScopeSpans `json:"scopeSpans"`
 }
 
@@ -111,7 +111,7 @@ type otlpResource struct {
 }
 
 type otlpScopeSpans struct {
-	Scope otlpScope `json:"scope"`
+	Scope otlpScope  `json:"scope"`
 	Spans []otlpSpan `json:"spans"`
 }
 
@@ -121,15 +121,15 @@ type otlpScope struct {
 }
 
 type otlpSpan struct {
-	TraceID           string         `json:"traceId"`
-	SpanID            string         `json:"spanId"`
-	ParentSpanID      string         `json:"parentSpanId,omitempty"`
-	Name              string         `json:"name"`
-	Kind              string         `json:"kind"`
-	StartTimeUnixNano string         `json:"startTimeUnixNano"`
-	EndTimeUnixNano   string         `json:"endTimeUnixNano"`
-	Attributes        []otlpKV       `json:"attributes,omitempty"`
-	Status            otlpStatus     `json:"status"`
+	TraceID           string     `json:"traceId"`
+	SpanID            string     `json:"spanId"`
+	ParentSpanID      string     `json:"parentSpanId,omitempty"`
+	Name              string     `json:"name"`
+	Kind              string     `json:"kind"`
+	StartTimeUnixNano string     `json:"startTimeUnixNano"`
+	EndTimeUnixNano   string     `json:"endTimeUnixNano"`
+	Attributes        []otlpKV   `json:"attributes,omitempty"`
+	Status            otlpStatus `json:"status"`
 }
 
 type otlpStatus struct {
@@ -143,10 +143,10 @@ type otlpKV struct {
 }
 
 type otlpValue struct {
-	StringValue string `json:"stringValue,omitempty"`
-	IntValue    string `json:"intValue,omitempty"`
-	DoubleValue float64 `json:"doubleValue,omitempty"`
-	BoolValue   bool   `json:"boolValue,omitempty"`
+	StringValue string          `json:"stringValue,omitempty"`
+	IntValue    string          `json:"intValue,omitempty"`
+	DoubleValue float64         `json:"doubleValue,omitempty"`
+	BoolValue   bool            `json:"boolValue,omitempty"`
 	ArrayValue  *otlpArrayValue `json:"arrayValue,omitempty"`
 }
 
@@ -264,5 +264,3 @@ func unixNano(t time.Time) string {
 	}
 	return fmt.Sprintf("%d", t.UnixNano())
 }
-
-

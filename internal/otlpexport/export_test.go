@@ -181,8 +181,8 @@ func TestExportHeadersPassed(t *testing.T) {
 	cfg := ExportConfig{
 		Endpoint: srv.URL,
 		Headers: map[string]string{
-			"X-Honeycomb-Team":  "abc123",
-			"X-Custom-Header":   "value",
+			"X-Honeycomb-Team": "abc123",
+			"X-Custom-Header":  "value",
 		},
 	}
 
@@ -201,21 +201,45 @@ func TestExportHeadersPassed(t *testing.T) {
 
 func TestConvertValueTypes(t *testing.T) {
 	tests := []struct {
-		name string
-		val  any
+		name  string
+		val   any
 		check func(v otlpValue)
 	}{
-		{"string", "hello", func(v otlpValue) { if v.StringValue != "hello" { t.Errorf("string: got %v", v) } }},
-		{"bool", true, func(v otlpValue) { if !v.BoolValue { t.Errorf("bool: got %v", v) } }},
-		{"int", int(42), func(v otlpValue) { if v.IntValue != "42" { t.Errorf("int: got %v", v) } }},
-		{"int64", int64(99), func(v otlpValue) { if v.IntValue != "99" { t.Errorf("int64: got %v", v) } }},
-		{"float64", float64(3.14), func(v otlpValue) { if v.DoubleValue != 3.14 { t.Errorf("float: got %v", v) } }},
+		{"string", "hello", func(v otlpValue) {
+			if v.StringValue != "hello" {
+				t.Errorf("string: got %v", v)
+			}
+		}},
+		{"bool", true, func(v otlpValue) {
+			if !v.BoolValue {
+				t.Errorf("bool: got %v", v)
+			}
+		}},
+		{"int", int(42), func(v otlpValue) {
+			if v.IntValue != "42" {
+				t.Errorf("int: got %v", v)
+			}
+		}},
+		{"int64", int64(99), func(v otlpValue) {
+			if v.IntValue != "99" {
+				t.Errorf("int64: got %v", v)
+			}
+		}},
+		{"float64", float64(3.14), func(v otlpValue) {
+			if v.DoubleValue != 3.14 {
+				t.Errorf("float: got %v", v)
+			}
+		}},
 		{"[]string", []string{"a", "b"}, func(v otlpValue) {
 			if v.ArrayValue == nil || len(v.ArrayValue.Values) != 2 {
 				t.Errorf("array: got %v", v)
 			}
 		}},
-		{"unknown", struct{}{}, func(v otlpValue) { if v.StringValue == "" { t.Errorf("unknown: got %v", v) } }},
+		{"unknown", struct{}{}, func(v otlpValue) {
+			if v.StringValue == "" {
+				t.Errorf("unknown: got %v", v)
+			}
+		}},
 	}
 
 	for _, tt := range tests {
