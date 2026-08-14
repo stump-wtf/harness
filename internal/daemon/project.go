@@ -12,7 +12,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/charmbracelet/log"
+	"charm.land/log/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"

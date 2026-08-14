@@ -10,7 +10,7 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -25,7 +25,7 @@ func attachedFake(w, h int) (*Model, *fakeAttach) {
 	m.harnesses = fc.harnesses
 	m.profiles = fc.profiles
 	m.w, m.h = w, h
-	m.help.Width = w
+	m.help.SetWidth(w)
 	m.mode = modeAttached
 	cols, rows := m.attachViewport()
 	m.att = newAttachState(m.harnesses[0].Name, protocol.AttachRW, sessionBase, cols, rows)

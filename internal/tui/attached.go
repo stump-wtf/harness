@@ -10,7 +10,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"charm.land/bubbles/v2/textinput"
 	"github.com/charmbracelet/harmonica"
 	"github.com/charmbracelet/x/ansi"
 

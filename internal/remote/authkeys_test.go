@@ -8,7 +8,7 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/charmbracelet/ssh"
+	"charm.land/ssh"
 	gossh "golang.org/x/crypto/ssh"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"

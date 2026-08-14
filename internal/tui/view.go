@@ -11,15 +11,32 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
-// View implements tea.Model.
-func (m *Model) View() string {
+// View implements tea.Model. Bubble Tea v2 made terminal features declarative:
+// the alt screen and mouse reporting are fields on the returned View, re-asserted
+// every frame, rather than startup options plus Enter/Exit commands. That is what
+// makes shift-passthrough (#49) a plain state flip — m.mouseReleased simply drops
+// MouseMode for as long as it is set, instead of racing a DisableMouse command
+// against the events still queued behind it.
+func (m *Model) View() tea.View {
+	v := tea.NewView(m.content())
+	v.AltScreen = true
+	if !m.mouseReleased {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
+	return v
+}
+
+// content renders the frame body — everything below the terminal-feature layer
+// that View declares.
+func (m *Model) content() string {
 	if m.quitting {
 		return ""
 	}
@@ -330,7 +347,14 @@ func (m *Model) viewPeek(w, h int) string {
 
 // viewFooter is the key bar (SPEC-0001: `?` expands to full help).
 func (m *Model) viewFooter() string {
-	return m.help.ShortHelpView(m.keys.ShortHelp())
+	bar := m.help.ShortHelpView(m.keys.ShortHelp())
+	// Hard clamp, matching the attached status bar below. Bubbles v2's help
+	// stops emitting items only when its ellipsis ALSO fits in the columns
+	// left; when it doesn't, it appends the overflowing item anyway (v1 broke
+	// out unconditionally). That leaves the bar wider than the window, where
+	// it wraps to a second physical row and scrolls the alt screen — so bound
+	// it here rather than trusting the widget's own truncation.
+	return ansi.Truncate(bar, m.w, "")
 }
 
 // --- attached -------------------------------------------------------------
@@ -408,7 +432,7 @@ func (m *Model) viewStatusBar() string {
 		avail = 0
 	}
 	hp := m.help
-	hp.Width = avail
+	hp.SetWidth(avail)
 	right := m.theme.Faint().Render("  ") + hp.ShortHelpView(m.keys.AttachedShortHelp())
 	rw := lipgloss.Width(right)
 

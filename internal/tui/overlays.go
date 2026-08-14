@@ -6,9 +6,9 @@ package tui
 // handling and closes back to whatever mode was underneath.
 
 import (
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/huh"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -23,7 +23,7 @@ func (m *Model) closeOverlay() {
 }
 
 // onOverlayKey routes keys to the active overlay.
-func (m *Model) onOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) onOverlayKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.overlay {
 	case overlayPalette:
 		return m.onPaletteKey(msg)
@@ -60,17 +60,17 @@ func (m *Model) openPalette() (tea.Model, tea.Cmd) {
 }
 
 // onPaletteKey handles palette navigation, filtering, and execution.
-func (m *Model) onPaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) onPaletteKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Back):
 		m.closeOverlay()
 		return m, nil
-	case msg.Type == tea.KeyEnter:
+	case msg.Code == tea.KeyEnter:
 		return m.executePalette()
-	case msg.Type == tea.KeyUp:
+	case msg.Code == tea.KeyUp:
 		m.pal.sel = clamp(m.pal.sel-1, 0, maxIndex(len(m.pal.filtered)))
 		return m, nil
-	case msg.Type == tea.KeyDown:
+	case msg.Code == tea.KeyDown:
 		m.pal.sel = clamp(m.pal.sel+1, 0, maxIndex(len(m.pal.filtered)))
 		return m, nil
 	}
@@ -152,8 +152,8 @@ func (m *Model) openSearch() (tea.Model, tea.Cmd) {
 }
 
 // onSearchKey live-filters the dashboard list; Enter commits, Esc clears.
-func (m *Model) onSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
+func (m *Model) onSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.Code {
 	case tea.KeyEscape:
 		m.searchQuery = ""
 		m.closeOverlay()
@@ -190,7 +190,7 @@ func (m *Model) openProfileSwitcher() (tea.Model, tea.Cmd) {
 // onProfileKey drives the two-step switcher: pick a profile, then answer the
 // non-destructive "start stopped members?" prompt (SPEC-0001 scenario
 // "Non-destructive switch").
-func (m *Model) onProfileKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) onProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.prof.askStart {
 		switch {
 		case key.Matches(msg, m.keys.Confirm), msg.String() == "y":
@@ -215,7 +215,7 @@ func (m *Model) onProfileKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.prof.sel = clamp(m.prof.sel-1, 0, maxIndex(len(m.profiles)))
 	case key.Matches(msg, m.keys.Down):
 		m.prof.sel = clamp(m.prof.sel+1, 0, maxIndex(len(m.profiles)))
-	case msg.Type == tea.KeyEnter:
+	case msg.Code == tea.KeyEnter:
 		if m.prof.sel >= 0 && m.prof.sel < len(m.profiles) {
 			m.prof.pending = m.profiles[m.prof.sel].Name
 			m.prof.askStart = true
@@ -281,7 +281,7 @@ func (m *Model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// Esc aborts the form without writing.
-	if km, ok := msg.(tea.KeyMsg); ok && km.Type == tea.KeyEscape {
+	if km, ok := msg.(tea.KeyPressMsg); ok && km.Code == tea.KeyEscape {
 		m.closeOverlay()
 		return m, nil
 	}
@@ -329,7 +329,7 @@ func (m *Model) saveHarnessCmd(form HarnessForm) tea.Cmd {
 
 // onConfirmKey resolves a destructive-action confirm dialog (SPEC-0001 REQ
 // "Confirmation Guards").
-func (m *Model) onConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) onConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Confirm) {
 		c := m.confirm
 		m.closeOverlay()

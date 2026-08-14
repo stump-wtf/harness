@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/ansifold"
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
@@ -293,7 +293,9 @@ func cmdAttach(o verbOpts) error {
 		AttachOnly:  o.name,
 		SkipConfirm: true,
 	})
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	// Alt screen and mouse reporting are View fields under Bubble Tea v2 (see
+	// tui.Model.View), not program options.
+	p := tea.NewProgram(m)
 	_, err := p.Run()
 	return err
 }

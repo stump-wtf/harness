@@ -20,12 +20,13 @@ package cliui
 import (
 	"errors"
 	"fmt"
+	"image/color"
 	"io"
 	"net"
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"golang.org/x/term"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
@@ -88,7 +89,7 @@ func (l Level) Glyph() string {
 // amber for warns, accent purple for info, mint for success). Exported so the
 // doctor table and any other tabular surfaces can colour their cells with the
 // same mapping the styled block uses.
-func (l Level) Color(p theme.Palette) lipgloss.AdaptiveColor {
+func (l Level) Color(p theme.Colors) color.Color {
 	switch l {
 	case LevelError:
 		return p.Coral
@@ -215,7 +216,7 @@ func Report(level Level, title, msg, hint string) {
 // inside the box; short ones get padded out.
 func (p *Printer) renderStyled(level Level, title, msg, hint string) {
 	th := theme.Default()
-	pal := th.Palette
+	pal := th.Colors()
 	width := p.blockWidth()
 
 	header := lipgloss.NewStyle().

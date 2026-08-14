@@ -108,7 +108,7 @@ func TestListViewportHeightInvariant(t *testing.T) {
 			w, h := sz[0], sz[1]
 			m := listTestModel(w, h, hc)
 			m.scrollListToSel()
-			view := m.View()
+			view := m.View().Content
 			lines := strings.Split(view, "\n")
 			if len(lines) > h {
 				t.Errorf("hc=%d %dx%d: %d rows > %d", hc, w, h, len(lines), h)

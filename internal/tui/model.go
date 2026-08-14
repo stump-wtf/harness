@@ -15,11 +15,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -53,8 +54,7 @@ type Options struct {
 	Socket      string
 	ConfigPath  string
 	Version     string
-	SkipConfirm bool               // --yes-style: skip confirm dialogs.
-	Renderer    *lipgloss.Renderer // optional; nil uses the default.
+	SkipConfirm bool // --yes-style: skip confirm dialogs.
 	// ReadOnly forces every attach opened by this Model to be a read-only
 	// attach (protocol.AttachRO): the daemon streams output but drops this
 	// client's input. It exists so a read-only remote SSH session — or a local
@@ -158,7 +158,7 @@ type Model struct {
 	pal     paletteState
 	prof    profState
 	confirm confirmState
-	form    tea.Model // *huh.Form when overlayForm
+	form    huh.Model // *huh.Form when overlayForm
 	fInputs formInputs
 	editing bool // form is editing (e) vs new (n)
 
@@ -171,7 +171,12 @@ func New(opts Options) *Model {
 	if opts.dial == nil {
 		opts.dial = realDial
 	}
-	th := theme.New(opts.Renderer, theme.DefaultPalette())
+	// Render at full fidelity and let Bubble Tea v2 downsample on the way out:
+	// the Program detects the real terminal's profile itself (the *client's*,
+	// over SSH), where Lip Gloss v1 needed a renderer wired in from the caller.
+	// The dark default is corrected by the tea.BackgroundColorMsg that
+	// tea.RequestBackgroundColor triggers in Init.
+	th := theme.New(colorprofile.TrueColor, true, theme.DefaultPalette())
 	pi := textinput.New()
 	pi.Prompt = "› "
 	pi.Placeholder = "verb target…  (e.g. restart reduit-agent)"
@@ -185,8 +190,7 @@ func New(opts Options) *Model {
 	hp := help.New()
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = th.Faint()
-	return &Model{
+	m := &Model{
 		opts:              opts,
 		theme:             th,
 		keys:              keys.Default(),
@@ -196,11 +200,35 @@ func New(opts Options) *Model {
 		search:            si,
 		attachOnlyPending: opts.AttachOnly,
 	}
+	m.applyTheme()
+	return m
+}
+
+// applyTheme pushes the current theme onto the Bubbles components that carry
+// their own styles. Bubbles v2 dropped AdaptiveColor, so a component's palette
+// is fixed at the moment it's built and has to be rebuilt when the background
+// polarity changes — see onBackgroundColor.
+func (m *Model) applyTheme() {
+	m.spinner.Style = m.theme.Faint()
+	m.help.Styles = help.DefaultStyles(m.theme.IsDark())
+}
+
+// onBackgroundColor rebuilds the theme once the terminal reports its background.
+// Under Bubble Tea v2 this is the only correct source of light/dark: it reflects
+// the *client's* terminal over SSH, where a server-side probe would report the
+// daemon host's. Governing: SPEC-0001 REQ "State Presentation" (day/night
+// themes), ADR-0008 (remote attach).
+func (m *Model) onBackgroundColor(msg tea.BackgroundColorMsg) (tea.Model, tea.Cmd) {
+	if isDark := msg.IsDark(); isDark != m.theme.IsDark() {
+		m.theme = m.theme.WithDarkBackground(isDark)
+		m.applyTheme()
+	}
+	return m, nil
 }
 
 // Init dials the daemon and starts the periodic tick.
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.connectCmd(), tick(), probeSizeCmd())
+	return tea.Batch(m.connectCmd(), tick(), probeSizeCmd(), tea.RequestBackgroundColor)
 }
 
 // probeSizeCmd is a fallback for environments where Bubble Tea doesn't detect

@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -47,7 +47,7 @@ func scrollbackModelWithScreen(w, h int, peekText, screen string) *Model {
 	m.harnesses = fc.harnesses
 	m.profiles = fc.profiles
 	m.w, m.h = w, h
-	m.help.Width = w
+	m.help.SetWidth(w)
 	m.mode = modeAttached
 	cols, rows := m.attachViewport()
 	m.att = newAttachState(m.harnesses[0].Name, protocol.AttachRW, sessionBase, cols, rows)

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -38,7 +38,7 @@ func TestAttachedFillsWindow(t *testing.T) {
 			}
 			m := New(Options{AttachOnly: "crush", ReadOnly: tc.readOnly})
 			m.w, m.h = tc.w, tc.h
-			m.help.Width = tc.w
+			m.help.SetWidth(tc.w)
 			m.mode = modeAttached
 			cols, rows := m.attachViewport()
 			m.att = newAttachState("crush", mode, sessionBase, cols, rows)
@@ -71,7 +71,7 @@ func TestScrollbackDoesNotOverflow(t *testing.T) {
 		w, h := dim[0], dim[1]
 		m := New(Options{AttachOnly: "crush"})
 		m.w, m.h = w, h
-		m.help.Width = w
+		m.help.SetWidth(w)
 		m.mode = modeAttached
 		cols, rows := m.attachViewport()
 		m.att = newAttachState("crush", protocol.AttachRW, sessionBase, cols, rows)

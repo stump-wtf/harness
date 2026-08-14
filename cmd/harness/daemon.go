@@ -24,7 +24,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/charmbracelet/log"
+	"charm.land/log/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/attach"
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"

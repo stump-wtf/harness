@@ -9,8 +9,8 @@ package tui
 // live agent").
 
 import (
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -26,13 +26,15 @@ func (m *Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	// Dashboard: wheel scrolls the harness list.
 	if m.mode == modeDashboard {
-		switch msg.Type { //nolint:exhaustive
-		case tea.MouseWheelUp:
-			m.moveSel(-1)
-			return m, m.peekCmd()
-		case tea.MouseWheelDown:
-			m.moveSel(1)
-			return m, m.peekCmd()
+		if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+			switch wheel.Button { //nolint:exhaustive
+			case tea.MouseWheelUp:
+				m.moveSel(-1)
+				return m, m.peekCmd()
+			case tea.MouseWheelDown:
+				m.moveSel(1)
+				return m, m.peekCmd()
+			}
 		}
 	}
 	return m, nil
@@ -45,24 +47,24 @@ func (m *Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // keep their normal meaning even with shift held. Any key press re-enables
 // the grab (onKey).
 func (m *Model) onAttachedMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	wheel, isWheel := msg.(tea.MouseWheelMsg)
 	// Shift held on a button event: release the mouse for native terminal
 	// selection (#49). The TUI gives up its grab so the *next* click-drag
 	// selects text in the user's terminal emulator (the press that triggered
 	// the release was already consumed, so the first drag only releases).
 	// Wheel events are exempt — shift+wheel keeps entering/navigating
 	// scrollback rather than silently killing the wheel.
-	if msg.Shift && m.att.substate == substateInteractive &&
-		msg.Type != tea.MouseWheelUp && msg.Type != tea.MouseWheelDown {
-		if m.mouseReleased {
-			// Already released — this is a queued event from the same gesture
-			// (the disable escape hadn't reached the terminal yet). Swallow it
-			// rather than re-issuing DisableMouse per motion event.
-			return m, nil
-		}
+	if msg.Mouse().Mod.Contains(tea.ModShift) && m.att.substate == substateInteractive && !isWheel {
+		// Setting the flag is the whole action: View stops declaring
+		// MouseModeCellMotion while it holds, so re-entering here for the
+		// queued events of the same gesture is harmless.
 		m.mouseReleased = true
-		return m, tea.DisableMouse
+		return m, nil
 	}
-	switch msg.Type { //nolint:exhaustive
+	if !isWheel {
+		return m, nil
+	}
+	switch wheel.Button { //nolint:exhaustive
 	case tea.MouseWheelUp:
 		if m.att.substate == substateInteractive {
 			// Scroll up from live → enter scrollback at the bottom.
@@ -82,26 +84,21 @@ func (m *Model) onAttachedMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 }
 
 // onKey is the top-level keystroke router.
-func (m *Model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) onKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Re-enable the mouse after shift-passthrough released it (#49). This
 	// lives at the router — not inside one mode handler — because the
 	// released state is terminal-global: the recovery must fire on any key,
 	// whether it lands in an overlay, the dashboard, attached interactive,
 	// or the scrollback substate.
-	var reenable tea.Cmd
-	if m.mouseReleased {
-		m.mouseReleased = false
-		reenable = tea.EnableMouseCellMotion
-	}
-	mm, cmd := m.routeKey(msg)
-	if reenable == nil {
-		return mm, cmd
-	}
-	return mm, tea.Batch(reenable, cmd)
+	// Clearing the flag is the whole recovery: View declares MouseModeCellMotion
+	// again on the very next frame (Bubble Tea v2 made mouse mode a View field
+	// rather than an Enable/Disable command pair).
+	m.mouseReleased = false
+	return m.routeKey(msg)
 }
 
 // routeKey dispatches a keystroke by overlay first, then primary mode.
-func (m *Model) routeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) routeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.overlay != overlayNone {
 		return m.onOverlayKey(msg)
 	}
@@ -112,17 +109,18 @@ func (m *Model) routeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // onDashboardKey handles keys on the dashboard (and its zero-states).
-func (m *Model) onDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) onDashboardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Bubble Tea coalesces consecutive printable runes arriving in a single
-	// read into one KeyRunes message (e.g. "jjj"). key.Matches compares
-	// msg.String() against bindings, so "jjj" matches nothing and the whole
-	// message is silently discarded. Expand multi-rune messages and dispatch
-	// each rune individually (issue #145). Destructive/guarded actions
-	// collapse to a single invocation — holding 'x' must not queue N stops.
-	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
+	// read into one key message whose Text holds them all (e.g. "jjj").
+	// key.Matches compares msg.String() against bindings, so "jjj" matches
+	// nothing and the whole message is silently discarded. Expand multi-rune
+	// messages and dispatch each rune individually (issue #145). Destructive/
+	// guarded actions collapse to a single invocation — holding 'x' must not
+	// queue N stops.
+	if runes := []rune(msg.Text); len(runes) > 1 {
 		var cmds []tea.Cmd
-		for _, r := range msg.Runes {
-			single := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+		for _, r := range runes {
+			single := tea.KeyPressMsg{Code: r, Text: string(r)}
 			mm, cmd := m.dispatchDashboardKey(single)
 			if mv, ok := mm.(*Model); ok {
 				m = mv
@@ -147,7 +145,7 @@ func (m *Model) onDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // dispatchDashboardKey is the inner switch for a single keystroke on the
 // dashboard. Separated from onDashboardKey so multi-rune expansion can call
 // it per rune without recursion.
-func (m *Model) dispatchDashboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) dispatchDashboardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// No-daemon zero-state: offer inline start (SPEC-0001 scenario "Daemon not
 	// running") — s starts the daemon, q quits.
 	if m.conn == startNoDaemon {
@@ -272,7 +270,7 @@ func (m *Model) performAction(a Action, name string) tea.Cmd {
 // implement the prefix state machine ourselves: Ctrl-b arms prefixArmed, the
 // next key is intercepted as a harness command. Every other keystroke goes
 // straight to the PTY. This means bare s/r/[/]/etc. always reach the agent.
-func (m *Model) onAttachedKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) onAttachedKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.att == nil {
 		m.mode = modeDashboard
 		return m, nil
@@ -291,7 +289,7 @@ func (m *Model) onAttachedKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Ctrl-b arms the prefix (only in read-write mode — read-only viewers
 	// don't need intercepts, their keys are dropped anyway).
-	if !m.att.readOnly() && msg.Type == tea.KeyCtrlB {
+	if !m.att.readOnly() && msg.Code == 'b' && msg.Mod == tea.ModCtrl {
 		m.att.prefixArmed = true
 		return m, nil
 	}
@@ -318,7 +316,7 @@ func (m *Model) onAttachedKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // resolves the command key to an action, or cancels (no-op) if the key isn't
 // a known chord — in which case the user mistyped and we don't forward the
 // stray key to the PTY (tmux behavior: unknown prefix command = cancel).
-func (m *Model) dispatchPrefixKey(msg tea.KeyMsg) tea.Cmd {
+func (m *Model) dispatchPrefixKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
 	case "d":
 		return m.detach()
@@ -345,10 +343,10 @@ func (m *Model) dispatchPrefixKey(msg tea.KeyMsg) tea.Cmd {
 
 // onScrollbackKey handles the frozen scrollback substate (SPEC-0001 REQ
 // "Scrollback Substate").
-func (m *Model) onScrollbackKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) onScrollbackKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	sb := m.att.scroll
 	if m.att.searchOn {
-		switch msg.Type {
+		switch msg.Code {
 		case tea.KeyEscape:
 			m.att.searchOn = false
 			m.att.search.Blur()

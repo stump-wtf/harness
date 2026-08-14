@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	osc52 "github.com/aymanbagabas/go-osc52/v2"
-	tea "github.com/charmbracelet/bubbletea"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )

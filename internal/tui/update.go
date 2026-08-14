@@ -8,8 +8,8 @@ package tui
 import (
 	"fmt"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -19,7 +19,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
-		m.help.Width = msg.Width
+		m.help.SetWidth(msg.Width)
 		if m.overlay == overlayForm {
 			// Keep the Huh form bounded to the (resized) overlay viewport so it
 			// scrolls rather than overflowing a short terminal (issue #25).
@@ -119,11 +119,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, cmd
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.onKey(msg)
 
 	case tea.MouseMsg:
 		return m.onMouse(msg)
+
+	case tea.BackgroundColorMsg:
+		return m.onBackgroundColor(msg)
 
 	case probeSizeMsg:
 		// Fallback size detection: if Bubble Tea's own checkResize never
@@ -131,7 +134,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// apply if m.w is still 0 so we don't override a real WindowSizeMsg.
 		if m.w == 0 && msg.w > 0 && msg.h > 0 {
 			m.w, m.h = msg.w, msg.h
-			m.help.Width = msg.w
+			m.help.SetWidth(msg.w)
 			// Same deferred-attach logic as WindowSizeMsg: if we were waiting
 			// for a size before opening the attach, do it now.
 			if m.attachOnlyPending != "" && m.ctrl != nil {
