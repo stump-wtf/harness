@@ -4,6 +4,9 @@ docs-site/.docusaurus/
 docs-generated/
 bin/
 dist/
+# `make build` writes to bin/, but a hand-run `go build -o harness ./cmd/harness`
+# drops a 13MB binary at the repo root. Root-anchored so cmd/harness/ is unaffected.
+/harness
 
 # Worktrees
 .claude/
