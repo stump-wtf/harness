@@ -700,3 +700,28 @@ func TestSanitizeProjectName_Exported(t *testing.T) {
 		t.Errorf("SanitizeProjectName = %q, want %q", got, "my-cool-project")
 	}
 }
+
+// TestParseProject_MCPAllowRejected: SPEC-0005 REQ "Capability Scoping"
+// requires mcp_allow to be global-only — a cloned repository cannot grant its
+// own harnesses write authority over the fleet.
+func TestParseProject_MCPAllowRejected(t *testing.T) {
+	data := []byte(`
+[harness.agent]
+cmd = "claude"
+mcp_allow = ["read", "write"]
+`)
+	_, err := ParseProject(data, "/tmp/myrepo/harness.toml")
+	if err == nil {
+		t.Fatal("expected error for mcp_allow in project file, got nil")
+	}
+	var ce *Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("error is %T, want *config.Error: %v", err, err)
+	}
+	if !strings.Contains(ce.Msg, "mcp_allow") {
+		t.Errorf("message %q does not contain 'mcp_allow'", ce.Msg)
+	}
+	if !strings.Contains(ce.Msg, "not supported in project files") {
+		t.Errorf("message %q does not contain 'not supported in project files'", ce.Msg)
+	}
+}

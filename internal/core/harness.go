@@ -172,6 +172,30 @@ type Harness struct {
 	// REQ "Schedule Exclusions"; issue #66; ADR-0006 (schema); ADR-0011 (prompt
 	// one-shot); SPEC-0003 (enabled-intent model the exclusion carves against).
 	Schedule string
+	// Agent names the adapter this harness resolves to, overriding inference
+	// from cmd. When empty, the daemon infers the adapter from the cmd
+	// basename (e.g. "claude" → "claude-code"); when no inference rule
+	// matches, the harness resolves to "generic". Naming an adapter that
+	// does not exist is a config-validation error. Governing: ADR-0011,
+	// SPEC-0006 REQ "Adapter Selection".
+	Agent string
+	// HarvestTrajectory controls whether the harness's trajectory is exposed
+	// read-only through the facade (list_trajectories / get_trajectory).
+	// Defaults to false: a trajectory may contain secrets the harnessed
+	// program printed itself (ADR-0008), so exposure is opt-in per harness.
+	// A harness that has not opted in is omitted from list results and
+	// get_trajectory refuses with a structured error. Governing: ADR-0008,
+	// SPEC-0006 REQ "Harvest Opt-In".
+	HarvestTrajectory bool
+	// MCPAllow is the per-harness capability scope for the MCP facade
+	// (SPEC-0005 REQ "Capability Scoping"). Defaults to ["read"]; including
+	// "write" permits write-class facade tools (harness_start, harness_stop,
+	// harness_restart). Trajectory tools are read-class and available to
+	// every harness, but still gated by HarvestTrajectory. Global config only
+	// — a project file declaring mcp_allow is rejected, so a cloned
+	// repository cannot grant its own harnesses write authority over the
+	// fleet. Governing: SPEC-0005 REQ "Capability Scoping".
+	MCPAllow []string
 }
 
 // AgentOpts carries the config-truth knobs a prompt harness folds into its
@@ -296,6 +320,15 @@ type DaemonConfig struct {
 	// per-harness env files for changes and auto-reloads (issue #98). Default
 	// is true (watching on); set watch_config = false to opt out.
 	WatchConfig *bool
+	// OTelEndpoint is the OTLP/HTTP endpoint the daemon ships agent traces to
+	// (e.g. "https://cairn.stump.wtf/v1/traces" or a Honeycomb/Tempo
+	// endpoint). When set, the daemon builds OTel traces from harvested
+	// sessions via agent-trace's otel.BuildTrace and POSTs them as standard
+	// OTLP JSON. Any OTLP-compatible endpoint works — Harness does not know
+	// or care what is on the other end. Per-harness opt-in via
+	// harvest_trajectory still gates which harnesses contribute traces.
+	// Governing: ADR-0008 (secrets), SPEC-0006 REQ "Trajectory Discovery".
+	OTelEndpoint string
 }
 
 // WatchConfigEnabled reports whether config watching is enabled, defaulting
