@@ -42,16 +42,16 @@ func TestHelpStylesAscii(t *testing.T) {
 
 	mustContainText := map[string]string{
 		"HelpProgram": "harness",
-		"HelpDesc":     "desc",
-		"HelpUsage":    "usage:",
-		"HelpVerb":     "list",
-		"HelpFlag":     "--json",
-		"HelpArg":      "NAME",
-		"HelpDesc2":    "description",
-		"HelpDefault":  "(default)",
-		"HelpSection":  "commands:",
-		"HelpError":    "error",
-		"HelpHint":     "hint",
+		"HelpDesc":    "desc",
+		"HelpUsage":   "usage:",
+		"HelpVerb":    "list",
+		"HelpFlag":    "--json",
+		"HelpArg":     "NAME",
+		"HelpDesc2":   "description",
+		"HelpDefault": "(default)",
+		"HelpSection": "commands:",
+		"HelpError":   "error",
+		"HelpHint":    "hint",
 	}
 
 	for text, expected := range mustContainText {

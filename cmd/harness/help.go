@@ -62,7 +62,7 @@ var helpText = struct {
 		{"ps", "list the project's harnesses (alias for list outside a project; takes no arguments)"},
 	},
 	projectNote: "inside a project, a bare NAME to describe/logs/start/stop/restart/attach\nalways resolves to <project>/NAME (a NAME containing \"/\" is taken as fully\nqualified); to address a global harness by its bare name, run the verb\noutside the project directory.",
-	daemonHead: "daemon subcommands (see \"harness daemon --help\"):",
+	daemonHead:  "daemon subcommands (see \"harness daemon --help\"):",
 	daemonCmds: [][2]string{
 		{"daemon start", "run the supervision daemon (ADR-0005 ExecStart; alias: run)"},
 		{"daemon stop", "gracefully stop the running daemon"},
