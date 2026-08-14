@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/agent-trace/tail"
 	"gitea.stump.rocks/stump.wtf/harness/internal/adapter"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/agent-trace/tail"
 )
 
 // newTestService creates a trajectory service with a default adapter registry

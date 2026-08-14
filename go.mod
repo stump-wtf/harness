@@ -3,7 +3,6 @@ module gitea.stump.rocks/stump.wtf/harness
 go 1.26.5
 
 require (
-	gitea.stump.rocks/stump.wtf/agent-trace v0.0.0-20260813215706-cab425a41c29
 	github.com/BurntSushi/toml v1.6.0
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1
 	github.com/charmbracelet/x/ansi v0.11.8
@@ -11,6 +10,7 @@ require (
 	github.com/charmbracelet/x/vt v0.0.0-20260813141921-f091cedeaf78
 	github.com/charmbracelet/x/xpty v0.1.4
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/stump-wtf/agent-trace v0.0.0-20260814165024-eb88b165bf06
 	golang.org/x/crypto v0.55.0
 	golang.org/x/term v0.45.0
 )

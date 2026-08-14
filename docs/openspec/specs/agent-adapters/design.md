@@ -49,7 +49,7 @@ project root and provenance, and publishes trajectories through SPEC-0005.
 
 **Choice**: A single interface — skills-from, skills-to, trajectory-at —
 implemented by `claude-code`, `crush`, `codex`, and `generic`. The trajectory
-half delegates to [agent-trace](https://gitea.stump.rocks/stump.wtf/agent-trace)
+half delegates to [agent-trace](https://github.com/stump-wtf/agent-trace)
 (`tail` package for session parsing, `classify` for action taxonomy, `otel` for
 span conversion); the skill-projection half remains harness-internal.
 
