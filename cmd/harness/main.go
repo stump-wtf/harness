@@ -29,6 +29,13 @@ func main() {
 	jsonOut := gfs.Bool("json", false, "machine-readable JSON output")
 	showVersion := gfs.Bool("version", false, "print version and exit")
 	gfs.Usage = usage
+	// The flag package calls gfs.Usage from *inside* Parse — on -h/--help and
+	// on a parse error — so the parsed --json value does not exist yet when
+	// usage() runs. Seed the printer from the raw args first, or
+	// `harness --json --help` would emit styled help despite --json asking for
+	// machine-readable output. The authoritative SetJSON below still wins for
+	// every other code path.
+	cliui.SetJSON(hasJSONArg(os.Args[1:]))
 	_ = gfs.Parse(os.Args[1:])
 	cliui.SetJSON(*jsonOut)
 

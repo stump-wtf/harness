@@ -131,14 +131,17 @@ func TestStyledUsageMonoLegible(t *testing.T) {
 	th := theme.New(colorprofile.Ascii, true, theme.DefaultPalette())
 	styled := stripANSI(styledUsage(th))
 	plain := plainUsage()
-	styledLines := strings.Split(strings.TrimSpace(styled), "\n")
-	plainLines := strings.Split(strings.TrimSpace(plain), "\n")
+	styledLines := strings.Split(strings.TrimRight(styled, "\n"), "\n")
+	plainLines := strings.Split(strings.TrimRight(plain, "\n"), "\n")
 	if len(styledLines) != len(plainLines) {
 		t.Fatalf("mono styled has %d lines, plain has %d", len(styledLines), len(plainLines))
 	}
 	for i, sl := range styledLines {
-		if strings.TrimSpace(sl) != strings.TrimSpace(plainLines[i]) {
-			t.Errorf("line %d: mono %q != plain %q", i, strings.TrimSpace(sl), strings.TrimSpace(plainLines[i]))
+		// TrimRight only: leading indentation is part of the layout, and
+		// trimming it on both sides is what let the styled renderer drop the
+		// two-space row indent unnoticed.
+		if strings.TrimRight(sl, " ") != strings.TrimRight(plainLines[i], " ") {
+			t.Errorf("line %d: mono %q != plain %q", i, sl, plainLines[i])
 		}
 	}
 }
@@ -148,14 +151,17 @@ func TestStyledDaemonUsageMonoLegible(t *testing.T) {
 	th := theme.New(colorprofile.Ascii, true, theme.DefaultPalette())
 	styled := stripANSI(styledDaemonUsage(th))
 	plain := plainDaemonUsage()
-	styledLines := strings.Split(strings.TrimSpace(styled), "\n")
-	plainLines := strings.Split(strings.TrimSpace(plain), "\n")
+	styledLines := strings.Split(strings.TrimRight(styled, "\n"), "\n")
+	plainLines := strings.Split(strings.TrimRight(plain, "\n"), "\n")
 	if len(styledLines) != len(plainLines) {
 		t.Fatalf("mono styled has %d lines, plain has %d", len(styledLines), len(plainLines))
 	}
 	for i, sl := range styledLines {
-		if strings.TrimSpace(sl) != strings.TrimSpace(plainLines[i]) {
-			t.Errorf("line %d: mono %q != plain %q", i, strings.TrimSpace(sl), strings.TrimSpace(plainLines[i]))
+		// TrimRight only: leading indentation is part of the layout, and
+		// trimming it on both sides is what let the styled renderer drop the
+		// two-space row indent unnoticed.
+		if strings.TrimRight(sl, " ") != strings.TrimRight(plainLines[i], " ") {
+			t.Errorf("line %d: mono %q != plain %q", i, sl, plainLines[i])
 		}
 	}
 }
@@ -172,8 +178,8 @@ func TestStyledUsageContentMatchesPlain(t *testing.T) {
 	// lines. We compare line-by-line because the padding/alignment may
 	// differ slightly between the styled (lipgloss-rendered) and plain
 	// (fmt %-21s) paths.
-	styledLines := strings.Split(strings.TrimSpace(styled), "\n")
-	plainLines := strings.Split(strings.TrimSpace(plain), "\n")
+	styledLines := strings.Split(strings.TrimRight(styled, "\n"), "\n")
+	plainLines := strings.Split(strings.TrimRight(plain, "\n"), "\n")
 
 	if len(styledLines) != len(plainLines) {
 		t.Fatalf("styled has %d lines, plain has %d (should match after ANSI strip)", len(styledLines), len(plainLines))
@@ -181,10 +187,9 @@ func TestStyledUsageContentMatchesPlain(t *testing.T) {
 
 	for i, sl := range styledLines {
 		pl := plainLines[i]
-		// Trim trailing whitespace for comparison — lipgloss may not
-		// pad the same way fmt %-21s does.
-		if strings.TrimSpace(sl) != strings.TrimSpace(pl) {
-			t.Errorf("line %d: styled %q != plain %q", i, strings.TrimSpace(sl), strings.TrimSpace(pl))
+		// TrimRight only — the left indent must match too (see above).
+		if strings.TrimRight(sl, " ") != strings.TrimRight(pl, " ") {
+			t.Errorf("line %d: styled %q != plain %q", i, sl, pl)
 		}
 	}
 }
@@ -195,8 +200,8 @@ func TestStyledDaemonUsageContentMatchesPlain(t *testing.T) {
 	styled := stripANSI(styledDaemonUsage(th))
 	plain := plainDaemonUsage()
 
-	styledLines := strings.Split(strings.TrimSpace(styled), "\n")
-	plainLines := strings.Split(strings.TrimSpace(plain), "\n")
+	styledLines := strings.Split(strings.TrimRight(styled, "\n"), "\n")
+	plainLines := strings.Split(strings.TrimRight(plain, "\n"), "\n")
 
 	if len(styledLines) != len(plainLines) {
 		t.Fatalf("styled has %d lines, plain has %d (should match after ANSI strip)", len(styledLines), len(plainLines))
@@ -204,8 +209,8 @@ func TestStyledDaemonUsageContentMatchesPlain(t *testing.T) {
 
 	for i, sl := range styledLines {
 		pl := plainLines[i]
-		if strings.TrimSpace(sl) != strings.TrimSpace(pl) {
-			t.Errorf("line %d: styled %q != plain %q", i, strings.TrimSpace(sl), strings.TrimSpace(pl))
+		if strings.TrimRight(sl, " ") != strings.TrimRight(pl, " ") {
+			t.Errorf("line %d: styled %q != plain %q", i, sl, pl)
 		}
 	}
 }
@@ -219,6 +224,72 @@ func TestStyledUsageDayNight(t *testing.T) {
 		out := styledUsage(th)
 		if !strings.Contains(out, "harness") {
 			t.Errorf("isDark=%v: styledUsage() missing program name", isDark)
+		}
+	}
+}
+
+// TestHelpRowsAreIndented pins the two-space row indent on BOTH renderers. The
+// styled renderer used to omit it entirely — every command and flag rendered
+// flush-left in a terminal while the piped output stayed indented — and the
+// comparison tests above could not see it because they trimmed both sides.
+func TestHelpRowsAreIndented(t *testing.T) {
+	th := theme.New(colorprofile.TrueColor, true, theme.DefaultPalette())
+	for name, out := range map[string]string{
+		"plain":  plainUsage(),
+		"styled": stripANSI(styledUsage(th)),
+	} {
+		seen := 0
+		for _, line := range strings.Split(out, "\n") {
+			trimmed := strings.TrimLeft(line, " ")
+			if !strings.HasPrefix(trimmed, "list ") && !strings.HasPrefix(trimmed, "--json ") {
+				continue
+			}
+			seen++
+			if !strings.HasPrefix(line, "  ") {
+				t.Errorf("%s: table row %q is not indented", name, line)
+			}
+		}
+		if seen != 2 {
+			t.Errorf("%s: matched %d sample rows, want 2 — the test is not looking at what it thinks", name, seen)
+		}
+	}
+}
+
+// TestHelpWrapsAtHelpWidth pins that no help line overflows an 80-column
+// terminal. The hand-written help wrapped its long descriptions by hand; the
+// generated layout has to do it itself, or `harness --help` in a default
+// terminal folds mid-word into column 0.
+func TestHelpWrapsAtHelpWidth(t *testing.T) {
+	for name, out := range map[string]string{
+		"root":   plainUsage(),
+		"daemon": plainDaemonUsage(),
+	} {
+		for _, line := range strings.Split(out, "\n") {
+			if len([]rune(line)) > helpWidth {
+				t.Errorf("%s help line is %d columns, want <= %d: %q", name, len([]rune(line)), helpWidth, line)
+			}
+		}
+	}
+}
+
+// TestHasJSONArg pins the pre-parse --json scan that keeps `harness --json
+// --help` plain. flag.Parse invokes Usage before the parsed value exists, so
+// without this the --json branch in usage() was unreachable.
+func TestHasJSONArg(t *testing.T) {
+	for _, tt := range []struct {
+		args []string
+		want bool
+	}{
+		{nil, false},
+		{[]string{"list"}, false},
+		{[]string{"--json", "--help"}, true},
+		{[]string{"-json"}, true},
+		{[]string{"--json=true"}, true},
+		{[]string{"--", "--json"}, false},
+		{[]string{"--socket", "/tmp/s.sock", "--json"}, true},
+	} {
+		if got := hasJSONArg(tt.args); got != tt.want {
+			t.Errorf("hasJSONArg(%v) = %v, want %v", tt.args, got, tt.want)
 		}
 	}
 }
