@@ -223,12 +223,23 @@ func TestRunVerbReloadIssuesReload(t *testing.T) {
 // disconnected (onDisconnect clears it), and the palette is still reachable —
 // so each of these must no-op rather than panic.
 func TestRunVerbWithoutControllerIsSafe(t *testing.T) {
-	for _, verb := range []string{"profile", "reload", "list", "profiles", "daemon-info"} {
+	// The lifecycle verbs go through performAction, which has its own nil
+	// guard; they belong here as much as the ones that guard inline.
+	verbs := []string{
+		"profile", "reload", "list", "profiles", "daemon-info",
+		"start", "stop", "restart", "delete",
+	}
+	for _, verb := range verbs {
 		t.Run(verb, func(t *testing.T) {
 			m, _ := verbFixture()
 			m.ctrl = nil
-			// Must not panic.
-			_, _ = m.runVerb(verb, "reduit")
+			// Must not panic — including inside the returned command. A guard
+			// that only checks at dispatch time still hands Bubble Tea a
+			// closure that dereferences the nil controller when it runs.
+			_, cmd := m.runVerb(verb, "reduit-agent")
+			if cmd != nil {
+				drain(cmd)
+			}
 		})
 	}
 }

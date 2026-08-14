@@ -18,6 +18,7 @@ package theme
 // on that terminal" reports.
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -101,25 +102,38 @@ func hasColorEscape(s string) bool {
 		}
 		j := i + 2
 		start := j
-		for j < len(s) && s[j] != 'm' && s[j] != 'a' {
+		for j < len(s) && s[j] != 'm' {
 			j++
 		}
-		if j >= len(s) || s[j] != 'm' {
+		if j >= len(s) {
 			continue
 		}
 		for _, param := range strings.Split(s[start:j], ";") {
-			switch {
-			case param == "38" || param == "48":
-				return true
-			case len(param) == 2 &&
-				(param[0] == '3' || param[0] == '4') &&
-				param[1] >= '0' && param[1] <= '7':
-				return true
-			case len(param) == 3 &&
-				(strings.HasPrefix(param, "9") || strings.HasPrefix(param, "10")):
+			if isColorParam(param) {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// isColorParam reports whether one SGR parameter selects a colour. Parsed as a
+// number rather than by string shape: a shape test that spelled the bright
+// range as "three characters starting with 9" matched nothing at all, because
+// bright foregrounds are the two-digit 90–97 — so an Ascii profile that leaked
+// \x1b[91m would have gone unnoticed by the mono test below.
+func isColorParam(param string) bool {
+	n, err := strconv.Atoi(param)
+	if err != nil {
+		return false
+	}
+	switch {
+	case n == 38 || n == 48: // extended (256-colour / truecolour) fg + bg
+		return true
+	case n >= 30 && n <= 37, n >= 40 && n <= 47: // basic fg + bg
+		return true
+	case n >= 90 && n <= 97, n >= 100 && n <= 107: // bright fg + bg
+		return true
 	}
 	return false
 }
@@ -172,5 +186,41 @@ func TestSelectedStaysDistinguishableOnMono(t *testing.T) {
 	}
 	if selected == row {
 		t.Error("Selected() applied nothing at all on a mono profile; the cursor would be invisible without colour")
+	}
+}
+
+// TestHasColorEscape pins the helper the mono assertions depend on. A helper
+// that under-reports colour turns TestChromeDropsColorOnMono into a test that
+// can only pass.
+func TestHasColorEscape(t *testing.T) {
+	colored := []string{
+		"\x1b[31mred\x1b[0m",
+		"\x1b[91mbright red\x1b[0m",
+		"\x1b[97mbright white\x1b[0m",
+		"\x1b[41mred bg\x1b[0m",
+		"\x1b[101mbright bg\x1b[0m",
+		"\x1b[38;2;255;0;0mtruecolour\x1b[0m",
+		"\x1b[48;5;12m256 bg\x1b[0m",
+		"\x1b[1;36mbold cyan\x1b[0m",
+	}
+	for _, s := range colored {
+		if !hasColorEscape(s) {
+			t.Errorf("hasColorEscape(%q) = false, want true", s)
+		}
+	}
+
+	plain := []string{
+		"no escapes at all",
+		"\x1b[1mbold\x1b[22m",
+		"\x1b[2mfaint\x1b[0m",
+		"\x1b[7minverse\x1b[27m",
+		"\x1b[mreset\x1b[0m",
+		"\x1b[2J",     // erase display, not SGR
+		"\x1b[10;20H", // cursor move, not SGR
+	}
+	for _, s := range plain {
+		if hasColorEscape(s) {
+			t.Errorf("hasColorEscape(%q) = true, want false", s)
+		}
 	}
 }

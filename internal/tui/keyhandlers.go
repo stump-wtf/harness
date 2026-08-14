@@ -370,10 +370,15 @@ func (m *Model) onScrollbackKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if cmd != nil {
 				cmds = append(cmds, cmd)
 			}
-			// Stop once a rune changed the mode: `/` opens the search input and
-			// the rest of the burst belongs to it, `q` leaves scrollback
-			// entirely. Continuing would feed navigation keys to a surface that
-			// is no longer showing.
+			// Stop once a rune changed the mode: `q` leaves scrollback and `/`
+			// opens the search input, and continuing would feed navigation
+			// keys to a surface that is no longer showing.
+			//
+			// Known limitation, shared with the dashboard: the remainder of
+			// the burst is dropped rather than handed to whatever just opened,
+			// so a fast `/alpha` opens search with an empty input. Still an
+			// improvement on dropping the whole burst, but the two halves
+			// should be fixed together.
 			if m.att == nil || m.att.searchOn || m.att.substate != substateScrollback {
 				break
 			}

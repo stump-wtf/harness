@@ -173,9 +173,11 @@ func TestDashboardMultiRuneStopsAtAnyOverlay(t *testing.T) {
 			m.Update(runeKey(tt.burst))
 
 			if m.overlay != tt.want {
-				// Not every build binds every one of these; skip rather than
-				// assert a binding that does not exist in this key map.
-				t.Skipf("burst %q did not open %v (overlay=%v); binding may differ", tt.burst, tt.want, m.overlay)
+				// Must fail, not skip: skipping here would swallow exactly the
+				// regression this test exists for — an expansion loop that
+				// stopped dispatching leaves overlay==overlayNone, and a Skip
+				// would hide that AND the selection assertion below.
+				t.Fatalf("burst %q did not open %v (overlay=%v)", tt.burst, tt.want, m.overlay)
 			}
 			if m.sel != startSel {
 				t.Errorf("selection moved from %d to %d — runes after the overlay opened "+

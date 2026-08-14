@@ -5,7 +5,7 @@ package tui
 // Calls".
 //
 // mutexController is the only thing standing between Bubble Tea's concurrent
-// Cmds and a Client that cannot take concurrent calls. Every one of its 13
+// Cmds and a Client that cannot take concurrent calls. Every one of its 12
 // methods was untested, because the model tests inject a fakeController
 // directly and never go through the wrapper — so a method that forgot to take
 // the lock, or forwarded to the wrong underlying call, would look fine
@@ -124,7 +124,7 @@ func (r *recordingController) seen() []string {
 	return append([]string(nil), r.calls...)
 }
 
-// TestMutexControllerForwardsEveryMethod drives all 13 methods and asserts each
+// TestMutexControllerForwardsEveryMethod drives all 12 methods and asserts each
 // reached its namesake exactly once, in order. This is the copy-paste guard.
 func TestMutexControllerForwardsEveryMethod(t *testing.T) {
 	rec := &recordingController{}

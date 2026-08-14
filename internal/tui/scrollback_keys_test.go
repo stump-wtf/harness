@@ -274,9 +274,11 @@ func TestScrollbackSearchInputDoesNotExpand(t *testing.T) {
 }
 
 // TestScrollbackMultiRuneStopsAtModeChange pins the break in the expansion
-// loop. A burst that opens search partway through must hand the remaining runes
-// to the input rather than continuing to drive navigation on a surface that is
-// no longer showing.
+// loop: a burst that opens search partway through must stop driving navigation
+// on a surface that is no longer showing.
+//
+// It does NOT claim the remaining runes reach the input — they are currently
+// dropped, same as on the dashboard. See the note in onScrollbackKey.
 func TestScrollbackMultiRuneStopsAtModeChange(t *testing.T) {
 	m, _ := sbFixture(t, 3)
 	// "j/j": scroll, then open search, then the trailing rune must NOT scroll.
