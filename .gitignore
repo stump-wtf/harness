@@ -4,3 +4,6 @@ docs-site/.docusaurus/
 docs-generated/
 bin/
 dist/
+
+# Worktrees
+.claude/
