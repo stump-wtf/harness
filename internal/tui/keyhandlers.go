@@ -343,7 +343,58 @@ func (m *Model) dispatchPrefixKey(msg tea.KeyPressMsg) tea.Cmd {
 
 // onScrollbackKey handles the frozen scrollback substate (SPEC-0001 REQ
 // "Scrollback Substate").
+//
+// Multi-rune expansion, same defect and same fix as the dashboard (issue #145).
+// Bubble Tea coalesces a burst of printable runes into ONE message carrying
+// "nnn" in Text; the navigation switch below compares msg.String() and
+// key.Matches against single-key bindings, so a coalesced burst matched nothing
+// and the whole message was dropped. Holding `n` to walk search matches, or a
+// fast `jjj`, did nothing at all here while working fine on the dashboard.
+//
+// The search sub-state deliberately does NOT expand: while the input is
+// focused, a coalesced burst is text the user typed or pasted, and it must
+// reach textinput whole — expanding it there would turn one paste into N
+// keystrokes and re-scan the buffer per rune.
 func (m *Model) onScrollbackKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.att.searchOn {
+		return m.dispatchScrollbackKey(msg)
+	}
+	if runes := []rune(msg.Text); len(runes) > 1 {
+		var cmds []tea.Cmd
+		for _, r := range runes {
+			single := tea.KeyPressMsg{Code: r, Text: string(r)}
+			mm, cmd := m.dispatchScrollbackKey(single)
+			if mv, ok := mm.(*Model); ok {
+				m = mv
+			}
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Stop once a rune changed the mode: `q` leaves scrollback and `/`
+			// opens the search input, and continuing would feed navigation
+			// keys to a surface that is no longer showing.
+			//
+			// Known limitation, shared with the dashboard: the remainder of
+			// the burst is dropped rather than handed to whatever just opened,
+			// so a fast `/alpha` opens search with an empty input. Still an
+			// improvement on dropping the whole burst, but the two halves
+			// should be fixed together.
+			if m.att == nil || m.att.searchOn || m.att.substate != substateScrollback {
+				break
+			}
+		}
+		if len(cmds) == 0 {
+			return m, nil
+		}
+		return m, tea.Batch(cmds...)
+	}
+	return m.dispatchScrollbackKey(msg)
+}
+
+// dispatchScrollbackKey is the inner handler for a single scrollback keystroke.
+// Split out of onScrollbackKey so multi-rune expansion can call it per rune
+// without recursing.
+func (m *Model) dispatchScrollbackKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	sb := m.att.scroll
 	if m.att.searchOn {
 		switch msg.Code {
