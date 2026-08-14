@@ -145,6 +145,14 @@ daemon SHALL expose trajectories through the SPEC-0005 facade as read-only
 operations (`list_trajectories`, `get_trajectory`) and MUST NOT write to, alter,
 or delete a tool's trajectory.
 
+**Implementation note:** Trajectory parsing is delegated to
+[agent-trace](https://gitea.stump.rocks/stump.wtf/agent-trace) (`tail` package),
+which ships per-agent JSONL parsers for Claude Code, Codex, Crush, OpenCode,
+and Pi. Harness maps its adapter identities onto agent-trace's adapters;
+`generic` reports no native trajectory regardless of agent-trace's coverage.
+The `classify` package provides structured action taxonomy for downstream
+consumers (SPEC-0007 distillation, OTel export).
+
 #### Scenario: Native transcript is located
 
 - **WHEN** a `claude-code` harness has written a session transcript

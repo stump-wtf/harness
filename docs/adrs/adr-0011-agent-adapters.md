@@ -228,6 +228,32 @@ flowchart TD
     RING -.-> F
 ```
 
+## Implementation Note: agent-trace
+
+The trajectory-discovery half of this ADR is implemented by
+[agent-trace](https://gitea.stump.rocks/stump.wtf/agent-trace)
+(`stump.wtf/agent-trace`), an external Go library extracted from
+[cosmtrek/mindwalk](https://github.com/cosmtrek/mindwalk). Its three packages
+map onto this ADR's concerns:
+
+* **`tail`** — live session log watchers with per-agent JSONL parsers for
+  Claude Code, Codex, Crush, OpenCode, and Pi (`tail.DefaultAdapters()`). This
+  is the implementation of "where does this tool write its trajectory?" for
+  every adapter except `generic`. Each adapter exposes a `Dir` field for test
+  injection so tests never touch a real home directory.
+* **`classify`** — pure classification of tool calls into semantic actions
+  (`search`, `read`, `edit`, `exec`, `verify`) with file targets. No I/O. This
+  is the structured signal that SPEC-0007 distillation clusters on, replacing
+  raw string matching.
+* **`otel`** — stateless conversion of classified events + marks into
+  OpenTelemetry span structs with deterministic trace/span IDs. Bridges
+  harvested trajectories to Cairn's run API for shareable trace export.
+
+The skill-projection half (questions 1 and 2) remains harness-internal; only
+question 3 ("trajectory at?") delegates to agent-trace. The `generic` adapter
+reports no native trajectory regardless of what agent-trace supports, preserving
+ADR-0002 agnosticism.
+
 ## More Information
 
 * **Extends [ADR-0006](adr-0006-configuration-and-profiles.md)** — adds
