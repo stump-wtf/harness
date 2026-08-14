@@ -77,6 +77,12 @@ func main() {
 				os.Exit(cliui.Fatal(err))
 			}
 		case "-h", "--help", "help":
+			// stop/status recover a post-`daemon` --json via resolveDaemonOpts;
+			// help has no opts to resolve, so it must seed the printer itself.
+			// The SetJSON above reflects only the flags before the `daemon`
+			// token (the flag package halts there), so without this
+			// `harness daemon --json --help` emits styled help.
+			cliui.SetJSON(*jsonOut || hasJSONArg(daemonArgs))
 			daemonUsage()
 		default:
 			os.Exit(cliui.FatalMsg("unknown command",
