@@ -63,8 +63,16 @@ type attachState struct {
 	prefixArmed bool
 }
 
-// newAttachState builds attach state for a harness at the given viewport size.
+// newAttachState builds attach state for a harness at the given viewport size,
+// with a freshly created embedded terminal. Callers that already hold a view
+// should use newAttachStateWith instead so the view (and its reply pump) is
+// re-used rather than duplicated — see vtView.pumpReplies.
 func newAttachState(name string, mode protocol.AttachMode, sessionID uint32, cols, rows int) *attachState {
+	return newAttachStateWith(name, mode, sessionID, newVTView(cols, rows))
+}
+
+// newAttachStateWith builds attach state around an existing embedded terminal.
+func newAttachStateWith(name string, mode protocol.AttachMode, sessionID uint32, view *vtView) *attachState {
 	ti := textinput.New()
 	ti.Prompt = "/"
 	ti.CharLimit = 128
@@ -72,7 +80,7 @@ func newAttachState(name string, mode protocol.AttachMode, sessionID uint32, col
 		name:      name,
 		mode:      mode,
 		sessionID: sessionID,
-		view:      newVTView(cols, rows),
+		view:      view,
 		substate:  substateInteractive,
 		search:    ti,
 		// ~60fps spring, moderately stiff, slightly underdamped for a lively feel.

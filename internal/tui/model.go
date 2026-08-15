@@ -155,12 +155,16 @@ type Model struct {
 	mode    mode
 	overlay overlay
 	att     *attachState
-	pal     paletteState
-	prof    profState
-	confirm confirmState
-	form    huh.Model // *huh.Form when overlayForm
-	fInputs formInputs
-	editing bool // form is editing (e) vs new (n)
+	// attachView is the embedded terminal, built once and re-used for every
+	// attach and hop. Re-use keeps the reply-pump count fixed; see
+	// vtView.pumpReplies for why views are never closed.
+	attachView *vtView
+	pal        paletteState
+	prof       profState
+	confirm    confirmState
+	form       huh.Model // *huh.Form when overlayForm
+	fInputs    formInputs
+	editing    bool // form is editing (e) vs new (n)
 
 	quitting  bool
 	closeOnce sync.Once

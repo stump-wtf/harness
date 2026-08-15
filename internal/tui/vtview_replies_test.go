@@ -14,6 +14,7 @@ package tui
 // below is a sequence real agent TUIs (crush, claude) emit at startup.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -52,7 +53,6 @@ func TestVTViewWriteDoesNotBlockOnGuestQuery(t *testing.T) {
 	for _, q := range guestQueries {
 		t.Run(q.name, func(t *testing.T) {
 			v := newVTView(174, 46)
-			defer v.close()
 			withinTimeout(t, 5*time.Second, "vtView.write", func() {
 				v.write([]byte(q.seq))
 			})
@@ -65,7 +65,6 @@ func TestVTViewWriteDoesNotBlockOnGuestQuery(t *testing.T) {
 // has to keep up over many writes, not just unblock once.
 func TestVTViewSurvivesQueryFlood(t *testing.T) {
 	v := newVTView(120, 40)
-	defer v.close()
 	withinTimeout(t, 10*time.Second, "repeated vtView.write", func() {
 		for i := 0; i < 200; i++ {
 			for _, q := range guestQueries {
@@ -81,7 +80,6 @@ func TestVTViewSurvivesQueryFlood(t *testing.T) {
 // on the screen, and must not appear in the rendered output itself.
 func TestVTViewQueryInterleavedWithOutputStillRenders(t *testing.T) {
 	v := newVTView(80, 10)
-	defer v.close()
 	withinTimeout(t, 5*time.Second, "vtView.write", func() {
 		v.write([]byte("BEFORE\x1b[?2026$pAFTER"))
 	})
@@ -109,42 +107,43 @@ func TestPeekCacheRenderDoesNotBlockOnGuestQuery(t *testing.T) {
 	}
 }
 
-// TestVTViewCloseIsIdempotent pins the contract the lifecycle call sites rely
-// on: detach, hop, and the peek replay all close views, and a double close (or
-// a write arriving after close) must not panic.
-func TestVTViewCloseIsIdempotent(t *testing.T) {
-	v := newVTView(40, 10)
-	v.close()
-	v.close()
-	withinTimeout(t, 5*time.Second, "write after close", func() {
-		v.write([]byte("post-close output\x1b[6n"))
+// TestVTViewResetClearsAndKeepsDraining covers the re-use path that replaces
+// closing: a view handed to a different harness must come back blank at the new
+// size, and must still drain queries afterwards.
+func TestVTViewResetClearsAndKeepsDraining(t *testing.T) {
+	v := newVTView(80, 24)
+	v.write([]byte("OLD HARNESS OUTPUT"))
+	withinTimeout(t, 5*time.Second, "vtView.reset", func() { v.reset(120, 30) })
+	if got := v.render(); strings.Contains(got, "OLD HARNESS OUTPUT") {
+		t.Error("reset left the previous harness's output on screen")
+	}
+	if v.cols != 120 || v.rows != 30 {
+		t.Errorf("reset produced %dx%d, want 120x30", v.cols, v.rows)
+	}
+	withinTimeout(t, 5*time.Second, "write after reset", func() {
+		v.write([]byte("\x1b[?2026$pNEW OUTPUT"))
 	})
-	if got := v.render(); got == "" {
-		t.Error("render returned nothing after close; the screen should still be readable")
+	if got := v.render(); !strings.Contains(got, "NEW OUTPUT") {
+		t.Errorf("post-reset output missing: %q", firstLine(got))
 	}
 }
 
-// TestVTViewCloseStopsTheReplyPump guards against leaking a goroutine per view.
-// Emulator.Close closes the pipe, so the parked Read must return an error and
-// the pump must exit — otherwise a session that hops between harnesses, or a
-// dashboard that re-renders the peek pane, drips goroutines for its lifetime.
-func TestVTViewCloseStopsTheReplyPump(t *testing.T) {
-	v := newVTView(40, 10)
-	v.close()
-	// After close the emulator reports EOF rather than parking a reader.
-	done := make(chan error, 1)
-	go func() {
-		buf := make([]byte, 16)
-		_, err := v.term.Read(buf)
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Error("Read returned nil error after close; the pump would spin instead of exiting")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Read still parked after close — the reply pump would leak")
+// TestPeekCacheReusesOneView pins the property that keeps the pump count fixed:
+// repeated renders with changing tails must not build a new view each time. The
+// peek pane misses roughly once a second against a live harness, so a view per
+// miss would be a goroutine per second.
+func TestPeekCacheReusesOneView(t *testing.T) {
+	var pc peekCache
+	pc.render("first tail\r\n", 80, 10)
+	first := pc.view
+	if first == nil {
+		t.Fatal("peekCache did not retain a view")
+	}
+	for i := 0; i < 25; i++ {
+		pc.render(fmt.Sprintf("tail %d\r\n\x1b[6n", i), 80, 10)
+	}
+	if pc.view != first {
+		t.Error("peekCache built a new view on a miss; each one starts another reply pump")
 	}
 }
 
@@ -156,9 +155,8 @@ func firstLine(s string) string {
 	return s
 }
 
-// compile-time assertion that the interface the pump relies on is the one the
-// view actually holds.
+// compile-time assertion that the reader the pump relies on is part of the
+// interface the view actually holds.
 var _ interface {
 	Read([]byte) (int, error)
-	Close() error
 } = vt.Terminal(nil)

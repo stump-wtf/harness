@@ -482,10 +482,6 @@ func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 		if m.attach != nil {
 			closeCmd = func() tea.Msg { _ = m.attach.AttachClose(prev); return nil }
 		}
-		// A hop replaces the view below; retire the outgoing one so its reply
-		// pump doesn't outlive it (hopping repeatedly would otherwise leak a
-		// goroutine per hop).
-		m.att.view.close()
 	}
 	// A read-only Model (e.g. a read-only remote SSH session, ADR-0008) opens
 	// every attach as AttachRO so the daemon drops this client's keystrokes;
@@ -494,7 +490,15 @@ func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 	if m.opts.ReadOnly {
 		mode = protocol.AttachRO
 	}
-	m.att = newAttachState(info.Name, mode, sid, cols, rows)
+	// Re-use the embedded terminal across attaches and hops. A fresh view per
+	// attach would start a reply pump per attach, and those pumps can't be
+	// stopped without racing the emulator's close flag — see vtView.pumpReplies.
+	if m.attachView == nil {
+		m.attachView = newVTView(cols, rows)
+	} else {
+		m.attachView.reset(cols, rows)
+	}
+	m.att = newAttachStateWith(info.Name, mode, sid, m.attachView)
 	if direction != 0 {
 		m.att.impulseHop(direction)
 	}
@@ -517,12 +521,9 @@ func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 // to, so detach quits the program.
 func (m *Model) detach() tea.Cmd {
 	var cmd tea.Cmd
-	if m.att != nil {
-		if m.attach != nil {
-			sid := m.att.sessionID
-			cmd = func() tea.Msg { _ = m.attach.AttachClose(sid); return nil }
-		}
-		m.att.view.close()
+	if m.att != nil && m.attach != nil {
+		sid := m.att.sessionID
+		cmd = func() tea.Msg { _ = m.attach.AttachClose(sid); return nil }
 	}
 	m.att = nil
 	if m.opts.AttachOnly != "" {

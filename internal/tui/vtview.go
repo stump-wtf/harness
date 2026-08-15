@@ -10,7 +10,6 @@ package tui
 
 import (
 	"strings"
-	"sync"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
@@ -26,9 +25,6 @@ type vtView struct {
 	// interface exposes no reader for it, so it has to be reconstructed from
 	// callbacks — see newVTView for why one callback isn't enough.
 	cursorHidden bool
-	// closeOnce guards the reply-pump teardown; close is called from several
-	// unrelated paths (detach, hop, peek replay) and must be idempotent.
-	closeOnce sync.Once
 }
 
 // newVTView creates an embedded terminal of the given size.
@@ -92,6 +88,14 @@ func newVTView(cols, rows int) *vtView {
 // query once per client, and the surplus replies would land in the guest as
 // spurious input.
 //
+// The pump runs for the process's lifetime and is never stopped, matching the
+// daemon's Mux. Emulator.Close would unpark the Read, but Close writes the
+// emulator's `closed` flag while the parked Read is reading it, with no
+// synchronization upstream — a genuine data race that `make race` catches. So
+// views are RE-USED rather than closed (see reset): the peek pane keeps one for
+// the dashboard's lifetime, and the attached view is reset across attaches and
+// hops, which means the number of pumps is fixed rather than growing with use.
+//
 // Governing: ADR-0003 (client-side emulator mirrors the daemon's screen), and
 // the daemon-side precedent in f03e493.
 func (v *vtView) pumpReplies() {
@@ -103,14 +107,20 @@ func (v *vtView) pumpReplies() {
 	}
 }
 
-// close tears down the emulator and, with it, the reply pump. Emulator.Close
-// closes the pipe, so the parked Read returns an error and the goroutine exits;
-// a later write() is a no-op rather than a panic. Safe to call more than once,
-// and required wherever a view is discarded — a hop and a detach both replace
-// or drop the attached view, and the peek pane builds a throwaway view per
-// replay, so leaking one goroutine per view would be a steady drip.
-func (v *vtView) close() {
-	v.closeOnce.Do(func() { _ = v.term.Close() })
+// reset returns the view to a blank screen at the given size so it can be
+// re-used for a different harness (a hop, a re-attach) or a different peek
+// tail. Re-use is what keeps the reply pump count constant — see pumpReplies
+// for why the views can't simply be closed and replaced.
+//
+// RIS clears the screen and restores modes; it is applied before the resize so
+// the emulator lays the fresh grid out at the final dimensions. cursorHidden is
+// reset by hand because RIS clears the screen's cursor to visible without
+// necessarily firing the callbacks that shadow it (the same subtlety newVTView
+// documents).
+func (v *vtView) reset(cols, rows int) {
+	v.write([]byte("\x1bc"))
+	v.resize(cols, rows)
+	v.cursorHidden = false
 }
 
 // resize resizes the emulator (the client viewport changed; smallest-attached-
@@ -220,6 +230,10 @@ type peekCache struct {
 	cols     int
 	rows     int
 	screen   string // last renderNoCursor output
+	// view is built once and re-used for every replay. A fresh view per miss
+	// would start a reply pump per miss, and the peek pane misses roughly once
+	// a second on a live harness — see pumpReplies.
+	view *vtView
 }
 
 // render returns the cached screen for the given tail and dimensions, or
@@ -229,16 +243,19 @@ func (pc *peekCache) render(tail string, cols, rows int) string {
 	if pc.screen != "" && pc.tailHash == h && pc.cols == cols && pc.rows == rows {
 		return pc.screen
 	}
-	pv := newVTView(cols, rows)
-	// The replay view is thrown away at the end of this call; close it so its
-	// reply pump doesn't outlive it. The tail is guest output and can carry the
-	// same queries the attached stream does, so this path needs the drain too.
-	defer pv.close()
-	pv.write([]byte(tail))
+	// The tail is guest output and carries the same queries the attached stream
+	// does, so this path needs the drain too — hence a real vtView rather than
+	// a bare emulator.
+	if pc.view == nil {
+		pc.view = newVTView(cols, rows)
+	} else {
+		pc.view.reset(cols, rows)
+	}
+	pc.view.write([]byte(tail))
 	pc.tailHash = h
 	pc.cols = cols
 	pc.rows = rows
-	pc.screen = pv.renderNoCursor()
+	pc.screen = pc.view.renderNoCursor()
 	return pc.screen
 }
 
