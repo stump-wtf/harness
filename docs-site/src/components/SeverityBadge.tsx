@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {ReactElement} from 'react';
 import clsx from 'clsx';
 
 export type SeverityType = 'critical' | 'high' | 'medium' | 'low' | 'info' | 'unknown';
@@ -17,7 +17,7 @@ const severityEmojis: Record<string, string> = {
   'unknown': '\u26aa',
 };
 
-export default function SeverityBadge({severity, className}: SeverityBadgeProps): JSX.Element {
+export default function SeverityBadge({severity, className}: SeverityBadgeProps): ReactElement {
   const normalizedSeverity = severity.toLowerCase() as SeverityType;
   const emoji = severityEmojis[normalizedSeverity] || severityEmojis['unknown'];
 
