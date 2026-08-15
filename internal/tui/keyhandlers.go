@@ -474,6 +474,7 @@ func (m *Model) hopTo(direction int) tea.Cmd {
 // closes the prior session, increments the session id, and kicks the spring.
 func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 	cols, rows := m.attachViewport()
+	reportCols, reportRows := m.attachReportSize()
 	sid := sessionBase
 	var closeCmd tea.Cmd
 	if m.att != nil {
@@ -507,8 +508,11 @@ func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 	openCmd := tea.Cmd(nil)
 	if m.attach != nil {
 		name := info.Name
+		// Report the real viewport, or 0×0 when unknown — never the 80×24
+		// display fallback (#183): a client that cannot detect its size must
+		// not define geometry for everyone else attached to this harness.
 		openCmd = func() tea.Msg {
-			_ = m.attach.AttachOpen(sid, name, cols, rows, mode)
+			_ = m.attach.AttachOpen(sid, name, reportCols, reportRows, mode)
 			return nil
 		}
 	}

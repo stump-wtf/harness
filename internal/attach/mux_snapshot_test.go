@@ -116,3 +116,34 @@ func TestRegistrySnapshotForDoesNotCreate(t *testing.T) {
 		t.Error("createdAt is in the future")
 	}
 }
+
+// TestUnknownSizeSessionDoesNotClamp pins the daemon half of #183's third
+// defect: a session that attached with 0×0 (client could not detect its size)
+// never participates in smallest-attached-wins, so it cannot clamp the guest
+// for the clients that do know their viewport.
+func TestUnknownSizeSessionDoesNotClamp(t *testing.T) {
+	m := newMux("h", 100, nil, nil)
+	blind := m.Attach(1, protocol.AttachRW, 0, 0, discard)
+	sighted := m.Attach(2, protocol.AttachRW, 200, 49, discard)
+
+	if c, r := m.Size(); c != 200 || r != 49 {
+		t.Fatalf("viewport = %dx%d, want 200x49 — the blind session must not clamp it", c, r)
+	}
+	snap := m.Snapshot()
+	if snap.Sessions[0].SetsMin {
+		t.Error("the 0x0 session must not be flagged as minimum-setter")
+	}
+	if !snap.Sessions[1].SetsMin {
+		t.Error("the only sized session is the minimum-setter")
+	}
+
+	// The blind client learns its size: it joins the policy without evicting
+	// anyone, and the minimum only changes if the new size is actually smaller.
+	blind.Resize(120, 30)
+	if c, r := m.Size(); c != 120 || r != 30 {
+		t.Fatalf("viewport after the blind client learned 120x30 = %dx%d, want 120x30", c, r)
+	}
+
+	blind.Detach()
+	sighted.Detach()
+}

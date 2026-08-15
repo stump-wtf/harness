@@ -49,3 +49,23 @@ func TestPrintAttachSessionsEmptyIsSilent(t *testing.T) {
 		t.Errorf("no sessions should print nothing, got:\n%s", buf.String())
 	}
 }
+
+// TestPrintAttachSessionsUnknownViewport: a 0×0 session (client could not
+// detect its size, #183) renders as "unknown" rather than a bogus "0x0".
+func TestPrintAttachSessionsUnknownViewport(t *testing.T) {
+	var buf bytes.Buffer
+	err := printAttachSessions(&buf, []protocol.AttachSessionInfo{
+		{ID: 2, Mode: "rw", Cols: 0, Rows: 0, CreatedAt: "2026-08-15T07:00:00Z"},
+		{ID: 1, Mode: "rw", Cols: 200, Rows: 49, CreatedAt: "2026-08-15T07:00:00Z", SetsMin: true},
+	})
+	if err != nil {
+		t.Fatalf("print: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "unknown") {
+		t.Errorf("0x0 session should render as unknown:\n%s", out)
+	}
+	if strings.Contains(out, "0x0") {
+		t.Errorf("0x0 is not a viewport:\n%s", out)
+	}
+}

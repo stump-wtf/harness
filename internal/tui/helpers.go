@@ -63,7 +63,11 @@ func (m *Model) maybeStartSpinner() tea.Cmd {
 }
 
 // attachViewport returns the cols/rows available to the embedded terminal after
-// subtracting the ribbon chrome.
+// subtracting the ribbon chrome. When the window size is unknown it falls back
+// to 80×24 — a display default for the LOCAL view only. attachReportSize is
+// what must not fall back: reporting 80×24 to the daemon when the size is
+// unknown is how one blind client clamps every other client's guest PTY
+// (#183).
 func (m *Model) attachViewport() (int, int) {
 	cols := m.w
 	if cols < 1 {
@@ -74,6 +78,20 @@ func (m *Model) attachViewport() (int, int) {
 		rows = 24
 	}
 	return cols, rows
+}
+
+// attachReportSize returns the viewport to report to the daemon on attach:
+// the real window size, or 0×0 when it is genuinely unknown (#183). The daemon
+// already treats a non-positive session size as "does not participate in
+// smallest-attached-wins", so a blind client follows the harness's current
+// geometry instead of defining it for everyone. When a real size arrives later
+// (WindowSizeMsg / probeSizeMsg), AttachResize brings the session into the
+// policy — see the WindowSizeMsg handler.
+func (m *Model) attachReportSize() (int, int) {
+	if m.w < 1 || m.h-ribbonRows < 1 {
+		return 0, 0
+	}
+	return m.w, m.h - ribbonRows
 }
 
 // scrollbackHeight is the number of scrollback content rows that fit in the

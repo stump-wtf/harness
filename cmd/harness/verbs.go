@@ -133,7 +133,12 @@ func printAttachSessions(w io.Writer, sessions []protocol.AttachSessionInfo) err
 	}
 	t := NewTable(w, "SESSION", "MODE", "VIEWPORT", "AGE", "MIN")
 	for _, s := range sessions {
-		size := fmt.Sprintf("%dx%d", s.Cols, s.Rows)
+		// 0×0 is "unknown", not a real viewport (#183): a client that could
+		// not detect its size attaches without one so it cannot clamp anyone.
+		size := "unknown"
+		if s.Cols > 0 && s.Rows > 0 {
+			size = fmt.Sprintf("%dx%d", s.Cols, s.Rows)
+		}
 		age := "unknown"
 		if created, err := time.Parse(time.RFC3339, s.CreatedAt); err == nil {
 			age = time.Since(created).Round(time.Second).String()
