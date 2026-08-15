@@ -17,6 +17,7 @@ import (
 
 	"github.com/charmbracelet/x/xpty"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/adapter"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )
 
@@ -174,21 +175,36 @@ func expandArgs(args []string, workdir string) []string {
 
 // execArgv resolves the executable and argv spawn runs: the configured cmd
 // with {workdir}-expanded args, or — for a prompt harness (empty Cmd, ADR-0011
-// spawn-time synthesis) — the argv core.AgentCommand builds from the prompt
-// and the model/auto-accept/max-turns options. Prompt and options are passed
+// spawn-time synthesis) — the argv the adapter registry resolves from the
+// harness's agent key (or crush by default). Prompt and options are passed
 // verbatim: only configured args go through expandArgs's {workdir}
 // substitution, never those — a prompt legitimately containing "{workdir}" is
 // instruction text, not a placeholder. The cmd path ignores Model, AutoAccept,
 // and MaxTurns entirely (config validation forbids the combinations; a wire
 // def carrying them spawns on its configured argv alone).
 func execArgv(h core.Harness, workdir string) (string, []string) {
+	return execArgvWithRegistry(h, workdir, adapter.NewRegistryWithDefaults())
+}
+
+// execArgvWithRegistry is the adapter-aware version of execArgv. For a prompt
+// harness it resolves the adapter via the registry and delegates to its
+// PromptCommand, so each agent CLI gets its own flags instead of everything
+// being hardcoded to crush. For a cmd harness it bypasses the registry
+// entirely and returns the configured cmd/args with {workdir} expansion.
+// Governing: issue #74 (adapter-aware prompt synthesis).
+func execArgvWithRegistry(h core.Harness, workdir string, reg *adapter.Registry) (string, []string) {
 	if h.Cmd == "" && h.Prompt != "" {
-		return core.AgentCommand(h.Prompt, core.AgentOpts{
+		opts := core.AgentOpts{
 			Model:      h.Model,
 			AutoAccept: h.AutoAccept,
 			MaxTurns:   h.MaxTurns,
 			Quiet:      h.Quiet,
-		})
+		}
+		a := reg.Resolve(h)
+		if a == nil {
+			return core.AgentCommand(h.Prompt, opts)
+		}
+		return a.PromptCommand(h.Prompt, opts)
 	}
 	return h.Cmd, expandArgs(h.Args, workdir)
 }

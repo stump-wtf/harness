@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/adapter"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )
 
@@ -305,5 +306,98 @@ func TestEnsureTermEnvPreservesExisting(t *testing.T) {
 	}
 	if v, _ := lookupEnv(got, "COLORTERM"); v != "yes" {
 		t.Errorf("existing COLORTERM should win, got %q", v)
+	}
+}
+
+// --- Adapter-aware prompt synthesis tests (issue #74) ---
+
+func TestExecArgvWithRegistryClaudeCode(t *testing.T) {
+	reg := adapter.NewRegistryWithDefaults()
+	h := core.Harness{
+		Name:   "test-agent",
+		Prompt: "review the code",
+		Agent:  "claude-code",
+		Quiet:  true,
+	}
+	cmd, args := execArgvWithRegistry(h, "/home/x", reg)
+	if cmd != "claude" {
+		t.Fatalf("cmd = %q, want claude (from claude-code adapter)", cmd)
+	}
+	if args[len(args)-1] != "review the code" {
+		t.Fatalf("last arg = %q, want prompt as final element", args[len(args)-1])
+	}
+}
+
+func TestExecArgvWithRegistryDefaultCrush(t *testing.T) {
+	reg := adapter.NewRegistryWithDefaults()
+	h := core.Harness{
+		Name:   "test-default",
+		Prompt: "check deployments",
+		Quiet:  true,
+	}
+	cmd, args := execArgvWithRegistry(h, "/home/x", reg)
+	if cmd != "crush" {
+		t.Fatalf("cmd = %q, want crush (default for prompt harness without agent)", cmd)
+	}
+	want := []string{"run", "--quiet", "check deployments"}
+	if !slices.Equal(args, want) {
+		t.Fatalf("args = %q, want %q", args, want)
+	}
+}
+
+func TestExecArgvWithRegistryCmdIgnoresRegistry(t *testing.T) {
+	reg := adapter.NewRegistryWithDefaults()
+	h := core.Harness{
+		Name:  "my-svc",
+		Cmd:   "node",
+		Args:  []string{"server.js"},
+		Agent: "claude-code",
+	}
+	cmd, args := execArgvWithRegistry(h, "/home/x", reg)
+	if cmd != "node" {
+		t.Fatalf("cmd = %q, want node", cmd)
+	}
+	if !slices.Equal(args, []string{"server.js"}) {
+		t.Fatalf("args = %q, want [server.js]", args)
+	}
+}
+
+func TestExecArgvWithRegistryCodex(t *testing.T) {
+	reg := adapter.NewRegistryWithDefaults()
+	h := core.Harness{
+		Name:   "codex-agent",
+		Prompt: "write tests",
+		Agent:  "codex",
+		Quiet:  true,
+	}
+	cmd, args := execArgvWithRegistry(h, "/home/x", reg)
+	if cmd != "codex" {
+		t.Fatalf("cmd = %q, want codex", cmd)
+	}
+	if args[0] != "exec" {
+		t.Fatalf("first arg = %q, want exec subcommand", args[0])
+	}
+	if args[len(args)-1] != "write tests" {
+		t.Fatalf("last arg = %q, want prompt as final element", args[len(args)-1])
+	}
+}
+
+func TestExecArgvWithRegistryExplicitOverridesInference(t *testing.T) {
+	reg := adapter.NewRegistryWithDefaults()
+	// A prompt harness with Agent set should use that adapter even though
+	// inference would fall to generic (no Cmd to infer from).
+	h := core.Harness{
+		Name:   "explicit",
+		Prompt: "analyze this",
+		Agent:  "crush",
+		Quiet:  true,
+	}
+	cmd, args := execArgvWithRegistry(h, "/home/x", reg)
+	if cmd != "crush" {
+		t.Fatalf("cmd = %q, want crush", cmd)
+	}
+	want := []string{"run", "--quiet", "analyze this"}
+	if !slices.Equal(args, want) {
+		t.Fatalf("args = %q, want %q", args, want)
 	}
 }

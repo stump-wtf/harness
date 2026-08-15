@@ -16,6 +16,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
@@ -47,6 +48,13 @@ type Adapter interface {
 	// TailAdapter returns the agent-trace tail.Adapter used to enumerate and
 	// parse sessions, or nil when the adapter has no native trajectory (Generic).
 	TailAdapter() tail.Adapter
+
+	// PromptCommand returns the executable and argv for running a prompt
+	// one-shot with this adapter's CLI. Each adapter maps the generic
+	// AgentOpts onto its own flags (e.g. crush uses --yolo, claude uses
+	// --dangerously-skip-permissions). The prompt is always the final argv
+	// element. Governing: issue #74 (adapter-aware prompt synthesis).
+	PromptCommand(prompt string, opts core.AgentOpts) (cmd string, args []string)
 }
 
 // Registry maps adapter names to Adapter implementations. The daemon holds one
@@ -146,6 +154,21 @@ func (a *ClaudeCode) TrajectoryDir(_ string) string {
 
 func (a *ClaudeCode) TailAdapter() tail.Adapter { return &tail.ClaudeCodeAdapter{} }
 
+func (a *ClaudeCode) PromptCommand(prompt string, opts core.AgentOpts) (string, []string) {
+	args := []string{"-p"}
+	if opts.AutoAccept {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
+	}
+	if opts.MaxTurns > 0 {
+		args = append(args, "--max-turns", strconv.Itoa(opts.MaxTurns))
+	}
+	args = append(args, "--output-format", "stream-json")
+	return "claude", append(args, prompt)
+}
+
 // Crush is the adapter for Crush.
 type Crush struct{}
 
@@ -160,6 +183,23 @@ func (a *Crush) TrajectoryDir(_ string) string {
 }
 
 func (a *Crush) TailAdapter() tail.Adapter { return &tail.CrushAdapter{} }
+
+func (a *Crush) PromptCommand(prompt string, opts core.AgentOpts) (string, []string) {
+	args := []string{"run"}
+	if opts.Quiet {
+		args = append(args, "--quiet")
+	}
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
+	}
+	if opts.AutoAccept {
+		args = append(args, "--yolo")
+	}
+	if opts.MaxTurns > 0 {
+		args = append(args, "--max-turns", strconv.Itoa(opts.MaxTurns))
+	}
+	return "crush", append(args, prompt)
+}
 
 // Codex is the adapter for Codex.
 type Codex struct{}
@@ -176,6 +216,17 @@ func (a *Codex) TrajectoryDir(_ string) string {
 
 func (a *Codex) TailAdapter() tail.Adapter { return &tail.CodexAdapter{} }
 
+func (a *Codex) PromptCommand(prompt string, opts core.AgentOpts) (string, []string) {
+	args := []string{"exec"}
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
+	}
+	if opts.AutoAccept {
+		args = append(args, "--full-auto")
+	}
+	return "codex", append(args, prompt)
+}
+
 // Generic is the adapter for unrecognized tools. It reports no trajectory —
 // the daemon falls back to the SPEC-0002 scrollback ring (ADR-0007). Per
 // SPEC-0006 REQ "Adapter Selection", this is a real adapter, not an error.
@@ -186,6 +237,10 @@ func (a *Generic) Name() string { return "generic" }
 func (a *Generic) TrajectoryDir(_ string) string { return "" }
 
 func (a *Generic) TailAdapter() tail.Adapter { return nil }
+
+func (a *Generic) PromptCommand(prompt string, opts core.AgentOpts) (string, []string) {
+	return (&Crush{}).PromptCommand(prompt, opts)
+}
 
 // DefaultInference returns the default cmd→adapter inference table used by
 // NewRegistryWithDefaults. This is the zero-config path described in SPEC-0006
