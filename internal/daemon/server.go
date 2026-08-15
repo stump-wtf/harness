@@ -22,10 +22,25 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
 )
 
-// pingInterval is how often the daemon PINGs each connection so a dead client's
-// write fails and its sessions get reaped (SPEC-0002 REQ "Backpressure
+// defaultPingInterval is how often the daemon PINGs each connection so a dead
+// client's write fails and its sessions get reaped (SPEC-0002 REQ "Backpressure
 // Isolation": "PING/PONG heartbeats SHALL detect dead clients").
-const pingInterval = 15 * time.Second
+const defaultPingInterval = 15 * time.Second
+
+// defaultLivenessTimeout is how long a connection may go without a single
+// inbound frame before the daemon reaps it (#183). A client that is alive but
+// no longer reading its socket never fails the daemon's writes — the kernel
+// receive buffer swallows the PINGs — so it holds its attach sessions forever
+// and, because the resize policy takes the minimum viewport across sessions
+// (ADR-0003), clamps the guest PTY for every other client until the daemon
+// restarts. Silence is the only signal that distinguishes it from a live one.
+//
+// Four ping intervals is three consecutive unanswered PINGs plus a full
+// interval of slack. A healthy client answers within one round trip on a Unix
+// socket, so the margin covers a GC pause, a long repaint, or a stalled SSH
+// hop without ever reaping a working session, while still freeing a clamped
+// PTY inside a minute rather than never.
+const defaultLivenessTimeout = 4 * defaultPingInterval
 
 // Server serves the protocol on a Unix socket.
 type Server struct {
@@ -35,6 +50,13 @@ type Server struct {
 	configPath string
 	version    string
 	started    time.Time
+
+	// pingInterval / livenessTimeout are the heartbeat knobs, seeded from the
+	// defaults above and fixed for the Server's lifetime. They are fields
+	// rather than package constants so tests can drive the reaper in
+	// milliseconds instead of minutes; nothing in production sets them.
+	pingInterval    time.Duration
+	livenessTimeout time.Duration
 
 	ln   net.Listener
 	done chan struct{}
@@ -60,20 +82,36 @@ type Options struct {
 	SocketPath string
 	ConfigPath string // for the reload op
 	Version    string
+
+	// PingInterval and LivenessTimeout override the heartbeat defaults. Zero
+	// (the production case) means defaultPingInterval / defaultLivenessTimeout;
+	// tests shrink them so the reaper runs in milliseconds.
+	PingInterval    time.Duration
+	LivenessTimeout time.Duration
 }
 
 // NewServer builds a Server. It does not listen until Listen is called.
 func NewServer(opts Options) *Server {
+	ping := opts.PingInterval
+	if ping <= 0 {
+		ping = defaultPingInterval
+	}
+	liveness := opts.LivenessTimeout
+	if liveness <= 0 {
+		liveness = defaultLivenessTimeout
+	}
 	return &Server{
-		mgr:        opts.Manager,
-		reg:        opts.Registry,
-		socketPath: opts.SocketPath,
-		configPath: opts.ConfigPath,
-		version:    opts.Version,
-		started:    time.Now(),
-		done:       make(chan struct{}),
-		subs:       make(map[chan protocol.EventMsg]struct{}),
-		conns:      make(map[*conn]struct{}),
+		mgr:             opts.Manager,
+		reg:             opts.Registry,
+		socketPath:      opts.SocketPath,
+		configPath:      opts.ConfigPath,
+		version:         opts.Version,
+		started:         time.Now(),
+		pingInterval:    ping,
+		livenessTimeout: liveness,
+		done:            make(chan struct{}),
+		subs:            make(map[chan protocol.EventMsg]struct{}),
+		conns:           make(map[*conn]struct{}),
 	}
 }
 
