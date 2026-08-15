@@ -7,7 +7,8 @@
 #   make run          # build and launch the TUI against the local daemon
 #   make daemon       # run the daemon in the foreground
 #   make tidy         # go mod tidy + gofumpt
-#   make check        # just the CI gates (fmt, vet, build, test, race)
+#   make lint         # static checks only (fmt, vet, go.mod/go.sum tidiness)
+#   make check        # just the CI gates (lint, test, race)
 #
 # Override the binary path / version via:
 #   make VERSION=v0.1.0
@@ -27,7 +28,7 @@ LDFLAGS   := -X $(PKG)/internal/buildinfo.Version=$(VERSION)
 GOFLAGS   := -trimpath -ldflags "$(LDFLAGS)"
 BIN       := harness
 
-.PHONY: all build check lint fmt vet test race tidy clean run daemon install version release-snapshot release-check
+.PHONY: all build check lint fmt vet tidy-check test race tidy clean run daemon install version release-snapshot release-check
 
 # The default "did I break it" loop.
 all: build check
@@ -36,11 +37,11 @@ all: build check
 build:
 	$(GO) build $(GOFLAGS) -o bin/$(BIN) ./cmd/harness
 
-# Full CI gate: formatting, vet, build, tests, and the race detector.
-check: fmt vet test race
+# Full CI gate: the static checks, tests, and the race detector.
+check: lint test race
 
 # Static checks only (the uniform `make lint` entry point).
-lint: fmt vet
+lint: fmt vet tidy-check
 
 fmt:
 	@unformatted=$$(gofmt -l $$(git ls-files '*.go' | grep -v '^vendor/')); \
@@ -50,6 +51,16 @@ fmt:
 
 vet:
 	$(GO) vet ./...
+
+# go.mod / go.sum must already be tidy. Without this gate a dependency bump
+# leaves the superseded version's `h1:` and `/go.mod` lines behind in go.sum
+# (PR #173 shipped two stale charm.land/ssh v0.4.2 lines that way), and the
+# next person to run `make tidy` picks up that churn in an unrelated PR.
+# `-diff` needs Go 1.23+; the module requires 1.25.
+tidy-check:
+	@$(GO) mod tidy -diff || { \
+		echo "go.mod/go.sum are not tidy — run 'make tidy' and commit the result"; exit 1; \
+	}
 
 test:
 	$(GO) test ./...
