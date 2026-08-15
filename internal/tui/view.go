@@ -94,11 +94,41 @@ func paneInner(w int) int {
 	return maxInt(1, w-2)
 }
 
+// paneBorderRows is the vertical cost of a pane's rounded Box border. Panes
+// are handed their CONTENT budget by viewDashboard and render content + this
+// many border rows; the borders are exactly what bodyHeight()'s
+// headerRows/footerRows over-reservation pays for, so a pane must always pad
+// out to content+paneBorderRows — sparse content included (#180) — and its
+// content must clamp to the budget, because lipgloss pads up but never
+// truncates down (#179).
+const paneBorderRows = 2
+
 func (m *Model) viewDashboard() string {
 	header := m.viewHeader()
 	footer := m.viewFooter()
 
 	body := m.bodyHeight()
+
+	// Below the split cockpit's floor — header (2) + bordered pane (3:
+	// one content row plus its borders) + footer (1) = 6 rows — no pane layout
+	// can land on exactly m.h, so degrade to a single summary row and pad or
+	// truncate the frame to the window (#179: the alt screen scrolls on any
+	// excess line, which is the failure #144 banned).
+	if m.h < 6 {
+		parts := []string{header}
+		if m.banner != "" {
+			parts = append(parts, m.theme.Banner().Render("⚠ "+m.banner))
+		}
+		parts = append(parts,
+			m.theme.Faint().Render(fmt.Sprintf("%d harnesses · terminal too short for the split view", len(m.visible()))),
+			footer)
+		lines := strings.Split(strings.Join(parts, "\n"), "\n")
+		for len(lines) < m.h {
+			lines = append(lines, "")
+		}
+		return strings.Join(lines[:m.h], "\n")
+	}
+
 	listW := m.w * 2 / 5
 	if listW < 24 {
 		listW = min(m.w, 24)
@@ -108,6 +138,10 @@ func (m *Model) viewDashboard() string {
 		peekW = 1
 	}
 
+	// The panes receive `body` as their CONTENT budget and render body+2 rows
+	// total (see viewList/viewPeek): the +2 of borders is exactly the
+	// header/footer over-reservation in bodyHeight(), so sparse content must
+	// still pad out to it or the frame lands short of m.h (#180).
 	list := m.viewList(listW, body)
 	peek := m.viewPeek(peekW, body)
 	cols := lipgloss.JoinHorizontal(lipgloss.Top, list, " ", peek)
@@ -159,9 +193,11 @@ func (m *Model) viewList(w, h int) string {
 	lines := []string{title, ""}
 
 	if len(v) == 0 {
+		// The empty state flows through the same clamps below: its multi-line
+		// text used to bypass them, wrap at narrow pane widths, and overflow
+		// the frame (#179's dashboard-empty case).
 		empty := emptyStateText(profileName(m.profiles, m.showAll))
-		lines = append(lines, m.theme.Faint().Render(empty))
-		return m.theme.Box().Width(paneInner(w)).Height(h).Render(strings.Join(lines, "\n"))
+		lines = append(lines, strings.Split(m.theme.Faint().Render(empty), "\n")...)
 	}
 
 	// Viewport: render only the window [listOffset..] that fits within the
@@ -245,7 +281,17 @@ func (m *Model) viewList(w, h int) string {
 	if len(lines) > maxContent {
 		lines = lines[:maxContent]
 	}
-	return m.theme.Box().Width(paneInner(w)).Height(h).Render(strings.Join(lines, "\n"))
+	// Clamp to box WIDTH too: a row wider than the pane interior wraps inside
+	// the box, and every wrapped row is a frame row the height clamp above
+	// never counted — the pane outgrows its budget and scrolls the window
+	// (#179, exposed at narrow widths by the {60,8} matrix case).
+	inner := paneInner(w)
+	for i, ln := range lines {
+		if lipgloss.Width(ln) > inner {
+			lines[i] = ansi.Truncate(ln, inner, "")
+		}
+	}
+	return m.theme.Box().Width(w).Height(h + paneBorderRows).Render(strings.Join(lines, "\n"))
 }
 
 // renderRow renders one harness row. The colored glyph leads; name, state label,
@@ -287,7 +333,7 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool, w int) string {
 func (m *Model) viewPeek(w, h int) string {
 	sel, ok := m.selectedHarness()
 	if !ok {
-		return m.theme.Box().Width(paneInner(w)).Height(h).Render(m.theme.Faint().Render("no selection"))
+		return m.theme.Box().Width(w).Height(h + paneBorderRows).Render(m.theme.Faint().Render("no selection"))
 	}
 	head := m.theme.Header().Render(sel.Name) + " " +
 		m.theme.Faint().Render("live preview · read-only")
@@ -341,8 +387,24 @@ func (m *Model) viewPeek(w, h int) string {
 		tailLines = tailLines[len(tailLines)-maxLines:]
 	}
 
-	content := head + "\n\n" + strings.Join(tailLines, "\n") + "\n" + strings.Join(summary, "\n")
-	return m.theme.Box().Width(paneInner(w)).Height(h).Render(content)
+	// Content assembly is height-clamped from the bottom: the summary block
+	// is fixed-length, and on a short body budget (#179) lipgloss would
+	// otherwise happily render it all and push the frame past m.h. The head
+	// and the live tail win; the summary gives way first.
+	lines := []string{head, ""}
+	lines = append(lines, tailLines...)
+	lines = append(lines, summary...)
+	if len(lines) > h {
+		lines = lines[:h]
+	}
+	// And width-clamped: a wrapped line is a hidden extra row (see viewList).
+	inner := paneInner(w)
+	for i, ln := range lines {
+		if lipgloss.Width(ln) > inner {
+			lines[i] = ansi.Truncate(ln, inner, "")
+		}
+	}
+	return m.theme.Box().Width(w).Height(h + paneBorderRows).Render(strings.Join(lines, "\n"))
 }
 
 // viewFooter is the key bar (SPEC-0001: `?` expands to full help).
@@ -561,6 +623,25 @@ func (m *Model) overlayBox(title, body string) string {
 			style = style.Width(maxW)
 		}
 		style = style.MaxWidth(m.w)
+	}
+	// Nor may it exceed the terminal HEIGHT (#179): the box renders title +
+	// blank + body + borders + padding, and lipgloss pads up but never
+	// truncates down, so a long body (the palette's ten rows, the full help)
+	// scrolls the alt screen in a short window. Give the body a line budget —
+	// title, blank, and the 4 rows of border+padding come off the top — and
+	// drop body lines from the bottom to fit. A too-short window keeps the
+	// title and as much body as fits, which is all it can honestly show.
+	if m.h > 0 {
+		if budget := m.h - 4; budget >= 0 {
+			lines := strings.Split(body, "\n")
+			if len(lines) > budget {
+				lines = lines[:budget]
+				if budget > 0 {
+					lines[budget-1] += " …"
+				}
+			}
+			inner = m.theme.Header().Render(title) + "\n\n" + strings.Join(lines, "\n")
+		}
 	}
 	return style.Render(inner)
 }

@@ -170,14 +170,17 @@ func journeys() []journey {
 	}
 }
 
-var sizes = [][2]int{{200, 50}, {145, 42}, {120, 40}, {100, 30}, {80, 24}}
+// The matrix runs down through the dashboard's pane floor (#179): {60, 8} is
+// below the height where the old guard matrices stopped (16), which is why
+// the â¤ 12-row overflow was never caught — the shortest case could not see it.
+var sizes = [][2]int{{200, 50}, {145, 42}, {120, 40}, {100, 30}, {80, 24}, {80, 12}, {80, 10}, {60, 8}}
 
 // TestVisualJourneysFit is the broad deterministic visual guard: every screen,
-// at every size, must render within the viewport — no line wider than the
+// at every size, must render within the viewport â no line wider than the
 // terminal (which wraps + scrolls), and no more rows than the terminal (checked
 // both as a line count and via x/vt: the cursor must stay on-grid). This is the
-// same View()→x/vt approach as TestAttachedVisualNoScroll, applied across the
-// whole UI so a regression in any screen's sizing is caught deterministically —
+// same View()âx/vt approach as TestAttachedVisualNoScroll, applied across the
+// whole UI so a regression in any screen's sizing is caught deterministically â
 // no PTY, no daemon, no timing.
 func TestVisualJourneysFit(t *testing.T) {
 	for _, j := range journeys() {
@@ -194,7 +197,7 @@ func TestVisualJourneysFit(t *testing.T) {
 				}
 			}
 
-			// Height: every screen must fit — including the new-harness form,
+			// Height: every screen must fit â including the new-harness form,
 			// which scrolls within its overlay on short terminals (issue #25).
 			if len(lines) > h {
 				t.Errorf("%s %dx%d: %d rows exceed terminal height %d", j.name, w, h, len(lines), h)
@@ -208,7 +211,7 @@ func TestVisualJourneysFit(t *testing.T) {
 
 // TestNewFormFitsShortTerminals is the direct guard for issue #25: the Huh
 // new-harness form is intrinsically ~34 rows, but bounded to the overlay
-// viewport it must fit (and scroll internally) at any terminal size — never
+// viewport it must fit (and scroll internally) at any terminal size â never
 // overflow and scroll the whole screen. Covers editing (pre-filled) too.
 func TestNewFormFitsShortTerminals(t *testing.T) {
 	for _, editing := range []bool{false, true} {
@@ -232,7 +235,7 @@ func TestNewFormFitsShortTerminals(t *testing.T) {
 
 // TestDashboardViewNeverExceedsHeight is the direct invariant for issue #144:
 // View() must return at most m.h lines for every dashboard state. This is the
-// whole ticket — assert it directly across a matrix of harness counts,
+// whole ticket â assert it directly across a matrix of harness counts,
 // terminal sizes, chrome combinations, and summary field variations.
 func TestDashboardViewNeverExceedsHeight(t *testing.T) {
 	harnessCounts := []int{1, 10, 57, 200}
