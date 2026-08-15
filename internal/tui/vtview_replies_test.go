@@ -128,6 +128,36 @@ func TestVTViewResetClearsAndKeepsDraining(t *testing.T) {
 	}
 }
 
+// TestVTViewResetRestoresCursorAndPrimaryScreen pins the hop scenario reset()
+// exists for: the previous harness left the emulator on the alt screen with its
+// cursor hidden, and the view is re-used (same size, so resize is a no-op and
+// RIS is the only thing that runs) for the next harness. RIS must return to the
+// primary screen and the cursor-hidden shadow must be cleared, or the next
+// harness inherits a permanently hidden cursor and an alt screen its own
+// ?1049h would silently no-op on.
+func TestVTViewResetRestoresCursorAndPrimaryScreen(t *testing.T) {
+	v := newVTView(80, 24)
+	v.write([]byte("\x1b[?1049h"))
+	v.write([]byte("\x1b[?25l"))
+	v.write([]byte("ALT SCREEN CONTENT"))
+	if !v.term.IsAltScreen() {
+		t.Fatal("setup failed: guest did not enter the alt screen")
+	}
+	if !v.cursorHidden {
+		t.Fatal("setup failed: guest did not hide the cursor")
+	}
+	withinTimeout(t, 5*time.Second, "vtView.reset", func() { v.reset(80, 24) })
+	if v.term.IsAltScreen() {
+		t.Error("reset left the emulator on the alt screen; the next harness inherits hidden primary state")
+	}
+	if v.cursorHidden {
+		t.Error("reset left the view's cursor-hidden shadow set; the next harness would render no cursor")
+	}
+	if got := v.render(); strings.Contains(got, "ALT SCREEN CONTENT") {
+		t.Error("reset left the previous harness's alt-screen content visible")
+	}
+}
+
 // TestPeekCacheReusesOneView pins the property that keeps the pump count fixed:
 // repeated renders with changing tails must not build a new view each time. The
 // peek pane misses roughly once a second against a live harness, so a view per
