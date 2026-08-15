@@ -10,6 +10,7 @@ package tui
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
@@ -25,6 +26,9 @@ type vtView struct {
 	// interface exposes no reader for it, so it has to be reconstructed from
 	// callbacks — see newVTView for why one callback isn't enough.
 	cursorHidden bool
+	// closeOnce guards the reply-pump teardown; close is called from several
+	// unrelated paths (detach, hop, peek replay) and must be idempotent.
+	closeOnce sync.Once
 }
 
 // newVTView creates an embedded terminal of the given size.
@@ -60,7 +64,53 @@ func newVTView(cols, rows int) *vtView {
 			}
 		},
 	})
+	go v.pumpReplies()
 	return v
+}
+
+// pumpReplies drains the emulator's reply pipe for the view's lifetime.
+//
+// Several CSI handlers (DECRQM mode reports, cursor position reports, device
+// attributes) synthesize a reply and write it into an internal io.Pipe,
+// expecting the caller to drain the paired reader. That pipe is unbuffered, so
+// the write blocks until something reads it — and write() is called from
+// Update, on the attachDataMsg branch. Bubble Tea runs Update on a single event
+// loop, so blocking there wedges the whole program: no keystrokes, no Ctrl-C,
+// and no terminal-capability handshake, with the last frame still on screen so
+// the session looks alive. The client then can't be detached or even SIGTERMed,
+// and the abandoned process keeps its attach session registered, clamping the
+// harness PTY for every other client (stump.wtf/harness#183).
+//
+// A shell guest never queries the terminal, so this only fires against a real
+// agent TUI — which is every guest that matters here.
+//
+// The replies are DISCARDED rather than forwarded. The daemon's Mux drains its
+// own emulator and forwards the reply to the real PTY (internal/attach/mux.go,
+// pumpReplies), and it is the authoritative responder: it is the end actually
+// attached to the guest's terminal. Every attached client mirrors the same byte
+// stream through its own emulator, so forwarding here too would answer a single
+// query once per client, and the surplus replies would land in the guest as
+// spurious input.
+//
+// Governing: ADR-0003 (client-side emulator mirrors the daemon's screen), and
+// the daemon-side precedent in f03e493.
+func (v *vtView) pumpReplies() {
+	buf := make([]byte, 1024)
+	for {
+		if _, err := v.term.Read(buf); err != nil {
+			return
+		}
+	}
+}
+
+// close tears down the emulator and, with it, the reply pump. Emulator.Close
+// closes the pipe, so the parked Read returns an error and the goroutine exits;
+// a later write() is a no-op rather than a panic. Safe to call more than once,
+// and required wherever a view is discarded — a hop and a detach both replace
+// or drop the attached view, and the peek pane builds a throwaway view per
+// replay, so leaking one goroutine per view would be a steady drip.
+func (v *vtView) close() {
+	v.closeOnce.Do(func() { _ = v.term.Close() })
 }
 
 // resize resizes the emulator (the client viewport changed; smallest-attached-
@@ -180,6 +230,10 @@ func (pc *peekCache) render(tail string, cols, rows int) string {
 		return pc.screen
 	}
 	pv := newVTView(cols, rows)
+	// The replay view is thrown away at the end of this call; close it so its
+	// reply pump doesn't outlive it. The tail is guest output and can carry the
+	// same queries the attached stream does, so this path needs the drain too.
+	defer pv.close()
 	pv.write([]byte(tail))
 	pc.tailHash = h
 	pc.cols = cols

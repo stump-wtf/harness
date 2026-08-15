@@ -482,6 +482,10 @@ func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 		if m.attach != nil {
 			closeCmd = func() tea.Msg { _ = m.attach.AttachClose(prev); return nil }
 		}
+		// A hop replaces the view below; retire the outgoing one so its reply
+		// pump doesn't outlive it (hopping repeatedly would otherwise leak a
+		// goroutine per hop).
+		m.att.view.close()
 	}
 	// A read-only Model (e.g. a read-only remote SSH session, ADR-0008) opens
 	// every attach as AttachRO so the daemon drops this client's keystrokes;
@@ -513,9 +517,12 @@ func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 // to, so detach quits the program.
 func (m *Model) detach() tea.Cmd {
 	var cmd tea.Cmd
-	if m.att != nil && m.attach != nil {
-		sid := m.att.sessionID
-		cmd = func() tea.Msg { _ = m.attach.AttachClose(sid); return nil }
+	if m.att != nil {
+		if m.attach != nil {
+			sid := m.att.sessionID
+			cmd = func() tea.Msg { _ = m.attach.AttachClose(sid); return nil }
+		}
+		m.att.view.close()
 	}
 	m.att = nil
 	if m.opts.AttachOnly != "" {
