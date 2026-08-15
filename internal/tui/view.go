@@ -341,13 +341,14 @@ func (m *Model) viewPeek(w, h int) string {
 	if !ok {
 		return m.theme.Box().Width(w).Height(h + paneBorderRows).Render(m.theme.Faint().Render("no selection"))
 	}
+	tail := m.peek.text
+	peekCols, peekRows := m.peek.cols, m.peek.rows
+	if m.peek.name != sel.Name {
+		tail, peekCols, peekRows = "", 0, 0
+	}
+
 	head := m.theme.Header().Render(sel.Name) + " " +
 		m.theme.Faint().Render("live preview · read-only")
-
-	tail := m.peek.text
-	if m.peek.name != sel.Name {
-		tail = ""
-	}
 
 	// A prompt harness carries no configured cmd — surface the prompt, what
 	// the user actually wrote (ADR-0011 spawn-time synthesis).
@@ -382,15 +383,37 @@ func (m *Model) viewPeek(w, h int) string {
 	// Render the peek through a client-side vt emulator so full-screen TUIs
 	// show their current screen rather than a transcript of every repaint
 	// (issue #147). The emulator replays the raw PTY bytes and we render its
-	// cell grid via renderNoCursor — inert by construction. The emulator is
-	// sized to the pane; the guest's PTY dimensions aren't known here, but a
-	// full-screen guest reflows on resize. Cached via peekCache so the replay
-	// only fires when the tail or dimensions change.
-	peekCols := paneInner(w)
-	screenStr := m.peekCache.render(tail, peekCols, maxLines+1)
+	// cell grid via renderNoCursor — inert by construction. Cached via peekCache
+	// so the replay only fires when the tail or dimensions change.
+	//
+	// The emulator MUST be sized to the guest's authoritative viewport (carried
+	// on the logs reply from the same Mux the attach plane resizes), not to the
+	// pane. A tail drawn for a 156-column guest replayed into a 90-column
+	// emulator wraps every line and drops cursor-addressed content into the
+	// wrong cells — the smooshed peek you get after detaching from a full-window
+	// attach, which is the "not 100%x100%" bug arriving through the dashboard's
+	// seam instead of the attached view's. Sized correctly, the screen
+	// reconstructs faithfully and the pane simply CROPS it (width below, height
+	// via the bottom-anchored slice here): honestly cut beats plausibly wrong.
+	// A daemon with no viewport to report (no Mux, or predating ProtoMinor 6)
+	// leaves us the pane's own geometry — the historical behaviour.
+	knownViewport := peekCols > 0 && peekRows > 0
+	if !knownViewport {
+		peekCols, peekRows = paneInner(w), maxLines+1
+	}
+	screenStr := m.peekCache.render(tail, peekCols, peekRows)
 	tailLines := trimBlankTail(splitLines(screenStr))
 	if len(tailLines) > maxLines {
 		tailLines = tailLines[len(tailLines)-maxLines:]
+	}
+
+	// When the guest doesn't fit the pane, name its viewport in the head so the
+	// missing rows and columns read as a crop rather than a broken render — the
+	// same "colsxrows" describe reports (#183), and the number to size the
+	// window against. Only when the viewport is the guest's: the fallback
+	// geometry is the pane's own, so there is nothing to report.
+	if knownViewport && (peekCols > paneInner(w) || peekRows > maxLines) {
+		head += m.theme.Faint().Render(fmt.Sprintf(" · %d×%d cropped", peekCols, peekRows))
 	}
 
 	// Content assembly is height-clamped from the bottom: the summary block

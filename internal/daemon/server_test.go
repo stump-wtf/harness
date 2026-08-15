@@ -453,3 +453,50 @@ func TestDaemonInfo(t *testing.T) {
 		t.Errorf("harnesses = %d, want 1", di.Harnesses)
 	}
 }
+
+// TestLogsCarriesGuestViewport pins the dashboard half of the "not 100%x100%"
+// bug. The logs tail is raw PTY output: it only reconstructs into a screen at
+// the geometry it was drawn at, so a client that replays it through a terminal
+// emulator (the TUI peek pane) needs that geometry from the daemon rather than
+// substituting its own pane size. Before anyone attaches that is the 80×24 a
+// fresh PTY is born at; once an attach makes a viewport authoritative
+// (smallest-attached-wins, ADR-0003), the logs reply must follow it.
+func TestLogsCarriesGuestViewport(t *testing.T) {
+	td := newTestDaemon(t, sleeperTOML)
+	c := td.dial(t, nil)
+
+	ld, err := c.Logs("sleeper", 10)
+	if err != nil {
+		t.Fatalf("Logs before start: %v", err)
+	}
+	if ld.Cols != 80 || ld.Rows != 24 {
+		t.Errorf("viewport before any attach = %dx%d, want 80x24 (the born size)", ld.Cols, ld.Rows)
+	}
+
+	if _, err := c.Start("sleeper"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	att := td.dial(t, nil)
+	if err := att.AttachOpen(1, "sleeper", 132, 43, protocol.AttachRW); err != nil {
+		t.Fatalf("attach open: %v", err)
+	}
+
+	// The attach frame is processed asynchronously, so poll rather than race it.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		ld, err = c.Logs("sleeper", 10)
+		if err != nil {
+			t.Fatalf("Logs: %v", err)
+		}
+		if ld.Cols == 132 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if ld.Cols != 132 || ld.Rows != 43 {
+		t.Errorf("viewport = %dx%d, want 132x43 (the attached client's)", ld.Cols, ld.Rows)
+	}
+	if ld.Name != "sleeper" {
+		t.Errorf("name = %q, want sleeper", ld.Name)
+	}
+}

@@ -52,7 +52,10 @@ The control plane SHALL mirror the CLI verbs and the TUI 1:1 (ADR-0002):
 `list`, `describe`, `start`, `stop`, `restart`, `logs`, `profiles`,
 `use_profile`, `reload`, and `daemon_info`. Operations SHALL be idempotent
 where that makes sense (double-`start` is a no-op). Errors SHALL come back as
-structured `ERROR` frames with a code and a human message.
+structured `ERROR` frames with a code and a human message. A response that
+carries raw terminal output SHALL also carry the viewport that output was drawn
+at, so a client replaying it through an emulator reconstructs the screen instead
+of reflowing it.
 
 #### Scenario: Idempotent start
 
@@ -64,6 +67,14 @@ structured `ERROR` frames with a code and a human message.
 - **WHEN** a control request references an unknown harness
 - **THEN** the client receives an `ERROR` with a machine code and a human
   message the TUI/CLI can surface verbatim
+
+#### Scenario: Replayable log tail
+
+- **WHEN** a client requests `logs` for a harness whose PTY has an
+  authoritative viewport (ADR-0003 smallest-attached-wins)
+- **THEN** the reply carries that viewport (`cols`/`rows`) alongside the text,
+  so the tail reconstructs at the geometry it was drawn at rather than the
+  client's own
 
 ### Requirement: Event Subscription
 

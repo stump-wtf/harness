@@ -27,7 +27,10 @@ const (
 	// HarnessInfo (agent unattended mode, issue #58) — additive only.
 	// ProtoMinor 5 added AttachViewport and AttachSessions on HarnessInfo
 	// (describe-only attach session visibility, issue #183) — additive only.
-	ProtoMinor = 5
+	// ProtoMinor 6 added Cols/Rows on LogsData so the peek pane replays the
+	// tail at the guest's authoritative viewport instead of the pane's — additive
+	// only.
+	ProtoMinor = 6
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -233,6 +236,18 @@ type ProfileInfo struct {
 type LogsData struct {
 	Name string `json:"name"`
 	Text string `json:"text"`
+	// Cols/Rows are the harness's authoritative (smallest-attached-wins)
+	// viewport — the geometry Text was drawn at. A client that replays the tail
+	// through a terminal emulator (the TUI's peek pane) MUST size that emulator
+	// to these dimensions and crop, not to its own pane: replaying a 156-column
+	// guest into a 90-column emulator wraps every line and lands cursor-
+	// addressed content in the wrong cells, which is the same "not 100%x100%"
+	// class of bug the attach path fixed by negotiating a size (ADR-0003).
+	// Absent (0) when no Mux exists for the harness — nothing has ever teed
+	// output for it — or when the daemon predates ProtoMinor 6; the client then
+	// falls back to its own geometry, the historical behaviour.
+	Cols int `json:"cols,omitempty"`
+	Rows int `json:"rows,omitempty"`
 }
 
 // ProjectUpData is the project_up response payload: the project's harnesses
