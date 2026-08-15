@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
@@ -188,6 +189,11 @@ func (m *Model) onRefresh(msg refreshMsg) (tea.Model, tea.Cmd) {
 	m.harnesses = msg.harnesses
 	m.profiles = msg.profiles
 	m.daemon = msg.daemon
+	// Advisory build-skew banner (#181): recompute on every refresh so a
+	// daemon restart (or a caught-up daemon) clears it on the next poll.
+	if !m.skewDismissed {
+		m.skewNotice = buildinfo.SkewNotice(m.daemon.Version, buildinfo.Version)
+	}
 	if prevName != "" {
 		if i := selectByName(m.visible(), prevName); i >= 0 {
 			m.sel = i

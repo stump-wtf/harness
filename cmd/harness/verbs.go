@@ -268,6 +268,12 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 	}
 	t := NewTable(os.Stdout, "FIELD", "VALUE")
 	t.Row("version", t.accentBold(di.Version))
+	// The client half of the version picture (#181): daemon-info is where
+	// build skew gets diagnosed, so show both sides and flag disagreement.
+	t.Row("client", t.faintPlain(buildinfo.Version))
+	if notice := buildinfo.SkewNotice(di.Version, buildinfo.Version); notice != "" {
+		t.Row("skew", t.amberBold(notice))
+	}
 	t.Row("proto", t.faintPlain(di.ProtoVersion))
 	t.Row("pid", fmt.Sprintf("%d", di.PID))
 	t.Row("uptime", fmt.Sprintf("%ds", di.UptimeSeconds))

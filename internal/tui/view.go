@@ -119,6 +119,9 @@ func (m *Model) viewDashboard() string {
 		if m.banner != "" {
 			parts = append(parts, m.theme.Banner().Render("⚠ "+m.banner))
 		}
+		if m.skewNotice != "" {
+			parts = append(parts, m.theme.Banner().Render("⚠ "+m.skewNotice))
+		}
 		parts = append(parts,
 			m.theme.Faint().Render(fmt.Sprintf("%d harnesses · terminal too short for the split view", len(m.visible()))),
 			footer)
@@ -149,6 +152,9 @@ func (m *Model) viewDashboard() string {
 	parts := []string{header}
 	if m.banner != "" {
 		parts = append(parts, m.theme.Banner().Render("⚠ "+m.banner))
+	}
+	if m.skewNotice != "" {
+		parts = append(parts, m.theme.Banner().Render("⚠ "+m.skewNotice+" (esc dismisses)"))
 	}
 	parts = append(parts, cols)
 	if m.overlay == overlaySearch {

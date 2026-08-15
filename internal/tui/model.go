@@ -131,6 +131,10 @@ type Model struct {
 	daemon    protocol.DaemonInfo
 	banner    string // config parse banner (last-good config, ADR-0006)
 	status    string // transient status line
+	// skewNotice is the client/daemon build-skew banner (#181), recomputed on
+	// every refresh and dismissable with esc — advisory only, never a gate.
+	skewNotice    string
+	skewDismissed bool
 
 	// dashboard
 	sel         int

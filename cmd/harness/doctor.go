@@ -140,7 +140,9 @@ func runDoctor(o verbOpts) int {
 
 	// --- Check 3: version match (client vs daemon) -------------------------
 	// Governing: SPEC-0002 REQ "Handshake And Versioning" (proto major must
-	// match; build version is informational but worth surfacing on skew).
+	// match; build version is informational but worth surfacing on skew,
+	// #181). The shared SkewNotice decides what counts as skew: a dev build
+	// next to any daemon is the normal dev workflow and stays silent.
 	di, err := c.DaemonInfo()
 	switch {
 	case err != nil:
@@ -149,19 +151,21 @@ func runDoctor(o verbOpts) int {
 			level:  cliui.LevelWarn,
 			detail: fmt.Sprintf("couldn't fetch daemon info: %v", err),
 		})
-	case di.Version != buildinfo.Version:
-		rows = append(rows, check{
-			name:   "version",
-			level:  cliui.LevelWarn,
-			detail: fmt.Sprintf("client %s vs daemon %s", buildinfo.Version, di.Version),
-			hint:   "restart the daemon to pick up the new binary",
-		})
 	default:
-		rows = append(rows, check{
-			name:   "version",
-			level:  cliui.LevelSuccess,
-			detail: fmt.Sprintf("client and daemon both %s", buildinfo.Version),
-		})
+		if notice := buildinfo.SkewNotice(di.Version, buildinfo.Version); notice != "" {
+			rows = append(rows, check{
+				name:   "version",
+				level:  cliui.LevelWarn,
+				detail: notice,
+				hint:   "restart the daemon to pick up the new binary",
+			})
+		} else {
+			rows = append(rows, check{
+				name:   "version",
+				level:  cliui.LevelSuccess,
+				detail: fmt.Sprintf("client %s · daemon %s", buildinfo.Version, di.Version),
+			})
+		}
 	}
 
 	// --- Check 4: harnesses in healthy state -------------------------------

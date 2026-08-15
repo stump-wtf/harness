@@ -116,6 +116,9 @@ func (m *Model) bodyHeight() int {
 	if m.banner != "" {
 		h--
 	}
+	if m.skewNotice != "" {
+		h--
+	}
 	if m.status != "" {
 		h--
 	}

@@ -165,6 +165,13 @@ func (m *Model) dispatchDashboardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.quitting = true
 		m.stopReadLoop()
 		return m, tea.Quit
+	case msg.Code == tea.KeyEscape && m.skewNotice != "":
+		// Dismiss the advisory build-skew banner (#181). Esc at the dashboard
+		// is otherwise unbound; overlays intercept their own esc first, so
+		// this only fires on the bare dashboard.
+		m.skewNotice = ""
+		m.skewDismissed = true
+		return m, nil
 	case key.Matches(msg, m.keys.Help):
 		m.overlay = overlayHelp
 		return m, nil
