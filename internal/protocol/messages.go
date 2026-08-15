@@ -25,7 +25,9 @@ const (
 	// (agent model selection, issue #57) — additive only.
 	// ProtoMinor 4 added the auto_accept field on ProjectHarness and
 	// HarnessInfo (agent unattended mode, issue #58) — additive only.
-	ProtoMinor = 4
+	// ProtoMinor 5 added AttachViewport and AttachSessions on HarnessInfo
+	// (describe-only attach session visibility, issue #183) — additive only.
+	ProtoMinor = 5
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -191,6 +193,31 @@ type HarnessInfo struct {
 	// for a global-config harness. Lets `down`/`ps` scope correctly (SPEC-0004
 	// REQ "Project Naming And Namespacing"; ADR-0009).
 	Project string `json:"project,omitempty"`
+	// AttachViewport is the authoritative (smallest-attached-wins) viewport the
+	// guest PTY is sized to, "colsxrows" ("80x24"). Present when a Mux exists
+	// — i.e. someone has attached, or the supervisor teed output — so "why is
+	// my guest 80 columns wide?" is answerable from describe alone (#183).
+	// Describe only; list omits it.
+	AttachViewport string `json:"attach_viewport,omitempty"`
+	// AttachSessions lists every live attach session with the one(s) setting
+	// the minimum flagged, so a stale client clamping the PTY for everyone
+	// else is visible instead of only discoverable with lsof (#183).
+	// Describe only; list omits it.
+	AttachSessions []AttachSessionInfo `json:"attach_sessions,omitempty"`
+}
+
+// AttachSessionInfo is one live attach session on a harness (#183).
+type AttachSessionInfo struct {
+	ID uint32 `json:"id"`
+	// Mode is "rw" or "ro" (ADR-0008).
+	Mode string `json:"mode"`
+	Cols int    `json:"cols"`
+	Rows int    `json:"rows"`
+	// CreatedAt is when the session opened, RFC3339 — the client renders age.
+	CreatedAt string `json:"created_at"`
+	// SetsMin marks a session whose viewport defines the current
+	// smallest-attached-wins minimum on at least one axis.
+	SetsMin bool `json:"sets_minimum,omitempty"`
 }
 
 // ProfileInfo is one profile for the profiles op.

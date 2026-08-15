@@ -8,6 +8,7 @@ package attach
 
 import (
 	"sync"
+	"time"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -31,6 +32,11 @@ type Session struct {
 	closed chan struct{}
 	once   sync.Once
 	wg     sync.WaitGroup
+
+	// createdAt stamps when the attach opened, for visibility (#183): a
+	// session that has been "attached" for six hours next to a six-minute
+	// one is the prime suspect for a stale client clamping the PTY.
+	createdAt time.Time
 }
 
 // ID returns the session's client-chosen id.

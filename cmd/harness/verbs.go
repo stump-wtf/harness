@@ -114,6 +114,36 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	if h.Description != "" {
 		t.Row("description", t.dimItalic(h.Description))
 	}
+	if h.AttachViewport != "" {
+		t.Row("attach viewport", t.faintPlain(h.AttachViewport))
+	}
+	if err := t.Flush(); err != nil {
+		return err
+	}
+	return printAttachSessions(os.Stdout, h.AttachSessions)
+}
+
+// printAttachSessions renders the live attach sessions under a describe's
+// FIELD/VALUE table (#183). The session(s) flagged as setting the
+// smallest-attached-wins minimum are highlighted, because that row is the
+// answer to "why is my guest 80 columns wide?" — the clamping session.
+func printAttachSessions(w io.Writer, sessions []protocol.AttachSessionInfo) error {
+	if len(sessions) == 0 {
+		return nil
+	}
+	t := NewTable(w, "SESSION", "MODE", "VIEWPORT", "AGE", "MIN")
+	for _, s := range sessions {
+		size := fmt.Sprintf("%dx%d", s.Cols, s.Rows)
+		age := "unknown"
+		if created, err := time.Parse(time.RFC3339, s.CreatedAt); err == nil {
+			age = time.Since(created).Round(time.Second).String()
+		}
+		marker := ""
+		if s.SetsMin {
+			marker = t.amberBold("≤ clamps guest")
+		}
+		t.Row(fmt.Sprintf("%d", s.ID), s.Mode, size, age, marker)
+	}
 	return t.Flush()
 }
 

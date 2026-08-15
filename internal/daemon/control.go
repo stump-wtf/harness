@@ -10,6 +10,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -114,7 +115,34 @@ func (c *conn) opDescribe(req protocol.ControlReq) {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
 		return
 	}
-	c.respond(req, c.infoFor(snap))
+	info := c.infoFor(snap)
+	c.attachInfoFor(&info)
+	c.respond(req, info)
+}
+
+// attachInfoFor decorates a describe payload with the harness's attach plane:
+// the authoritative viewport and every live session, with the session(s)
+// setting the smallest-attached-wins minimum flagged (#183). Describe only —
+// list would pay a registry round-trip per harness for data nobody asked for.
+// A harness with no Mux (never attached, no output teed) gets neither field.
+func (c *conn) attachInfoFor(info *protocol.HarnessInfo) {
+	ms, ok := c.srv.reg.SnapshotFor(info.Name)
+	if !ok {
+		return
+	}
+	info.AttachViewport = fmt.Sprintf("%dx%d", ms.Cols, ms.Rows)
+	sessions := make([]protocol.AttachSessionInfo, 0, len(ms.Sessions))
+	for _, s := range ms.Sessions {
+		sessions = append(sessions, protocol.AttachSessionInfo{
+			ID:        s.ID,
+			Mode:      string(s.Mode),
+			Cols:      s.Cols,
+			Rows:      s.Rows,
+			CreatedAt: s.CreatedAt.Format(time.RFC3339),
+			SetsMin:   s.SetsMin,
+		})
+	}
+	info.AttachSessions = sessions
 }
 
 // opLifecycle handles start/stop/restart. Each is idempotent (SPEC-0002:

@@ -230,6 +230,83 @@ func TestMixedTrafficOneConnection(t *testing.T) {
 	}
 }
 
+// TestDescribeShowsAttachSessions is the #183 regression: describe must expose
+// the attach plane — the authoritative viewport and every live session, with
+// the smallest-attached-wins minimum-setter flagged — so a stale client
+// clamping the guest PTY is visible without lsof on the daemon. Before this,
+// describe carried no attach data at all and the question was unanswerable.
+func TestDescribeShowsAttachSessions(t *testing.T) {
+	td := newTestDaemon(t, sleeperTOML)
+	if _, err := td.dial(t, nil).Start("sleeper"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	big := td.dial(t, nil)
+	if err := big.AttachOpen(1, "sleeper", 200, 49, protocol.AttachRW); err != nil {
+		t.Fatalf("big attach: %v", err)
+	}
+	stale := td.dial(t, nil)
+	if err := stale.AttachOpen(1, "sleeper", 80, 24, protocol.AttachRO); err != nil {
+		t.Fatalf("stale attach: %v", err)
+	}
+
+	// Attach and close frames are processed asynchronously by the daemon, so
+	// poll describe until both sessions are visible rather than racing them.
+	var info protocol.HarnessInfo
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		var err error
+		info, err = big.Describe("sleeper")
+		if err != nil {
+			t.Fatalf("describe: %v", err)
+		}
+		if len(info.AttachSessions) == 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if info.AttachViewport != "80x24" {
+		t.Errorf("attach viewport = %q, want 80x24 (the stale client's clamp)", info.AttachViewport)
+	}
+	if len(info.AttachSessions) != 2 {
+		t.Fatalf("attach sessions = %+v, want 2", info.AttachSessions)
+	}
+	for _, s := range info.AttachSessions {
+		if _, err := time.Parse(time.RFC3339, s.CreatedAt); err != nil {
+			t.Errorf("session %d created_at = %q, want RFC3339", s.ID, s.CreatedAt)
+		}
+		if s.Mode != string(protocol.AttachRW) && s.Mode != string(protocol.AttachRO) {
+			t.Errorf("session %d mode = %q", s.ID, s.Mode)
+		}
+		wantMin := s.Mode == string(protocol.AttachRO) // the 80x24 session
+		if s.SetsMin != wantMin {
+			t.Errorf("session (mode %s, %dx%d) SetsMin = %v, want %v",
+				s.Mode, s.Cols, s.Rows, s.SetsMin, wantMin)
+		}
+	}
+
+	// The clamp detaches: describe reflects it without any daemon restart.
+	if err := stale.AttachClose(1); err != nil {
+		t.Fatalf("stale detach: %v", err)
+	}
+	for {
+		var err error
+		info, err = big.Describe("sleeper")
+		if err != nil {
+			t.Fatalf("describe after detach: %v", err)
+		}
+		if len(info.AttachSessions) == 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if info.AttachViewport != "200x49" {
+		t.Errorf("attach viewport after detach = %q, want 200x49", info.AttachViewport)
+	}
+	if len(info.AttachSessions) != 1 || !info.AttachSessions[0].SetsMin {
+		t.Errorf("attach sessions after detach = %+v, want the lone rw session flagged", info.AttachSessions)
+	}
+}
+
 // TestEventSubscription is SPEC-0002 REQ "Event Subscription" scenario "Reactive
 // dashboard": a subscribed client receives harness_state_changed and
 // harness_exited when a harness exits, without issuing any request itself.

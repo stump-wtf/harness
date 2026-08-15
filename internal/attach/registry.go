@@ -81,6 +81,20 @@ func (r *Registry) WriterFor(name string) io.Writer { return r.Mux(name) }
 // the historical behaviour.
 func (r *Registry) SizeFor(name string) (int, int) { return r.Mux(name).Size() }
 
+// SnapshotFor returns a point-in-time view of name's attach plane — the
+// authoritative viewport and every live session — for `describe` visibility
+// (#183). Unlike Mux/SizeFor it never creates a Mux: describing a harness
+// nobody has ever attached to must not materialize emulator state for it.
+func (r *Registry) SnapshotFor(name string) (MuxSnapshot, bool) {
+	r.mu.Lock()
+	m, ok := r.muxes[name]
+	r.mu.Unlock()
+	if !ok {
+		return MuxSnapshot{}, false
+	}
+	return m.Snapshot(), true
+}
+
 // Remove drops the Mux registered for name, releasing its vt emulator and
 // scrollback ring for collection. The supervisor Manager calls this (via
 // ManagerOptions.DropExtraOut) when a project harness is deregistered, so an

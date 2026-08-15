@@ -8,7 +8,9 @@ package attach
 // (ring + backpressure); ADR-0008 (read-only attach).
 
 import (
+	"sort"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/x/vt"
 
@@ -114,6 +116,67 @@ func (m *Mux) pumpReplies() {
 // Name returns the harness name this mux serves.
 func (m *Mux) Name() string { return m.name }
 
+// SessionInfo describes one live attach session for visibility (#183): who is
+// attached, at what viewport, for how long, and whether it is a session the
+// smallest-attached-wins minimum currently comes from.
+type SessionInfo struct {
+	ID        uint32
+	Mode      protocol.AttachMode
+	Cols      int
+	Rows      int
+	CreatedAt time.Time
+	// SetsMin marks a session whose viewport defines the current minimum on
+	// at least one axis — the row that answers "why is my guest 80 columns
+	// wide?" without lsof on the daemon and stty on the guest's tty.
+	SetsMin bool
+}
+
+// MuxSnapshot is a point-in-time view of a Mux for `describe` (#183): the
+// authoritative viewport plus every live session.
+type MuxSnapshot struct {
+	Cols     int
+	Rows     int
+	Sessions []SessionInfo
+}
+
+// Snapshot returns the authoritative viewport and the live sessions with the
+// minimum-setter flagged. The minimum is recomputed here exactly as
+// applyResizeLocked computes it, under the same lock, so the flag can never
+// disagree with the policy that actually resized the PTY.
+func (m *Mux) Snapshot() MuxSnapshot {
+	m.mu.Lock()
+	minC, minR := 0, 0
+	first := true
+	for s := range m.sessions {
+		if s.cols <= 0 || s.rows <= 0 {
+			continue
+		}
+		if first || s.cols < minC {
+			minC = s.cols
+		}
+		if first || s.rows < minR {
+			minR = s.rows
+		}
+		first = false
+	}
+	sessions := make([]SessionInfo, 0, len(m.sessions))
+	for s := range m.sessions {
+		sessions = append(sessions, SessionInfo{
+			ID:        s.id,
+			Mode:      s.mode,
+			Cols:      s.cols,
+			Rows:      s.rows,
+			CreatedAt: s.createdAt,
+			SetsMin:   !first && (s.cols == minC || s.rows == minR),
+		})
+	}
+	m.mu.Unlock()
+
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].ID < sessions[j].ID })
+	cols, rows := m.Size()
+	return MuxSnapshot{Cols: cols, Rows: rows, Sessions: sessions}
+}
+
 // Write feeds raw PTY bytes into the emulator, the scrollback ring, and every
 // attached session's bounded queue. It is the supervisor's ExtraOut sink. It
 // MUST NOT block on any client (SPEC-0002 REQ "Backpressure Isolation"): all
@@ -145,14 +208,15 @@ func (m *Mux) Write(p []byte) (int, error) {
 // precisely what triggers coalescing without ever stalling Write.
 func (m *Mux) Attach(id uint32, mode protocol.AttachMode, cols, rows int, write func([]byte) error) *Session {
 	s := &Session{
-		id:     id,
-		mode:   mode,
-		mux:    m,
-		cols:   cols,
-		rows:   rows,
-		write:  write,
-		out:    make(chan []byte, queueCap),
-		closed: make(chan struct{}),
+		id:        id,
+		mode:      mode,
+		mux:       m,
+		cols:      cols,
+		rows:      rows,
+		write:     write,
+		out:       make(chan []byte, queueCap),
+		closed:    make(chan struct{}),
+		createdAt: time.Now(),
 	}
 	m.mu.Lock()
 	s.enqueueLocked(renderScreen(m.term)) // 1. screen snapshot
