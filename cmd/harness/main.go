@@ -29,6 +29,13 @@ func main() {
 	jsonOut := gfs.Bool("json", false, "machine-readable JSON output")
 	showVersion := gfs.Bool("version", false, "print version and exit")
 	gfs.Usage = usage
+	// The flag package calls gfs.Usage from *inside* Parse — on -h/--help and
+	// on a parse error — so the parsed --json value does not exist yet when
+	// usage() runs. Seed the printer from the raw args first, or
+	// `harness --json --help` would emit styled help despite --json asking for
+	// machine-readable output. The authoritative SetJSON below still wins for
+	// every other code path.
+	cliui.SetJSON(hasJSONArg(os.Args[1:]))
 	_ = gfs.Parse(os.Args[1:])
 	cliui.SetJSON(*jsonOut)
 
@@ -70,6 +77,12 @@ func main() {
 				os.Exit(cliui.Fatal(err))
 			}
 		case "-h", "--help", "help":
+			// stop/status recover a post-`daemon` --json via resolveDaemonOpts;
+			// help has no opts to resolve, so it must seed the printer itself.
+			// The SetJSON above reflects only the flags before the `daemon`
+			// token (the flag package halts there), so without this
+			// `harness daemon --json --help` emits styled help.
+			cliui.SetJSON(*jsonOut || hasJSONArg(daemonArgs))
 			daemonUsage()
 		default:
 			os.Exit(cliui.FatalMsg("unknown command",
@@ -390,80 +403,5 @@ func lifecycleAll(c *client.Client, o verbOpts, verb string) error {
 	return nil
 }
 
-func usage() {
-	fmt.Fprint(os.Stderr, `harness — systemctl for your agents
-
-usage:
-  harness [--socket PATH] [--json] <command> [args]
-  harness daemon <subcommand> [daemon-flags]
-
-commands:
-  list                 list configured harnesses and their state (default)
-  describe NAME        show one harness in detail
-  start NAME           start (enable) a harness
-  stop NAME            stop (disable) a harness
-  restart NAME         restart a harness (clears a failed latch)
-  logs NAME [--lines N] [--follow]   show a harness's log tail
-  profiles             list profiles (active one flagged)
-  use-profile NAME     activate a profile
-  reload               re-read the daemon config
-  daemon-info          show daemon status
-  doctor               run health checks (config, daemon, harnesses)
-  attach NAME [--ro]   attach to a harness's terminal
-
-project commands (repo-root harness.toml, discovered by walking up from cwd):
-  up                   register + start the project's harnesses (detached;
-                       takes no arguments)
-  down [PROJECT]       stop + deregister the project's harnesses
-  ps                   list the project's harnesses (alias for list outside
-                       a project; takes no arguments)
-
-  inside a project, a bare NAME to describe/logs/start/stop/restart/attach
-  always resolves to <project>/NAME (a NAME containing "/" is taken as fully
-  qualified); to address a global harness by its bare name, run the verb
-  outside the project directory.
-
-daemon subcommands (see "harness daemon --help"):
-  daemon start         run the supervision daemon (ADR-0005 ExecStart; alias: run)
-  daemon stop          gracefully stop the running daemon
-  daemon status        alias for daemon-info
-
-flags:
-  --socket PATH        daemon socket (default $XDG_RUNTIME_DIR/harness.sock)
-  --json               machine-readable output
-`)
-}
-
-// daemonUsage prints the help for the `harness daemon` subcommand group.
-// Routed when the user runs `harness daemon --help|-h|help` or an unknown
-// subcommand.
-func daemonUsage() {
-	fmt.Fprint(os.Stderr, `harness daemon — supervise long-running harnesses
-
-usage:
-  harness daemon <subcommand> [flags]
-
-subcommands:
-  start                run the supervision daemon in the foreground
-                       (alias: run; bare "harness daemon" defaults to start)
-  stop                 gracefully stop the running daemon (SIGTERM)
-  status               show daemon status (alias: daemon-info)
-
-start/run flags:
-  --config PATH        path to harness.toml
-  --socket PATH        control/data plane socket path
-  --scrollback N       per-harness scrollback ring depth (lines)
-  --log-level LEVEL    debug, info (default), warn, error
-  --log-file PATH      append logs to this file instead of stderr
-  --detach             fork into the background; redirect stdio to --log-file
-                       (default: $XDG_STATE_HOME/harness/harness-daemon.log)
-  --ssh                enable the remote Wish SSH server
-  --ssh-listen H:P     SSH bind address (overrides [server] listen)
-  --version            print version and exit
-
-examples:
-  harness daemon start --detach       run in the background
-  harness daemon stop                 stop the running daemon
-  harness daemon status               check if the daemon is up
-`)
-}
+// usage and daemonUsage live in help.go (styled via theme palette,
+// plain fallback for non-TTY/--json).
