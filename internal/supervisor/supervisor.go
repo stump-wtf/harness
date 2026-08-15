@@ -38,6 +38,7 @@ const (
 	cmdShutdown
 	cmdResize
 	cmdWriteInput
+	cmdSignal
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -54,9 +55,10 @@ type command struct {
 	kind    cmdKind
 	cfg     *core.Harness
 	restore *restoreData
-	input   []byte // cmdWriteInput payload (attach keystrokes → PTY)
-	cols    int    // cmdResize
-	rows    int    // cmdResize
+	input   []byte         // cmdWriteInput payload (attach keystrokes → PTY)
+	cols    int            // cmdResize
+	rows    int            // cmdResize
+	sig     syscall.Signal // cmdSignal payload (delivered to the process group)
 	done    chan struct{}
 }
 
@@ -201,6 +203,13 @@ func (s *Supervisor) Resize(cols, rows int) { s.send(command{kind: cmdResize, co
 // intended for the PTY. Blocks until the loop processes it.
 func (s *Supervisor) WriteInput(p []byte) { s.send(command{kind: cmdWriteInput, input: p}) }
 
+// SignalGroup delivers a signal to the harness's live process group (pgid ==
+// pid: children are spawned with Setsid). Used by the attach layer to
+// re-deliver SIGWINCH after a resize that landed while the guest was still
+// booting and had no handler installed yet (stump.wtf/harness#182). A no-op
+// when the harness is not running. Blocks until the loop processes it.
+func (s *Supervisor) SignalGroup(sig syscall.Signal) { s.send(command{kind: cmdSignal, sig: sig}) }
+
 // Shutdown stops the harness if running and terminates the actor loop. After
 // Shutdown the Supervisor must not be used.
 func (s *Supervisor) Shutdown() {
@@ -295,6 +304,15 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		// live process is dropped.
 		if s.hasProcess() {
 			_, _ = s.proc.pty.Write(c.input)
+		}
+	case cmdSignal:
+		// Governing: stump.wtf/harness#182 — the kernel only raises SIGWINCH on
+		// an actual dimension change, so a resize applied while the guest was
+		// still booting (no handler installed) is lost forever. Re-delivering
+		// the signal to the group is safe at any time: a guest with no handler
+		// ignores it, a guest with one re-reads a size that is already correct.
+		if s.hasProcess() {
+			s.proc.signalGroup(c.sig)
 		}
 	case cmdShutdown:
 		// Shutdown must NOT touch `enabled`. The daemon cannot tell why it is

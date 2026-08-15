@@ -235,3 +235,40 @@ func lastLines(s string, n int) string {
 	}
 	return strings.Join(parts, "\n")
 }
+
+// lateWinchProbeScript models a booting agent TUI (stump.wtf/harness#182): it
+// spends its first seconds "starting up" and only then installs a SIGWINCH
+// handler — the window in which the kernel's resize signal is lost.
+const lateWinchProbeScript = `sleep 3; trap 'echo WINCH-$(stty size | tr " " x)' WINCH; echo READY; while true; do sleep 0.1; done`
+
+// TestAttachDuringGuestStartupStillNotifies is the #182 regression. The attach
+// lands while the guest is still inside its boot sleep, so the kernel's
+// SIGWINCH for the 150x40 resize reaches a process with no handler installed
+// and is dropped. Without a re-assert, the guest keeps its 80x24 layout inside
+// a correctly-sized PTY forever — the sizes were right, only the notification
+// was missed. The nudge schedule must re-deliver WINCH after the trap finally
+// exists, and the guest must then report the real size.
+func TestAttachDuringGuestStartupStillNotifies(t *testing.T) {
+	r := newRig(t, lateWinchProbeScript)
+	r.mgr.Start("probe")
+
+	// Attach immediately: the guest is still "booting" (pre-trap), which is
+	// exactly the race.
+	sess := r.attachAt(1, 150, 40)
+	defer sess.Detach()
+
+	const want = "WINCH-40x150"
+	var got string
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		got = r.seen.String()
+		r.mu.Unlock()
+		if strings.Contains(got, want) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	r.t.Fatalf("guest never learned 150x40 via SIGWINCH after boot (want %q); it reported: %q",
+		want, lastLines(got, 6))
+}

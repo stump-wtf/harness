@@ -13,6 +13,7 @@ import (
 	"io"
 	"slices"
 	"sync"
+	"syscall"
 	"time"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
@@ -316,6 +317,17 @@ func (m *Manager) Resize(name string, cols, rows int) bool {
 func (m *Manager) WriteInput(name string, p []byte) bool {
 	if s := m.get(name); s != nil {
 		s.WriteInput(p)
+		return true
+	}
+	return false
+}
+
+// SignalGroup delivers a signal to a single harness's live process group
+// (stump.wtf/harness#182: the attach layer re-delivers SIGWINCH after a resize
+// that may have landed during the guest's boot), ok=false if unknown.
+func (m *Manager) SignalGroup(name string, sig syscall.Signal) bool {
+	if s := m.get(name); s != nil {
+		s.SignalGroup(sig)
 		return true
 	}
 	return false

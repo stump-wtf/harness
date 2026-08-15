@@ -21,7 +21,7 @@ func discard([]byte) error { return nil }
 // is clamping the guest?": the session(s) whose viewport defines the current
 // minimum on at least one axis, recomputed exactly as applyResizeLocked does.
 func TestMuxSnapshotFlagsMinimumSetter(t *testing.T) {
-	m := newMux("h", 100, nil, nil)
+	m := newMux("h", 100, nil, nil, nil)
 	big := m.Attach(1, protocol.AttachRW, 200, 50, discard)
 	small := m.Attach(2, protocol.AttachRW, 80, 24, discard)
 	ro := m.Attach(3, protocol.AttachRO, 120, 40, discard)
@@ -80,7 +80,7 @@ func TestMuxSnapshotFlagsMinimumSetter(t *testing.T) {
 // session list — the describe output then says "clamped, but by nobody live",
 // which is exactly the retained-intent case #183 documents.
 func TestMuxSnapshotNoSessionsIsHonest(t *testing.T) {
-	m := newMux("h", 100, nil, nil)
+	m := newMux("h", 100, nil, nil, nil)
 	s := m.Attach(7, protocol.AttachRW, 100, 30, discard)
 	s.Detach()
 
@@ -122,7 +122,7 @@ func TestRegistrySnapshotForDoesNotCreate(t *testing.T) {
 // never participates in smallest-attached-wins, so it cannot clamp the guest
 // for the clients that do know their viewport.
 func TestUnknownSizeSessionDoesNotClamp(t *testing.T) {
-	m := newMux("h", 100, nil, nil)
+	m := newMux("h", 100, nil, nil, nil)
 	blind := m.Attach(1, protocol.AttachRW, 0, 0, discard)
 	sighted := m.Attach(2, protocol.AttachRW, 200, 49, discard)
 

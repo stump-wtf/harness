@@ -41,6 +41,9 @@ type Mux struct {
 	name     string
 	onResize func(cols, rows int)
 	onInput  func(p []byte)
+	// onNudge re-delivers SIGWINCH to the guest's process group (#182). It may
+	// be nil (tests).
+	onNudge func()
 
 	mu       sync.Mutex
 	term     vt.Terminal
@@ -61,12 +64,14 @@ type Mux struct {
 
 // newMux builds a Mux for a harness. onResize is invoked when the
 // smallest-attached-wins size changes (to resize the real PTY); onInput
-// delivers read-write attach keystrokes to the PTY. Either may be nil.
-func newMux(name string, ringLines int, onResize func(cols, rows int), onInput func(p []byte)) *Mux {
+// delivers read-write attach keystrokes to the PTY; onNudge re-delivers
+// SIGWINCH to the guest's process group (see reassertWinch). Any may be nil.
+func newMux(name string, ringLines int, onResize func(cols, rows int), onInput func(p []byte), onNudge func()) *Mux {
 	m := &Mux{
 		name:     name,
 		onResize: onResize,
 		onInput:  onInput,
+		onNudge:  onNudge,
 		term:     vt.NewEmulator(defaultCols, defaultRows),
 		ring:     newRing(ringLines),
 		cols:     defaultCols,
@@ -110,6 +115,38 @@ func (m *Mux) pumpReplies() {
 		if err != nil {
 			return
 		}
+	}
+}
+
+// winchNudgeDelays is the decaying SIGWINCH re-assert schedule armed by every
+// Attach (stump.wtf/harness#182). The kernel only raises SIGWINCH on an actual
+// dimension change, so the resize an attach applies is silently lost when the
+// guest has not installed a handler yet — which for a real agent TUI (LSPs,
+// MCP servers booting for seconds) is exactly when attaches land. The sizes
+// are already correct by then; only the notification was missed, so the nudge
+// re-delivers it to the process group (never the bare pid: crush/claude run
+// their renderer as a child sharing the group).
+//
+// Deliberately generous rather than clever: an extra SIGWINCH is harmless by
+// design (default-ignored without a handler; a running TUI re-reads a size
+// that is already right and repaints nothing), so the schedule simply spans
+// the boot window instead of trying to detect readiness.
+var winchNudgeDelays = []time.Duration{
+	300 * time.Millisecond,
+	900 * time.Millisecond,
+	2 * time.Second,
+	4 * time.Second,
+}
+
+// reassertWinch fires onNudge on the nudge schedule. Bounded, so a Mux that is
+// never closed still leaks nothing.
+func (m *Mux) reassertWinch() {
+	for _, d := range winchNudgeDelays {
+		time.Sleep(d)
+		if m.onNudge == nil {
+			return
+		}
+		m.onNudge()
 	}
 }
 
@@ -229,6 +266,10 @@ func (m *Mux) Attach(id uint32, mode protocol.AttachMode, cols, rows int, write 
 
 	s.wg.Add(1)
 	go s.pump() // 3. live stream drains from here on
+	// 4. Re-assert the size over the guest's boot window (#182): this attach
+	// just applied smallest-attached-wins, and the kernel's SIGWINCH for it is
+	// lost if the guest has no handler installed yet.
+	go m.reassertWinch()
 	return s
 }
 

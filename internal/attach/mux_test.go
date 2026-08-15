@@ -62,7 +62,7 @@ func waitForFrameContaining(t *testing.T, c *collector, sub []byte) {
 // "Instant repaint on attach": a client receives a full screen snapshot before
 // any live bytes.
 func TestAttachSnapshotBeforeLive(t *testing.T) {
-	m := newMux("h", 100, nil, nil)
+	m := newMux("h", 100, nil, nil, nil)
 	m.Write([]byte("hello\r\n")) // on screen before the attach
 
 	c := &collector{}
@@ -101,7 +101,7 @@ func TestReadOnlyDropsInput(t *testing.T) {
 		got = append(got, append([]byte(nil), p...))
 		mu.Unlock()
 	}
-	m := newMux("h", 100, nil, onInput)
+	m := newMux("h", 100, nil, onInput, nil)
 
 	ro := m.Attach(1, protocol.AttachRO, 80, 24, func([]byte) error { return nil })
 	ro.Input([]byte("secret-keys"))
@@ -132,7 +132,7 @@ func TestResizeSmallestWins(t *testing.T) {
 		sizes = append(sizes, [2]int{cols, rows})
 		mu.Unlock()
 	}
-	m := newMux("h", 100, onResize, nil)
+	m := newMux("h", 100, onResize, nil, nil)
 
 	big := m.Attach(1, protocol.AttachRW, 120, 50, func([]byte) error { return nil })
 	if c, r := m.Size(); c != 120 || r != 50 {
@@ -160,7 +160,7 @@ func TestResizeSmallestWins(t *testing.T) {
 // TestCloseTearsDownOnlyThatSession: ATTACH_CLOSE removes just its session; the
 // other sessions keep receiving live output (SPEC-0002 REQ "Attach Session").
 func TestCloseTearsDownOnlyThatSession(t *testing.T) {
-	m := newMux("h", 100, nil, nil)
+	m := newMux("h", 100, nil, nil, nil)
 	a := &collector{}
 	b := &collector{}
 	sa := m.Attach(1, protocol.AttachRW, 80, 24, a.write)
@@ -181,7 +181,7 @@ func TestCloseTearsDownOnlyThatSession(t *testing.T) {
 // clients, and eventually receives a snapshot repaint instead of the full
 // backlog. Runs under -race.
 func TestBackpressureCoalesce(t *testing.T) {
-	m := newMux("h", 100, nil, nil)
+	m := newMux("h", 100, nil, nil, nil)
 
 	// Slow client: every write blocks until released, modelling a stalled
 	// socket.
@@ -253,7 +253,7 @@ func TestWriteForwardsAutoAnsweredQueries(t *testing.T) {
 		got = append(got, append([]byte(nil), p...))
 		mu.Unlock()
 	}
-	m := newMux("h", 100, nil, onInput)
+	m := newMux("h", 100, nil, onInput, nil)
 
 	done := make(chan struct{})
 	go func() {
@@ -317,7 +317,7 @@ func noopWrite([]byte) error { return nil }
 // redundant SIGWINCHes and the PTY tracks the smallest viewport (ADR-0003).
 func TestResizeDrivesPTYOnlyOnChange(t *testing.T) {
 	rec := &resizeRecorder{}
-	m := newMux("h", 100, rec.onResize, nil) // starts at the 80x24 default
+	m := newMux("h", 100, rec.onResize, nil, nil) // starts at the 80x24 default
 
 	// Attaching at exactly the current size changes nothing → no onResize.
 	a := m.Attach(1, protocol.AttachRW, 80, 24, noopWrite)
@@ -362,7 +362,7 @@ func TestResizeDrivesPTYOnlyOnChange(t *testing.T) {
 // (applyResizeLocked: "with no sessions the last size is retained").
 func TestResizeRetainsSizeWithNoSessions(t *testing.T) {
 	rec := &resizeRecorder{}
-	m := newMux("h", 100, rec.onResize, nil)
+	m := newMux("h", 100, rec.onResize, nil, nil)
 
 	a := m.Attach(1, protocol.AttachRW, 90, 30, noopWrite)
 	if got := rec.snapshot(); len(got) != 1 || got[0] != [2]int{90, 30} {
@@ -383,7 +383,7 @@ func TestResizeRetainsSizeWithNoSessions(t *testing.T) {
 // blank every other viewer.
 func TestResizeIgnoresInvalidViewport(t *testing.T) {
 	rec := &resizeRecorder{}
-	m := newMux("h", 100, rec.onResize, nil)
+	m := newMux("h", 100, rec.onResize, nil, nil)
 
 	m.Attach(1, protocol.AttachRW, 100, 40, noopWrite)
 	base := rec.snapshot()
@@ -419,7 +419,7 @@ func TestSizeReadableDuringResizeCallback(t *testing.T) {
 	m := newMux("h", 100, func(int, int) {
 		close(inCallback)
 		<-release
-	}, nil)
+	}, nil, nil)
 	defer close(release)
 
 	a := m.Attach(1, protocol.AttachRW, 80, 24, noopWrite)

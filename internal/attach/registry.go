@@ -9,14 +9,17 @@ package attach
 import (
 	"io"
 	"sync"
+	"syscall"
 )
 
 // Controller is the slice of the supervisor Manager the attach layer needs to
-// drive the real PTY: apply the smallest-attached-wins resize and deliver
-// read-write keystrokes. *supervisor.Manager satisfies it.
+// drive the real PTY: apply the smallest-attached-wins resize, deliver
+// read-write keystrokes, and signal the guest's process group (the SIGWINCH
+// re-assert, stump.wtf/harness#182). *supervisor.Manager satisfies it.
 type Controller interface {
 	Resize(name string, cols, rows int) bool
 	WriteInput(name string, p []byte) bool
+	SignalGroup(name string, sig syscall.Signal) bool
 }
 
 // Registry maps harness name → Mux, creating each lazily on first use. It is
@@ -63,6 +66,11 @@ func (r *Registry) Mux(name string) *Mux {
 		func(p []byte) {
 			if c := r.controller(); c != nil {
 				c.WriteInput(name, p)
+			}
+		},
+		func() {
+			if c := r.controller(); c != nil {
+				c.SignalGroup(name, syscall.SIGWINCH)
 			}
 		},
 	)

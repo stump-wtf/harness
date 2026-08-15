@@ -7,17 +7,20 @@ package attach
 
 import (
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
-// recordingController is a fake supervisor.Manager slice: it records the resize
-// and input calls the Registry's muxes make.
+// recordingController is a fake supervisor.Manager slice: it records the resize,
+// input, and signal calls the Registry's muxes make.
 type recordingController struct {
 	mu      sync.Mutex
 	resizes []resizeCall
 	inputs  []inputCall
+	signals []signalCall
 }
 
 type resizeCall struct {
@@ -27,6 +30,10 @@ type resizeCall struct {
 type inputCall struct {
 	name string
 	data string
+}
+type signalCall struct {
+	name string
+	sig  syscall.Signal
 }
 
 func (c *recordingController) Resize(name string, cols, rows int) bool {
@@ -43,6 +50,13 @@ func (c *recordingController) WriteInput(name string, p []byte) bool {
 	return true
 }
 
+func (c *recordingController) SignalGroup(name string, sig syscall.Signal) bool {
+	c.mu.Lock()
+	c.signals = append(c.signals, signalCall{name, sig})
+	c.mu.Unlock()
+	return true
+}
+
 func (c *recordingController) resizeCalls() []resizeCall {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -53,6 +67,12 @@ func (c *recordingController) inputCalls() []inputCall {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]inputCall(nil), c.inputs...)
+}
+
+func (c *recordingController) signalCalls() []signalCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]signalCall(nil), c.signals...)
 }
 
 // TestRegistryResizeReachesController is the end of the resize seam: an attach
@@ -145,4 +165,39 @@ func TestRegistryRemoveDropsMux(t *testing.T) {
 	}
 	// Removing an unknown name is a harmless no-op.
 	r.Remove("never-registered")
+}
+
+// TestAttachNudgesGuestWithSIGWINCH is the #182 seam test: every attach arms a
+// decaying SIGWINCH re-assert schedule against the wired Controller, so a
+// resize the guest could not hear (no handler installed yet) is re-delivered.
+// The schedule is shrunk here for determinism; the real one spans the guest
+// boot window (see winchNudgeDelays).
+func TestAttachNudgesGuestWithSIGWINCH(t *testing.T) {
+	orig := winchNudgeDelays
+	winchNudgeDelays = []time.Duration{5 * time.Millisecond, 5 * time.Millisecond}
+	t.Cleanup(func() { winchNudgeDelays = orig })
+
+	ctrl := &recordingController{}
+	r := NewRegistry(100)
+	r.SetController(ctrl)
+	m := r.Mux("h")
+	s := m.Attach(1, protocol.AttachRW, 100, 40, discard)
+	defer s.Detach()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		calls := ctrl.signalCalls()
+		if len(calls) >= 2 {
+			for _, c := range calls {
+				if c.name != "h" || c.sig != syscall.SIGWINCH {
+					t.Fatalf("signal call = %+v, want SIGWINCH to h", c)
+				}
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("attach delivered %d SIGWINCH nudges in 2s, want ≥2: %+v", len(calls), calls)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
