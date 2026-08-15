@@ -49,6 +49,15 @@ to full help).
 - **THEN** the peek pane switches to a live read-only tail of that harness
   without attaching
 
+#### Scenario: Peek after a full-window attach
+
+- **WHEN** the selected harness's PTY is larger than the peek pane — the usual
+  state after detaching from a full-window attach, which leaves the guest at
+  the window's size
+- **THEN** the peek reconstructs the guest's screen at the guest's viewport and
+  crops it to the pane, naming that viewport, rather than reflowing the tail
+  into the pane's geometry
+
 ### Requirement: Attached Mode
 
 Attached mode SHALL render the harness's actual terminal full-width/height

@@ -168,6 +168,12 @@ func (c *conn) opLifecycle(req protocol.ControlReq) {
 
 // opLogs returns a tail of the harness's on-disk log (ADR-0007). Works for a
 // live or crashed harness alike.
+//
+// The reply also carries the harness's authoritative viewport when one exists,
+// because the log tail is raw PTY output: it only reconstructs into a screen at
+// the geometry it was drawn at. Sourced from the same Mux the attach plane
+// resizes, so the peek pane and an attach session agree on the guest's size
+// instead of each guessing (ADR-0003 smallest-attached-wins).
 func (c *conn) opLogs(req protocol.ControlReq) {
 	if _, ok := c.srv.mgr.Snapshot(req.Name); !ok {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
@@ -178,7 +184,13 @@ func (c *conn) opLogs(req protocol.ControlReq) {
 		lines = 200
 	}
 	text := readLogTail(c.srv.mgr.LogDir(), req.Name, lines)
-	c.respond(req, protocol.LogsData{Name: req.Name, Text: text})
+	data := protocol.LogsData{Name: req.Name, Text: text}
+	// SnapshotFor never materializes a Mux (#183), so a harness nobody has
+	// attached to and that has teed no output simply reports no viewport.
+	if ms, ok := c.srv.reg.SnapshotFor(req.Name); ok {
+		data.Cols, data.Rows = ms.Cols, ms.Rows
+	}
+	c.respond(req, data)
 }
 
 // opProfiles returns every profile, flagging the active one.
