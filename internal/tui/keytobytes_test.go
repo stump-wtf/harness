@@ -95,14 +95,94 @@ func TestKeyToBytesCtrlLetters(t *testing.T) {
 	}
 }
 
-// TestKeyToBytesCtrlOnlyWhenAlone guards the Mod equality check. Ctrl+Alt+C is a
-// different keystroke from Ctrl+C and must not be encoded as an interrupt —
-// the guard is `msg.Mod == tea.ModCtrl`, not a bitmask test, and this pins
-// that deliberate choice.
-func TestKeyToBytesCtrlOnlyWhenAlone(t *testing.T) {
+// TestKeyToBytesCtrlShiftReachesPTY is the #178 regression, with the shape
+// taken from a real Ghostty session (Kitty keyboard protocol, flags=1):
+// Ctrl+Shift+C arrives as ModCtrl|ModShift, and the old exact-equality Ctrl
+// check swallowed it — the keystroke never reached the guest. Asserted
+// positively: every Ctrl±Shift letter must produce its control byte.
+func TestKeyToBytesCtrlShiftReachesPTY(t *testing.T) {
+	for r := 'a'; r <= 'z'; r++ {
+		got := keyToBytes(tea.KeyPressMsg{Code: r, Mod: tea.ModCtrl | tea.ModShift})
+		want := byte(r-'a') + 1
+		if len(got) != 1 || got[0] != want {
+			t.Errorf("ctrl+shift+%c = %#v, want [%#x] — the chord was swallowed", r, got, want)
+		}
+	}
+}
+
+// TestKeyToBytesCtrlAltIsEscPrefixed replaces the old negative-only guard
+// (which `nil` satisfied — total swallowing read as success). Ctrl+Alt+C is
+// still never a BARE interrupt, but it must also send something: the terminal
+// convention for an Alt+Ctrl chord is ESC + the control code.
+func TestKeyToBytesCtrlAltIsEscPrefixed(t *testing.T) {
 	got := keyToBytes(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl | tea.ModAlt})
-	if len(got) == 1 && got[0] == 0x03 {
-		t.Error("ctrl+alt+c encoded as a bare interrupt (0x03); the Mod check must be exact, not a bitmask")
+	if string(got) != "\x1b\x03" {
+		t.Errorf("ctrl+alt+c = %#v, want ESC + 0x03 (alt prefix, not a bare interrupt, not nothing)", got)
+	}
+}
+
+// TestKeyToBytesAltPrefixesEsc covers the modifier's meaning everywhere it can
+// appear (#178 flagged the pre-existing loss: Alt+a used to forward a bare
+// "a"). Alt/Meta prefix ESC on the wire, whatever the base key.
+func TestKeyToBytesAltPrefixesEsc(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  tea.KeyPressMsg
+		want string
+	}{
+		{"alt+rune", tea.KeyPressMsg{Code: 'a', Text: "a", Mod: tea.ModAlt}, "\x1ba"},
+		{"meta+rune (same wire bytes as alt)", tea.KeyPressMsg{Code: 'a', Text: "a", Mod: tea.ModMeta}, "\x1ba"},
+		{"alt+shift+rune", tea.KeyPressMsg{Code: 'a', Text: "A", Mod: tea.ModAlt | tea.ModShift}, "\x1bA"},
+		{"alt+left (word-back in readline)", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt}, "\x1b\x1b[D"},
+		{"alt+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModAlt}, "\x1b\r"},
+		{"alt+backspace (word-delete)", tea.KeyPressMsg{Code: tea.KeyBackspace, Mod: tea.ModAlt}, "\x1b\x7f"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := keyToBytes(tt.msg); string(got) != tt.want {
+				t.Errorf("keyToBytes(%v) = %q, want %q", tt.msg.Code, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestKeyToBytesNoChordReturnsNothing pins the invariant from #178: every
+// chord a real terminal can report over the shapes keyToBytes handles —
+// Ctrl±(Shift|Alt) letters and Alt over text, specials, and control keys —
+// must produce bytes. A chord that encodes to nothing is a keystroke silently
+// dropped on the floor.
+func TestKeyToBytesNoChordReturnsNothing(t *testing.T) {
+	mods := []tea.KeyMod{
+		tea.ModCtrl,
+		tea.ModCtrl | tea.ModShift,
+		tea.ModCtrl | tea.ModAlt,
+		tea.ModCtrl | tea.ModAlt | tea.ModShift,
+		tea.ModAlt,
+		tea.ModAlt | tea.ModShift,
+	}
+	type shape struct {
+		name string
+		msg  tea.KeyPressMsg
+	}
+	letters := []shape{
+		{"a", tea.KeyPressMsg{Code: 'a', Text: "a"}},
+		{"c", tea.KeyPressMsg{Code: 'c', Text: "c"}},
+		{"z", tea.KeyPressMsg{Code: 'z', Text: "z"}},
+	}
+	specials := []shape{
+		{"enter", tea.KeyPressMsg{Code: tea.KeyEnter}},
+		{"left", tea.KeyPressMsg{Code: tea.KeyLeft}},
+		{"backspace", tea.KeyPressMsg{Code: tea.KeyBackspace}},
+		{"space", tea.KeyPressMsg{Code: ' ', Text: " "}},
+	}
+	for _, mod := range mods {
+		for _, s := range append(append([]shape{}, letters...), specials...) {
+			msg := s.msg
+			msg.Mod = mod
+			if got := keyToBytes(msg); len(got) == 0 {
+				t.Errorf("%+v chord over %s produced no bytes — the keystroke never reaches the guest", mod, s.name)
+			}
+		}
 	}
 }
 

@@ -20,47 +20,72 @@ import (
 // agent"). It covers the common control keys and arrow escapes; printable runes
 // pass through verbatim.
 func keyToBytes(msg tea.KeyPressMsg) []byte {
+	// Modifiers are decided up front and applied uniformly (#178). Bubble Tea
+	// v2 reports the modifier set as a bitmask: legacy terminals and tmux
+	// collapse Ctrl+Shift+C into exactly ModCtrl, while Kitty-protocol
+	// terminals (Ghostty with keyboard enhancements, flags=1) report the Shift
+	// bit separately — so matching the mask for exact equality silently
+	// swallowed the chord and the keystroke never reached the PTY.
+	ctrl := msg.Mod&tea.ModCtrl != 0
+	// Alt and Meta are indistinguishable on the wire (both are an ESC prefix
+	// in the xterm/readline convention), so they are handled together.
+	alt := msg.Mod&(tea.ModAlt|tea.ModMeta) != 0
+
 	// Ctrl+A..Ctrl+Z map to 0x01..0x1a. Bubble Tea v2 dropped the KeyCtrlA..Z
-	// key types and models Ctrl as a modifier on the base key instead; match
-	// Ctrl alone (not Ctrl+Alt, etc.) to keep v1's exact behaviour.
-	if msg.Mod == tea.ModCtrl && msg.Code >= 'a' && msg.Code <= 'z' {
-		return []byte{byte(msg.Code - 'a' + 1)}
+	// key types and models Ctrl as a modifier on the base key. Match the Ctrl
+	// BIT rather than the whole mask: Shift folds into the control code (a
+	// terminal cannot express a shifted control code distinctly, and v1
+	// behaved the same way by folding Shift into the key type), and Alt
+	// prefixes ESC, which is what a terminal delivers for Alt+Ctrl chords.
+	if ctrl && msg.Code >= 'a' && msg.Code <= 'z' {
+		return altPrefix(alt, []byte{byte(msg.Code - 'a' + 1)})
 	}
+	var base []byte
 	switch msg.Code {
 	case tea.KeyEnter:
-		return []byte{'\r'}
+		base = []byte{'\r'}
 	case tea.KeyTab:
-		return []byte{'\t'}
+		base = []byte{'\t'}
 	case tea.KeyBackspace:
-		return []byte{0x7f}
+		base = []byte{0x7f}
 	case tea.KeyDelete:
-		return []byte("\x1b[3~")
+		base = []byte("\x1b[3~")
 	case tea.KeyEscape:
-		return []byte{0x1b}
+		base = []byte{0x1b}
 	case tea.KeyUp:
-		return []byte("\x1b[A")
+		base = []byte("\x1b[A")
 	case tea.KeyDown:
-		return []byte("\x1b[B")
+		base = []byte("\x1b[B")
 	case tea.KeyRight:
-		return []byte("\x1b[C")
+		base = []byte("\x1b[C")
 	case tea.KeyLeft:
-		return []byte("\x1b[D")
+		base = []byte("\x1b[D")
 	case tea.KeyHome:
-		return []byte("\x1b[H")
+		base = []byte("\x1b[H")
 	case tea.KeyEnd:
-		return []byte("\x1b[F")
+		base = []byte("\x1b[F")
 	case tea.KeyPgUp:
-		return []byte("\x1b[5~")
+		base = []byte("\x1b[5~")
 	case tea.KeyPgDown:
-		return []byte("\x1b[6~")
+		base = []byte("\x1b[6~")
 	}
-	// Printable characters (space included) pass through verbatim. Text is
-	// populated only for keys that produce printable output, so this is v1's
-	// KeyRunes/KeySpace pair collapsed into one case.
-	if msg.Text != "" {
-		return []byte(msg.Text)
+	if base == nil && msg.Text != "" {
+		// Printable characters (space included) pass through verbatim. Text is
+		// populated only for keys that produce printable output, so this is
+		// v1's KeyRunes/KeySpace pair collapsed into one case.
+		base = []byte(msg.Text)
 	}
-	return nil
+	// Alt/Meta prefixes ESC — what a real terminal sends for an Alt chord
+	// (#178: this used to forward Alt+a as a bare "a", losing the modifier).
+	return altPrefix(alt, base)
+}
+
+// altPrefix prepends the ESC byte an Alt/Meta chord carries on the wire.
+func altPrefix(alt bool, b []byte) []byte {
+	if !alt || len(b) == 0 {
+		return b
+	}
+	return append([]byte{0x1b}, b...)
 }
 
 // textinputBlink is the textinput cursor-blink Cmd.
