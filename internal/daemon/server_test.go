@@ -27,13 +27,16 @@ type testDaemon struct {
 	socket     string
 	configPath string
 	mgr        *supervisor.Manager
+	reg        *attach.Registry
 	srv        *Server
 }
 
 // newTestDaemon writes tomlBody to a config file, boots a Manager (temp state/
 // log dirs) + attach Registry + Server, and serves on a short-path socket. It
 // registers cleanup. It does NOT autostart (tests drive lifecycle explicitly).
-func newTestDaemon(t *testing.T, tomlBody string) *testDaemon {
+// Each tune func may adjust the Options before the Server is built — the
+// liveness tests use it to shrink the heartbeat intervals to milliseconds.
+func newTestDaemon(t *testing.T, tomlBody string, tune ...func(*Options)) *testDaemon {
 	t.Helper()
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "harness.toml")
@@ -61,19 +64,23 @@ func newTestDaemon(t *testing.T, tomlBody string) *testDaemon {
 	})
 	reg.SetController(mgr)
 
-	srv := NewServer(Options{
+	opts := Options{
 		Manager:    mgr,
 		Registry:   reg,
 		SocketPath: socket,
 		ConfigPath: configPath,
 		Version:    "test",
-	})
+	}
+	for _, f := range tune {
+		f(&opts)
+	}
+	srv := NewServer(opts)
 	if err := srv.Listen(); err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	go srv.Serve()
 
-	td := &testDaemon{socket: socket, configPath: configPath, mgr: mgr, srv: srv}
+	td := &testDaemon{socket: socket, configPath: configPath, mgr: mgr, reg: reg, srv: srv}
 	t.Cleanup(func() {
 		srv.Close()
 		mgr.Close()

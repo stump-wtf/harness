@@ -3,8 +3,11 @@ package daemon
 // Governing: SPEC-0002 REQ "Handshake And Versioning" (HELLO + proto-major
 // check; mismatch → structured ERROR then clean close), REQ "Message Framing"
 // (control and attach multiplexed on one connection), REQ "Event Subscription"
-// (push EVENT frames after a HELLO that wants events), and REQ "Attach Session"
-// (ATTACH_OPEN/DATA/RESIZE/CLOSE per session).
+// (push EVENT frames after a HELLO that wants events), REQ "Attach Session"
+// (ATTACH_OPEN/DATA/RESIZE/CLOSE per session), and REQ "Backpressure Isolation"
+// ("PING/PONG heartbeats SHALL detect dead clients so their sessions get
+// reaped" — the liveness reaper below, plus ADR-0003 for the smallest-attached-
+// wins minimum a stale session would otherwise pin).
 
 import (
 	"encoding/json"
@@ -31,16 +34,29 @@ type conn struct {
 
 	mu       sync.Mutex
 	sessions map[uint32]*attach.Session
+
+	// liveMu guards the liveness bookkeeping the heartbeat reaper reads (#183).
+	// It is deliberately not mu: mu is held while attach sessions are looked up
+	// and torn down, and the reaper must be able to sample liveness without
+	// queueing behind that.
+	liveMu sync.Mutex
+	// lastAlive is when this connection last produced an inbound frame — see
+	// markAlive for why any frame, not just PONG, counts.
+	lastAlive time.Time
+	// sawPong records that this client has answered at least one PING. It is
+	// the compatibility guard on eviction; see stale().
+	sawPong bool
 }
 
 // handleConn runs the full lifecycle for one accepted connection.
 func (s *Server) handleConn(raw net.Conn) {
 	c := &conn{
-		srv:      s,
-		pc:       protocol.NewConn(raw),
-		raw:      raw,
-		closed:   make(chan struct{}),
-		sessions: make(map[uint32]*attach.Session),
+		srv:       s,
+		pc:        protocol.NewConn(raw),
+		raw:       raw,
+		closed:    make(chan struct{}),
+		sessions:  make(map[uint32]*attach.Session),
+		lastAlive: time.Now(),
 	}
 	// Register before serving so a concurrent Close can reach this socket; if the
 	// server is already shutting down, close immediately and bail.
@@ -137,16 +153,80 @@ func (c *conn) forwardEvents() {
 	}
 }
 
-// heartbeat PINGs the client periodically; a failed write means the client is
-// gone and unblocks teardown of its sessions (SPEC-0002 REQ "Backpressure
-// Isolation").
+// markAlive records proof that the client is still processing its socket. It is
+// called for every inbound frame, and pong marks the frame as a PONG.
+//
+// Any inbound frame counts, not just PONG: a client that is issuing control
+// requests, attach input, or resizes is demonstrably transacting on this
+// connection and is not the wedged-and-gone case this reaper exists for.
+// Counting only PONG would discard evidence we already have, for no gain: it
+// cannot detect anything the wider signal misses, and it can only ever evict
+// sooner — and a false eviction destroys a working session, which is strictly
+// worse than carrying a stale one for another interval. PONG then serves as the
+// *solicited* variant: it guarantees an otherwise idle-but-healthy client still
+// refreshes its liveness once per ping interval, so silence really does mean
+// silence rather than "nothing to say".
+//
+// Known limitation: a client whose read side is wedged while its write side
+// keeps emitting frames would be treated as alive. Neither of our clients can
+// be in that state — both answer PING from the same read loop that would be
+// stuck — and mis-classifying that hypothetical is the safe direction.
+func (c *conn) markAlive(pong bool) {
+	c.liveMu.Lock()
+	c.lastAlive = time.Now()
+	if pong {
+		c.sawPong = true
+	}
+	c.liveMu.Unlock()
+}
+
+// stale reports whether this connection has gone silent long enough to reap
+// (#183). It is deliberately conservative in one specific way.
+//
+// Compatibility guard: a client that has never PONGed at all is a client that
+// does not speak PONG, not a wedged one, and reaping it would kill a working
+// session on an older build. Only a connection that proved it answers PINGs and
+// then stopped is eligible. PING/PONG are frame types 9/10 in the base
+// protocol, so there is no ProtoMinor that separates "answers PONG" from
+// "doesn't" — gating on the HELLO version would gate on nothing, and a version
+// is a claim where an observed PONG is evidence. Hence behaviour, not version.
+//
+// The edge this honestly leaves open: a client that wedges *before* its first
+// PONG — inside the first ping interval of connecting — is never eligible, and
+// still pins the minimum until the daemon restarts. Narrowing that would mean
+// reaping clients we have no evidence about, which trades a rare stuck session
+// for routinely killing live ones.
+func (c *conn) stale() bool {
+	c.liveMu.Lock()
+	defer c.liveMu.Unlock()
+	if !c.sawPong {
+		return false
+	}
+	return time.Since(c.lastAlive) > c.srv.livenessTimeout
+}
+
+// heartbeat PINGs the client periodically and reaps a connection that has gone
+// silent (SPEC-0002 REQ "Backpressure Isolation"). A failed write means the
+// client is gone; so does a client that keeps absorbing PINGs without ever
+// answering, because its socket receive buffer makes our writes succeed long
+// after it stopped reading (#183).
+//
+// Reaping closes the raw socket, which unblocks loop()'s ReadFrame and lets
+// handleConn's deferred teardown() detach the sessions through the one existing
+// path — Mux.Detach then recomputes smallest-attached-wins for whoever is left,
+// so a surviving healthy client gets its geometry back (ADR-0003).
 func (c *conn) heartbeat() {
 	defer c.srv.wg.Done()
-	t := time.NewTicker(pingInterval)
+	t := time.NewTicker(c.srv.pingInterval)
 	defer t.Stop()
 	for {
 		select {
 		case <-t.C:
+			// Evaluate the previous tick's PING before sending the next one.
+			if c.stale() {
+				_ = c.raw.Close()
+				return
+			}
 			if err := c.pc.WriteFrame(protocol.TypePing, nil); err != nil {
 				return
 			}
@@ -165,6 +245,9 @@ func (c *conn) loop() {
 		if err != nil {
 			return // EOF or transport error → teardown
 		}
+		// Every frame that arrives is proof the client is still reading and
+		// writing this socket (#183).
+		c.markAlive(f.Type == protocol.TypePong)
 		switch f.Type {
 		case protocol.TypeControlReq:
 			c.handleControl(f.Payload)
@@ -179,7 +262,7 @@ func (c *conn) loop() {
 		case protocol.TypePing:
 			_ = c.pc.WriteFrame(protocol.TypePong, nil)
 		case protocol.TypePong:
-			// Liveness ack; nothing to do.
+			// Liveness ack; already recorded by markAlive above.
 		default:
 			_ = c.pc.WriteError(0, protocol.ErrBadRequest, "unexpected frame %s", f.Type)
 		}

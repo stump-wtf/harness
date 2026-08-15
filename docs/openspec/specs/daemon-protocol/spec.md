@@ -127,6 +127,16 @@ clients so their sessions get reaped.
 - **THEN** the harness and all other clients continue at full speed, and the
   slow client eventually receives a snapshot repaint instead of the backlog
 
+#### Scenario: Wedged client pinning the viewport
+
+- **WHEN** an attached client stays connected but stops reading its socket, so
+  the daemon's writes keep succeeding into its receive buffer and its `PONG`s
+  stop
+- **THEN** the daemon reaps that connection once its silence passes the
+  liveness timeout, tears down its attach sessions, and recomputes
+  smallest-attached-wins over the survivors so the guest PTY is no longer
+  clamped by it — a client that has never answered a `PING` is left alone
+
 ### Requirement: Transport Bindings
 
 Locally, the daemon SHALL serve this protocol on a Unix socket with `0600`
