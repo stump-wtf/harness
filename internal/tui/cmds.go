@@ -30,10 +30,14 @@ type refreshMsg struct {
 }
 
 // logsMsg is a read-only tail for the peek pane (SPEC-0001 REQ "Dashboard":
-// live read-only tail without attaching).
+// live read-only tail without attaching). cols/rows carry the guest's
+// authoritative viewport — the geometry the tail was drawn at — so viewPeek can
+// replay it faithfully; both are 0 when the daemon has no viewport to report.
 type logsMsg struct {
 	name string
 	text string
+	cols int
+	rows int
 	err  error
 }
 
@@ -97,7 +101,7 @@ func fetchLogs(ctrl Controller, name string, lines int) tea.Cmd {
 	}
 	return func() tea.Msg {
 		ld, err := ctrl.Logs(name, lines)
-		return logsMsg{name: name, text: ld.Text, err: err}
+		return logsMsg{name: name, text: ld.Text, cols: ld.Cols, rows: ld.Rows, err: err}
 	}
 }
 
