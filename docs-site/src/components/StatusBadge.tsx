@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {ReactElement} from 'react';
 import clsx from 'clsx';
 
 export type StatusType = 'accepted' | 'approved' | 'active' | 'inactive' | 'draft' | 'rejected' | 'proposed' | 'deprecated' | 'superseded' | 'unknown';
@@ -21,7 +21,7 @@ const statusEmojis: Record<string, string> = {
   'unknown': '\ud83e\udd37',
 };
 
-export default function StatusBadge({status, className}: StatusBadgeProps): JSX.Element {
+export default function StatusBadge({status, className}: StatusBadgeProps): ReactElement {
   const normalizedStatus = status.toLowerCase() as StatusType;
   const emoji = statusEmojis[normalizedStatus] || statusEmojis['unknown'];
 

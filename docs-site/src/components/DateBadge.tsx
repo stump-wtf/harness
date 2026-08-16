@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {ReactElement} from 'react';
 
 interface DateBadgeProps {
   date: string;
@@ -7,7 +7,7 @@ interface DateBadgeProps {
 
 const CALENDAR_EMOJI = '\uD83D\uDCC5';
 
-export default function DateBadge({date, className}: DateBadgeProps): JSX.Element {
+export default function DateBadge({date, className}: DateBadgeProps): ReactElement {
   return (
     <span className={`date-badge ${className || ''}`}>
       {CALENDAR_EMOJI} {date}

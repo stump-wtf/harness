@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {ReactElement} from 'react';
 import clsx from 'clsx';
 
 export type PriorityType = 'P0' | 'P1' | 'P2' | 'P3' | 'P4';
@@ -16,7 +16,7 @@ const priorityEmojis: Record<string, string> = {
   'P4': '\u26aa',
 };
 
-export default function PriorityBadge({priority, className}: PriorityBadgeProps): JSX.Element {
+export default function PriorityBadge({priority, className}: PriorityBadgeProps): ReactElement {
   const normalizedPriority = priority.toUpperCase() as PriorityType;
   const emoji = priorityEmojis[normalizedPriority] || priorityEmojis['P4'];
 

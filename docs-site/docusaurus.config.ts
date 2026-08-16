@@ -35,11 +35,16 @@ const config: Config = {
   baseUrl: BASE_URL,
 
   onBrokenLinks: 'warn',
-  onBrokenMarkdownLinks: 'warn',
 
   markdown: {
     format: 'detect',
     mermaid: true,
+    hooks: {
+      // Moved out of the top-level `onBrokenMarkdownLinks`, which is deprecated
+      // and printed a migration warning on every build (twice, once per SSG
+      // pass). Same behaviour, current location.
+      onBrokenMarkdownLinks: 'warn',
+    },
   },
 
   themes: ['@docusaurus/theme-mermaid'],
