@@ -7,7 +7,7 @@ require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/term v0.2.2
-	github.com/charmbracelet/x/vt v0.0.0-20260813141921-f091cedeaf78
+	github.com/charmbracelet/x/vt v0.0.0-20260816001655-68d539dca504
 	github.com/charmbracelet/x/xpty v0.1.4
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/stump-wtf/agent-trace v0.0.0-20260814165024-eb88b165bf06
