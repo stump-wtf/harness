@@ -368,6 +368,13 @@ func lifecycleAll(c *client.Client, o verbOpts, verb string) error {
 	if len(hs) == 0 {
 		return fmt.Errorf("--all: no harnesses configured")
 	}
+	// Animated path: on a real terminal (and only outside --json) the run
+	// renders through the Bubble Tea lifecycle view — spinner on the harness
+	// being acted on, SPEC-0003 state per completed row, overall progress.
+	// Pipes and scripts keep the plain line-per-harness contract.
+	if !o.json && cliui.WriterIsTTY(os.Stdout) {
+		return runLifecycleAnimated(verb, c, harnessNames(hs))
+	}
 	var (
 		results []protocol.HarnessInfo
 		errs    []string
@@ -401,6 +408,16 @@ func lifecycleAll(c *client.Client, o verbOpts, verb string) error {
 		return fmt.Errorf("%d failed:\n  %s", len(errs), strings.Join(errs, "\n  "))
 	}
 	return nil
+}
+
+// harnessNames projects a list result onto the ordered name slice the
+// animated lifecycle view walks.
+func harnessNames(hs []protocol.HarnessInfo) []string {
+	names := make([]string, len(hs))
+	for i, h := range hs {
+		names[i] = h.Name
+	}
+	return names
 }
 
 // usage and daemonUsage live in help.go (styled via theme palette,

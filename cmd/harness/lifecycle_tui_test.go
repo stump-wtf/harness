@@ -1,0 +1,146 @@
+package main
+
+// Governing: ADR-0001 (Charmbracelet stack owns the visual language) and
+// SPEC-0003 (glyph + adaptive color — legible even when the test terminal
+// strips every color). Exercises the animated --all model headlessly: the
+// op-result sequence a real run produces, the failure path, and the
+// ctrl-c interrupt.
+
+import (
+	"strings"
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+)
+
+func TestHarnessNames(t *testing.T) {
+	hs := []protocol.HarnessInfo{{Name: "a"}, {Name: "b"}, {Name: "c"}}
+	got := harnessNames(hs)
+	if len(got) != 3 || got[0] != "a" || got[2] != "c" {
+		t.Fatalf("harnessNames = %v", got)
+	}
+}
+
+func TestLifecycleModelCompletes(t *testing.T) {
+	m := newLifecycleModel("start", nil, []string{"alpha", "beta"})
+	_ = m.Init()
+
+	var cmd tea.Cmd
+	mi, cmd := m.Update(opDoneMsg{idx: 0, info: protocol.HarnessInfo{State: "running"}})
+	m = mi.(*lifecycleModel)
+	if cmd == nil {
+		t.Fatal("completion of a row must schedule the next op + progress")
+	}
+	if m.idx != 1 || !m.rows[1].running {
+		t.Fatalf("expected row 1 active after first op, idx=%d", m.idx)
+	}
+	mi, _ = m.Update(opDoneMsg{idx: 1, info: protocol.HarnessInfo{State: "running"}})
+	m = mi.(*lifecycleModel)
+
+	if !m.quitting {
+		t.Fatal("last op must quit the program")
+	}
+	if len(m.errs) != 0 {
+		t.Fatalf("unexpected errors: %v", m.errs)
+	}
+	out := m.finalView()
+	for _, want := range []string{"✓ alpha", "✓ beta", "2 harnesses started"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("final view missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestLifecycleModelFailureCollected(t *testing.T) {
+	m := newLifecycleModel("stop", nil, []string{"alpha", "beta"})
+	mi, _ := m.Update(opDoneMsg{idx: 0, err: errBoom})
+	m = mi.(*lifecycleModel)
+	mi, _ = m.Update(opDoneMsg{idx: 1, info: protocol.HarnessInfo{State: "stopped"}})
+	m = mi.(*lifecycleModel)
+
+	if len(m.errs) != 1 || !strings.Contains(m.errs[0], "alpha") {
+		t.Fatalf("errs = %v, want one alpha failure", m.errs)
+	}
+	out := m.finalView()
+	if !strings.Contains(out, "✗ alpha") || !strings.Contains(out, "boom") {
+		t.Errorf("final view must show the failed row:\n%s", out)
+	}
+	if !strings.Contains(out, "1 failed") {
+		t.Errorf("final view must tally failures:\n%s", out)
+	}
+}
+
+func TestLifecycleModelInterrupt(t *testing.T) {
+	m := newLifecycleModel("start", nil, []string{"alpha", "beta"})
+	m2, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	if cmd == nil {
+		t.Fatal("ctrl-c must quit")
+	}
+	if !m2.(*lifecycleModel).quitting {
+		t.Fatal("quit key must set quitting")
+	}
+	if !strings.Contains(m2.(*lifecycleModel).finalView(), "interrupted") {
+		t.Errorf("interrupted run must say so:\n%s", m2.(*lifecycleModel).finalView())
+	}
+}
+
+func TestVerbForms(t *testing.T) {
+	cases := map[string][2]string{
+		"start":   {"Starting", "started"},
+		"stop":    {"Stopping", "stopped"},
+		"restart": {"Restarting", "restarted"},
+	}
+	for verb, want := range cases {
+		if got := verbGerund(verb); got != want[0] {
+			t.Errorf("verbGerund(%q) = %q", verb, got)
+		}
+		if got := verbPast(verb); got != want[1] {
+			t.Errorf("verbPast(%q) = %q", verb, got)
+		}
+	}
+	if got := firstLine("a\nb\nc"); got != "a" {
+		t.Errorf("firstLine = %q", got)
+	}
+}
+
+// errBoom is a sentinel for the failure-path tests.
+var errBoom = errorString("boom")
+
+type errorString string
+
+func (e errorString) Error() string { return string(e) }
+
+// TestLifecycleResultExitStatus pins the verdict the caller turns into an exit
+// code. The interrupt case is the one that was wrong: aborting collects no
+// per-harness error, so reporting only errs exited 0 and told a script the
+// whole fleet had been acted on.
+func TestLifecycleResultExitStatus(t *testing.T) {
+	complete := newLifecycleModel("start", nil, []string{"alpha", "beta"})
+	mi, _ := complete.Update(opDoneMsg{idx: 0, info: protocol.HarnessInfo{State: "running"}})
+	mi, _ = mi.(*lifecycleModel).Update(opDoneMsg{idx: 1, info: protocol.HarnessInfo{State: "running"}})
+	if err := mi.(*lifecycleModel).result(); err != nil {
+		t.Errorf("a clean run must succeed, got %v", err)
+	}
+
+	interrupted := newLifecycleModel("stop", nil, []string{"alpha", "beta", "gamma"})
+	mi, _ = interrupted.Update(opDoneMsg{idx: 0, info: protocol.HarnessInfo{State: "stopped"}})
+	mi, _ = mi.(*lifecycleModel).Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+	err := mi.(*lifecycleModel).result()
+	if err == nil {
+		t.Fatal("an interrupted run must not report success")
+	}
+	if !strings.Contains(err.Error(), "interrupted after 1 of 3") {
+		t.Errorf("interrupt error = %q, want the count it got through", err)
+	}
+
+	// A failure underneath an interrupt survives it.
+	both := newLifecycleModel("stop", nil, []string{"alpha", "beta"})
+	mi, _ = both.Update(opDoneMsg{idx: 0, err: errBoom})
+	mi, _ = mi.(*lifecycleModel).Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	err = mi.(*lifecycleModel).result()
+	if err == nil || !strings.Contains(err.Error(), "interrupted") || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("result = %v, want both the interrupt and the failure", err)
+	}
+}
