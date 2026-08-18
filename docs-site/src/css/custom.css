@@ -446,3 +446,80 @@ table thead tr {
   font-size: var(--text-xs);
   color: var(--text-dim);
 }
+
+/* ============================================
+   Homepage Hero + Feature Tiles
+   ============================================ */
+.homepage-hero {
+  text-align: center;
+  padding: var(--space-8) 0 var(--space-6) 0;
+}
+.homepage-hero__title {
+  font-size: clamp(2.5rem, 6vw, 4rem);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+  margin: 0;
+  background: linear-gradient(
+    90deg,
+    var(--charm-purple),
+    var(--charm-pink),
+    var(--charm-cyan)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.homepage-hero__subtitle {
+  font-size: var(--text-lg);
+  color: var(--text-muted);
+  margin: var(--space-4) auto 0 auto;
+  max-width: 44rem;
+}
+.feature-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+  margin: var(--space-6) 0 var(--space-8) 0;
+}
+@media (max-width: 996px) {
+  .feature-tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .feature-tiles {
+    grid-template-columns: 1fr;
+  }
+}
+.feature-tile {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-5);
+  border: var(--border-hair) solid var(--line);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-card);
+  text-decoration: none !important;
+  color: inherit !important;
+  transition: border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-spring),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+.feature-tile:hover {
+  border-color: var(--border-brand);
+  transform: translateY(-2px);
+  box-shadow: var(--glow-soft);
+  text-decoration: none !important;
+}
+.feature-tile__icon {
+  font-size: 1.75rem;
+  line-height: 1;
+  margin-bottom: var(--space-3);
+}
+.feature-tile__title {
+  font-weight: var(--weight-bold);
+  margin-bottom: var(--space-2);
+}
+.feature-tile__description {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}

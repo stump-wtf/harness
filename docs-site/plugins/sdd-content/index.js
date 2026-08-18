@@ -998,34 +998,82 @@ ${renderHierarchySection({ kind: 'adr', kindPlural: 'ADRs' }, graph, baseUrl)}`;
   fs.writeFileSync(path.join(decisionsDest, 'index.mdx'), content);
 }
 
+// Homepage hero + feature tiles. The tiles describe the project itself (not
+// the ADR/spec tree), so they live here as data; the ADR/spec counts below
+// stay derived from the source tree.
+const HOMEPAGE_TAGLINE = 'systemctl for your agents';
+const HOMEPAGE_FEATURES = [
+  {
+    icon: '🖥️',
+    title: 'Keyboard-driven dashboard',
+    description: 'Open the cockpit TUI and hop between every harness with live terminal previews — no args, just harness.',
+    href: '/usage/tui',
+  },
+  {
+    icon: '♻️',
+    title: 'Real supervision',
+    description: 'Restart policies, escalating crash-loop backoff and state persistence — harnesses survive client disconnects and daemon restarts.',
+    href: '/usage/supervision',
+  },
+  {
+    icon: '🤖',
+    title: 'Agent adapters',
+    description: 'First-class Claude Code, Crush and Codex support: prompt one-shots, model selection, turn budgets, trajectory harvesting.',
+    href: '/usage/configuration#agent-adapters',
+  },
+  {
+    icon: '⏰',
+    title: 'Scheduled one-shots',
+    description: 'Give a prompt harness a cron schedule and the daemon fires it on cadence — overlapping runs skip, never stack.',
+    href: '/usage/configuration#scheduled-one-shots',
+  },
+  {
+    icon: '📦',
+    title: 'Project compose',
+    description: 'A repo-root harness.toml gives every checkout its own fleet: harness up / down / ps with project-scoped names.',
+    href: '/usage/projects',
+  },
+  {
+    icon: '🔒',
+    title: 'Remote over SSH',
+    description: 'The same dashboard over the network via Wish — public-key auth only, per-key read-only scoping, no password path.',
+    href: '/usage/remote',
+  },
+];
+
 function generateMainIndex(adrsSource, specsSource, docsDest, projectTitle) {
   const adrCount = countAdrs(adrsSource);
   const specCount = countSpecs(specsSource);
 
-  const safeTitle = projectTitle.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const esc = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const tiles = HOMEPAGE_FEATURES.map(
+    (f) => `<a className="feature-tile" href="${f.href}">
+  <div className="feature-tile__icon">${f.icon}</div>
+  <div className="feature-tile__title">${esc(f.title)}</div>
+  <div className="feature-tile__description">${esc(f.description)}</div>
+</a>`,
+  ).join('\n');
+
   const content = `---
-title: "${safeTitle}"
+title: "${esc(projectTitle)}"
 slug: /
 ---
 
-# ${projectTitle}
+<div className="homepage-hero">
+  <h1 className="homepage-hero__title">${esc(projectTitle)}</h1>
+  <p className="homepage-hero__subtitle">${esc(HOMEPAGE_TAGLINE)} — supervise, attach to, and hop between long-running agent CLIs, REPLs and watchers from one Go binary.</p>
+</div>
 
-${adrCount > 0 || specCount > 0
-    ? 'Browse the architecture decisions and specifications for this project.'
-    : 'No architecture artifacts found yet.'}
+<div className="feature-tiles">
+${tiles}
+</div>
 
-${adrCount > 0 ? `## Architecture Decisions
+${adrCount > 0 || specCount > 0 ? `## Under the hood
 
-This project has **${adrCount}** ADR${adrCount !== 1 ? 's' : ''} documenting key architectural choices.
+This project has **${adrCount}** architecture decision${adrCount !== 1 ? 's' : ''} and **${specCount}** specification${specCount !== 1 ? 's' : ''} recording why every behavior above is the way it is.
 
-[Browse Architecture Decisions →](/decisions)
-` : ''}
-${specCount > 0 ? `## Specifications
-
-This project has **${specCount}** specification${specCount !== 1 ? 's' : ''} defining capability requirements and design.
-
-[Browse Specifications →](/specs)
-` : ''}`;
+[Browse Architecture Decisions →](/decisions) · [Browse Specifications →](/specs)
+` : 'No architecture artifacts found yet.'}`;
 
   fs.mkdirSync(docsDest, { recursive: true });
   fs.writeFileSync(path.join(docsDest, 'index.mdx'), content);
