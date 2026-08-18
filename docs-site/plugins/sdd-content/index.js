@@ -1057,6 +1057,7 @@ function generateMainIndex(adrsSource, specsSource, docsDest, projectTitle) {
   const content = `---
 title: "${esc(projectTitle)}"
 slug: /
+hide_title: true
 ---
 
 <div className="homepage-hero">

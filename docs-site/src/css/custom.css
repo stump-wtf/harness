@@ -455,6 +455,7 @@ table thead tr {
   padding: var(--space-8) 0 var(--space-6) 0;
 }
 .homepage-hero__title {
+  text-align: center;
   font-size: clamp(2.5rem, 6vw, 4rem);
   font-weight: var(--weight-bold);
   letter-spacing: -0.02em;
@@ -463,13 +464,14 @@ table thead tr {
     90deg,
     var(--charm-purple),
     var(--charm-pink),
-    var(--charm-cyan)
+    var(--charm-fuchsia)
   );
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 .homepage-hero__subtitle {
+  text-align: center;
   font-size: var(--text-lg);
   color: var(--text-muted);
   margin: var(--space-4) auto 0 auto;
