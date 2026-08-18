@@ -1041,13 +1041,13 @@ const HOMEPAGE_FEATURES = [
   },
 ];
 
-function generateMainIndex(adrsSource, specsSource, docsDest, projectTitle) {
+function generateMainIndex(adrsSource, specsSource, docsDest, projectTitle, baseUrl) {
   const adrCount = countAdrs(adrsSource);
   const specCount = countSpecs(specsSource);
 
   const esc = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const tiles = HOMEPAGE_FEATURES.map(
-    (f) => `<a className="feature-tile" href="${f.href}">
+    (f) => `<a className="feature-tile" href="${baseUrl}${f.href}">
   <div className="feature-tile__icon">${f.icon}</div>
   <div className="feature-tile__title">${esc(f.title)}</div>
   <div className="feature-tile__description">${esc(f.description)}</div>
@@ -1058,8 +1058,10 @@ function generateMainIndex(adrsSource, specsSource, docsDest, projectTitle) {
 title: "${esc(projectTitle)}"
 slug: /
 hide_title: true
+hide_table_of_contents: true
 ---
 
+<div className="homepage">
 <div className="homepage-hero">
   <h1 className="homepage-hero__title">${esc(projectTitle)}</h1>
   <p className="homepage-hero__subtitle">${esc(HOMEPAGE_TAGLINE)} — supervise, attach to, and hop between long-running agent CLIs, REPLs and watchers from one Go binary.</p>
@@ -1069,12 +1071,18 @@ hide_title: true
 ${tiles}
 </div>
 
-${adrCount > 0 || specCount > 0 ? `## Under the hood
+${adrCount > 0 || specCount > 0 ? `<div className="homepage__footnote">
+
+## Under the hood
 
 This project has **${adrCount}** architecture decision${adrCount !== 1 ? 's' : ''} and **${specCount}** specification${specCount !== 1 ? 's' : ''} recording why every behavior above is the way it is.
 
-[Browse Architecture Decisions →](/decisions) · [Browse Specifications →](/specs)
-` : 'No architecture artifacts found yet.'}`;
+[Browse Architecture Decisions →](${baseUrl}/decisions) · [Browse Specifications →](${baseUrl}/specs)
+
+</div>
+` : 'No architecture artifacts found yet.'}
+
+</div>`;
 
   fs.mkdirSync(docsDest, { recursive: true });
   fs.writeFileSync(path.join(docsDest, 'index.mdx'), content);
@@ -1304,7 +1312,7 @@ module.exports = function(context, options) {
       }
 
       // Generate index pages
-      generateMainIndex(adrsSource, specsSource, docsDest, projectTitle);
+      generateMainIndex(adrsSource, specsSource, docsDest, projectTitle, baseUrl);
       generateSpecsIndex(specsSource, docsDest, graph, baseUrl);
       generateDecisionsIndex(adrsSource, docsDest, graph, baseUrl);
       console.log(`  Generated index pages`);

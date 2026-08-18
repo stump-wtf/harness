@@ -450,6 +450,37 @@ table thead tr {
 /* ============================================
    Homepage Hero + Feature Tiles
    ============================================ */
+
+/* The homepage is a landing page living inside the docs layout, so the
+   article column it inherits is sized and positioned for prose — left-aligned
+   under a sidebar that this page does not have. Centering the hero text alone
+   left the whole page hanging off-center. The wrapper takes the column back:
+   it centers itself in whatever width the theme hands it, and caps at a width
+   the three-up tile grid actually wants. */
+.homepage {
+  max-width: 60rem;
+  margin: 0 auto;
+  width: 100%;
+}
+.theme-doc-markdown:has(.homepage) {
+  display: flex;
+  justify-content: center;
+}
+/* `docMainContainerEnhanced` caps itself at `calc(100% - 30px)` to reserve the
+   collapsed-sidebar strip. The homepage has no sidebar to expand, so that
+   reservation is pure left-bias — 175px of gutter on one side against 205px on
+   the other. Hand the width back on this page only. The hashed suffix on the
+   class changes per build, so match the stable prefix. */
+.main-wrapper:has(.homepage) [class*='docMainContainer'] {
+  max-width: 100%;
+}
+.homepage__footnote {
+  text-align: center;
+}
+.homepage__footnote h2 {
+  margin-top: var(--space-8);
+}
+
 .homepage-hero {
   text-align: center;
   padding: var(--space-8) 0 var(--space-6) 0;
