@@ -245,7 +245,7 @@ func TestCrushPromptCommandAllOpts(t *testing.T) {
 	if cmd != "crush" {
 		t.Fatalf("cmd = %q, want crush", cmd)
 	}
-	want := []string{"run", "--quiet", "--model", "claude-opus-5", "--yolo", "--max-turns", "10", "check deps"}
+	want := []string{"--yolo", "run", "--quiet", "--model", "claude-opus-5", "check deps"}
 	if !slicesEqual(args, want) {
 		t.Fatalf("args = %q, want %q", args, want)
 	}

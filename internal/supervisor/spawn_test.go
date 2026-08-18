@@ -128,45 +128,45 @@ func TestExecArgvCmdIgnoresModel(t *testing.T) {
 }
 
 // TestExecArgvPromptAutoAcceptSynthesis pins the yolo flag's spawn-time
-// placement (issue #58): --yolo rides the synthesized agent argv after the
-// optional --model and BEFORE the prompt — the prompt stays the final argv
-// element — and, like prompt and model, it never passes through {workdir}
-// expansion.
+// placement (issue #58): --yolo is a GLOBAL crush flag, so it rides the
+// synthesized argv BEFORE the `run` subcommand — after `run` crush rejects it
+// with "unknown flag" and the harness crash-loops to degraded. The prompt
+// stays the final argv element and never passes through {workdir} expansion.
 func TestExecArgvPromptAutoAcceptSynthesis(t *testing.T) {
 	h := core.Harness{Name: "agent", Prompt: "check deployments", Model: "claude-opus-5", AutoAccept: true, Quiet: true}
 	name, args := execArgv(h, "/home/x")
 	if name != "crush" {
 		t.Errorf("cmd = %q, want crush", name)
 	}
-	want := []string{"run", "--quiet", "--model", "claude-opus-5", "--yolo", "check deployments"}
+	want := []string{"--yolo", "run", "--quiet", "--model", "claude-opus-5", "check deployments"}
 	if !slices.Equal(args, want) {
-		t.Errorf("args = %q, want %q (--yolo after --model, prompt last)", args, want)
+		t.Errorf("args = %q, want %q (--yolo before run, prompt last)", args, want)
 	}
 
-	// Without a model the flag still precedes the prompt.
+	// Without a model the flag still precedes the subcommand.
 	h = core.Harness{Name: "agent", Prompt: "check deployments", AutoAccept: true, Quiet: true}
 	_, args = execArgv(h, "/home/x")
-	want = []string{"run", "--quiet", "--yolo", "check deployments"}
+	want = []string{"--yolo", "run", "--quiet", "check deployments"}
 	if !slices.Equal(args, want) {
 		t.Errorf("args = %q, want %q", args, want)
 	}
 }
 
-// TestExecArgvPromptMaxTurnsSynthesis pins the turn-budget flag's spawn-time
-// placement (issue #59): --max-turns rides the synthesized agent argv before
-// the prompt, and a 0/unset budget emits no flag at all (the "unlimited"
-// default, so a prompt one-shot is not silently capped).
+// TestExecArgvPromptMaxTurnsSynthesis pins the turn budget's inertness
+// (issue #59): crush has no --max-turns flag at any position, so a budget > 0
+// emits NO flag — emitting one would kill the spawn — and a 0/unset budget is
+// equally silent. The knob stays on the wire for when crush grows the flag.
 func TestExecArgvPromptMaxTurnsSynthesis(t *testing.T) {
 	h := core.Harness{Name: "agent", Prompt: "check deployments", MaxTurns: 8, Quiet: true}
 	name, args := execArgv(h, "/home/x")
 	if name != "crush" {
 		t.Errorf("cmd = %q, want crush", name)
 	}
-	if want := []string{"run", "--quiet", "--max-turns", "8", "check deployments"}; !slices.Equal(args, want) {
-		t.Errorf("args = %q, want %q (--max-turns before the prompt)", args, want)
+	if want := []string{"run", "--quiet", "check deployments"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (crush has no --max-turns; budget is inert)", args, want)
 	}
 
-	// Budget 0 (unset/unlimited) emits no flag.
+	// Budget 0 (unset/unlimited) is equally silent.
 	h = core.Harness{Name: "agent", Prompt: "check deployments", MaxTurns: 0, Quiet: true}
 	_, args = execArgv(h, "/home/x")
 	if want := []string{"run", "--quiet", "check deployments"}; !slices.Equal(args, want) {
@@ -176,8 +176,8 @@ func TestExecArgvPromptMaxTurnsSynthesis(t *testing.T) {
 	// It stacks with the other options in a stable flag order.
 	h = core.Harness{Name: "agent", Prompt: "check", Model: "claude-opus-5", AutoAccept: true, MaxTurns: 3, Quiet: true}
 	_, args = execArgv(h, "/home/x")
-	if want := []string{"run", "--quiet", "--model", "claude-opus-5", "--yolo", "--max-turns", "3", "check"}; !slices.Equal(args, want) {
-		t.Errorf("args = %q, want %q (model, yolo, then max-turns, prompt last)", args, want)
+	if want := []string{"--yolo", "run", "--quiet", "--model", "claude-opus-5", "check"}; !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q (yolo before run, model after, prompt last)", args, want)
 	}
 }
 

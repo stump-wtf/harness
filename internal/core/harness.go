@@ -6,7 +6,6 @@ package core
 // (config, supervisor, protocol, tui) imports.
 
 import (
-	"strconv"
 	"time"
 )
 
@@ -215,28 +214,31 @@ type AgentOpts struct {
 }
 
 // AgentCommand returns the argv a prompt harness spawns: the agent CLI, the
-// optional --model selection (issue #57), the optional --yolo unattended flag
-// (issue #58), the optional --max-turns budget (issue #59), then the prompt,
-// verbatim, as the FINAL argv element — flags precede the prompt so the
-// instruction text stays last. Callers pass the opts through untouched: they
-// are config truth, not configured args, so none go through the {workdir}
-// placeholder expansion the supervisor applies to Args.
+// optional --yolo unattended flag (issue #58), the run subcommand, the
+// optional --quiet, --model, then the prompt, verbatim, as the FINAL argv
+// element — flags precede the prompt so the instruction text stays last.
+// --yolo is a GLOBAL crush flag (urfac-style CLI: global flags precede the
+// subcommand); placing it after `run` fails with "unknown flag" and the
+// harness crash-loops to degraded. crush has no --max-turns at any position;
+// MaxTurns > 0 is logged-and-dropped rather than emitting a flag that would
+// kill the spawn (issue #59 stays open against crush growing the flag).
+// Callers pass the opts through untouched: they are config truth, not
+// configured args, so none go through the {workdir} placeholder expansion the
+// supervisor applies to Args.
 // Governing: ADR-0011 — interim single-vendor synthesis; the SPEC-0006 adapter
 // registry replaces this call site (and maps auto-accept and the turn budget
 // onto each vendor's own flag).
 func AgentCommand(prompt string, opts AgentOpts) (cmd string, args []string) {
-	args = []string{"run"}
+	args = []string{}
+	if opts.AutoAccept {
+		args = append(args, "--yolo")
+	}
+	args = append(args, "run")
 	if opts.Quiet {
 		args = append(args, "--quiet")
 	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
-	}
-	if opts.AutoAccept {
-		args = append(args, "--yolo")
-	}
-	if opts.MaxTurns > 0 {
-		args = append(args, "--max-turns", strconv.Itoa(opts.MaxTurns))
 	}
 	return "crush", append(args, prompt)
 }

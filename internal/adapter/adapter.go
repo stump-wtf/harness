@@ -185,18 +185,20 @@ func (a *Crush) TrajectoryDir(_ string) string {
 func (a *Crush) TailAdapter() tail.Adapter { return &tail.CrushAdapter{} }
 
 func (a *Crush) PromptCommand(prompt string, opts core.AgentOpts) (string, []string) {
-	args := []string{"run"}
+	// --yolo is a GLOBAL crush flag — it must precede the `run` subcommand;
+	// after it, crush exits "unknown flag" and the harness crash-loops.
+	// crush has no --max-turns at any position, so the budget stays inert
+	// (issue #59 remains open against crush growing the flag).
+	args := []string{}
+	if opts.AutoAccept {
+		args = append(args, "--yolo")
+	}
+	args = append(args, "run")
 	if opts.Quiet {
 		args = append(args, "--quiet")
 	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
-	}
-	if opts.AutoAccept {
-		args = append(args, "--yolo")
-	}
-	if opts.MaxTurns > 0 {
-		args = append(args, "--max-turns", strconv.Itoa(opts.MaxTurns))
 	}
 	return "crush", append(args, prompt)
 }
