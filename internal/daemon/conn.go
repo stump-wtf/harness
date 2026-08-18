@@ -122,6 +122,8 @@ func (c *conn) handshake() bool {
 	}
 	c.srv.wg.Add(1)
 	go c.heartbeat()
+	c.srv.wg.Add(1)
+	go c.reap()
 	return true
 }
 
@@ -205,16 +207,12 @@ func (c *conn) stale() bool {
 	return time.Since(c.lastAlive) > c.srv.livenessTimeout
 }
 
-// heartbeat PINGs the client periodically and reaps a connection that has gone
-// silent (SPEC-0002 REQ "Backpressure Isolation"). A failed write means the
-// client is gone; so does a client that keeps absorbing PINGs without ever
-// answering, because its socket receive buffer makes our writes succeed long
-// after it stopped reading (#183).
+// heartbeat PINGs the client periodically (SPEC-0002 REQ "Backpressure
+// Isolation"). A failed write means the client is gone.
 //
-// Reaping closes the raw socket, which unblocks loop()'s ReadFrame and lets
-// handleConn's deferred teardown() detach the sessions through the one existing
-// path — Mux.Detach then recomputes smallest-attached-wins for whoever is left,
-// so a surviving healthy client gets its geometry back (ADR-0003).
+// It does not reap: the eviction decision lives in reap(), on its own
+// goroutine, because this one can block indefinitely. See reap() for why that
+// separation is load-bearing.
 func (c *conn) heartbeat() {
 	defer c.srv.wg.Done()
 	t := time.NewTicker(c.srv.pingInterval)
@@ -222,12 +220,51 @@ func (c *conn) heartbeat() {
 	for {
 		select {
 		case <-t.C:
-			// Evaluate the previous tick's PING before sending the next one.
-			if c.stale() {
-				_ = c.raw.Close()
+			if err := c.pc.WriteFrame(protocol.TypePing, nil); err != nil {
 				return
 			}
-			if err := c.pc.WriteFrame(protocol.TypePing, nil); err != nil {
+		case <-c.srv.done:
+			return
+		case <-c.closed:
+			return
+		}
+	}
+}
+
+// reap closes a connection that has gone silent (#183): a client that keeps
+// absorbing PINGs without ever answering, because its socket receive buffer
+// makes our writes succeed long after it stopped reading.
+//
+// This runs on its own goroutine, and that is the whole point. It used to
+// share heartbeat's loop, which made the reaper reachable only between PING
+// writes — and a wedged client is precisely the case where that write does not
+// return. Once the client stops reading, its socket send buffer fills, the
+// session pump blocks inside net.Write holding the protocol Conn's write
+// mutex, and the next PING blocks acquiring that mutex. The reaper never got
+// another tick, so the connection it existed to evict pinned the mux minimum
+// forever. Backpressure disarmed the backpressure defense.
+//
+// Only the socket buffer size decided how long that took to bite, which is why
+// it read as platform-specific: ~8 KiB on macOS fills during a single attach
+// repaint, where Linux's ~208 KiB default absorbs it and hides the bug until
+// enough output accumulates.
+//
+// So reap touches nothing that can block on the peer: stale() takes only the
+// liveness mutex, and Close on the raw socket is what unblocks everyone else.
+// Closing unblocks loop()'s ReadFrame and the wedged Write, and lets
+// handleConn's deferred teardown() detach the sessions through the one
+// existing path — Mux.Detach then recomputes smallest-attached-wins for
+// whoever is left, so a surviving healthy client gets its geometry back
+// (ADR-0003).
+func (c *conn) reap() {
+	defer c.srv.wg.Done()
+	t := time.NewTicker(c.srv.pingInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			if c.stale() {
+				_ = c.raw.Close()
 				return
 			}
 		case <-c.srv.done:

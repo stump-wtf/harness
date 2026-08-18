@@ -306,3 +306,55 @@ func TestHealthyClientIsNeverEvicted(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// chattyTOML is a harness that never stops writing. Its output is what fills a
+// wedged client's socket buffers, which is the condition the reaper has to
+// survive — see TestWedgedClientReapedWhileOutputBacksUp.
+const chattyTOML = `
+[harness.chatty]
+cmd = "sh"
+args = ["-c", "while :; do printf 'harness output line for the wedged client %s\\n' $i; i=$((i+1)); done"]
+description = "never stops talking"
+`
+
+// TestWedgedClientReapedWhileOutputBacksUp pins the regression behind #183's
+// incomplete fix: the reaper must stay armed while the daemon's write to the
+// wedged client is blocked.
+//
+// The reaper used to share heartbeat's loop, so the eviction check was
+// reachable only between PING writes. A wedged client stops reading, its
+// socket buffers fill, the session pump blocks in net.Write holding the
+// protocol write mutex, and the next PING blocks acquiring it — leaving the
+// reaper unreachable exactly when it was needed. Backpressure disarmed the
+// backpressure defense.
+//
+// The old code passed on Linux by accident: a ~208 KiB socket buffer swallows
+// a quiet harness's output, so nothing blocked. This test removes that luck by
+// keeping output flowing, which fills any platform's buffer.
+func TestWedgedClientReapedWhileOutputBacksUp(t *testing.T) {
+	td := newTestDaemon(t, chattyTOML, reapFast)
+	if _, err := td.dial(t, nil).Start("chatty"); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	healthy := td.dial(t, nil)
+	stopHealthy := pongForever(healthy)
+	defer stopHealthy()
+	if err := healthy.AttachOpen(1, "chatty", 200, 50, protocol.AttachRW); err != nil {
+		t.Fatalf("healthy attach: %v", err)
+	}
+	waitSessions(t, td, "chatty", 1)
+
+	stuck := td.dial(t, nil)
+	wedge(t, stuck)
+	if err := stuck.AttachOpen(1, "chatty", 80, 24, protocol.AttachRW); err != nil {
+		t.Fatalf("stuck attach: %v", err)
+	}
+	waitSessions(t, td, "chatty", 2)
+
+	// The wedged client goes, and the survivor's geometry comes back with it.
+	snap := waitSessions(t, td, "chatty", 1)
+	if snap.Cols != 200 || snap.Rows != 50 {
+		t.Fatalf("viewport after eviction = %dx%d, want 200x50 restored", snap.Cols, snap.Rows)
+	}
+}
