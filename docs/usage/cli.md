@@ -25,7 +25,13 @@ harness start --all           # start/stop/restart every harness at once
 ```
 
 `<name>` resolves to `<project>/<name>` inside a project (see
-[Projects](./projects)); `--all` keeps its daemon-wide meaning.
+[Projects](./projects)); `--all` keeps its daemon-wide meaning. `--all` runs
+render live per-harness progress with a Bubble Tea animation so a large fleet
+start/stop is visible as it converges.
+
+The client warns when its own build is older or newer than the daemon's
+(client/daemon skew) — after upgrading, restart the daemon so both sides speak
+the same protocol version.
 
 ## Listing & inspection
 
@@ -36,7 +42,25 @@ harness describe <name>       # one harness in detail (state, cmd, backend, flap
 harness daemon-info           # daemon version, proto, PID, uptime, socket, active profile
 ```
 
+`list` and `describe` also surface **schedule metadata** for scheduled
+one-shots (see [Scheduled jobs](#scheduled-jobs) under Configuration): when any
+harness carries a `schedule`, the table grows `schedule` and `next run`
+columns, and `describe` shows the cron spec plus when the next firing is due.
+The columns disappear entirely when nothing is scheduled, so unscheduled
+fleets keep their compact table.
+
+`describe` additionally lists the harness's **live attach sessions** — who is
+attached right now, and whether each session is read-only.
+
 `--json` on any of these emits the same data as structured JSON.
+
+## Scheduled jobs
+
+Scheduled one-shots fire daemon-side on a cron schedule — no verb to remember,
+just configure `schedule` on a `prompt` harness (see
+[Configuration → Scheduled one-shots](./configuration#scheduled-one-shots)).
+`harness list` / `harness describe` show each job's schedule and next firing
+time.
 
 ## Logs
 

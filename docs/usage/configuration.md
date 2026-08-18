@@ -80,6 +80,75 @@ argv, so a `cmd` harness passes its tool's flags through `args` itself.
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
 it on trusted, headless runs.
 
+## Scheduled one-shots
+
+Give an agent one-shot a `schedule` (a standard cron expression, validated at
+config load) and the daemon fires it on that cadence — ADR-0013's replacement
+for the original SPEC-0008 timer design:
+
+```toml
+[harness.stumpcloud-sweep]
+prompt = "check all StumpCloud services and report anything unhealthy"
+auto_accept = true
+schedule = "0 */6 * * *"   # every 6 hours
+description = "scheduled sweep (every 6 hours)"
+```
+
+Rules:
+
+- Requires `prompt` — only agent one-shots can be scheduled.
+- At each firing the harness starts if it is not already running; **overlapping
+  firings are skipped, not stacked**.
+- The run exiting is terminal for that firing; the restart policy applies only
+  to abnormal exit, so only `restart = "no"` (the prompt default) and
+  `"on-failure"` are accepted here.
+- Mutually exclusive with `enabled = true` and with profile membership.
+- Global config only — project files reject the key.
+
+`harness list` and `harness describe` show each scheduled harness's cron spec
+and next-run time (the columns appear only when something is scheduled).
+
+## Agent adapters
+
+The `agent` key selects which adapter the harness resolves to (ADR-0011,
+SPEC-0006). When omitted, the daemon infers it from the `cmd` basename
+(`claude` → `claude-code`, `crush` → `crush`); an unrecognized tool resolves to
+`generic` (no projection, scrollback-only trajectory). Valid values:
+`claude-code`, `crush`, `codex`, `generic`. Adapters also pick the right
+adapter-specific CLI when synthesizing prompt one-shot invocations.
+
+```toml
+[harness.my-agent]
+cmd = "claude"
+agent = "claude-code"
+```
+
+## Trajectory harvesting & facade scope
+
+- `harvest_trajectory = true` (default `false`) exposes this harness's session
+  transcripts read-only through the MCP facade (`list_trajectories` /
+  `get_trajectory`). Opt-in because a transcript may contain secrets the
+  harnessed program printed itself (ADR-0008).
+- `mcp_allow` (default `["read"]`) lists the operations this harness may
+  invoke through the MCP facade; include `"write"` to permit
+  `harness_start/stop/restart` through the facade. **Global config only** —
+  project files reject the key so a cloned repository cannot grant itself write
+  authority over the fleet.
+
+## Daemon settings (`[daemon]`)
+
+```toml
+[daemon]
+watch_config = true                   # auto-reload on config file changes (default true)
+otel_endpoint = "https://cairn.stump.wtf"   # OTLP/HTTP trace export (optional)
+```
+
+`otel_endpoint` is an OTLP/HTTP URL the daemon ships agent traces to. Any
+OTLP-compatible endpoint works (Honeycomb, Tempo, Jaeger, Grafana, or a Cairn
+instance exposing OTLP): the daemon builds OTel traces from harvested sessions
+(`harvest_trajectory = true`) and POSTs standard OTLP JSON to
+`<endpoint>/v1/traces`.
+
 ## Restart policy
 
 The `restart` key mirrors Docker Compose's directive and controls whether a
