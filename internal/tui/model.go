@@ -314,9 +314,14 @@ func (m *Model) clampSel() {
 }
 
 // scrollListToSel adjusts listOffset so the selected row is visible within
-// the list pane's height budget. It accounts for degraded rows occupying two
-// lines. Called after every selection change and after the visible list
-// changes (search filter, profile switch, state refresh).
+// the list pane's height budget. Called after every selection change and after
+// the visible list changes (search filter, profile switch, state refresh).
+//
+// Every row is listRowLines tall since #199 — the metadata sub-line made
+// multi-line rows universal, and folding the degraded expansion into it kept
+// them uniform — so a harness index converts to a rendered-line position by
+// multiplication. This used to walk the list to accumulate variable row
+// heights, and binary-search that walk to invert it.
 func (m *Model) scrollListToSel() {
 	v := m.visible()
 	if len(v) == 0 {
@@ -332,41 +337,16 @@ func (m *Model) scrollListToSel() {
 		contentRows = 1
 	}
 
-	// Compute rendered-line position of a harness index.
-	rowOf := func(idx int) int {
-		r := 0
-		for i := 0; i < idx && i < len(v); i++ {
-			r++
-			if isDegraded(v[i]) {
-				r++
-			}
-		}
-		return r
-	}
-	selRow := rowOf(m.sel)
-	selHeight := 1
-	if isDegraded(v[m.sel]) {
-		selHeight = 2
-	}
-
-	curOffsetRow := rowOf(m.listOffset)
+	selRow := m.sel * listRowLines
+	curOffsetRow := m.listOffset * listRowLines
 
 	if selRow < curOffsetRow {
 		m.listOffset = m.sel
-	} else if selRow+selHeight > curOffsetRow+contentRows {
-		// Find the offset that puts sel at the bottom of the viewport.
-		targetTop := selRow + selHeight - contentRows
-		// Binary search for the harness index whose row matches targetTop.
-		lo, hi := 0, m.sel
-		for lo < hi {
-			mid := (lo + hi) / 2
-			if rowOf(mid) < targetTop {
-				lo = mid + 1
-			} else {
-				hi = mid
-			}
-		}
-		m.listOffset = lo
+	} else if selRow+listRowLines > curOffsetRow+contentRows {
+		// Scroll just far enough to put the selected row at the bottom: the
+		// lowest index whose first line is at or below targetTop.
+		targetTop := selRow + listRowLines - contentRows
+		m.listOffset = (targetTop + listRowLines - 1) / listRowLines
 	}
 	if m.listOffset >= len(v) {
 		m.listOffset = len(v) - 1

@@ -8,6 +8,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -66,19 +67,67 @@ func nextActionText(h protocol.HarnessInfo) string {
 	return ""
 }
 
-// flappingDetail is the expanded second line for a degraded/flapping row
-// (SPEC-0001 REQ "Zero And Error States": the ◐ row expands to show last exit
-// code + backoff countdown, one keystroke to logs).
-func flappingDetail(h protocol.HarnessInfo) string {
-	detail := fmt.Sprintf("last exit %d", h.LastExitCode)
-	if h.RestartCount > 0 {
-		detail += fmt.Sprintf(" · %d restarts", h.RestartCount)
+// harnessMeta returns the per-row metadata sub-line as its two separable
+// halves: the elidable `what` (the configured cmd, or the prompt for an agent
+// one-shot) and the fixed-width `rest` facts that follow it.
+//
+// This is the block that used to hang off the bottom of the peek pane as a
+// key/value dump (#199). It lives under the harness now because that is what
+// it describes — the preview pane's job is the guest's screen, not a debug
+// readout — and it is split rather than pre-joined so metaLine can shrink the
+// one field with unbounded length instead of truncating the whole line and
+// losing the pid off the right edge.
+//
+// A degraded row folds its expansion in here too (SPEC-0001 REQ "Zero And
+// Error States") rather than claiming a third line, and the caller paints the
+// whole line in the degraded color — a louder signal than the separate line it
+// replaces.
+//
+// Two of the fields the old peek summary and the old flapping detail carried
+// are deliberately absent, because renderRow already puts them one line above:
+// the restart count (its `↻N` marker) and the backoff countdown
+// (nextActionText). Repeating either is noise, not completeness, and the
+// columns are better spent on the cmd that has nowhere else to go.
+func harnessMeta(h protocol.HarnessInfo) (what string, rest []string) {
+	// A prompt harness carries no configured cmd — surface the prompt, what
+	// the user actually wrote (ADR-0011 spawn-time synthesis).
+	what = flattenSpace(h.Cmd)
+	if h.Prompt != "" {
+		what = flattenSpace(h.Prompt)
 	}
-	if h.NextRetryInMs > 0 {
-		detail += " · retry in " + humanizeMs(h.NextRetryInMs)
+	if h.Model != "" {
+		rest = append(rest, "model "+h.Model)
 	}
-	detail += " · l: logs"
-	return detail
+	if h.AutoAccept {
+		rest = append(rest, "yolo")
+	}
+	rest = append(rest,
+		orDefault(h.Backend, "native"),
+		fmt.Sprintf("exit %d", h.LastExitCode),
+	)
+	if h.PID > 0 {
+		rest = append(rest, fmt.Sprintf("pid %d", h.PID))
+	}
+	if isDegraded(h) {
+		rest = append(rest, "l: logs")
+	}
+	return what, rest
+}
+
+// flattenSpace collapses every run of whitespace — newlines included — into a
+// single space.
+//
+// A prompt is routinely written as a YAML block scalar, so it arrives with
+// embedded newlines. The metadata sub-line is ONE line by construction: every
+// height budget in the list pane counts it as one (viewList's contentBudget,
+// scrollListToSel's listRowLines), and lipgloss pads a pane up but never
+// truncates it down, so a `what` carrying a newline renders extra physical
+// rows that nothing counted and pushes the dashboard past m.h — the alt-screen
+// scroll of #179. Width clamps cannot catch it either: lipgloss.Width of a
+// multi-line string is its widest line, so a tall-but-narrow prompt measures as
+// fitting.
+func flattenSpace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // isDegraded reports whether a row should render its expanded flapping detail.

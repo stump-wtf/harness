@@ -12,9 +12,15 @@ decoration (see `docs/design/` in the repo for the design exploration).
 
 ## The dashboard
 
-The dashboard lists every harness with its **state glyph**, enabled flag,
-restart count, PID, and description. Vim-style navigation works everywhere
-(`j`/`k`, `g`/`G`).
+The dashboard lists every harness with its **state glyph**, name, state, and
+restart count, over a faint sub-line carrying that harness's `cmd` (or
+`prompt`), backend, last exit code, and PID. Vim-style navigation works
+everywhere (`j`/`k`, `g`/`G`).
+
+Beside the list, the **preview pane** is a live read-only view of the selected
+harness's screen and nothing else — move the selection and it follows, without
+attaching. The list takes only the width its rows need, so the preview gets
+every column that's left.
 
 | Key | Action |
 |-----|--------|

@@ -51,22 +51,74 @@ func TestHopIndexWraps(t *testing.T) {
 	}
 }
 
-// TestFlappingDetail verifies the degraded-row expansion carries the last exit
-// code, restart count, and backoff countdown with a one-key logs hint
-// (SPEC-0001 REQ "Zero And Error States").
-func TestFlappingDetail(t *testing.T) {
+// TestHarnessMetaDegraded verifies the degraded-row expansion survived #199
+// folding it into the metadata sub-line (SPEC-0001 REQ "Zero And Error
+// States"). Every fact the old two-line expansion carried is still on screen —
+// the exit code and logs hint in the sub-line, the restart count and backoff
+// countdown one line above, where renderRow already had them.
+func TestHarnessMetaDegraded(t *testing.T) {
 	h := protocol.HarnessInfo{State: "degraded", LastExitCode: 137, RestartCount: 3, NextRetryInMs: 8000, Flapping: true}
-	got := flappingDetail(h)
-	for _, want := range []string{"last exit 137", "3 restarts", "retry in 8s", "logs"} {
+	what, rest := harnessMeta(h)
+	got := metaLine(what, rest, 0)
+	for _, want := range []string{"exit 137", "logs"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("flappingDetail = %q, missing %q", got, want)
+			t.Errorf("metaLine = %q, missing %q", got, want)
 		}
+	}
+	// Not duplicated from the main row.
+	for _, banned := range []string{"retry in", "3 restart"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("metaLine = %q repeats %q, already on the row above", got, banned)
+		}
+	}
+	if want := "retry in 8s"; nextActionText(h) != want {
+		t.Errorf("nextActionText = %q, want %q — the countdown must stay on the main row", nextActionText(h), want)
+	}
+	if restartMarker(h.RestartCount) != "↻3" {
+		t.Errorf("restartMarker = %q, want ↻3 on the main row", restartMarker(h.RestartCount))
 	}
 	if !isDegraded(h) {
 		t.Error("flapping harness should be degraded")
 	}
 	if isDegraded(protocol.HarnessInfo{State: "running"}) {
 		t.Error("running harness should not be degraded")
+	}
+}
+
+// TestHarnessMetaCarriesThePeekSummary pins the fields that moved out of the
+// peek pane (#199): a healthy row must still be able to answer cmd, model,
+// yolo, backend, exit and pid without opening `describe`.
+func TestHarnessMetaCarriesThePeekSummary(t *testing.T) {
+	h := protocol.HarnessInfo{
+		Name: "agent", State: "running", Cmd: "/usr/local/bin/claude",
+		Backend: "tmux", LastExitCode: 143, PID: 4242,
+	}
+	what, rest := harnessMeta(h)
+	got := metaLine(what, rest, 0)
+	for _, want := range []string{"/usr/local/bin/claude", "tmux", "exit 143", "pid 4242"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("metaLine = %q, missing %q", got, want)
+		}
+	}
+
+	// A prompt harness shows the prompt where a cmd harness shows its cmd
+	// (ADR-0011), plus the model and yolo flags folded into the argv at spawn.
+	p := protocol.HarnessInfo{
+		Name: "one-shot", State: "running", Prompt: "check the deployments",
+		Model: "claude-opus-5", AutoAccept: true,
+	}
+	what, rest = harnessMeta(p)
+	got = metaLine(what, rest, 0)
+	for _, want := range []string{"check the deployments", "model claude-opus-5", "yolo", "native"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt metaLine = %q, missing %q", got, want)
+		}
+	}
+
+	// The restart count is deliberately absent — renderRow's ↻N carries it.
+	what, rest = harnessMeta(protocol.HarnessInfo{RestartCount: 9})
+	if got := metaLine(what, rest, 0); strings.Contains(got, "9 restart") {
+		t.Errorf("metaLine = %q duplicates the restart count already on the main row", got)
 	}
 }
 

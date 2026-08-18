@@ -36,12 +36,21 @@ help.
 
 The Dashboard SHALL show a list of harnesses filtered to the active profile
 (with a toggle to show all), each row carrying status glyph, name, state,
-restart count (`↻`), and uptime/next-action. It SHALL show a detail/peek pane
-for the selected harness — a live read-only tail of its output (streamed via
-SPEC-0002 snapshot+tail) plus its config summary (`cmd`/`cwd`/`env`/exit/
-started/backend). The header SHALL show app name, active profile, and daemon
-identity (`local` or `user@host`); the footer SHALL be a key bar (`?` expands
-to full help).
+restart count (`↻`), and uptime/next-action, over a metadata sub-line carrying
+that harness's config summary (`cmd` or `prompt`, model, backend, last exit,
+pid). It SHALL show a detail/peek pane for the selected harness — a live
+read-only tail of its output (streamed via SPEC-0002 snapshot+tail) and
+nothing else. The list pane SHALL be sized to its content rather than to a
+fixed fraction of the window, bounded by a floor and a ceiling, so unused
+columns go to the peek. The header SHALL show app name, active profile, and
+daemon identity (`local` or `user@host`); the footer SHALL be a key bar (`?`
+expands to full help).
+
+#### Scenario: Metadata reads beside the harness, not inside the preview
+
+- **WHEN** the user looks at a harness's cmd, backend, exit code, or pid
+- **THEN** they are on the sub-line under that harness's own row, and the peek
+  pane carries only the head line and the guest's screen
 
 #### Scenario: Glance before you hop
 

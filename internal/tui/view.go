@@ -132,10 +132,7 @@ func (m *Model) viewDashboard() string {
 		return strings.Join(lines[:m.h], "\n")
 	}
 
-	listW := m.w * 2 / 5
-	if listW < 24 {
-		listW = min(m.w, 24)
-	}
+	listW := m.listPaneWidth()
 	peekW := m.w - listW - 1
 	if peekW < 1 {
 		peekW = 1
@@ -166,6 +163,65 @@ func (m *Model) viewDashboard() string {
 	return strings.Join(parts, "\n")
 }
 
+// minListWidth is the narrowest the harness list may be squeezed to before the
+// dashboard would rather clip it than shrink it further.
+const minListWidth = 24
+
+// listPaneWidth sizes the list pane to its CONTENT rather than to a fixed
+// fraction of the window (#199).
+//
+// The old `m.w * 2 / 5` reserved two fifths of the terminal whether the list
+// needed them or not: on a wide window that is a column of dead space, and
+// every one of those columns is taken from the live preview beside it — the
+// one pane that can always use more. Measuring the rows instead means a
+// dashboard of short names collapses to a narrow rail, while a long cmd path
+// or a `project/harness` name gets the room it actually needs.
+//
+// Bounded on both ends. The floor keeps a nearly-empty list legible; the
+// ceiling (a third of the window) keeps one pathological row — a 300-character
+// prompt — from swallowing the preview, and is what metaLine's elision budget
+// bottoms out against.
+func (m *Model) listPaneWidth() int {
+	natural := lipgloss.Width(m.listTitle())
+	measure := func(s string) {
+		if w := lipgloss.Width(s); w > natural {
+			natural = w
+		}
+	}
+	v := m.visible()
+	for _, h := range v {
+		measure(m.renderRow(h, true))
+		what, rest := harnessMeta(h)
+		measure(strings.Repeat(" ", metaIndent) + metaLine(what, rest, 0))
+	}
+	if len(v) == 0 {
+		// The zero-state is the only content the pane has; sizing to the rows
+		// (there are none) would clamp it to the floor and wrap its text.
+		for _, ln := range strings.Split(emptyStateText(profileName(m.profiles, m.showAll)), "\n") {
+			measure(ln)
+		}
+	}
+
+	w := natural + 2 // the rounded Box border, one column each side
+	ceiling := m.w / 3
+	if ceiling < minListWidth {
+		ceiling = minListWidth
+	}
+	if w > ceiling {
+		w = ceiling
+	}
+	if w < minListWidth {
+		w = minListWidth
+	}
+	// Never wider than the window itself: on a terminal narrower than the
+	// floor the list takes what there is and the peek collapses to its own
+	// 1-column minimum (viewDashboard), which is all either can honestly do.
+	if w > m.w && m.w > 0 {
+		w = m.w
+	}
+	return w
+}
+
 // viewHeader renders "harness · profile: X · daemon: local" (SPEC-0001 header).
 func (m *Model) viewHeader() string {
 	profile := "all"
@@ -190,13 +246,20 @@ func (m *Model) daemonIdentity() string {
 
 // viewList renders the harness rows (SPEC-0001 REQ "Dashboard" / "State
 // Presentation": glyph/name/state/↻/uptime, degraded rows expanded).
-func (m *Model) viewList(w, h int) string {
-	v := m.visible()
+// listTitle is the list pane's heading — "HARNESSES", plus the active profile
+// when the view is filtered to one. Split out of viewList so listPaneWidth can
+// measure it without rendering the whole pane.
+func (m *Model) listTitle() string {
 	title := m.theme.Faint().Render(strings.ToUpper("harnesses"))
 	if p := activeProfile(m.profiles); p != nil && !m.showAll {
 		title += m.theme.Faint().Render(" · " + p.Name)
 	}
-	lines := []string{title, ""}
+	return title
+}
+
+func (m *Model) viewList(w, h int) string {
+	v := m.visible()
+	lines := []string{m.listTitle(), ""}
 
 	if len(v) == 0 {
 		// The empty state flows through the same clamps below: its multi-line
@@ -218,20 +281,10 @@ func (m *Model) viewList(w, h int) string {
 		offset = 0
 	}
 
-	// Count rendered lines (degraded rows take 2) to compare against the
-	// budget — comparing harness count to row budget is wrong when degraded
-	// rows are present (issue #148 "rows vs harnesses").
-	renderedLinesOf := func(endIdx int) int {
-		n := 2 // title + blank
-		for i := offset; i < endIdx && i < len(v); i++ {
-			n++
-			if isDegraded(v[i]) {
-				n++
-			}
-		}
-		return n
-	}
-	totalRenderedLines := renderedLinesOf(len(v))
+	// Count rendered lines to compare against the budget — comparing harness
+	// count to row budget is wrong when a row is taller than one line (issue
+	// #148 "rows vs harnesses"), which since #199 every row is.
+	totalRenderedLines := 2 + (len(v)-offset)*listRowLines // title + blank
 
 	// Determine if we need a scroll indicator before rendering, so we can
 	// reserve its row in the budget.
@@ -243,22 +296,16 @@ func (m *Model) viewList(w, h int) string {
 		contentBudget = 1
 	}
 
+	metaBudget := paneInner(w) - metaIndent
 	var rendered int
 	lastRenderedIdx := offset - 1
 	for i := offset; i < len(v); i++ {
-		rowLines := 1
-		if isDegraded(v[i]) {
-			rowLines = 2
+		if rendered+listRowLines > contentBudget {
+			break // don't half-render a row, leaving a name with no metadata
 		}
-		if rendered+rowLines > contentBudget {
-			break // don't half-render a degraded row
-		}
-		lines = append(lines, m.renderRow(v[i], i == m.sel, w-2))
-		rendered++
-		if isDegraded(v[i]) {
-			lines = append(lines, "   "+m.theme.StateStyle(core.StateDegraded).Render(flappingDetail(v[i])))
-			rendered++
-		}
+		lines = append(lines, m.renderRow(v[i], i == m.sel))
+		lines = append(lines, m.renderMetaRow(v[i], metaBudget))
+		rendered += listRowLines
 		lastRenderedIdx = i
 	}
 
@@ -300,10 +347,26 @@ func (m *Model) viewList(w, h int) string {
 	return m.theme.Box().Width(w).Height(h + paneBorderRows).Render(strings.Join(lines, "\n"))
 }
 
+// listRowLines is how many lines one harness occupies in the list: the state
+// row, plus the metadata sub-line beneath it (#199). Every row is the same
+// height — the degraded expansion folds into the metadata line rather than
+// claiming a third — which is what keeps viewList's budget and
+// scrollListToSel's rowOf() a multiplication instead of a scan.
+const listRowLines = 2
+
+// metaIndent aligns the metadata sub-line under the harness name: renderRow
+// leads with a 2-cell selection marker, then a 1-cell glyph and a space.
+const metaIndent = 4
+
+// minWhatWidth is the least room worth giving the elided cmd/prompt. Below it
+// the field is all ellipsis and no information, so metaLine drops it and
+// spends the columns on the facts instead.
+const minWhatWidth = 8
+
 // renderRow renders one harness row. The colored glyph leads; name, state label,
 // restart marker, and next-action follow — glyph + text are always present so a
 // mono terminal is fully legible (SPEC-0001 REQ "State Presentation").
-func (m *Model) renderRow(h protocol.HarnessInfo, selected bool, w int) string {
+func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 	st := core.State(h.State)
 	// Transient states get the live spinner frame in place of the static
 	// glyph so the row reads as "alive" while the harness is booting/
@@ -334,8 +397,90 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool, w int) string {
 	return "  " + line
 }
 
-// viewPeek renders the live read-only tail + config summary (SPEC-0001 REQ
-// "Dashboard": "live read-only tail ... plus its config summary").
+// renderMetaRow renders the metadata sub-line beneath a harness row — the
+// block that used to sit at the bottom of the peek pane (#199). A degraded
+// harness gets the whole line in the degraded color, which subsumes the
+// separate expansion row it used to draw (SPEC-0001 REQ "Zero And Error
+// States").
+func (m *Model) renderMetaRow(h protocol.HarnessInfo, budget int) string {
+	what, rest := harnessMeta(h)
+	style := m.theme.Faint()
+	if isDegraded(h) {
+		style = m.theme.StateStyle(core.StateDegraded)
+	}
+	return strings.Repeat(" ", metaIndent) + style.Render(metaLine(what, rest, budget))
+}
+
+// metaLine joins a harness's metadata into one line of at most budget columns
+// (budget <= 0 means unbounded — how listPaneWidth measures the natural width
+// before there is a pane to fit).
+//
+// `what` (the cmd path or the prompt) is the only field with unbounded length,
+// so it absorbs the shortfall alone: truncating the joined line from the right
+// would push the pid and exit code — the operationally useful half — off the
+// edge to keep a directory prefix nobody reads. It is elided from the LEFT so
+// what survives is the executable's basename, or the tail of the prompt.
+func metaLine(what string, rest []string, budget int) string {
+	tail := strings.Join(rest, " · ")
+	if what == "" {
+		return clampWidth(tail, budget)
+	}
+	if budget <= 0 {
+		return what + " · " + tail
+	}
+	room := budget - lipgloss.Width(tail) - 3 // the " · " joining what to tail
+	if lipgloss.Width(what) > room && room < minWhatWidth {
+		// It does not fit whole, and what is left would be all ellipsis and no
+		// information — spend every column on facts instead. The floor gates
+		// the ELISION, not the field: a `/bin/sh` that fits in 7 columns still
+		// renders, and listPaneWidth sized the pane expecting it to.
+		return clampWidth(tail, budget)
+	}
+	return elideLeft(what, room) + " · " + tail
+}
+
+// clampWidth truncates s to at most budget columns; budget <= 0 is unbounded.
+func clampWidth(s string, budget int) string {
+	if budget <= 0 || lipgloss.Width(s) <= budget {
+		return s
+	}
+	return ansi.Truncate(s, budget, "")
+}
+
+// elideLeft shortens s to w columns by dropping from the FRONT and marking the
+// cut with an ellipsis, so the informative tail (a basename, the end of a
+// prompt) is what survives.
+//
+// A cmd is usually a path, so the cut prefers a `/` boundary: "…/.local/bin/
+// claude" reads as a path fragment, where the raw column cut "…nt/.local/bin/
+// claude" leaves a stump of the directory above it that looks like corruption.
+func elideLeft(s string, w int) string {
+	full := lipgloss.Width(s)
+	if full <= w {
+		return s
+	}
+	if w <= 1 {
+		return "…"
+	}
+	// Left to right, so the first separator whose suffix fits is the LONGEST
+	// fitting one — as much path as the budget allows.
+	for i, r := range s {
+		if r == '/' && lipgloss.Width(s[i:]) <= w-1 {
+			return "…" + s[i:]
+		}
+	}
+	// TruncateLeft removes n columns from the front; the prefix it adds back
+	// costs one, so cut one extra to land on w.
+	return ansi.TruncateLeft(s, full-w+1, "…")
+}
+
+// viewPeek renders the live read-only tail (SPEC-0001 REQ "Dashboard").
+//
+// The pane is a head line and the guest's screen, nothing else. It used to
+// close with a key/value block of the harness's config summary — cmd, backend,
+// exit, restarts, pid — which read as a debug dump stapled to a live terminal
+// and cost the preview six rows. That metadata now renders under its own row
+// in the list (#199, renderMetaRow), where per-harness facts belong.
 func (m *Model) viewPeek(w, h int) string {
 	sel, ok := m.selectedHarness()
 	if !ok {
@@ -350,32 +495,9 @@ func (m *Model) viewPeek(w, h int) string {
 	head := m.theme.Header().Render(sel.Name) + " " +
 		m.theme.Faint().Render("live preview · read-only")
 
-	// A prompt harness carries no configured cmd — surface the prompt, what
-	// the user actually wrote (ADR-0011 spawn-time synthesis).
-	what := m.theme.Faint().Render("cmd     ") + sel.Cmd
-	if sel.Prompt != "" {
-		what = m.theme.Faint().Render("prompt  ") + sel.Prompt
-	}
-	summary := []string{"", what}
-	if sel.Model != "" {
-		summary = append(summary, m.theme.Faint().Render("model   ")+sel.Model)
-	}
-	if sel.AutoAccept {
-		summary = append(summary, m.theme.Faint().Render("yolo    ")+"auto_accept on")
-	}
-	summary = append(summary,
-		m.theme.Faint().Render("backend ")+orDefault(sel.Backend, "native"),
-		m.theme.Faint().Render("exit    ")+fmt.Sprintf("%d", sel.LastExitCode),
-		m.theme.Faint().Render("restarts")+fmt.Sprintf(" %d", sel.RestartCount),
-	)
-	if sel.PID > 0 {
-		summary = append(summary, m.theme.Faint().Render("pid     ")+fmt.Sprintf("%d", sel.PID))
-	}
-
-	// Derive the tail budget from the actual summary length rather than a
-	// hard-coded constant (issue #144 trigger B). Layout within the content
-	// height h: head(1) + blank(1) + tail(N) + summary(len(summary)).
-	maxLines := h - 2 - len(summary) // head + blank-before-tail
+	// Layout within the content height h: head(1) + blank(1) + tail(N). Every
+	// row the summary block used to hold is the tail's now.
+	maxLines := h - 2 // head + blank-before-tail
 	if maxLines < 1 {
 		maxLines = 1
 	}
@@ -416,13 +538,12 @@ func (m *Model) viewPeek(w, h int) string {
 		head += m.theme.Faint().Render(fmt.Sprintf(" · %d×%d cropped", peekCols, peekRows))
 	}
 
-	// Content assembly is height-clamped from the bottom: the summary block
-	// is fixed-length, and on a short body budget (#179) lipgloss would
-	// otherwise happily render it all and push the frame past m.h. The head
-	// and the live tail win; the summary gives way first.
+	// Content assembly stays height-clamped: on a short body budget (#179)
+	// lipgloss pads up but never truncates down, so a head plus a tail that
+	// together overrun h would push the frame past m.h and scroll the alt
+	// screen. maxLines already bounds the tail; this is the backstop.
 	lines := []string{head, ""}
 	lines = append(lines, tailLines...)
-	lines = append(lines, summary...)
 	if len(lines) > h {
 		lines = lines[:h]
 	}
@@ -699,13 +820,6 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func maxInt(a, b int) int {

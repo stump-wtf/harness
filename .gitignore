@@ -1,3 +1,7 @@
+# Agent worktrees. Claude Code creates these in-repo; a worktree visible to
+# git, builds, linters, or a `git ls-files` glob breaks all four.
+.claude/worktrees/
+
 docs-site/node_modules/
 docs-site/build/
 docs-site/.docusaurus/

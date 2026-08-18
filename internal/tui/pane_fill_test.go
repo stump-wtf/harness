@@ -57,15 +57,16 @@ var harnessRowRe = regexp.MustCompile(`h-\d{3}`)
 // The list pane's interior is bodyHeight() rows (lipgloss Box().Height(h) sets
 // CONTENT height; the border is added outside it and is already paid for by
 // the header/footer over-reservation). Two of those rows are the title and the
-// blank beneath it, so with abundant harnesses the pane must show
-// bodyHeight()-2 rows.
+// blank beneath it, one is the scroll indicator, and each harness costs
+// listRowLines (its state row plus the metadata sub-line, #199) — so the pane
+// must show as many whole harnesses as divide into what's left.
 func TestListPaneFillsHeightBudget(t *testing.T) {
 	for _, h := range []int{24, 45, 80} {
 		m := manyHarnessModel(160, h, 500)
 		// With viewport scrolling (#154), one row is reserved for the scroll
 		// indicator (↑N ↓N) when content overflows — which it does at 500
 		// harnesses at every tested height.
-		want := m.bodyHeight() - 2 - 1 // title + blank + indicator
+		want := (m.bodyHeight() - 2 - 1) / listRowLines // title + blank + indicator
 		got := len(harnessRowRe.FindAllString(m.viewList(60, m.bodyHeight()), -1))
 		if got != want {
 			t.Errorf("h=%d: list rendered %d harness rows, want %d (%d rows of pane wasted)",
@@ -75,11 +76,12 @@ func TestListPaneFillsHeightBudget(t *testing.T) {
 }
 
 // TestPeekPaneFillsHeightBudget asserts the peek renders every tail line that
-// fits: interior(bodyHeight) - head(1) - blank(1) - len(summary).
+// fits: interior(bodyHeight) - head(1) - blank(1).
 //
-// The summary for this fixture is ["", cmd, backend, exit, restarts, pid] = 6.
+// Since #199 the pane is head + screen and nothing else — the config summary
+// that used to claim six rows at the bottom moved under the harness's own row
+// in the list.
 func TestPeekPaneFillsHeightBudget(t *testing.T) {
-	const summaryLines = 6
 	tailRe := regexp.MustCompile(`tail-\d{3}`)
 
 	for _, h := range []int{24, 45, 80} {
@@ -94,12 +96,35 @@ func TestPeekPaneFillsHeightBudget(t *testing.T) {
 		m.peek = logsMsg{name: m.harnesses[0].Name, text: b.String()}
 
 		body := m.bodyHeight()
-		want := max(body-2-summaryLines, 1)
+		want := max(body-2, 1)
 		got := len(tailRe.FindAllString(m.viewPeek(95, body), -1))
 		if got != want {
 			t.Errorf("h=%d: peek rendered %d tail lines, want %d (%d rows of pane wasted)",
 				h, got, want, want-got)
 		}
+	}
+}
+
+// TestPeekPaneCarriesNoConfigSummary pins the other half of #199: the metadata
+// block must be gone from the preview, not merely shortened. It is the pane's
+// contract — head plus the guest's screen — and a regression that reintroduces
+// a row of it would otherwise only show up as an off-by-one in the test above.
+func TestPeekPaneCarriesNoConfigSummary(t *testing.T) {
+	m := manyHarnessModel(160, 45, 3)
+	m.harnesses[0].PID = 12345
+	m.harnesses[0].Cmd = "/usr/local/bin/agentd"
+	m.harnesses[0].Backend = "tmux"
+	m.sel = 0
+	m.peek = logsMsg{name: m.harnesses[0].Name, text: "just the guest screen\r\n"}
+
+	got := m.viewPeek(95, m.bodyHeight())
+	for _, banned := range []string{"/usr/local/bin/agentd", "tmux", "12345", "restarts"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("peek pane still renders config summary field %q", banned)
+		}
+	}
+	if !strings.Contains(got, "just the guest screen") {
+		t.Error("peek pane dropped the guest screen it exists to show")
 	}
 }
 
