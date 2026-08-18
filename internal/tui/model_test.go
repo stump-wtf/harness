@@ -23,6 +23,10 @@ type fakeController struct {
 	startCalls []string
 	rstCalls   []string
 	useProfile string
+	// logCalls counts `logs` fetches. The preview stops polling once its
+	// attach session is streaming the same screen (#200), and a counter is the
+	// only way to see traffic that is supposed to STOP.
+	logCalls int
 }
 
 func (f *fakeController) List() ([]protocol.HarnessInfo, error) { return f.harnesses, nil }
@@ -48,6 +52,9 @@ func (f *fakeController) Restart(n string) (protocol.HarnessInfo, error) {
 	return protocol.HarnessInfo{Name: n, State: "starting"}, nil
 }
 func (f *fakeController) Logs(n string, lines int) (protocol.LogsData, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.logCalls++
 	return protocol.LogsData{Name: n, Text: "log line\n"}, nil
 }
 func (f *fakeController) Profiles() ([]protocol.ProfileInfo, error) { return f.profiles, nil }
@@ -80,6 +87,15 @@ type fakeAttach struct {
 	// half of "the harness fills the window and follows it" (ADR-0003).
 	openSizes []viewport
 	resizes   []viewport
+	// openModes records rw/ro per open. The dashboard's preview must open
+	// read-only (ADR-0008, #200) — a preview that accepted input would forward
+	// the user's list navigation into the guest.
+	openModes []protocol.AttachMode
+	// order is the sequence of calls as they reached the wire ("open",
+	// "close", "resize"). Attaching has to close the preview session BEFORE
+	// opening the full-window one, or smallest-attached-wins clamps the guest
+	// to the pane; only ordering shows that, not the per-call slices.
+	order []string
 }
 
 // viewport is a recorded cols×rows the client reported for a session.
@@ -91,6 +107,8 @@ type viewport struct {
 func (f *fakeAttach) AttachOpen(sid uint32, name string, cols, rows int, mode protocol.AttachMode) error {
 	f.opens = append(f.opens, name)
 	f.openSizes = append(f.openSizes, viewport{sid, cols, rows})
+	f.openModes = append(f.openModes, mode)
+	f.order = append(f.order, "open")
 	return nil
 }
 func (f *fakeAttach) AttachInput(sid uint32, data []byte) error {
@@ -99,10 +117,12 @@ func (f *fakeAttach) AttachInput(sid uint32, data []byte) error {
 }
 func (f *fakeAttach) AttachResize(sid uint32, cols, rows int) error {
 	f.resizes = append(f.resizes, viewport{sid, cols, rows})
+	f.order = append(f.order, "resize")
 	return nil
 }
 func (f *fakeAttach) AttachClose(sid uint32) error {
 	f.closes = append(f.closes, sid)
+	f.order = append(f.order, "close")
 	return nil
 }
 func (f *fakeAttach) Conn() *protocol.Conn { return nil }

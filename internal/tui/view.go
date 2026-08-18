@@ -502,28 +502,38 @@ func (m *Model) viewPeek(w, h int) string {
 		maxLines = 1
 	}
 
-	// Render the peek through a client-side vt emulator so full-screen TUIs
-	// show their current screen rather than a transcript of every repaint
-	// (issue #147). The emulator replays the raw PTY bytes and we render its
-	// cell grid via renderNoCursor — inert by construction. Cached via peekCache
-	// so the replay only fires when the tail or dimensions change.
+	// The screen comes from one of two places.
 	//
-	// The emulator MUST be sized to the guest's authoritative viewport (carried
-	// on the logs reply from the same Mux the attach plane resizes), not to the
-	// pane. A tail drawn for a 156-column guest replayed into a 90-column
-	// emulator wraps every line and drops cursor-addressed content into the
-	// wrong cells — the smooshed peek you get after detaching from a full-window
-	// attach, which is the "not 100%x100%" bug arriving through the dashboard's
-	// seam instead of the attached view's. Sized correctly, the screen
-	// reconstructs faithfully and the pane simply CROPS it (width below, height
-	// via the bottom-anchored slice here): honestly cut beats plausibly wrong.
-	// A daemon with no viewport to report (no Mux, or predating ProtoMinor 6)
-	// leaves us the pane's own geometry — the historical behaviour.
-	knownViewport := peekCols > 0 && peekRows > 0
-	if !knownViewport {
-		peekCols, peekRows = paneInner(w), maxLines+1
+	// Live (#200): the preview holds its own read-only attach session sized to
+	// this pane, so the guest's PTY is this size and its ATTACH_DATA stream has
+	// been rendering into peekView all along. Nothing to reconstruct and
+	// nothing to crop — the emulator's grid IS the pane.
+	//
+	// Polled: until that session settles (peekSettleDelay), and against a
+	// daemon that cannot serve one, fall back to replaying the `logs` tail
+	// through peekCache. That replay MUST be sized to the guest's authoritative
+	// viewport (carried on the logs reply from the same Mux the attach plane
+	// resizes), not to the pane: a tail drawn for a 156-column guest replayed
+	// into a 90-column emulator wraps every line and lands cursor-addressed
+	// content in the wrong cells (#192). Sized correctly it reconstructs
+	// faithfully and the pane simply CROPS it — honestly cut beats plausibly
+	// wrong. A daemon with no viewport to report (no Mux, or predating
+	// ProtoMinor 6) leaves us the pane's own geometry, the historical
+	// behaviour.
+	var (
+		screenStr string
+		cropNote  bool
+	)
+	if m.peekLive() {
+		screenStr = m.peekView.renderNoCursor()
+	} else {
+		knownViewport := peekCols > 0 && peekRows > 0
+		if !knownViewport {
+			peekCols, peekRows = paneInner(w), maxLines+1
+		}
+		screenStr = m.peekCache.render(tail, peekCols, peekRows)
+		cropNote = knownViewport && (peekCols > paneInner(w) || peekRows > maxLines)
 	}
-	screenStr := m.peekCache.render(tail, peekCols, peekRows)
 	tailLines := trimBlankTail(splitLines(screenStr))
 	if len(tailLines) > maxLines {
 		tailLines = tailLines[len(tailLines)-maxLines:]
@@ -532,9 +542,9 @@ func (m *Model) viewPeek(w, h int) string {
 	// When the guest doesn't fit the pane, name its viewport in the head so the
 	// missing rows and columns read as a crop rather than a broken render — the
 	// same "colsxrows" describe reports (#183), and the number to size the
-	// window against. Only when the viewport is the guest's: the fallback
-	// geometry is the pane's own, so there is nothing to report.
-	if knownViewport && (peekCols > paneInner(w) || peekRows > maxLines) {
+	// window against. A live session is sized to the pane by construction, so
+	// it never crops and never carries the note.
+	if cropNote {
 		head += m.theme.Faint().Render(fmt.Sprintf(" · %d×%d cropped", peekCols, peekRows))
 	}
 

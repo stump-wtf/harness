@@ -128,7 +128,7 @@ func (m *Model) runVerb(verb, target string) (tea.Model, tea.Cmd) {
 			m.sel = i
 			m.scrollListToSel()
 		}
-		return m, m.peekCmd()
+		return m, m.peekTargetChanged()
 	case "reload":
 		if m.ctrl != nil {
 			return m, doReload(m.ctrl)
@@ -164,7 +164,7 @@ func (m *Model) onSearchKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.closeOverlay()
 		m.clampSel()
 		m.scrollListToSel()
-		return m, m.peekCmd()
+		return m, m.peekTargetChanged()
 	}
 	var cmd tea.Cmd
 	m.search, cmd = m.search.Update(msg)

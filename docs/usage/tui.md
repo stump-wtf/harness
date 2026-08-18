@@ -22,6 +22,14 @@ harness's screen and nothing else — move the selection and it follows, without
 attaching. The list takes only the width its rows need, so the preview gets
 every column that's left.
 
+The preview is a real read-only attach under the hood, so the harness inside it
+is sized to the pane and follows it: a full-screen agent lays out at the size
+you're actually looking at, not at the 80×24 it was spawned with. Hop in with
+`↵` and it resizes again to your whole window; detach and the preview takes it
+back. If two clients are watching the same harness at different sizes, the
+smaller one wins — `harness describe <name>` lists every attached session and
+flags the one setting the minimum.
+
 | Key | Action |
 |-----|--------|
 | `↵` | attach to the selected harness |

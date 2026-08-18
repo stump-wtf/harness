@@ -94,6 +94,31 @@ func (m *Model) attachReportSize() (int, int) {
 	return m.w, m.h - ribbonRows
 }
 
+// peekViewport is the geometry the dashboard's preview pane renders a guest
+// into — and therefore the viewport the peek session reports to the daemon
+// (#200). It mirrors viewDashboard's split and viewPeek's own layout (head +
+// blank + screen) so the guest is sized to exactly the cells it will be drawn
+// in, and the pane neither crops nor letterboxes.
+//
+// Returns 0×0 when the window size is not known yet, the same discipline
+// attachReportSize follows: a client that cannot measure itself must not
+// define geometry for every other client attached to that harness (#183).
+func (m *Model) peekViewport() (int, int) {
+	if m.w < 1 || m.h < 1 {
+		return 0, 0
+	}
+	peekW := m.w - m.listPaneWidth() - 1
+	if peekW < 1 {
+		return 0, 0
+	}
+	cols := paneInner(peekW)
+	rows := m.bodyHeight() - 2 // head + the blank beneath it
+	if cols < 1 || rows < 1 {
+		return 0, 0
+	}
+	return cols, rows
+}
+
 // scrollbackHeight is the number of scrollback content rows that fit in the
 // attached viewport. It's one less than the terminal body (view.rows) because
 // viewScrollback renders its own 1-line status footer, and viewAttached appends

@@ -30,10 +30,10 @@ func (m *Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			switch wheel.Button { //nolint:exhaustive
 			case tea.MouseWheelUp:
 				m.moveSel(-1)
-				return m, m.peekCmd()
+				return m, m.peekTargetChanged()
 			case tea.MouseWheelDown:
 				m.moveSel(1)
-				return m, m.peekCmd()
+				return m, m.peekTargetChanged()
 			}
 		}
 	}
@@ -189,22 +189,22 @@ func (m *Model) dispatchDashboardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.showAll = !m.showAll
 		m.clampSel()
 		m.scrollListToSel()
-		return m, m.peekCmd()
+		return m, m.peekTargetChanged()
 	case key.Matches(msg, m.keys.Up):
 		m.moveSel(-1)
-		return m, m.peekCmd()
+		return m, m.peekTargetChanged()
 	case key.Matches(msg, m.keys.Down):
 		m.moveSel(1)
-		return m, m.peekCmd()
+		return m, m.peekTargetChanged()
 	case key.Matches(msg, m.keys.Top):
 		m.sel = 0
 		m.scrollListToSel()
-		return m, m.peekCmd()
+		return m, m.peekTargetChanged()
 	case key.Matches(msg, m.keys.Bot):
 		m.sel = len(m.visible()) - 1
 		m.clampSel()
 		m.scrollListToSel()
-		return m, m.peekCmd()
+		return m, m.peekTargetChanged()
 	case key.Matches(msg, m.keys.Attach):
 		if sel, ok := m.selectedHarness(); ok {
 			return m, m.attachTo(sel, 0)
@@ -482,14 +482,21 @@ func (m *Model) hopTo(direction int) tea.Cmd {
 func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 	cols, rows := m.attachViewport()
 	reportCols, reportRows := m.attachReportSize()
-	sid := sessionBase
-	var closeCmd tea.Cmd
-	if m.att != nil {
-		prev := m.att.sessionID
-		sid = prev + 1
-		if m.attach != nil {
-			closeCmd = func() tea.Msg { _ = m.attach.AttachClose(prev); return nil }
-		}
+	// Drop the dashboard's preview session first (#200). It is open on this
+	// same harness at a THIRD of the window, and smallest-attached-wins would
+	// hand the guest that size the moment both exist — the user presses ↵ for a
+	// full-window terminal and gets the preview's geometry stretched across it.
+	// These closes run inside the open command below, in order, rather than
+	// batched alongside it: tea.Batch runs its commands concurrently, which
+	// would race the open against them on the same mux.
+	closers := []func(){}
+	if c := m.closePeekSession(); c != nil {
+		closers = append(closers, func() { c() })
+	}
+	sid := m.nextSessionID()
+	if m.att != nil && m.attach != nil {
+		prev, conn := m.att.sessionID, m.attach
+		closers = append(closers, func() { _ = conn.AttachClose(prev) })
 	}
 	// A read-only Model (e.g. a read-only remote SSH session, ADR-0008) opens
 	// every attach as AttachRO so the daemon drops this client's keystrokes;
@@ -518,12 +525,25 @@ func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 		// Report the real viewport, or 0×0 when unknown — never the 80×24
 		// display fallback (#183): a client that cannot detect its size must
 		// not define geometry for everyone else attached to this harness.
+		conn := m.attach
 		openCmd = func() tea.Msg {
-			_ = m.attach.AttachOpen(sid, name, reportCols, reportRows, mode)
+			for _, c := range closers {
+				c()
+			}
+			_ = conn.AttachOpen(sid, name, reportCols, reportRows, mode)
 			return nil
 		}
 	}
-	return tea.Batch(closeCmd, openCmd)
+	if openCmd == nil && len(closers) > 0 {
+		// No connection to open on, but sessions to tear down all the same.
+		return func() tea.Msg {
+			for _, c := range closers {
+				c()
+			}
+			return nil
+		}
+	}
+	return openCmd
 }
 
 // detach closes the attach session and returns to the Dashboard; the harness
@@ -543,7 +563,11 @@ func (m *Model) detach() tea.Cmd {
 		return tea.Batch(cmd, tea.Quit)
 	}
 	m.mode = modeDashboard
-	return cmd
+	// The dashboard is the viewer again, so the preview takes the harness back
+	// (#200). Batching is safe here where attachTo's was not: the reconcile
+	// runs behind peekSettleDelay, so the attach's close is long since on the
+	// wire before the preview's open follows it.
+	return tea.Batch(cmd, m.peekTargetChanged())
 }
 
 // peekLines returns the current peek text split into lines, used as the frozen

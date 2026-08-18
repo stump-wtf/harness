@@ -145,6 +145,25 @@ type Model struct {
 	search      textinput.Model
 	searchQuery string
 
+	// Live preview session (#200, see peek.go). The dashboard's peek is a
+	// read-only attach sized to the pane, so the daemon knows how big the
+	// viewer is and the guest's PTY follows it. peekSess is 0 when none is
+	// open; peekView is the emulator the streamed screen lands in, re-used
+	// across selections (vtView.pumpReplies).
+	peekSess     uint32
+	peekSessName string
+	peekCols     int
+	peekRows     int
+	peekView     *vtView
+	peekGen      uint64
+	// peekSyncedGen is the generation the last reconcile ran at. While it
+	// trails peekGen a debounce is still outstanding, which is how the tick
+	// knows to keep its hands off a target that is still moving.
+	peekSyncedGen uint64
+	// sessionSeq allocates ids for BOTH the preview and attached mode — see
+	// nextSessionID for why they cannot have separate counters.
+	sessionSeq uint32
+
 	// mouseReleased is set when shift+mouse released the TUI's mouse grab for
 	// native terminal text selection (#49). It lives on the Model — not on
 	// attachState — because the released state is a property of the user's

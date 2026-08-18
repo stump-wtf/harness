@@ -53,6 +53,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.conn, m.connErr = startOtherErr, fmt.Errorf("no such harness: %s", name)
 		}
+		// The preview pane just changed size, so the guest it is sized to has
+		// to follow (#200). Debounced like a selection change: dragging a
+		// window edge emits a WindowSizeMsg per frame, and each one would
+		// otherwise be a PTY resize and a SIGWINCH into a live agent.
+		if m.mode == modeDashboard {
+			return m, m.peekTargetChanged()
+		}
 		return m, nil
 
 	case connectedMsg:
@@ -87,7 +94,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.att != nil && msg.sessionID == m.att.sessionID {
 			m.att.view.write(msg.data)
 		}
+		// The dashboard's preview is its own read-only session on the same
+		// connection (#200), so route by id — ids are unique across both, and
+		// a frame still in flight from a closed session matches neither.
+		if m.peekView != nil && m.peekSess != 0 && msg.sessionID == m.peekSess {
+			m.peekView.write(msg.data)
+		}
 		return m, waitForFrame(m.events)
+
+	case peekSyncMsg:
+		// Superseded by a newer target — this is the debounce (see peek.go).
+		if msg.gen != m.peekGen {
+			return m, nil
+		}
+		m.peekSyncedGen = msg.gen
+		return m, m.syncPeekSession()
 
 	case attachErrorMsg:
 		m.status = msg.err.Error()
@@ -201,7 +222,7 @@ func (m *Model) onRefresh(msg refreshMsg) (tea.Model, tea.Cmd) {
 	}
 	m.clampSel()
 	m.scrollListToSel()
-	cmds := []tea.Cmd{m.peekCmd(), m.maybeStartSpinner()}
+	cmds := []tea.Cmd{m.peekTargetChanged(), m.maybeStartSpinner()}
 	// `harness attach <name>`: first successful refresh after connect — find
 	// the named harness and auto-attach. But ONLY if we already know the
 	// window size (m.w > 0); otherwise the attach opens at the 80×24 fallback
@@ -305,7 +326,26 @@ func (m *Model) onTick() (tea.Model, tea.Cmd) {
 		// keep ticking to finish the hop animation (tick already re-armed)
 	}
 	if m.mode == modeDashboard && m.overlay == overlayNone && m.conn == startOK {
+		// The polled tail keeps running even once the stream is driving the
+		// pane. It is not duplicate traffic: peekView holds the visible screen,
+		// while the `logs` tail is the 200 lines of HISTORY that peekLines()
+		// hands to attached scrollback. Skipping it froze m.peek.text the
+		// moment the session went live, so pressing ↵ after watching a harness
+		// for two minutes and then scrolling back showed the buffer as it was
+		// two minutes ago.
 		cmds = append(cmds, m.peekCmd())
+		// Reconcile on the tick as well as on change: the pane's geometry moves
+		// with the status line and the banners, not only with the selection.
+		//
+		// Only once the target has settled, though. A tick that reconciles
+		// while a debounce is still outstanding IS a reconcile on change, just
+		// on a one-second grid — holding j would open a session on whatever row
+		// the tick caught, resize that guest's PTY and SIGWINCH it, then tear it
+		// down on the next one. That is the churn peekSettleDelay exists to
+		// prevent.
+		if m.peekSyncedGen == m.peekGen {
+			cmds = append(cmds, m.syncPeekSession())
+		}
 	}
 	return m, tea.Batch(cmds...)
 }

@@ -52,17 +52,37 @@ expands to full help).
 - **THEN** they are on the sub-line under that harness's own row, and the peek
   pane carries only the head line and the guest's screen
 
+The peek pane SHALL hold a read-only attach session (ADR-0008) on the selected
+harness, sized to the pane, so the guest's PTY is sized to its viewer under the
+same smallest-attached-wins policy as attached mode (ADR-0003) — the Dashboard
+SHALL NOT define a second sizing mechanism. It SHALL report no viewport at all
+when the window size is unknown, and SHALL hold no session while attached.
+
 #### Scenario: Glance before you hop
 
 - **WHEN** the user moves the selection to a different harness
-- **THEN** the peek pane switches to a live read-only tail of that harness
-  without attaching
+- **THEN** the peek pane switches to a live read-only view of that harness
+  without entering attached mode, and releases the session it held on the
+  previous one
 
-#### Scenario: Peek after a full-window attach
+#### Scenario: The preview sizes the guest
 
-- **WHEN** the selected harness's PTY is larger than the peek pane — the usual
-  state after detaching from a full-window attach, which leaves the guest at
-  the window's size
+- **WHEN** a harness nobody has attached to is selected on the Dashboard
+- **THEN** its PTY is resized to the peek pane and the guest is signalled, so
+  a full-screen agent lays out at the size it is actually being displayed at
+  rather than at the size it was spawned with
+
+#### Scenario: Hopping in takes the whole window back
+
+- **WHEN** the user attaches (`↵`) to the harness the preview is showing
+- **THEN** the preview's session is released before the attach's is opened, so
+  smallest-attached-wins cannot clamp the full-window attach to the pane; on
+  detach the preview takes the harness back
+
+#### Scenario: Peek without a session
+
+- **WHEN** the peek has no session yet (the selection has not settled) or the
+  daemon cannot serve one, and the guest's PTY is larger than the pane
 - **THEN** the peek reconstructs the guest's screen at the guest's viewport and
   crops it to the pane, naming that viewport, rather than reflowing the tail
   into the pane's geometry
