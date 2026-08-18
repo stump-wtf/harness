@@ -92,8 +92,17 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		info.Quiet = h.Quiet
 		info.Backend = string(h.Backend)
 		info.Description = h.Description
+		info.Schedule = h.Schedule
 	}
 	info.Project = project
+	// Next-run comes from the live cron, not the config snapshot: the spec
+	// alone can't answer "when", and the daemon is the only party that knows
+	// the resolved phase (ADR-0013).
+	if info.Schedule != "" && c.srv.sched != nil {
+		if next, ok := c.srv.sched.NextFire(snap.Name); ok {
+			info.NextRun = next.Format(time.RFC3339)
+		}
+	}
 	return info
 }
 

@@ -19,6 +19,7 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/attach"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/scheduler"
 	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
 )
 
@@ -46,6 +47,7 @@ const defaultLivenessTimeout = 4 * defaultPingInterval
 type Server struct {
 	mgr        *supervisor.Manager
 	reg        *attach.Registry
+	sched      *scheduler.Scheduler
 	socketPath string
 	configPath string
 	version    string
@@ -77,8 +79,11 @@ type Server struct {
 
 // Options configure a Server.
 type Options struct {
-	Manager    *supervisor.Manager
-	Registry   *attach.Registry
+	Manager  *supervisor.Manager
+	Registry *attach.Registry
+	// Scheduler exposes next-fire times for scheduled harnesses in list and
+	// describe (ADR-0013). Optional: nil leaves NextRun empty.
+	Scheduler  *scheduler.Scheduler
 	SocketPath string
 	ConfigPath string // for the reload op
 	Version    string
@@ -103,6 +108,7 @@ func NewServer(opts Options) *Server {
 	return &Server{
 		mgr:             opts.Manager,
 		reg:             opts.Registry,
+		sched:           opts.Scheduler,
 		socketPath:      opts.SocketPath,
 		configPath:      opts.ConfigPath,
 		version:         opts.Version,

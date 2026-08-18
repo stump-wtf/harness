@@ -3,6 +3,7 @@ package scheduler
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )
@@ -180,4 +181,49 @@ func TestSchedulerFiresCallback(t *testing.T) {
 	defer s.Close()
 
 	<-fired
+}
+
+// TestSchedulerNextFire verifies NextFire resolves the cron entry's next
+// firing time once started, and reports false for unscheduled harnesses or
+// before Start (cron has not computed a firing time yet).
+func TestSchedulerNextFire(t *testing.T) {
+	s := New(func(string) {})
+	defer s.Close()
+
+	cfg := &core.Config{
+		Harnesses: map[string]core.Harness{
+			"a": {Name: "a", Prompt: "test", Schedule: "0 */6 * * *"},
+			"b": {Name: "b", Prompt: "test"},
+		},
+		HarnessOrder: []string{"a", "b"},
+	}
+	s.Apply(cfg)
+
+	if _, ok := s.NextFire("b"); ok {
+		t.Error("unscheduled harness must report no next fire")
+	}
+	if _, ok := s.NextFire("missing"); ok {
+		t.Error("unknown harness must report no next fire")
+	}
+	if _, ok := s.NextFire("a"); ok {
+		t.Error("before Start the entry has no resolved firing time")
+	}
+
+	s.Start()
+	next, ok := s.NextFire("a")
+	if !ok {
+		t.Fatal("scheduled harness must report a next fire after Start")
+	}
+	if !next.After(time.Now()) {
+		t.Errorf("next fire %v is not in the future", next)
+	}
+
+	// A reload that keeps the spec unchanged must keep the phase — the
+	// reported next fire cannot move (Apply leaves the entry untouched).
+	before, _ := s.NextFire("a")
+	s.Apply(cfg)
+	after, _ := s.NextFire("a")
+	if !before.Equal(after) {
+		t.Errorf("unchanged schedule moved next fire: %v -> %v", before, after)
+	}
 }

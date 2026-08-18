@@ -196,6 +196,13 @@ type HarnessInfo struct {
 	// for a global-config harness. Lets `down`/`ps` scope correctly (SPEC-0004
 	// REQ "Project Naming And Namespacing"; ADR-0009).
 	Project string `json:"project,omitempty"`
+	// Schedule is the cron expression from config for a daemon-scheduled
+	// one-shot harness (ADR-0013; SPEC-0008 REQ "Schedule Key"). Empty for an
+	// always-on or purely manual harness.
+	Schedule string `json:"schedule,omitempty"`
+	// NextRun is when Schedule next fires, RFC 3339 local time. Empty when
+	// there is no schedule or the daemon has not resolved a firing time yet.
+	NextRun string `json:"next_run,omitempty"`
 	// AttachViewport is the authoritative (smallest-attached-wins) viewport the
 	// guest PTY is sized to, "colsxrows" ("80x24"). Present when a Mux exists
 	// — i.e. someone has attached, or the supervisor teed output — so "why is

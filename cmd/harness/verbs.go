@@ -62,18 +62,107 @@ func renderHarnessList(c *client.Client, o verbOpts, project string) error {
 // `ps`, and the `up` one-shot status output (SPEC-0004 REQ "Bring Up"), so
 // every listing surface stays one product.
 func printHarnessTable(w io.Writer, hs []protocol.HarnessInfo) error {
-	t := NewTable(w, "NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
+	// The schedule columns are conditional. They cost 26 of the table's
+	// 80-cell budget, which comes out of DESCRIPTION (the only flex column) —
+	// rendered unconditionally they collapse it to ~3 cells and shred every
+	// description into a column of two-letter fragments, on every listing, for
+	// every user who has no scheduled harness at all. Show them when there is
+	// something to show.
+	scheduled := false
 	for _, h := range hs {
-		t.Row(
-			h.Name,
-			t.stateCell(h.State),
+		if h.Schedule != "" {
+			scheduled = true
+			break
+		}
+	}
+
+	headers := []string{"NAME", "STATE"}
+	if scheduled {
+		headers = append(headers, "SCHEDULE", "NEXT")
+	}
+	headers = append(headers, "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
+
+	t := NewTable(w, headers...)
+	for _, h := range hs {
+		cells := []string{h.Name, t.stateCell(h.State)}
+		if scheduled {
+			cells = append(cells, scheduleCell(h.Schedule), nextRunCell(h.NextRun))
+		}
+		cells = append(cells,
 			t.enabledCell(h.Enabled),
 			fmt.Sprintf("%d", h.RestartCount),
 			t.pidCell(h.PID),
 			h.Description,
 		)
+		t.Row(cells...)
 	}
 	return t.Flush()
+}
+
+// scheduleCell renders the schedule column: the cron spec (or "—" for an
+// always-on/manual harness). The spec is shown verbatim rather than
+// humanized — "0 */6 * * *" is what the user wrote in harness.toml, so it
+// stays greppable and matches the config round-trip.
+func scheduleCell(spec string) string {
+	if spec == "" {
+		return "-"
+	}
+	return spec
+}
+
+// nextRunCell renders the NEXT column as a relative time from now ("in 3h",
+// "in 12m", "due") so a glance answers "how long until it fires" without
+// mental timezone math. Absolute time stays available via describe/--json.
+func nextRunCell(nextRun string) string {
+	if nextRun == "" {
+		return "-"
+	}
+	next, err := time.Parse(time.RFC3339, nextRun)
+	if err != nil {
+		return "-"
+	}
+	d := time.Until(next)
+	if d <= 0 {
+		return "due"
+	}
+	return "in " + shortDuration(d)
+}
+
+// shortDuration compacts a duration the way an operator reads it: dropping
+// fractional seconds and every zero unit, leading or trailing ("45s", "12m",
+// "2h5m", "3d4h").
+//
+// Formatted by hand rather than through Duration.String(), which always
+// carries the smaller units down to seconds — "12m0s", "10h45m0s". That is
+// noise at a glance, and "in 10h45m0s" is 11 cells against the NEXT column's
+// 10, so the table truncated it back to "in 10h45m…".
+//
+// Rounding is applied before the unit split so a carry lands in the right
+// place: 59m45s reads "1h", not "60m".
+func shortDuration(d time.Duration) string {
+	if d < time.Minute {
+		return d.Round(time.Second).String()
+	}
+	if d < 24*time.Hour {
+		d = d.Round(time.Minute)
+	} else {
+		d = d.Round(time.Hour)
+	}
+	days := int(d / (24 * time.Hour))
+	hours := int(d/time.Hour) % 24
+	mins := int(d/time.Minute) % 60
+	switch {
+	case days > 0 && hours > 0:
+		return fmt.Sprintf("%dd%dh", days, hours)
+	case days > 0:
+		return fmt.Sprintf("%dd", days)
+	case hours > 0 && mins > 0:
+		return fmt.Sprintf("%dh%dm", hours, mins)
+	case hours > 0:
+		return fmt.Sprintf("%dh", hours)
+	default:
+		return fmt.Sprintf("%dm", mins)
+	}
 }
 
 func cmdDescribe(c *client.Client, o verbOpts) error {
@@ -102,6 +191,14 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 		t.Row("auto_accept", t.faintPlain("true"))
 	}
 	t.Row("backend", t.faintPlain(h.Backend))
+	if h.Schedule != "" {
+		t.Row("schedule", t.faintPlain(h.Schedule))
+		if h.NextRun != "" {
+			if next, err := time.Parse(time.RFC3339, h.NextRun); err == nil {
+				t.Row("next run", t.faintPlain(fmt.Sprintf("%s (%s)", next.Format("Mon Jan 2 15:04"), nextRunCell(h.NextRun))))
+			}
+		}
+	}
 	t.Row("restarts", fmt.Sprintf("%d", h.RestartCount))
 	t.Row("last_exit", fmt.Sprintf("%d", h.LastExitCode))
 	t.Row("flapping", t.flappingCell(h.Flapping))

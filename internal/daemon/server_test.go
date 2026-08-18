@@ -19,6 +19,7 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/scheduler"
 	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
 )
 
@@ -498,5 +499,44 @@ func TestLogsCarriesGuestViewport(t *testing.T) {
 	}
 	if ld.Name != "sleeper" {
 		t.Errorf("name = %q, want sleeper", ld.Name)
+	}
+}
+
+// TestListCarriesScheduleMetadata verifies list projects the schedule spec
+// and the scheduler's resolved next-fire time onto HarnessInfo (ADR-0013;
+// the daemon is the only party that knows the live phase).
+func TestListCarriesScheduleMetadata(t *testing.T) {
+	const toml = `
+[harness.sweep]
+prompt = "do the sweep"
+auto_accept = true
+schedule = "0 */6 * * *"
+`
+	td := newTestDaemon(t, toml)
+	cfg, err := config.Load(td.configPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	sched := scheduler.New(func(string) {})
+	defer sched.Close()
+	sched.Apply(cfg)
+	sched.Start()
+	td.srv.sched = sched
+
+	hs, err := td.dial(t, nil).List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(hs) != 1 {
+		t.Fatalf("expected 1 harness, got %d", len(hs))
+	}
+	if hs[0].Schedule != "0 */6 * * *" {
+		t.Errorf("schedule not carried: %q", hs[0].Schedule)
+	}
+	if hs[0].NextRun == "" {
+		t.Fatal("next_run missing for a started scheduled harness")
+	}
+	if _, err := time.Parse(time.RFC3339, hs[0].NextRun); err != nil {
+		t.Errorf("next_run not RFC3339: %q", hs[0].NextRun)
 	}
 }

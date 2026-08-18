@@ -160,6 +160,7 @@ func runDaemon(args []string) {
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
 		Registry:   reg,
+		Scheduler:  sched,
 		SocketPath: *socketPath,
 		ConfigPath: *configPath,
 		Version:    buildinfo.Version,

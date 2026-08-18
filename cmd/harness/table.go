@@ -196,6 +196,11 @@ func defaultColumnWidths(headers []string, budget, nameWidth int) (widths []int,
 		"CHECK":     12,
 		"STATUS":    10,
 		"AUTOSTART": 10,
+		// SCHEDULE holds a cron spec ("0 */6 * * *") or "-": a structured
+		// identifier, cut is safe.
+		"SCHEDULE": 16,
+		// NEXT holds a short relative time ("in 3h", "due", "-").
+		"NEXT": 10,
 	}
 	widths = make([]int, n)
 	truncate = make([]bool, n)

@@ -110,6 +110,20 @@ func (s *Scheduler) Apply(cfg *core.Config) {
 	}
 }
 
+// NextFire reports when the named harness's schedule next fires. The zero
+// bool means the harness has no schedule registered (or cron has not yet
+// resolved a firing time — before Start, an entry's Next is zero).
+func (s *Scheduler) NextFire(name string) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[name]
+	if !ok {
+		return time.Time{}, false
+	}
+	ce := s.cron.Entry(e.id)
+	return ce.Next, !ce.Next.IsZero()
+}
+
 // Start activates the cron scheduler. Entries applied while running take
 // effect immediately.
 func (s *Scheduler) Start() {
