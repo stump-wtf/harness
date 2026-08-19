@@ -116,7 +116,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 	}
 	return core.Harness{
 		Name:         ph.Name,
-		Cmd:          ph.Cmd,
+		Adapter:      ph.Harness,
 		Args:         ph.Args,
 		Prompt:       ph.Prompt,
 		Model:        ph.Model,

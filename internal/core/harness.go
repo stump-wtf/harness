@@ -78,17 +78,15 @@ func (p RestartPolicy) ShouldRestart(code int) bool {
 type Harness struct {
 	// Name is the table name, unique across the config.
 	Name string
-	// Cmd is the executable to run (required unless Prompt is set).
-	Cmd string
-	// Args are the command arguments; {workdir} placeholders are expanded at
-	// spawn time by the supervisor, not here.
+	// Args are the command arguments, appended after the adapter's
+	// executable; {workdir} placeholders are expanded at spawn time by the
+	// supervisor, not here.
 	Args []string
-	// Prompt is an agent one-shot instruction, the declarative alternative to
-	// Cmd: exactly one of the two is set (config validation enforces it, and
-	// Args belong to Cmd only). Cmd/Args stay EMPTY for a prompt harness — the
-	// supervisor synthesizes the agent argv at spawn time via AgentCommand, so
-	// the file remains the source of truth (ADR-0006) and the prompt text
-	// never passes through {workdir} arg expansion.
+	// Prompt is an agent one-shot instruction, the declarative alternative
+	// to a long-running harness: when set, the supervisor synthesizes the
+	// entire agent argv at spawn time via the adapter's PromptCommand (Args
+	// stay EMPTY), so the file remains the source of truth (ADR-0006) and
+	// the prompt text never passes through {workdir} arg expansion.
 	// Governing: ADR-0011; issue #56 (harness abstraction for agent CLIs).
 	Prompt string
 	// Model selects which model the agent CLI runs a prompt harness with.
@@ -171,13 +169,16 @@ type Harness struct {
 	// REQ "Schedule Exclusions"; issue #66; ADR-0006 (schema); ADR-0011 (prompt
 	// one-shot); SPEC-0003 (enabled-intent model the exclusion carves against).
 	Schedule string
-	// Agent names the adapter this harness resolves to, overriding inference
-	// from cmd. When empty, the daemon infers the adapter from the cmd
-	// basename (e.g. "claude" → "claude-code"); when no inference rule
-	// matches, the harness resolves to "generic". Naming an adapter that
-	// does not exist is a config-validation error. Governing: ADR-0011,
-	// SPEC-0006 REQ "Adapter Selection".
-	Agent string
+	// Adapter is the harness kind — the config `harness` key, an enum:
+	// "crush" (the default when omitted), "claude-code", "codex",
+	// "generic". It selects the adapter, which supplies BOTH the
+	// tool-specific behaviour (trajectory discovery, prompt flag mapping)
+	// and the executable a long-running (non-prompt) harness runs; `args`
+	// are appended after it. Naming an unknown value is a
+	// config-validation error. "generic" has no executable of its own, so
+	// it is only valid for a prompt harness. Governing: ADR-0011, SPEC-0006
+	// REQ "Adapter Selection".
+	Adapter string
 	// HarvestTrajectory controls whether the harness's trajectory is exposed
 	// read-only through the facade (list_trajectories / get_trajectory).
 	// Defaults to false: a trajectory may contain secrets the harnessed
@@ -211,36 +212,6 @@ type AgentOpts struct {
 	AutoAccept bool
 	// MaxTurns caps agent iterations, emitted as --max-turns when > 0.
 	MaxTurns int
-}
-
-// AgentCommand returns the argv a prompt harness spawns: the agent CLI, the
-// optional --yolo unattended flag (issue #58), the run subcommand, the
-// optional --quiet, --model, then the prompt, verbatim, as the FINAL argv
-// element — flags precede the prompt so the instruction text stays last.
-// --yolo is a GLOBAL crush flag (urfac-style CLI: global flags precede the
-// subcommand); placing it after `run` fails with "unknown flag" and the
-// harness crash-loops to degraded. crush has no --max-turns at any position;
-// MaxTurns > 0 is logged-and-dropped rather than emitting a flag that would
-// kill the spawn (issue #59 stays open against crush growing the flag).
-// Callers pass the opts through untouched: they are config truth, not
-// configured args, so none go through the {workdir} placeholder expansion the
-// supervisor applies to Args.
-// Governing: ADR-0011 — interim single-vendor synthesis; the SPEC-0006 adapter
-// registry replaces this call site (and maps auto-accept and the turn budget
-// onto each vendor's own flag).
-func AgentCommand(prompt string, opts AgentOpts) (cmd string, args []string) {
-	args = []string{}
-	if opts.AutoAccept {
-		args = append(args, "--yolo")
-	}
-	args = append(args, "run")
-	if opts.Quiet {
-		args = append(args, "--quiet")
-	}
-	if opts.Model != "" {
-		args = append(args, "--model", opts.Model)
-	}
-	return "crush", append(args, prompt)
 }
 
 // QualifiedName returns the daemon-wide name a project-local harness registers

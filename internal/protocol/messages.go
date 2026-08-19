@@ -106,12 +106,15 @@ type ControlReq struct {
 // namespaces it to <project>/<name> at registration (SPEC-0004 REQ "Project
 // Naming And Namespacing"). Governing: ADR-0009 (project-scoped compose).
 type ProjectHarness struct {
-	Name string   `json:"name"`
-	Cmd  string   `json:"cmd"`
-	Args []string `json:"args,omitempty"`
+	Name string `json:"name"`
+	// Harness is the harness-kind enum ("crush", "claude-code", "codex",
+	// "generic"); empty means the default, "crush". It selects the adapter
+	// and the executable (ADR-0011).
+	Harness string   `json:"harness,omitempty"`
+	Args    []string `json:"args,omitempty"`
 	// Prompt mirrors the schema's agent one-shot `prompt`: exactly one of
-	// cmd/prompt is set, and a prompt harness carries empty cmd/args — the
-	// daemon synthesizes its argv at spawn time (ADR-0011).
+	// harness/prompt defines the argv, and a prompt harness carries empty
+	// args — the daemon synthesizes its argv at spawn time (ADR-0011).
 	Prompt string `json:"prompt,omitempty"`
 	// Model mirrors the schema's agent `model` selection: set only alongside
 	// prompt (parse validation enforces it); the daemon folds it into the
@@ -170,10 +173,10 @@ type HarnessInfo struct {
 	NextRetryInMs int64  `json:"next_retry_in_ms,omitempty"`
 	ConfigChanged bool   `json:"config_changed,omitempty"`
 	PID           int    `json:"pid,omitempty"`
-	Cmd           string `json:"cmd,omitempty"`
-	// Prompt is the agent one-shot instruction for a prompt harness (Cmd is
-	// then empty; the argv is synthesized at spawn, ADR-0011). Clients show it
-	// where they would show cmd.
+	// Adapter is the harness-kind enum the harness selected ("crush" default).
+	Adapter string `json:"adapter,omitempty"`
+	// Prompt is the agent one-shot instruction for a prompt harness; the
+	// argv is synthesized at spawn from the same adapter (ADR-0011).
 	Prompt string `json:"prompt,omitempty"`
 	// Model is the agent model selection for a prompt harness, folded into the
 	// synthesized argv at spawn (issue #57). Empty for cmd harnesses.

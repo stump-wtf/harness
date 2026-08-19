@@ -333,16 +333,13 @@ func validateProjectDefs(project string, defs []core.Harness) error {
 				project, h.Name, ErrInvalidProjectDef)
 		case seen[h.Name]:
 			return fmt.Errorf("project up %q: %w: duplicate harness %q", project, ErrInvalidProjectDef, h.Name)
-		// Exactly one of cmd/prompt defines what runs — the same invariant the
-		// config parsers enforce (a prompt harness carries empty Cmd/Args; its
-		// argv is synthesized at spawn, ADR-0011). Re-checked here because the
-		// wire is a second front door into the registry.
-		case strings.TrimSpace(h.Cmd) == "" && strings.TrimSpace(h.Prompt) == "":
-			return fmt.Errorf("project up %q: harness %q: %w: missing required cmd (or prompt)",
-				project, h.Name, ErrInvalidProjectDef)
-		case strings.TrimSpace(h.Cmd) != "" && strings.TrimSpace(h.Prompt) != "":
-			return fmt.Errorf("project up %q: harness %q: %w: prompt and cmd are mutually exclusive",
-				project, h.Name, ErrInvalidProjectDef)
+		// The `harness` enum + prompt invariants — the same ones the config
+		// parsers enforce. Re-checked here because the wire is a second front
+		// door into the registry (ADR-0011).
+		case h.Adapter != "" && h.Adapter != "crush" && h.Adapter != "claude-code" &&
+			h.Adapter != "codex" && h.Adapter != "generic":
+			return fmt.Errorf("project up %q: harness %q: %w: unknown harness kind %q",
+				project, h.Name, ErrInvalidProjectDef, h.Adapter)
 		case strings.TrimSpace(h.Prompt) != "" && len(h.Args) > 0:
 			return fmt.Errorf("project up %q: harness %q: %w: prompt and args are mutually exclusive",
 				project, h.Name, ErrInvalidProjectDef)
@@ -365,7 +362,7 @@ func validateProjectDefs(project string, defs []core.Harness) error {
 // field, so an unchanged re-up definition stages nothing and flags no change.
 func harnessDefEqual(a, b core.Harness) bool {
 	return a.Name == b.Name &&
-		a.Cmd == b.Cmd &&
+		a.Adapter == b.Adapter &&
 		slices.Equal(a.Args, b.Args) &&
 		a.Prompt == b.Prompt &&
 		a.Model == b.Model &&

@@ -62,8 +62,7 @@ func TestResolveExplicitAgent(t *testing.T) {
 
 	// Explicit agent = "claude-code" on a harness with an unrecognized cmd.
 	h := core.Harness{
-		Cmd:   "my-wrapper",
-		Agent: "claude-code",
+		Adapter: "claude-code",
 	}
 	a := r.Resolve(h)
 	if a == nil {
@@ -74,76 +73,29 @@ func TestResolveExplicitAgent(t *testing.T) {
 	}
 }
 
-func TestResolveExplicitAgentOverridesInference(t *testing.T) {
+func TestResolveEmptyDefaultsToCrush(t *testing.T) {
 	r := NewRegistryWithDefaults()
 
-	// SPEC-0006 REQ "Adapter Selection" scenario "Explicit agent overrides
-	// inference": cmd matches an inference rule, but an explicit agent key
-	// should win.
-	h := core.Harness{
-		Cmd:   "claude",
-		Agent: "crush",
-	}
-	a := r.Resolve(h)
-	if a == nil {
-		t.Fatal("expected non-nil adapter")
-	}
-	if a.Name() != "crush" {
-		t.Fatalf("got %q, want crush (explicit should win over inference)", a.Name())
-	}
-}
-
-func TestResolveInferredFromCmd(t *testing.T) {
-	r := NewRegistryWithDefaults()
-
-	tests := []struct {
-		cmd      string
-		wantName string
-	}{
-		{"claude", "claude-code"},
-		{"crush", "crush"},
-		{"codex", "codex"},
-		{"/usr/local/bin/claude", "claude-code"}, // basename extraction
-		{"./my-wrapper", "generic"},              // unrecognized
-		{"", "generic"},                          // empty cmd
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.cmd, func(t *testing.T) {
-			h := core.Harness{Cmd: tt.cmd}
-			a := r.Resolve(h)
-			if a == nil {
-				t.Fatal("expected non-nil adapter")
-			}
-			if a.Name() != tt.wantName {
-				t.Fatalf("Resolve(%q) = %q, want %q", tt.cmd, a.Name(), tt.wantName)
-			}
-		})
-	}
-}
-
-func TestResolvePromptHarnessFallsToGeneric(t *testing.T) {
-	r := NewRegistryWithDefaults()
-
-	// A prompt harness has no Cmd — inference finds nothing, falls to generic.
-	// The daemon's interim synthesis uses crush, but trajectory discovery
-	// should not assume a prompt harness is crush unless `agent` is set.
+	// The `harness` enum key defaults to crush: a harness with no adapter set
+	// (the common prompt one-shot) resolves to Crush, whose PromptCommand
+	// synthesizes `crush run …` (ADR-0011).
 	h := core.Harness{Prompt: "do the thing"}
 	a := r.Resolve(h)
-	if a == nil {
-		t.Fatal("expected non-nil adapter")
+	if a.Name() != "crush" {
+		t.Fatalf("Resolve(empty) = %q, want crush", a.Name())
 	}
-	if a.Name() != "generic" {
-		t.Fatalf("got %q, want generic for prompt harness without agent key", a.Name())
+	// An unknown value maps defensively to Generic (config validation
+	// rejects it before this point; Resolve never returns nil).
+	if got := r.Resolve(core.Harness{Adapter: "nope"}); got.Name() != "generic" {
+		t.Fatalf("Resolve(nope) = %q, want generic", got.Name())
 	}
 }
-
 func TestResolvePromptHarnessWithExplicitAgent(t *testing.T) {
 	r := NewRegistryWithDefaults()
 
 	h := core.Harness{
-		Prompt: "do the thing",
-		Agent:  "claude-code",
+		Prompt:  "do the thing",
+		Adapter: "claude-code",
 	}
 	a := r.Resolve(h)
 	if a == nil {
@@ -154,13 +106,14 @@ func TestResolvePromptHarnessWithExplicitAgent(t *testing.T) {
 	}
 }
 
-func TestResolveUnknownAgentReturnsNil(t *testing.T) {
+func TestResolveUnknownFallsBackToGeneric(t *testing.T) {
 	r := NewRegistryWithDefaults()
 
-	h := core.Harness{Agent: "nonexistent"}
-	a := r.Resolve(h)
-	if a != nil {
-		t.Fatalf("expected nil for unknown agent, got %v", a)
+	// Config validation rejects unknown values up front; Resolve defends the
+	// wire by mapping them to Generic instead of returning nil.
+	a := r.Resolve(core.Harness{Adapter: "nope"})
+	if a == nil || a.Name() != "generic" {
+		t.Fatalf("Resolve(nope) = %v, want generic", a)
 	}
 }
 

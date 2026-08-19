@@ -84,7 +84,7 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 	// Naming And Namespacing"; ADR-0009).
 	h, project, ok := c.srv.mgr.HarnessRecord(snap.Name)
 	if ok {
-		info.Cmd = h.Cmd
+		info.Adapter = h.Adapter
 		info.Prompt = h.Prompt
 		info.Model = h.Model
 		info.AutoAccept = h.AutoAccept

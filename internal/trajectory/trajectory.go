@@ -124,9 +124,6 @@ func (s *Service) List(cfg *core.Config, name string) ([]SessionSummary, error) 
 	}
 
 	adp := s.registry.Resolve(h)
-	if adp == nil {
-		return nil, fmt.Errorf("adapter: %s: %w", h.Agent, adapter.ErrUnknownAdapter)
-	}
 
 	// Native trajectory path.
 	td := adp.TailAdapter()

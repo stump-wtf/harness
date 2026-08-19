@@ -225,7 +225,7 @@ func wireHarnesses(proj *config.Project) []protocol.ProjectHarness {
 		h := proj.Config.Harnesses[name]
 		out = append(out, protocol.ProjectHarness{
 			Name:           name,
-			Cmd:            h.Cmd,
+			Harness:        h.Adapter,
 			Args:           h.Args,
 			Prompt:         h.Prompt,
 			Model:          h.Model,

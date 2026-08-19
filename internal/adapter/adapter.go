@@ -6,10 +6,10 @@
 // SPEC-0006 REQ "Trajectory Discovery".
 //
 // The daemon holds a Registry it dispatches on without understanding any
-// entry, mirroring the existing backend precedent (ADR-0003). Selection is by
-// an optional `agent` key on the harness, inferred from `cmd` when unset.
-// An unrecognized tool resolves to Generic, which reports no trajectory —
-// its record is the scrollback ring (ADR-0007).
+// entry, mirroring the existing backend precedent (ADR-0003). Selection is
+// the harness's `harness` enum key (core.Harness.Adapter), defaulting to
+// Crush. An unrecognized tool resolves to Generic, which reports no
+// trajectory — its record is the scrollback ring (ADR-0007).
 package adapter
 
 import (
@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"github.com/stump-wtf/agent-trace/tail"
@@ -49,6 +48,10 @@ type Adapter interface {
 	// parse sessions, or nil when the adapter has no native trajectory (Generic).
 	TailAdapter() tail.Adapter
 
+	// Executable returns the CLI an adapter's long-running (non-prompt)
+	// harness runs; Args from the config are appended after it.
+	Executable() string
+
 	// PromptCommand returns the executable and argv for running a prompt
 	// one-shot with this adapter's CLI. Each adapter maps the generic
 	// AgentOpts onto its own flags (e.g. crush uses --yolo, claude uses
@@ -62,18 +65,13 @@ type Adapter interface {
 // the backend registry (ADR-0003).
 type Registry struct {
 	entries map[string]Adapter
-	// inference maps a cmd basename to an adapter name, for zero-config
-	// selection when the `agent` key is absent (SPEC-0006 REQ "Adapter
-	// Selection": "inferred from cmd").
-	inference map[string]string
 }
 
 // NewRegistry returns a Registry populated with the built-in adapters:
 // claude-code, crush, codex, and generic.
 func NewRegistry() *Registry {
 	r := &Registry{
-		entries:   make(map[string]Adapter),
-		inference: make(map[string]string),
+		entries: make(map[string]Adapter),
 	}
 	r.register(&ClaudeCode{})
 	r.register(&Crush{})
@@ -100,36 +98,18 @@ func (r *Registry) Names() []string {
 	return []string{"claude-code", "crush", "codex", "generic"}
 }
 
-// RegisterInference maps a cmd basename to an adapter name, so that
-// Resolve("claude") finds the claude-code adapter without an explicit
-// `agent` key. Call this for each built-in inference rule.
-func (r *Registry) RegisterInference(cmdBasename, adapterName string) {
-	r.inference[cmdBasename] = adapterName
-}
-
-// Resolve selects the adapter for a harness: the `agent` key when set,
-// otherwise inferred from `cmd`, otherwise Generic. Per SPEC-0006 REQ
-// "Adapter Selection", an explicit `agent` key naming an unknown adapter is
-// an error (validation should catch this before Resolve is called, but
-// Resolve also returns it defensively).
+// Resolve selects the adapter for a harness: the `harness` enum key when
+// set, otherwise the default (Crush — the config layer normalizes empty to
+// "crush", but Resolve defends the wire path too). Per SPEC-0006 REQ
+// "Adapter Selection", an adapter key naming an unknown value is an error;
+// config validation rejects it up front, and Resolve defensively maps an
+// unknown value to Generic rather than nil.
 func (r *Registry) Resolve(h core.Harness) Adapter {
-	if h.Agent != "" {
-		if a, ok := r.entries[h.Agent]; ok {
-			return a
-		}
-		return nil
+	if h.Adapter == "" {
+		return r.entries["crush"]
 	}
-	// Infer from cmd basename. A prompt harness has no Cmd (the supervisor
-	// synthesizes it at spawn time), so inference falls through to generic —
-	// the prompt harness's trajectory is the scrollback ring unless an
-	// explicit `agent` key is set.
-	fields := strings.Fields(h.Cmd)
-	if len(fields) == 0 {
-		return r.entries["generic"]
-	}
-	cmd := filepath.Base(fields[0])
-	if name, ok := r.inference[cmd]; ok {
-		return r.entries[name]
+	if a, ok := r.entries[h.Adapter]; ok {
+		return a
 	}
 	return r.entries["generic"]
 }
@@ -140,6 +120,8 @@ func (r *Registry) Resolve(h core.Harness) Adapter {
 type ClaudeCode struct{}
 
 func (a *ClaudeCode) Name() string { return "claude-code" }
+
+func (a *ClaudeCode) Executable() string { return "claude" }
 
 func (a *ClaudeCode) TrajectoryDir(_ string) string {
 	// Claude Code stores JSONL transcripts under ~/.claude/projects/, organized
@@ -173,6 +155,8 @@ func (a *ClaudeCode) PromptCommand(prompt string, opts core.AgentOpts) (string, 
 type Crush struct{}
 
 func (a *Crush) Name() string { return "crush" }
+
+func (a *Crush) Executable() string { return "crush" }
 
 func (a *Crush) TrajectoryDir(_ string) string {
 	home, err := os.UserHomeDir()
@@ -208,6 +192,8 @@ type Codex struct{}
 
 func (a *Codex) Name() string { return "codex" }
 
+func (a *Codex) Executable() string { return "codex" }
+
 func (a *Codex) TrajectoryDir(_ string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -236,6 +222,10 @@ type Generic struct{}
 
 func (a *Generic) Name() string { return "generic" }
 
+// Executable is sh: a Generic harness is an arbitrary command, expressed as
+// args (e.g. harness = "generic", args = ["-c", "while true; do …; done"]).
+func (a *Generic) Executable() string { return "sh" }
+
 func (a *Generic) TrajectoryDir(_ string) string { return "" }
 
 func (a *Generic) TailAdapter() tail.Adapter { return nil }
@@ -244,25 +234,10 @@ func (a *Generic) PromptCommand(prompt string, opts core.AgentOpts) (string, []s
 	return (&Crush{}).PromptCommand(prompt, opts)
 }
 
-// DefaultInference returns the default cmd→adapter inference table used by
-// NewRegistryWithDefaults. This is the zero-config path described in SPEC-0006
-// REQ "Adapter Selection" scenario "Adapter inferred from cmd": a harness with
-// cmd = "claude" and no agent key resolves to the claude-code adapter.
-func DefaultInference() map[string]string {
-	return map[string]string{
-		"claude": "claude-code",
-		"crush":  "crush",
-		"codex":  "codex",
-	}
-}
-
-// NewRegistryWithDefaults returns a Registry with both the built-in adapters
-// and the default cmd→adapter inference rules wired. This is what the daemon
-// constructs at startup.
+// NewRegistryWithDefaults returns a Registry with the built-in adapters.
+// This is what the daemon constructs at startup; with cmd→adapter inference
+// retired by the `harness` enum key (default crush), it is equivalent to
+// NewRegistry and kept for call-site stability.
 func NewRegistryWithDefaults() *Registry {
-	r := NewRegistry()
-	for cmd, name := range DefaultInference() {
-		r.RegisterInference(cmd, name)
-	}
-	return r
+	return NewRegistry()
 }

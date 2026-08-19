@@ -42,7 +42,7 @@ func TestManagerExtraOutTee(t *testing.T) {
 	logDir := filepath.Join(tmp, "logs")
 	h := core.Harness{
 		Name:    "echoer",
-		Cmd:     "sh",
+		Adapter: "generic",
 		Args:    []string{"-c", "printf HELLO-EXTRAOUT; sleep 0.1"},
 		Backend: core.BackendNative,
 	}

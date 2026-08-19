@@ -90,12 +90,12 @@ func TestHarnessMetaDegraded(t *testing.T) {
 // yolo, backend, exit and pid without opening `describe`.
 func TestHarnessMetaCarriesThePeekSummary(t *testing.T) {
 	h := protocol.HarnessInfo{
-		Name: "agent", State: "running", Cmd: "/usr/local/bin/claude",
+		Name: "agent", State: "running", Adapter: "claude-code",
 		Backend: "tmux", LastExitCode: 143, PID: 4242,
 	}
 	what, rest := harnessMeta(h)
 	got := metaLine(what, rest, 0)
-	for _, want := range []string{"/usr/local/bin/claude", "tmux", "exit 143", "pid 4242"} {
+	for _, want := range []string{"claude-code", "tmux", "exit 143", "pid 4242"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("metaLine = %q, missing %q", got, want)
 		}

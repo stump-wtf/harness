@@ -112,7 +112,7 @@ func TestPeekPaneFillsHeightBudget(t *testing.T) {
 func TestPeekPaneCarriesNoConfigSummary(t *testing.T) {
 	m := manyHarnessModel(160, 45, 3)
 	m.harnesses[0].PID = 12345
-	m.harnesses[0].Cmd = "/usr/local/bin/agentd"
+	m.harnesses[0].Adapter = "crush"
 	m.harnesses[0].Backend = "tmux"
 	m.sel = 0
 	m.peek = logsMsg{name: m.harnesses[0].Name, text: "just the guest screen\r\n"}

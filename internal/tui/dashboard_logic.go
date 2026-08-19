@@ -91,7 +91,7 @@ func nextActionText(h protocol.HarnessInfo) string {
 func harnessMeta(h protocol.HarnessInfo) (what string, rest []string) {
 	// A prompt harness carries no configured cmd — surface the prompt, what
 	// the user actually wrote (ADR-0011 spawn-time synthesis).
-	what = flattenSpace(h.Cmd)
+	what = orDefault(h.Adapter, "crush")
 	if h.Prompt != "" {
 		what = flattenSpace(h.Prompt)
 	}

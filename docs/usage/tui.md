@@ -13,7 +13,7 @@ decoration (see `docs/design/` in the repo for the design exploration).
 ## The dashboard
 
 The dashboard lists every harness with its **state glyph**, name, state, and
-restart count, over a faint sub-line carrying that harness's `cmd` (or
+restart count, over a faint sub-line carrying that harness's kind (or
 `prompt`), backend, last exit code, and PID. Vim-style navigation works
 everywhere (`j`/`k`, `g`/`G`).
 

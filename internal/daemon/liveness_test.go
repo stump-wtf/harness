@@ -312,7 +312,7 @@ func TestHealthyClientIsNeverEvicted(t *testing.T) {
 // survive — see TestWedgedClientReapedWhileOutputBacksUp.
 const chattyTOML = `
 [harness.chatty]
-cmd = "sh"
+harness = "generic"
 args = ["-c", "while :; do printf 'harness output line for the wedged client %s\\n' $i; i=$((i+1)); done"]
 description = "never stops talking"
 `

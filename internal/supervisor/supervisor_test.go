@@ -33,7 +33,7 @@ func fastPolicy() Policy {
 func shHarness(name, script string, restartDelay time.Duration) core.Harness {
 	return core.Harness{
 		Name:         name,
-		Cmd:          "sh",
+		Adapter:      "generic",
 		Args:         []string{"-c", script},
 		Backend:      core.BackendNative,
 		RestartDelay: restartDelay,
@@ -318,7 +318,7 @@ func TestRestartPolicyNoDoesNotRestart(t *testing.T) {
 
 func TestRestartPolicyNoSpawnFailureLandsFailed(t *testing.T) {
 	h := shHarnessWithRestart("nospawn", "exit 0", 5*time.Millisecond, core.RestartNo)
-	h.Cmd = "/nonexistent-harness-test-binary"
+	h.Workdir = "/nonexistent-harness-test-dir"
 	s := newTestSupervisor(t, h, noFlapPolicy())
 	s.Start()
 	// A command that never came up is a failure, not a completion: with

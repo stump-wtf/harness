@@ -33,11 +33,11 @@ func writeConfig(t *testing.T, path, content string) {
 }
 
 const twoHarnessTOML = `[harness.alpha]
-cmd = "sh"
+harness = "generic"
 args = ["-c", "while true; do sleep 0.02; done"]
 
 [harness.beta]
-cmd = "sh"
+harness = "generic"
 args = ["-c", "while true; do sleep 0.02; done"]
 
 [profile.default]
@@ -46,7 +46,7 @@ autostart = true
 `
 
 const oneHarnessTOML = `[harness.alpha]
-cmd = "sh"
+harness = "generic"
 args = ["-c", "while true; do sleep 0.02; done"]
 
 [profile.default]
@@ -205,8 +205,8 @@ func loadTestConfig(path string) (*core.Config, error) {
 	// config.Load internally. For the initial config, we build it by hand.
 	return &core.Config{
 		Harnesses: map[string]core.Harness{
-			"alpha": {Name: "alpha", Cmd: "sh", Args: []string{"-c", "while true; do sleep 0.02; done"}, Backend: core.BackendNative},
-			"beta":  {Name: "beta", Cmd: "sh", Args: []string{"-c", "while true; do sleep 0.02; done"}, Backend: core.BackendNative},
+			"alpha": {Name: "alpha", Adapter: "generic", Args: []string{"-c", "while true; do sleep 0.02; done"}, Backend: core.BackendNative},
+			"beta":  {Name: "beta", Adapter: "generic", Args: []string{"-c", "while true; do sleep 0.02; done"}, Backend: core.BackendNative},
 		},
 		HarnessOrder: []string{"alpha", "beta"},
 		Profiles: map[string]core.Profile{
@@ -223,17 +223,17 @@ func loadTestConfig(path string) (*core.Config, error) {
 // feature whose stated purpose is ending silence.
 func TestDiffConfigCatchesFieldsTheHandRolledListMissed(t *testing.T) {
 	base := func() *core.Harness {
-		return &core.Harness{Name: "alpha", Cmd: "sh", Args: []string{"-c", "sleep 1"}}
+		return &core.Harness{Name: "alpha", Adapter: "generic", Args: []string{"-c", "sleep 1"}}
 	}
 	tests := []struct {
 		name   string
 		mutate func(*core.Harness)
 	}{
 		{"args", func(h *core.Harness) { h.Args = []string{"-c", "sleep 2"} }},
-		{"model", func(h *core.Harness) { h.Cmd, h.Prompt, h.Model = "", "go", "claude-opus-5" }},
-		{"auto_accept", func(h *core.Harness) { h.Cmd, h.Prompt, h.AutoAccept = "", "go", true }},
-		{"max_turns", func(h *core.Harness) { h.Cmd, h.Prompt, h.MaxTurns = "", "go", 5 }},
-		{"quiet", func(h *core.Harness) { h.Cmd, h.Prompt, h.Quiet = "", "go", true }},
+		{"model", func(h *core.Harness) { h.Args, h.Prompt, h.Model = nil, "go", "claude-opus-5" }},
+		{"auto_accept", func(h *core.Harness) { h.Args, h.Prompt, h.AutoAccept = nil, "go", true }},
+		{"max_turns", func(h *core.Harness) { h.Args, h.Prompt, h.MaxTurns = nil, "go", 5 }},
+		{"quiet", func(h *core.Harness) { h.Args, h.Prompt, h.Quiet = nil, "go", true }},
 		{"restart_delay", func(h *core.Harness) { h.RestartDelay = 9 }},
 		{"description", func(h *core.Harness) { h.Description = "changed" }},
 	}

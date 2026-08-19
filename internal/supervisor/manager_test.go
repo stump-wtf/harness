@@ -397,7 +397,7 @@ func TestReloadNewDisabledHarnessStaysStopped(t *testing.T) {
 			"existing": shHarness("existing", "while true; do sleep 0.02; done", 0),
 			"newdisabled": {
 				Name:    "newdisabled",
-				Cmd:     "sh",
+				Adapter: "generic",
 				Args:    []string{"-c", "while true; do sleep 0.02; done"},
 				Backend: core.BackendNative,
 				Enabled: false,

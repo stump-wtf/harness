@@ -19,7 +19,7 @@ import (
 // sleeperDef is a project-local wire definition for a long runner, enabled so
 // project_up starts it (SPEC-0004 REQ "Bring Up").
 func sleeperDef(name string) protocol.ProjectHarness {
-	return protocol.ProjectHarness{Name: name, Cmd: "sleep", Args: []string{"60"}, Enabled: true}
+	return protocol.ProjectHarness{Name: name, Harness: "generic", Args: []string{"-c", "sleep 60"}, Enabled: true}
 }
 
 // errCodeOf asserts err is a structured *protocol.ErrorMsg and returns its code.
@@ -57,8 +57,8 @@ func TestProjectUpRoundTrip(t *testing.T) {
 		if h.Project != "reduit" {
 			t.Errorf("harness %q provenance = %q, want reduit", h.Name, h.Project)
 		}
-		if h.Cmd != "sleep" {
-			t.Errorf("harness %q cmd = %q, want sleep (definition projected)", h.Name, h.Cmd)
+		if h.Adapter != "generic" {
+			t.Errorf("harness %q adapter = %q, want generic (definition projected)", h.Name, h.Adapter)
 		}
 	}
 	// project_up starts them (SPEC-0004 REQ "Bring Up").
@@ -149,7 +149,7 @@ func TestProjectUpInvalidDefinitionError(t *testing.T) {
 
 	_, err := c.ProjectUp("reduit", []protocol.ProjectHarness{
 		sleeperDef("agent"),
-		{Name: "broken"}, // no cmd
+		{Name: "broken", Harness: "cursor"}, // unknown harness kind
 	})
 	if code := errCodeOf(t, err); code != protocol.ErrInvalidProject {
 		t.Errorf("code = %s, want %s", code, protocol.ErrInvalidProject)
@@ -224,7 +224,7 @@ func TestProjectUpDisabledHarnessNotStarted(t *testing.T) {
 	td := newTestDaemon(t, sleeperTOML)
 	c := td.dial(t, nil)
 
-	idle := protocol.ProjectHarness{Name: "idle", Cmd: "sleep", Args: []string{"60"}} // enabled=false
+	idle := protocol.ProjectHarness{Name: "idle", Harness: "generic", Args: []string{"-c", "sleep 60"}} // enabled=false
 	data, err := c.ProjectUp("reduit", []protocol.ProjectHarness{sleeperDef("agent"), idle})
 	if err != nil {
 		t.Fatalf("ProjectUp: %v", err)
@@ -281,7 +281,7 @@ func TestNoopReUpDoesNotBroadcast(t *testing.T) {
 
 	// Disabled harnesses register without starting, so the event stream stays
 	// free of unrelated state-change noise.
-	defs := []protocol.ProjectHarness{{Name: "idle", Cmd: "sleep", Args: []string{"60"}}}
+	defs := []protocol.ProjectHarness{{Name: "idle", Harness: "generic", Args: []string{"-c", "sleep 60"}}}
 	if _, err := ctl.ProjectUp("reduit", defs); err != nil {
 		t.Fatalf("first up: %v", err)
 	}
@@ -346,8 +346,8 @@ func TestHarnessFromWirePrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := harnessFromWire(decoded)
-	if h.Prompt != "do the thing" || h.Cmd != "" {
-		t.Errorf("harnessFromWire Prompt/Cmd = %q/%q, want prompt-only", h.Prompt, h.Cmd)
+	if h.Prompt != "do the thing" || len(h.Args) != 0 {
+		t.Errorf("harnessFromWire Prompt/Args = %q/%v, want prompt-only", h.Prompt, h.Args)
 	}
 	if h.Restart != core.RestartNo {
 		t.Errorf("Restart = %q, want %q (one-shot wire default)", h.Restart, core.RestartNo)
@@ -377,8 +377,8 @@ func TestHarnessFromWireModel(t *testing.T) {
 	if h.Model != "claude-opus-5" {
 		t.Errorf("Model = %q, want it carried across the wire", h.Model)
 	}
-	if h.Prompt != "do the thing" || h.Cmd != "" || h.Args != nil {
-		t.Errorf("Prompt/Cmd/Args = %q/%q/%v, want prompt-only with untouched args", h.Prompt, h.Cmd, h.Args)
+	if h.Prompt != "do the thing" || h.Args != nil {
+		t.Errorf("Prompt/Args = %q/%v, want prompt-only with untouched args", h.Prompt, h.Args)
 	}
 }
 
@@ -401,8 +401,8 @@ func TestHarnessFromWireAutoAccept(t *testing.T) {
 	if !h.AutoAccept {
 		t.Error("AutoAccept = false, want it carried across the wire")
 	}
-	if h.Prompt != "do the thing" || h.Cmd != "" || h.Args != nil {
-		t.Errorf("Prompt/Cmd/Args = %q/%q/%v, want prompt-only with untouched args", h.Prompt, h.Cmd, h.Args)
+	if h.Prompt != "do the thing" || h.Args != nil {
+		t.Errorf("Prompt/Args = %q/%v, want prompt-only with untouched args", h.Prompt, h.Args)
 	}
 }
 
@@ -424,8 +424,8 @@ func TestHarnessFromWireMaxTurns(t *testing.T) {
 	if h.MaxTurns != 12 {
 		t.Errorf("MaxTurns = %d, want it carried across the wire as 12", h.MaxTurns)
 	}
-	if h.Prompt != "do the thing" || h.Cmd != "" || h.Args != nil {
-		t.Errorf("Prompt/Cmd/Args = %q/%q/%v, want prompt-only with untouched args", h.Prompt, h.Cmd, h.Args)
+	if h.Prompt != "do the thing" || h.Args != nil {
+		t.Errorf("Prompt/Args = %q/%v, want prompt-only with untouched args", h.Prompt, h.Args)
 	}
 }
 

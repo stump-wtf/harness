@@ -25,7 +25,7 @@ import (
 // Enabled is a pointer so we can tell "absent" (default false) from an explicit
 // value without ambiguity.
 type rawHarness struct {
-	Cmd               string   `toml:"cmd"`
+	Harness           string   `toml:"harness"`
 	Args              []string `toml:"args"`
 	Prompt            string   `toml:"prompt"`
 	Model             string   `toml:"model"`
@@ -41,7 +41,6 @@ type rawHarness struct {
 	Enabled           *bool    `toml:"enabled"`
 	TmuxSocket        string   `toml:"tmux_socket"`
 	Schedule          string   `toml:"schedule"`
-	Agent             string   `toml:"agent"`
 	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
 	MCPAllow          []string `toml:"mcp_allow"`
 }
@@ -290,22 +289,32 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		return newError(filename, line, "duplicate harness %q", name)
 	}
 
-	// Exactly one of cmd/prompt defines what runs. A prompt harness stores
-	// only the prompt: its argv is synthesized at spawn time by the supervisor
-	// (core.AgentCommand, ADR-0011), never desugared here — the file stays the
-	// source of truth (ADR-0006).
-	cmd := strings.TrimSpace(rh.Cmd)
+	// The `harness` enum key selects the adapter (and, for a long-running
+	// harness, the executable it runs); it defaults to "crush". A prompt
+	// harness stores only the prompt: its argv is synthesized at spawn time
+	// from the same adapter (ADR-0011), never desugared here — the file stays
+	// the source of truth (ADR-0006).
+	adapter := strings.TrimSpace(rh.Harness)
+	if rh.Harness != "" && adapter == "" {
+		return newError(filename, line, "harness %q: \"harness\" must not be blank", name)
+	}
+	switch adapter {
+	case "", "crush", "claude-code", "codex", "generic":
+	default:
+		return newError(filename, line,
+			"harness %q: unknown harness kind %q (want one of: crush, claude-code, codex, generic)",
+			name, adapter)
+	}
+	if adapter == "" {
+		adapter = "crush"
+	}
 	prompt := strings.TrimSpace(rh.Prompt)
 	switch {
 	case rh.Prompt != "" && prompt == "":
 		return newError(filename, line, "harness %q: \"prompt\" must not be blank", name)
-	case cmd == "" && prompt == "":
-		return newError(filename, line, "harness %q: missing required key \"cmd\" (or set \"prompt\" for agent one-shot mode)", name)
-	case cmd != "" && prompt != "":
-		return newError(filename, line, "harness %q: \"prompt\" and \"cmd\" are mutually exclusive", name)
 	case prompt != "" && len(rh.Args) > 0:
 		return newError(filename, line,
-			"harness %q: \"prompt\" and \"args\" are mutually exclusive (args configure a cmd; the agent argv is synthesized at spawn)", name)
+			"harness %q: \"prompt\" and \"args\" are mutually exclusive (args configure a long-running harness; the agent argv is synthesized at spawn)", name)
 	}
 
 	// `model` is config truth only: stored on the harness and folded into the
@@ -463,7 +472,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 
 	h := core.Harness{
 		Name:         name,
-		Cmd:          rh.Cmd,
+		Adapter:      adapter,
 		Args:         rh.Args,
 		AutoAccept:   rh.AutoAccept,
 		MaxTurns:     maxTurns,
@@ -481,24 +490,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		Schedule:     schedule,
 	}
 	if prompt != "" {
-		// Cmd/Args stay EMPTY for a prompt harness (spawn-time synthesis,
-		// ADR-0011) — also defensively squashing a whitespace-only cmd.
-		h.Cmd, h.Args = "", nil
-	}
-
-	// SPEC-0006 REQ "Adapter Selection": validate the agent key against the
-	// known adapter names. The adapter registry lives in internal/adapter;
-	// to avoid an import cycle (config → adapter → core), the known names
-	// are duplicated here as a literal set. New adapters MUST be added to
-	// both places.
-	if rh.Agent != "" {
-		switch rh.Agent {
-		case "claude-code", "crush", "codex", "generic":
-		default:
-			return newError(filename, line,
-				"harness %q: unknown agent %q (want one of: claude-code, crush, codex, generic)",
-				name, rh.Agent)
-		}
+		// Args stay EMPTY for a prompt harness (spawn-time synthesis,
+		// ADR-0011) — also defensively squashing whitespace-only args.
+		h.Args = nil
 	}
 
 	// SPEC-0005 REQ "Capability Scoping": mcp_allow defaults to ["read"].
@@ -507,7 +501,6 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		mcpAllow = []string{"read"}
 	}
 
-	h.Agent = rh.Agent
 	h.HarvestTrajectory = rh.HarvestTrajectory != nil && *rh.HarvestTrajectory
 	h.MCPAllow = mcpAllow
 	cfg.Harnesses[name] = h

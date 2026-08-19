@@ -18,7 +18,7 @@ Each `[harness.<name>]` table defines one supervised process.
 
 ```toml
 [harness.my-agent]
-cmd = "claude"
+harness = "claude-code"
 args = ["--foo", "bar"]
 workdir = "~/src/my-project"
 description = "long-running agent in ~/src/my-project"
@@ -27,8 +27,8 @@ enabled = false
 
 | Field | Meaning |
 |-------|---------|
-| `cmd` | the executable to run (**required** unless `prompt` is set; can be a bare command found on `$PATH`) |
-| `args` | argument list passed to `cmd` |
+| `harness` | the harness kind, an enum: `crush` (the default), `claude-code`, `codex`, `generic`. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs through `sh` (an arbitrary command), `args = ["/usr/local/bin/x"]` style |
+| `args` | argument list appended after the adapter's executable |
 | `workdir` | working directory (**required** for most commands) |
 | `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config) |
 | `description` | free-text shown in the dashboard |
@@ -38,7 +38,7 @@ enabled = false
 | `backend` | hosting strategy: `native` (default) or `tmux` |
 | `tmux_socket` | tmux socket name; only used when `backend = "tmux"` |
 
-An **agent one-shot** replaces `cmd`/`args` with a `prompt` — see the next
+An **agent one-shot** replaces `args` with a `prompt` — see the next
 section.
 
 A bare `[name]` table is accepted for backward compatibility, but the
@@ -46,7 +46,7 @@ A bare `[name]` table is accepted for backward compatibility, but the
 
 ## Agent one-shot harnesses
 
-Give a harness a `prompt` instead of a `cmd`, and the daemon synthesizes the
+Give a harness a `prompt`, and the daemon synthesizes the
 agent invocation at spawn time (currently `crush run --quiet …`). This turns a
 harness into a one-shot agent run:
 
@@ -65,7 +65,7 @@ workdir = "~/src/my-project"
 
 | Field | Meaning |
 |-------|---------|
-| `prompt` | the agent instruction. Mutually exclusive with `cmd`/`args`; stored verbatim (never placeholder-expanded) and synthesized into the agent argv at spawn |
+| `prompt` | the agent instruction. Mutually exclusive with `args`; stored verbatim (never placeholder-expanded) and synthesized into the agent argv at spawn from the same `harness` adapter |
 | `model` | which model the agent runs, e.g. `claude-opus-5`. Requires `prompt`; folded into the synthesized argv |
 | `auto_accept` | run unattended, bypassing the agent's permission prompts (the vendor's yolo flag). Requires `prompt`; fold into the synthesized argv |
 | `max_turns` | cap on how many iterations the agent may run before stopping. Requires `prompt`; 0 or omitted means unlimited |
@@ -74,8 +74,8 @@ workdir = "~/src/my-project"
 These agent fields are **config truth only** — they are never written into
 `args` (that would corrupt the edit-form round-trip). The daemon folds them
 into the synthesized agent argv at spawn time, and they **require `prompt`**:
-there is no vendor-agnostic place to inject a flag into an arbitrary `cmd`'s
-argv, so a `cmd` harness passes its tool's flags through `args` itself.
+there is no vendor-agnostic place to inject a flag into an arbitrary
+argv, so a long-running harness passes its tool's flags through `args` itself.
 
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
 it on trusted, headless runs.
@@ -111,16 +111,17 @@ state glyph, and the next firing appended to its description (`· in 4h3m`).
 
 ## Agent adapters
 
-The `agent` key selects which adapter the harness resolves to (ADR-0011,
-SPEC-0006). When omitted, the daemon infers it from the `cmd` basename
-(`claude` → `claude-code`, `crush` → `crush`); an unrecognized tool resolves to
-`generic` (no projection, scrollback-only trajectory). Valid values:
-`claude-code`, `crush`, `codex`, `generic`. Adapters also pick the right
-adapter-specific CLI when synthesizing prompt one-shot invocations.
+The `harness` key is an enum selecting the adapter (ADR-0011, SPEC-0006):
+`crush` (the default when omitted), `claude-code`, `codex`, `generic`. The
+adapter owns both the tool-specific behaviour (trajectory discovery) and the
+executable a long-running harness runs; it also synthesizes the CLI-specific
+argv for prompt one-shots. `generic` means "none of the above" — it runs
+through `sh` (arbitrary commands) and reports no native trajectory
+(scrollback-only).
 
 ```toml
 [harness.my-agent]
-cmd = "claude"
+harness = "claude-code"
 agent = "claude-code"
 ```
 

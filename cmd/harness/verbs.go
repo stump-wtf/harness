@@ -155,7 +155,7 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	if h.Prompt != "" {
 		t.Row("prompt", t.faintPlain(h.Prompt))
 	} else {
-		t.Row("cmd", t.faintPlain(h.Cmd))
+		t.Row("harness", t.faintPlain(h.Adapter))
 	}
 	if h.Model != "" {
 		t.Row("model", t.faintPlain(h.Model))

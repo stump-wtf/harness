@@ -138,13 +138,13 @@ func writeProjectFile(t *testing.T) string {
 name = "proj"
 
 [harness.agent]
-cmd = "sleep"
-args = ["60"]
+harness = "generic"
+args = ["-c", "sleep 60"]
 enabled = true
 
 [harness.helper]
-cmd = "sleep"
-args = ["60"]
+harness = "generic"
+args = ["-c", "sleep 60"]
 enabled = false
 `)
 }
@@ -286,12 +286,12 @@ func TestCmdUpDefaultEnabled(t *testing.T) {
 name = "defproj"
 
 [harness.agent]
-cmd = "sleep"
-args = ["60"]
+harness = "generic"
+args = ["-c", "sleep 60"]
 
 [harness.reviewer]
-cmd = "sleep"
-args = ["60"]
+harness = "generic"
+args = ["-c", "sleep 60"]
 `))
 	o := verbOpts{socket: socket}
 	if _, err := captureStdout(t, func() error { return cmdUp(o) }); err != nil {
@@ -377,7 +377,7 @@ func TestCmdDownExplicitProject(t *testing.T) {
 	socket, _ := bootTestDaemon(t)
 	c := dialTest(t, socket)
 	if _, err := c.ProjectUp("ghost", []protocol.ProjectHarness{
-		{Name: "agent", Cmd: "sleep", Args: []string{"60"}, Enabled: true},
+		{Name: "agent", Harness: "generic", Args: []string{"-c", "sleep 60"}, Enabled: true},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestCmdDownSanitizesExplicitName(t *testing.T) {
 	socket, _ := bootTestDaemon(t)
 	c := dialTest(t, socket)
 	if _, err := c.ProjectUp("my-cool-project", []protocol.ProjectHarness{
-		{Name: "agent", Cmd: "sleep", Args: []string{"60"}, Enabled: false},
+		{Name: "agent", Harness: "generic", Args: []string{"-c", "sleep 60"}, Enabled: false},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -659,7 +659,7 @@ func TestScopedVerbMalformedProjectFileWarns(t *testing.T) {
 listen = ":9"
 
 [harness.demo2]
-cmd = "sleep"
+harness = "generic"
 `))
 
 	stop := verbOpts{socket: socket, json: true, name: "demo"}
@@ -709,7 +709,7 @@ func TestCmdUpExcludesActiveConfig(t *testing.T) {
 	// the exclusion, discovery would adopt it and fail with the
 	// forbidden-table parse error instead of ErrNoProjectFound.
 	dir := writeProjectDir(t, `[harness.demo]
-cmd = "sleep"
+harness = "generic"
 
 [profile.dev]
 harnesses = ["demo"]
@@ -747,7 +747,7 @@ func TestWireHarnessesCarriesEnabledAndOrder(t *testing.T) {
 	if wire[1].Enabled {
 		t.Error("helper Enabled = true, want false (explicit enabled = false)")
 	}
-	if wire[0].Cmd != "sleep" || len(wire[0].Args) != 1 {
+	if wire[0].Harness != "generic" || len(wire[0].Args) != 2 {
 		t.Errorf("agent definition not projected: %+v", wire[0])
 	}
 }
@@ -771,9 +771,6 @@ enabled = false
 	}
 	if wire[0].Prompt != "summarize the day" {
 		t.Errorf("Prompt = %q, want it carried onto the wire", wire[0].Prompt)
-	}
-	if wire[0].Cmd != "" || len(wire[0].Args) != 0 {
-		t.Errorf("Cmd/Args = %q/%v, want empty (spawn-time synthesis)", wire[0].Cmd, wire[0].Args)
 	}
 	if wire[0].Restart != "no" {
 		t.Errorf("Restart = %q, want %q (one-shot default made explicit by parse)", wire[0].Restart, "no")
@@ -801,9 +798,6 @@ enabled = false
 	if wire[0].Model != "claude-opus-5" {
 		t.Errorf("Model = %q, want it carried onto the wire", wire[0].Model)
 	}
-	if wire[0].Cmd != "" || len(wire[0].Args) != 0 {
-		t.Errorf("Cmd/Args = %q/%v, want empty (spawn-time synthesis)", wire[0].Cmd, wire[0].Args)
-	}
 }
 
 // TestWireHarnessesCarriesAutoAccept: a prompt harness's unattended mode
@@ -826,9 +820,6 @@ enabled = false
 	}
 	if !wire[0].AutoAccept {
 		t.Error("AutoAccept = false, want it carried onto the wire")
-	}
-	if wire[0].Cmd != "" || len(wire[0].Args) != 0 {
-		t.Errorf("Cmd/Args = %q/%v, want empty (spawn-time synthesis)", wire[0].Cmd, wire[0].Args)
 	}
 }
 

@@ -102,8 +102,8 @@ func (td *testDaemon) dial(t *testing.T, wants []string) *client.Client {
 
 const sleeperTOML = `
 [harness.sleeper]
-cmd = "sleep"
-args = ["60"]
+harness = "generic"
+args = ["-c", "sleep 60"]
 description = "long runner"
 `
 
@@ -160,8 +160,8 @@ func TestListGlyphs(t *testing.T) {
 	if !core.State(hs[0].State).Valid() || core.State(hs[0].State).Glyph() == "" {
 		t.Errorf("state %q has no SPEC-0003 glyph", hs[0].State)
 	}
-	if hs[0].Cmd != "sleep" {
-		t.Errorf("cmd = %q, want sleep", hs[0].Cmd)
+	if hs[0].Adapter != "generic" {
+		t.Errorf("adapter = %q, want generic", hs[0].Adapter)
 	}
 }
 
@@ -321,7 +321,7 @@ func TestDescribeShowsAttachSessions(t *testing.T) {
 func TestEventSubscription(t *testing.T) {
 	const blipTOML = `
 [harness.blip]
-cmd = "sh"
+harness = "generic"
 args = ["-c", "exit 0"]
 restart_delay = 60
 `

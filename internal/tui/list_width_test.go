@@ -35,12 +35,12 @@ func TestListPaneWidthTracksContent(t *testing.T) {
 	const w = 175
 
 	short := widthModel(w, 40,
-		protocol.HarnessInfo{Name: "top", State: "running", Cmd: "/usr/bin/top", PID: 5},
+		protocol.HarnessInfo{Name: "top", State: "running", Adapter: "generic", PID: 5},
 	)
 	long := widthModel(w, 40,
 		protocol.HarnessInfo{
 			Name: "a-considerably-longer-harness-name", State: "running",
-			Cmd: "/home/joestump-agent/.local/bin/claude", PID: 3720939, LastExitCode: 143,
+			Adapter: "generic", PID: 3720939, LastExitCode: 143,
 		},
 	)
 
@@ -63,7 +63,7 @@ func TestListPaneWidthTracksContent(t *testing.T) {
 // rather than collapsing the list to nothing.
 func TestListPaneWidthBounds(t *testing.T) {
 	tiny := widthModel(60, 14,
-		protocol.HarnessInfo{Name: "n", State: "running", Cmd: "/x"},
+		protocol.HarnessInfo{Name: "n", State: "running", Adapter: "generic"},
 	)
 	if got := tiny.listPaneWidth(); got != minListWidth {
 		t.Errorf("pane on a 60-column window = %d, want the %d floor", got, minListWidth)
@@ -73,7 +73,7 @@ func TestListPaneWidthBounds(t *testing.T) {
 	// 1-column minimum viewDashboard clamps it to. The invariant that matters
 	// is that nothing exceeds m.w.
 	cramped := widthModel(18, 14,
-		protocol.HarnessInfo{Name: "n", State: "running", Cmd: "/x"},
+		protocol.HarnessInfo{Name: "n", State: "running", Adapter: "generic"},
 	)
 	if got := cramped.listPaneWidth(); got > 18 {
 		t.Errorf("pane = %d on an 18-column window, wider than the window itself", got)
@@ -85,12 +85,12 @@ func TestListPaneWidthBounds(t *testing.T) {
 func TestListRowsCarryMetadata(t *testing.T) {
 	m := widthModel(175, 40,
 		protocol.HarnessInfo{
-			Name: "agent", State: "running", Cmd: "/usr/bin/agentd",
+			Name: "agent", State: "running", Adapter: "crush",
 			Backend: "tmux", PID: 4242, LastExitCode: 143,
 		},
 	)
 	got := m.viewList(m.listPaneWidth(), m.bodyHeight())
-	for _, want := range []string{"agent", "/usr/bin/agentd", "tmux", "exit 143", "pid 4242"} {
+	for _, want := range []string{"agent", "crush", "tmux", "exit 143", "pid 4242"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("list row missing %q:\n%s", want, got)
 		}
@@ -119,7 +119,7 @@ func TestElideLeftPrefersPathSeparators(t *testing.T) {
 // truncating the joined line from the right would do the opposite.
 func TestMetaLineKeepsTheFactsWhenCramped(t *testing.T) {
 	what, rest := harnessMeta(protocol.HarnessInfo{
-		Cmd: "/a/very/long/path/to/some/binary", PID: 4242, LastExitCode: 7,
+		Adapter: "generic", PID: 4242, LastExitCode: 7,
 	})
 	got := metaLine(what, rest, 34)
 	if !strings.Contains(got, "pid 4242") || !strings.Contains(got, "exit 7") {
@@ -132,14 +132,14 @@ func TestMetaLineKeepsTheFactsWhenCramped(t *testing.T) {
 
 // TestMetaLineKeepsShortCmd is the other half of the elision rule: the
 // minWhatWidth floor gates the ELISION, not the field. listPaneWidth sizes the
-// pane to hold `what · rest` whole, so a cmd that fits in fewer than
-// minWhatWidth columns must still render — dropping it left the pane sized for
-// a field it then refused to draw, and `/bin/sh` vanished from every row.
+// pane to hold `what · rest` whole, so an adapter name that fits in fewer
+// than minWhatWidth columns must still render — dropping it left the pane
+// sized for a field it then refused to draw, and the name vanished.
 func TestMetaLineKeepsShortCmd(t *testing.T) {
-	what, rest := harnessMeta(protocol.HarnessInfo{Cmd: "/bin/sh"})
+	what, rest := harnessMeta(protocol.HarnessInfo{Adapter: "generic"})
 	budget := lipgloss.Width(what) + 3 + lipgloss.Width(strings.Join(rest, " · "))
-	if got := metaLine(what, rest, budget); !strings.Contains(got, "/bin/sh") {
-		t.Errorf("metaLine(budget=%d) = %q, dropped a cmd that fits exactly", budget, got)
+	if got := metaLine(what, rest, budget); !strings.Contains(got, "generic") {
+		t.Errorf("metaLine(budget=%d) = %q, dropped the harness kind that fits exactly", budget, got)
 	}
 }
 
@@ -147,10 +147,10 @@ func TestMetaLineKeepsShortCmd(t *testing.T) {
 // the list sizes itself to must be a width the rows actually render in.
 func TestListRowsRenderShortCmd(t *testing.T) {
 	m := widthModel(120, 24,
-		protocol.HarnessInfo{Name: "sh", State: "running", Cmd: "/bin/sh"},
+		protocol.HarnessInfo{Name: "sh", State: "running", Adapter: "generic"},
 	)
 	got := m.viewList(m.listPaneWidth(), m.bodyHeight())
-	if !strings.Contains(got, "/bin/sh") {
+	if !strings.Contains(got, "generic") {
 		t.Errorf("list pane sized to %d columns still dropped the cmd:\n%s", m.listPaneWidth(), got)
 	}
 }
@@ -168,7 +168,7 @@ func TestMultilinePromptStaysOneLine(t *testing.T) {
 	hs := []protocol.HarnessInfo{h}
 	for i := 0; i < 20; i++ {
 		hs = append(hs, protocol.HarnessInfo{
-			Name: fmt.Sprintf("h%02d", i), State: "running", Cmd: "/usr/bin/something",
+			Name: fmt.Sprintf("h%02d", i), State: "running", Adapter: "generic",
 		})
 	}
 	m := widthModel(300, 20, hs...)

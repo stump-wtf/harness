@@ -81,7 +81,7 @@ func TestProjectUpRegistersNamespacedWithProvenance(t *testing.T) {
 	}
 	// Definitions are resolvable under the full name (drives describe/list),
 	// with provenance from the same lock hold.
-	if h, project, ok := m.HarnessRecord("reduit/agent"); !ok || h.Cmd != "sh" || project != "reduit" {
+	if h, project, ok := m.HarnessRecord("reduit/agent"); !ok || h.Args == nil || project != "reduit" {
 		t.Errorf("HarnessRecord(reduit/agent) = %+v project=%q ok=%v, want sh definition owned by reduit",
 			h, project, ok)
 	}
@@ -184,24 +184,24 @@ func TestProjectUpInvalidDefsNoPartialState(t *testing.T) {
 		{"dot harness name", "reduit", []core.Harness{shHarness(".", loopScript, 0)}},
 		{"dotdot harness name", "reduit", []core.Harness{shHarness("..", loopScript, 0)}},
 		{"duplicate harness", "reduit", projectDefs("agent", "agent")},
-		{"missing cmd", "reduit", []core.Harness{{Name: "agent", Backend: core.BackendNative}}},
-		// Exactly one of cmd/prompt, and args belong to cmd only — the same
+		{"unknown harness kind", "reduit", []core.Harness{{Name: "agent", Adapter: "cursor", Backend: core.BackendNative}}},
+		// Prompt and args belong to different harness shapes — the same
 		// invariants the config parsers enforce (ADR-0011).
-		{"prompt and cmd both set", "reduit", []core.Harness{{
-			Name: "agent", Cmd: "sh", Prompt: "hi", Backend: core.BackendNative,
+		{"prompt with args", "reduit", []core.Harness{{
+			Name: "agent", Prompt: "hi", Args: []string{"x"}, Backend: core.BackendNative,
 		}}},
 		{"prompt with args", "reduit", []core.Harness{{
 			Name: "agent", Prompt: "hi", Args: []string{"x"}, Backend: core.BackendNative,
 		}}},
-		{"invalid backend", "reduit", []core.Harness{{Name: "agent", Cmd: "sh", Backend: "bogus"}}},
+		{"invalid backend", "reduit", []core.Harness{{Name: "agent", Adapter: "generic", Backend: "bogus"}}},
 		{"negative restart delay", "reduit", []core.Harness{{
-			Name: "agent", Cmd: "sh", Backend: core.BackendNative, RestartDelay: -time.Second,
+			Name: "agent", Adapter: "generic", Backend: core.BackendNative, RestartDelay: -time.Second,
 		}}},
 		// The invalid entry is third: earlier valid entries must not stick.
 		{"invalid mid-list", "reduit", []core.Harness{
 			shHarness("a", loopScript, 0),
 			shHarness("b", loopScript, 0),
-			{Name: "c", Backend: core.BackendNative}, // missing cmd
+			{Name: "c", Adapter: "cursor", Backend: core.BackendNative}, // unknown harness kind
 		}},
 	}
 	for _, tc := range cases {
@@ -244,8 +244,8 @@ func TestProjectUpAcceptsPromptHarness(t *testing.T) {
 	if !ok {
 		t.Fatal("prompt harness not registered")
 	}
-	if h.Prompt != "do the thing" || h.Cmd != "" {
-		t.Errorf("registered def Prompt/Cmd = %q/%q, want prompt-only", h.Prompt, h.Cmd)
+	if h.Prompt != "do the thing" || len(h.Args) != 0 {
+		t.Errorf("registered def Prompt/Args = %q/%v, want prompt-only", h.Prompt, h.Args)
 	}
 }
 

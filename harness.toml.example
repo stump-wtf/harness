@@ -31,7 +31,7 @@
 # on boot (ADR-0005 supervision: it gets restarted if it exits, with
 # escalating backoff under crash-loop conditions).
 [harness.heartbeat]
-cmd = "sh"
+harness = "generic"
 args = ["-c", "while true; do echo $(date); sleep 60; done"]
 description = "prints the time once a minute"
 enabled = true
@@ -39,7 +39,7 @@ enabled = true
 # An agent CLI you drive from your phone via the remote SSH surface.
 # Disabled by default so it doesn't spawn until you explicitly `harness start`.
 [harness.my-agent]
-cmd = "claude"
+harness = "claude-code"
 args = ["--remote-control", "--dangerously-skip-permissions"]
 workdir = "~/src/my-project"
 description = "long-running agent in ~/src/my-project"
@@ -86,13 +86,14 @@ enabled = false
 # schedule = "0 */6 * * *"   # every 6 hours
 # description = "scheduled sweep (every 6 hours)"
 
-# Agent adapters (ADR-0011, SPEC-0006): the `agent` key selects which adapter
-# the harness resolves to. When omitted, the daemon infers it from the cmd
-# basename (e.g. "claude" -> "claude-code", "crush" -> "crush"). An unrecognized
-# tool resolves to "generic" (no projection, scrollback-only trajectory).
-# Valid values: "claude-code", "crush", "codex", "generic".
+# Harness kinds (ADR-0011, SPEC-0006): the `harness` key is an enum selecting
+# the adapter, which owns the executable a long-running harness runs (args are
+# appended after it) and the CLI-specific argv synthesized for a prompt
+# one-shot. Defaults to "crush" when omitted. "generic" runs through sh
+# (arbitrary commands; no projection, scrollback-only trajectory).
+# Valid values: "crush", "claude-code", "codex", "generic".
 #
-# agent = "claude-code"
+# harness = "claude-code"
 
 # Trajectory harvesting (SPEC-0006 REQ "Harvest Opt-In"): expose this harness's
 # session transcripts read-only through the facade (list_trajectories /
@@ -124,7 +125,8 @@ enabled = false
 # Compose's "on-failure:<max-retries>" suffix is not supported; retry limits
 # come from the daemon's crash-loop policy instead.
 [harness.flaky]
-cmd = "/usr/local/bin/maybe-fails"
+harness = "generic"
+args = ["/usr/local/bin/maybe-fails"]
 workdir = "/srv/flaky"
 restart_delay = 5
 restart = "on-failure"

@@ -21,7 +21,7 @@ table names the project:
 name = "my-project"
 
 [harness.api]
-cmd = "uvicorn"
+harness = "generic"
 args = ["app.main:app"]
 workdir = "."
 description = "the API"

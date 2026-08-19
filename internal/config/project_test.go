@@ -28,7 +28,7 @@ func writeProjectFile(t *testing.T, dir, data string) string {
 func TestParseProject_BasicHarness(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 args = ["--remote-control"]
 workdir = "."
 `)
@@ -49,8 +49,8 @@ workdir = "."
 	if !ok {
 		t.Fatal("missing harness 'agent'")
 	}
-	if h.Cmd != "claude" {
-		t.Errorf("Cmd = %q, want %q", h.Cmd, "claude")
+	if h.Adapter != "claude-code" {
+		t.Errorf("Adapter = %q, want claude-code", h.Adapter)
 	}
 	// Relative workdir resolved against project root.
 	if h.Workdir != "/tmp/myrepo" {
@@ -65,11 +65,11 @@ workdir = "."
 func TestParseProject_RestartPolicy(t *testing.T) {
 	data := []byte(`
 [harness.migrate]
-cmd = "./migrate"
+harness = "generic"
 restart = "no"
 
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 `)
 	proj, err := ParseProject(data, "/tmp/myrepo/harness.toml")
 	if err != nil {
@@ -84,7 +84,7 @@ cmd = "claude"
 
 	bad := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 restart = "until-pigs-fly"
 `)
 	_, err = ParseProject(bad, "/tmp/myrepo/harness.toml")
@@ -106,7 +106,7 @@ func TestParseProject_ProjectName(t *testing.T) {
 name = "custom-name"
 
 [harness.agent]
-cmd = "crush"
+harness = "crush"
 `)
 	proj, err := ParseProject(data, "/tmp/repo/harness.toml")
 	if err != nil {
@@ -120,7 +120,7 @@ cmd = "crush"
 func TestParseProject_RejectServer(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 
 [server]
 enabled = false
@@ -145,7 +145,7 @@ enabled = false
 func TestParseProject_RejectProfile(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 
 [profile.default]
 harnesses = ["agent"]
@@ -169,10 +169,10 @@ harnesses = ["agent"]
 func TestParseProject_MultipleHarnesses(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 
 [harness.reviewer]
-cmd = "crush"
+harness = "crush"
 workdir = "./reviews"
 `)
 	proj, err := ParseProject(data, "/tmp/repo/harness.toml")
@@ -195,7 +195,7 @@ func TestParseProject_BareHarnessTable(t *testing.T) {
 	// Bare [name] tables are backward-compatible (ADR-0006).
 	data := []byte(`
 [agent]
-cmd = "claude"
+harness = "claude-code"
 `)
 	proj, err := ParseProject(data, "/tmp/repo/harness.toml")
 	if err != nil {
@@ -212,7 +212,7 @@ cmd = "claude"
 func TestParseProject_EnvFileResolution(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 env_file = "secrets.env"
 `)
 	proj, err := ParseProject(data, "/tmp/repo/harness.toml")
@@ -228,7 +228,7 @@ env_file = "secrets.env"
 func TestParseProject_AbsoluteWorkdir(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 workdir = "/opt/abs"
 `)
 	proj, err := ParseProject(data, "/tmp/repo/harness.toml")
@@ -244,7 +244,7 @@ workdir = "/opt/abs"
 func TestParseProject_TildeWorkdir(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 workdir = "~/src"
 `)
 	proj, err := ParseProject(data, "/tmp/repo/harness.toml")
@@ -271,10 +271,10 @@ func TestParseProject_EmptyFile(t *testing.T) {
 func TestParseProject_DuplicateHarness(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 
 [harness.agent]
-cmd = "crush"
+harness = "crush"
 `)
 	_, err := ParseProject(data, "/tmp/repo/harness.toml")
 	if err == nil {
@@ -282,14 +282,14 @@ cmd = "crush"
 	}
 }
 
-func TestParseProject_MissingCmd(t *testing.T) {
+func TestParseProject_UnknownHarnessKind(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-args = ["--yolo"]
+harness = "cursor"
 `)
 	_, err := ParseProject(data, "/tmp/repo/harness.toml")
 	if err == nil {
-		t.Fatal("expected error for missing cmd, got nil")
+		t.Fatal("expected error for unknown harness kind, got nil")
 	}
 }
 
@@ -315,9 +315,6 @@ prompt = "summarize the day"
 	if h.Prompt != "summarize the day" {
 		t.Errorf("Prompt = %q, want %q", h.Prompt, "summarize the day")
 	}
-	if h.Cmd != "" || h.Args != nil {
-		t.Errorf("Cmd/Args = %q/%v, want empty (spawn-time synthesis)", h.Cmd, h.Args)
-	}
 	if h.Restart != core.RestartNo {
 		t.Errorf("Restart = %q, want %q (one-shot default)", h.Restart, core.RestartNo)
 	}
@@ -331,7 +328,6 @@ prompt = "summarize the day"
 // files too, with the same located-error contract as the global parser.
 func TestParseProject_PromptErrors(t *testing.T) {
 	tests := []struct{ name, toml, wantSub string }{
-		{"prompt and cmd", "[harness.bad]\ncmd = \"echo\"\nprompt = \"hi\"\n", `"prompt" and "cmd" are mutually exclusive`},
 		{"prompt and args", "[harness.bad]\nprompt = \"hi\"\nargs = [\"x\"]\n", `"prompt" and "args" are mutually exclusive`},
 		{"blank prompt", "[harness.bad]\nprompt = \" \"\n", `"prompt" must not be blank`},
 	}
@@ -378,9 +374,6 @@ model = "claude-opus-5"
 	}
 	if h.Model != "claude-opus-5" {
 		t.Errorf("Model = %q, want %q", h.Model, "claude-opus-5")
-	}
-	if h.Cmd != "" || h.Args != nil {
-		t.Errorf("Cmd/Args = %q/%v, want empty (model must never be desugared into args)", h.Cmd, h.Args)
 	}
 	// The project bring-up default still applies to model-bearing harnesses.
 	if !h.Enabled {
@@ -440,9 +433,6 @@ auto_accept = true
 	if !h.AutoAccept {
 		t.Error("AutoAccept = false, want true")
 	}
-	if h.Cmd != "" || h.Args != nil {
-		t.Errorf("Cmd/Args = %q/%v, want empty (auto_accept must never be desugared into args)", h.Cmd, h.Args)
-	}
 }
 
 // TestParseProject_AutoAcceptErrors: the auto_accept validation rule holds in
@@ -479,7 +469,7 @@ func TestDiscoverProject_FindsAncestorFile(t *testing.T) {
 	}
 	writeProjectFile(t, reduit, `
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 `)
 
 	oldWd, _ := os.Getwd()
@@ -621,7 +611,7 @@ func TestSentinelErrors_AreDistinct(t *testing.T) {
 func TestParseProject_EnabledDefaultsTrue(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 `)
 	proj, err := ParseProject(data, "/tmp/repo/harness.toml")
 	if err != nil {
@@ -637,11 +627,11 @@ cmd = "claude"
 func TestParseProject_EnabledExplicitFalse(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 enabled = false
 
 [harness.reviewer]
-cmd = "crush"
+harness = "crush"
 enabled = true
 `)
 	proj, err := ParseProject(data, "/tmp/repo/harness.toml")
@@ -673,7 +663,7 @@ func TestDiscoverProjectExcluding_SkipsActiveConfig(t *testing.T) {
 	}
 	custom := writeProjectFile(t, dir, `
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 `)
 
 	oldWd, _ := os.Getwd()
@@ -707,7 +697,7 @@ func TestSanitizeProjectName_Exported(t *testing.T) {
 func TestParseProject_MCPAllowRejected(t *testing.T) {
 	data := []byte(`
 [harness.agent]
-cmd = "claude"
+harness = "claude-code"
 mcp_allow = ["read", "write"]
 `)
 	_, err := ParseProject(data, "/tmp/myrepo/harness.toml")

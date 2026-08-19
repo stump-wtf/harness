@@ -98,8 +98,8 @@ type confirmState struct {
 // formInputs binds the Huh form's string fields; toForm converts to the typed
 // HarnessForm for TOML serialization.
 type formInputs struct {
-	name, cmd, prompt, model, maxTurns, schedule, args, workdir, envFile, delay, restart, backend, description string
-	enabled, autoAccept, quiet                                                                                 bool
+	name, harness, prompt, model, maxTurns, schedule, args, workdir, envFile, delay, restart, backend, description string
+	enabled, autoAccept, quiet                                                                                     bool
 }
 
 // Model is the root Bubble Tea model.

@@ -19,7 +19,7 @@ import (
 func TestHarnessFormRoundTrip(t *testing.T) {
 	f := HarnessForm{
 		Name:         "reduit-agent",
-		Cmd:          "crush",
+		Harness:      "crush",
 		Args:         []string{"--yolo", "--data-dir", "/tmp/x"},
 		Workdir:      "~/.local/share/reduit",
 		EnvFile:      "~/.config/vault/secrets.env",
@@ -43,8 +43,8 @@ func TestHarnessFormRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatalf("harness not present after parse; got %v", cfg.HarnessOrder)
 	}
-	if h.Cmd != "crush" {
-		t.Errorf("cmd = %q, want crush", h.Cmd)
+	if h.Adapter != "crush" {
+		t.Errorf("adapter = %q, want crush", h.Adapter)
 	}
 	if len(h.Args) != 3 || h.Args[0] != "--yolo" {
 		t.Errorf("args round-trip wrong: %v", h.Args)
@@ -98,8 +98,8 @@ func TestHarnessFormRoundTripPrompt(t *testing.T) {
 	if h.Prompt != f.Prompt {
 		t.Errorf("Prompt = %q, want %q (multi-word prompt must survive verbatim)", h.Prompt, f.Prompt)
 	}
-	if h.Cmd != "" || h.Args != nil {
-		t.Errorf("Cmd/Args = %q/%v, want empty (spawn-time synthesis)", h.Cmd, h.Args)
+	if h.Args != nil {
+		t.Errorf("Args = %v, want empty (spawn-time synthesis)", h.Args)
 	}
 	if h.Restart != core.RestartNo {
 		t.Errorf("Restart = %q, want %q (one-shot default)", h.Restart, core.RestartNo)
@@ -126,9 +126,7 @@ func TestEditPromptHarnessRoundTrip(t *testing.T) {
 	if fi.prompt != "check the deployments and report anything unhealthy" {
 		t.Fatalf("prompt not pre-filled: %q", fi.prompt)
 	}
-	if fi.cmd != "" {
-		t.Fatalf("cmd pre-filled for a prompt harness: %q", fi.cmd)
-	}
+
 	if fi.restart != string(core.RestartNo) {
 		t.Errorf("restart pre-fill = %q, want %q (one-shot default)", fi.restart, core.RestartNo)
 	}
@@ -193,9 +191,6 @@ func TestHarnessFormRoundTripModel(t *testing.T) {
 	}
 	if h.Prompt != f.Prompt {
 		t.Errorf("Prompt = %q, want %q", h.Prompt, f.Prompt)
-	}
-	if h.Cmd != "" || h.Args != nil {
-		t.Errorf("Cmd/Args = %q/%v, want empty (model never desugars into args)", h.Cmd, h.Args)
 	}
 }
 
@@ -286,9 +281,6 @@ func TestHarnessFormRoundTripAutoAccept(t *testing.T) {
 	if !h.AutoAccept {
 		t.Error("AutoAccept = false, want true")
 	}
-	if h.Cmd != "" || h.Args != nil {
-		t.Errorf("Cmd/Args = %q/%v, want empty (auto_accept never desugars into args)", h.Cmd, h.Args)
-	}
 }
 
 // TestEditAutoAcceptHarnessRoundTrip: editing an unattended prompt harness
@@ -374,9 +366,6 @@ func TestHarnessFormRoundTripMaxTurns(t *testing.T) {
 	}
 	if h.MaxTurns != 7 {
 		t.Errorf("MaxTurns = %d, want 7", h.MaxTurns)
-	}
-	if h.Cmd != "" || h.Args != nil {
-		t.Errorf("Cmd/Args = %q/%v, want empty (max_turns never desugars into args)", h.Cmd, h.Args)
 	}
 }
 
@@ -470,7 +459,7 @@ func TestHarnessFormValidateScheduleRules(t *testing.T) {
 		name string
 		bend func(*HarnessForm)
 	}{
-		{"schedule without prompt", func(f *HarnessForm) { f.Prompt = ""; f.Cmd = "sleep 1" }},
+		{"schedule without prompt", func(f *HarnessForm) { f.Prompt = "" }},
 		{"schedule with enabled", func(f *HarnessForm) { f.Enabled = true }},
 		{"schedule with restart always", func(f *HarnessForm) { f.Restart = "always" }},
 		{"schedule with restart unless-stopped", func(f *HarnessForm) { f.Restart = "unless-stopped" }},
@@ -572,7 +561,7 @@ func TestEditPreservesOmittedFields(t *testing.T) {
 	// name/cmd/backend/description/enabled only — no args/workdir/env_file/delay.
 	sel := protocol.HarnessInfo{
 		Name:        "reduit-agent",
-		Cmd:         "crush",
+		Adapter:     "crush",
 		Description: "the reduit agent",
 		Enabled:     true,
 	}
@@ -630,23 +619,23 @@ func TestEditPreservesOmittedFields(t *testing.T) {
 
 // TestFormValidate covers the pre-write guard rails.
 func TestFormValidate(t *testing.T) {
-	if err := (HarnessForm{Cmd: "x"}).Validate(); err == nil {
+	if err := (HarnessForm{Harness: "generic"}).Validate(); err == nil {
 		t.Error("missing name should fail")
 	}
-	if err := (HarnessForm{Name: "x"}).Validate(); err == nil {
-		t.Error("missing cmd should fail")
+	if err := (HarnessForm{Name: "x", Harness: "cursor"}).Validate(); err == nil {
+		t.Error("unknown harness kind should fail")
 	}
-	if err := (HarnessForm{Name: "x", Cmd: "y", Backend: "bogus"}).Validate(); err == nil {
+	if err := (HarnessForm{Name: "x", Harness: "generic", Backend: "bogus"}).Validate(); err == nil {
 		t.Error("bad backend should fail")
 	}
-	if err := (HarnessForm{Name: "x", Cmd: "y", RestartDelay: -1}).Validate(); err == nil {
+	if err := (HarnessForm{Name: "x", Harness: "generic", RestartDelay: -1}).Validate(); err == nil {
 		t.Error("negative delay should fail")
 	}
-	if err := (HarnessForm{Name: "x", Cmd: "y", Restart: "until-pigs-fly"}).Validate(); err == nil {
+	if err := (HarnessForm{Name: "x", Harness: "generic", Restart: "until-pigs-fly"}).Validate(); err == nil {
 		t.Error("bad restart policy should fail")
 	}
-	if err := (HarnessForm{Name: "x", Cmd: "y", Prompt: "z"}).Validate(); err == nil {
-		t.Error("cmd+prompt should fail (mutually exclusive)")
+	if err := (HarnessForm{Name: "x", Harness: "crush", Prompt: "z", Args: []string{"a"}}).Validate(); err == nil {
+		t.Error("prompt+args should fail (mutually exclusive)")
 	}
 	if err := (HarnessForm{Name: "x", Prompt: "z", Args: []string{"a"}}).Validate(); err == nil {
 		t.Error("prompt+args should fail (args belong to cmd)")
@@ -654,7 +643,7 @@ func TestFormValidate(t *testing.T) {
 	if err := (HarnessForm{Name: "x", Prompt: "do the thing"}).Validate(); err != nil {
 		t.Errorf("prompt-only form should validate: %v", err)
 	}
-	if err := (HarnessForm{Name: "x", Cmd: "y", Model: "m"}).Validate(); err == nil {
+	if err := (HarnessForm{Name: "x", Harness: "generic", Model: "m"}).Validate(); err == nil {
 		t.Error("cmd+model should fail (model requires prompt)")
 	}
 	if err := (HarnessForm{Name: "x", Prompt: "p", Model: "a b"}).Validate(); err == nil {
@@ -663,7 +652,7 @@ func TestFormValidate(t *testing.T) {
 	if err := (HarnessForm{Name: "x", Prompt: "p", Model: "claude-opus-5"}).Validate(); err != nil {
 		t.Errorf("prompt+model form should validate: %v", err)
 	}
-	if err := (HarnessForm{Name: "x", Cmd: "y", AutoAccept: true}).Validate(); err == nil {
+	if err := (HarnessForm{Name: "x", Harness: "generic", AutoAccept: true}).Validate(); err == nil {
 		t.Error("cmd+auto_accept should fail (auto_accept requires prompt)")
 	}
 	if err := (HarnessForm{Name: "x", Prompt: "p", AutoAccept: true}).Validate(); err != nil {
@@ -709,9 +698,9 @@ func TestRemoveHarnessTOML(t *testing.T) {
 // TestToFormParsesArgsAndDelay verifies the Huh string inputs convert to the
 // typed form (space-split args, integer delay).
 func TestToFormParsesArgsAndDelay(t *testing.T) {
-	fi := formInputs{name: " n ", cmd: " c ", args: "a b  c", delay: "7", backend: "native"}
+	fi := formInputs{name: " n ", harness: " crush ", args: "a b  c", delay: "7", backend: "native"}
 	f := fi.toForm()
-	if f.Name != "n" || f.Cmd != "c" {
+	if f.Name != "n" || f.Harness != "crush" {
 		t.Errorf("trim failed: %+v", f)
 	}
 	if len(f.Args) != 3 {

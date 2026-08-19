@@ -55,7 +55,7 @@ func newRig(t *testing.T, script string) *sizeRig {
 	cfg := &core.Config{
 		Harnesses: map[string]core.Harness{"probe": {
 			Name:    "probe",
-			Cmd:     "sh",
+			Adapter: "generic",
 			Args:    []string{"-c", script},
 			Workdir: tmp,
 			Backend: core.BackendNative,

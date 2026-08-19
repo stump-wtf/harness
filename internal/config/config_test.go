@@ -34,7 +34,7 @@ func TestParseZshHarnessdExample(t *testing.T) {
 	}
 	want := core.Harness{
 		Name:         "crush-signal-channel",
-		Cmd:          "crush",
+		Adapter:      "crush",
 		Args:         []string{"--yolo", "--data-dir", "{workdir}", "--channels", "server:signal"},
 		Workdir:      "~/.local/share/crush-signal-channel",
 		EnvFile:      "~/.config/vault/secrets-static.env",
@@ -139,10 +139,10 @@ func TestValidationErrors(t *testing.T) {
 		wantSub  string
 	}{
 		{
-			name:     "missing cmd",
-			toml:     "[foo]\nworkdir = \"~/src\"\n",
+			name:     "unknown harness kind",
+			toml:     "[foo]\nharness = \"cursor\"\n",
 			wantLine: 1,
-			wantSub:  `missing required key "cmd"`,
+			wantSub:  `unknown harness kind`,
 		},
 		{
 			name:     "invalid backend",
@@ -331,8 +331,8 @@ func TestParsePromptHarness(t *testing.T) {
 			if h.Prompt != tt.wantPrompt {
 				t.Errorf("Prompt = %q, want %q", h.Prompt, tt.wantPrompt)
 			}
-			if h.Cmd != "" || h.Args != nil {
-				t.Errorf("Cmd/Args = %q/%v, want empty (argv is synthesized at spawn, not parse)", h.Cmd, h.Args)
+			if h.Args != nil {
+				t.Errorf("Args = %v, want empty (argv is synthesized at spawn, not parse)", h.Args)
 			}
 			if h.Restart != tt.wantRestart {
 				t.Errorf("Restart = %q, want %q", h.Restart, tt.wantRestart)
@@ -353,22 +353,16 @@ func TestParsePromptErrors(t *testing.T) {
 		wantSub  string
 	}{
 		{
-			name:     "prompt and cmd are mutually exclusive",
-			toml:     "[harness.bad]\ncmd = \"echo\"\nprompt = \"hello\"\n",
+			name:     "blank harness kind is named as such",
+			toml:     "[harness.bad]\nharness = \"   \"\n",
 			wantLine: 1,
-			wantSub:  `"prompt" and "cmd" are mutually exclusive`,
+			wantSub:  `"harness" must not be blank`,
 		},
 		{
 			name:     "prompt and args are mutually exclusive",
 			toml:     "[harness.bad]\nprompt = \"hello\"\nargs = [\"run\"]\n",
 			wantLine: 1,
 			wantSub:  `"prompt" and "args" are mutually exclusive`,
-		},
-		{
-			name:     "neither cmd nor prompt mentions both options",
-			toml:     "# header\n\n[harness.empty]\ndescription = \"no cmd or prompt\"\n",
-			wantLine: 3,
-			wantSub:  `missing required key "cmd" (or set "prompt"`,
 		},
 		{
 			name:     "whitespace-only prompt names the blank prompt",
@@ -439,9 +433,6 @@ func TestParseModelHarness(t *testing.T) {
 			if h.Model != tt.wantModel {
 				t.Errorf("Model = %q, want %q", h.Model, tt.wantModel)
 			}
-			if h.Cmd != tt.wantCmd {
-				t.Errorf("Cmd = %q, want %q", h.Cmd, tt.wantCmd)
-			}
 			if !reflect.DeepEqual(h.Args, tt.wantArgs) {
 				t.Errorf("Args = %v, want %v (model must never be desugared into args)", h.Args, tt.wantArgs)
 			}
@@ -480,10 +471,10 @@ func TestParseModelErrors(t *testing.T) {
 			wantSub:  `"model" must be a single token`,
 		},
 		{
-			name:     "model alone still reports the missing cmd/prompt first",
-			toml:     "# header\n\n[harness.bad]\nmodel = \"claude-opus-5\"\n",
-			wantLine: 3,
-			wantSub:  `missing required key "cmd" (or set "prompt"`,
+			name:     "model requires prompt",
+			toml:     "[harness.bad]\nmodel = \"claude-opus-5\"\n",
+			wantLine: 1,
+			wantSub:  `requires "prompt"`,
 		},
 	}
 	for _, tt := range tests {
@@ -565,9 +556,6 @@ func TestParseAutoAcceptHarness(t *testing.T) {
 			if h.AutoAccept != tt.wantAutoAccept {
 				t.Errorf("AutoAccept = %v, want %v", h.AutoAccept, tt.wantAutoAccept)
 			}
-			if h.Cmd != tt.wantCmd {
-				t.Errorf("Cmd = %q, want %q", h.Cmd, tt.wantCmd)
-			}
 			if !reflect.DeepEqual(h.Args, tt.wantArgs) {
 				t.Errorf("Args = %v, want %v (auto_accept must never be desugared into args)", h.Args, tt.wantArgs)
 			}
@@ -596,10 +584,10 @@ func TestParseAutoAcceptErrors(t *testing.T) {
 			wantSub:  `"auto_accept" requires "prompt"`,
 		},
 		{
-			name:     "auto_accept alone still reports the missing cmd/prompt first",
-			toml:     "# header\n\n[harness.bad]\nauto_accept = true\n",
-			wantLine: 3,
-			wantSub:  `missing required key "cmd" (or set "prompt"`,
+			name:     "auto_accept requires prompt",
+			toml:     "[harness.bad]\nauto_accept = true\n",
+			wantLine: 1,
+			wantSub:  `requires "prompt"`,
 		},
 	}
 	for _, tt := range tests {
@@ -815,52 +803,49 @@ func TestParseQuietErrors(t *testing.T) {
 
 func TestParseAgentExplicit(t *testing.T) {
 	src := `[harness.agent]
-cmd = "my-wrapper"
-agent = "claude-code"
+harness = "claude-code"
 `
 	cfg, err := Parse([]byte(src), "t.toml")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	h := cfg.Harnesses["agent"]
-	if h.Agent != "claude-code" {
-		t.Fatalf("agent = %q, want claude-code", h.Agent)
+	if h.Adapter != "claude-code" {
+		t.Fatalf("adapter = %q, want claude-code", h.Adapter)
 	}
 }
 
 func TestParseAgentUnknown(t *testing.T) {
 	src := `[harness.agent]
-cmd = "claude"
-agent = "nonexistent"
+harness = "cursor"
 `
 	_, err := Parse([]byte(src), "t.toml")
 	if err == nil {
-		t.Fatal("expected error for unknown agent, got nil")
+		t.Fatal("expected error for unknown harness kind, got nil")
 	}
 	var ce *Error
 	if !errors.As(err, &ce) {
 		t.Fatalf("error is %T, want *config.Error: %v", err, err)
 	}
-	if !strings.Contains(ce.Msg, "unknown agent") {
-		t.Errorf("message %q does not contain 'unknown agent'", ce.Msg)
+	if !strings.Contains(ce.Msg, "unknown harness kind") {
+		t.Errorf("message %q does not contain 'unknown harness kind'", ce.Msg)
 	}
-	if !strings.Contains(ce.Msg, "nonexistent") {
-		t.Errorf("message %q does not contain 'nonexistent'", ce.Msg)
+	if !strings.Contains(ce.Msg, "cursor") {
+		t.Errorf("message %q does not contain 'cursor'", ce.Msg)
 	}
 }
 
 func TestParseAgentGenericExplicit(t *testing.T) {
 	src := `[harness.tool]
-cmd = "custom-tool"
-agent = "generic"
+harness = "generic"
 `
 	cfg, err := Parse([]byte(src), "t.toml")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	h := cfg.Harnesses["tool"]
-	if h.Agent != "generic" {
-		t.Fatalf("agent = %q, want generic", h.Agent)
+	if h.Adapter != "generic" {
+		t.Fatalf("adapter = %q, want generic", h.Adapter)
 	}
 }
 
@@ -868,7 +853,7 @@ agent = "generic"
 
 func TestParseHarvestTrajectoryDefault(t *testing.T) {
 	src := `[harness.agent]
-cmd = "claude"
+harness = "claude-code"
 `
 	cfg, err := Parse([]byte(src), "t.toml")
 	if err != nil {
@@ -882,7 +867,7 @@ cmd = "claude"
 
 func TestParseHarvestTrajectoryTrue(t *testing.T) {
 	src := `[harness.agent]
-cmd = "claude"
+harness = "claude-code"
 harvest_trajectory = true
 `
 	cfg, err := Parse([]byte(src), "t.toml")
@@ -897,7 +882,7 @@ harvest_trajectory = true
 
 func TestParseHarvestTrajectoryFalse(t *testing.T) {
 	src := `[harness.agent]
-cmd = "claude"
+harness = "claude-code"
 harvest_trajectory = false
 `
 	cfg, err := Parse([]byte(src), "t.toml")
@@ -914,7 +899,7 @@ harvest_trajectory = false
 
 func TestParseMCPAllowDefault(t *testing.T) {
 	src := `[harness.agent]
-cmd = "claude"
+harness = "claude-code"
 `
 	cfg, err := Parse([]byte(src), "t.toml")
 	if err != nil {
@@ -928,7 +913,7 @@ cmd = "claude"
 
 func TestParseMCPAllowWrite(t *testing.T) {
 	src := `[harness.agent]
-cmd = "claude"
+harness = "claude-code"
 mcp_allow = ["read", "write"]
 `
 	cfg, err := Parse([]byte(src), "t.toml")
@@ -944,7 +929,7 @@ mcp_allow = ["read", "write"]
 func TestParseMCPAllowEmpty(t *testing.T) {
 	// An explicit empty list is allowed (no tools permitted through facade).
 	src := `[harness.agent]
-cmd = "claude"
+harness = "claude-code"
 mcp_allow = []
 `
 	cfg, err := Parse([]byte(src), "t.toml")

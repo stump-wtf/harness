@@ -1,7 +1,7 @@
 package tui
 
 // Governing: SPEC-0001 REQ "Harness Form" — n/e open a Huh form over the harness
-// schema (cmd/prompt/model/auto_accept/schedule/args/workdir/env_file/
+// schema (harness/prompt/model/auto_accept/schedule/args/workdir/env_file/
 // restart_delay/restart/backend/description/profile membership) that writes back to
 // harness.toml (ADR-0006: file is truth); e
 // pre-fills from the existing harness; then the daemon reloads and the harness
@@ -28,9 +28,13 @@ import (
 // match the TOML unit (config.rawHarness.RestartDelay).
 type HarnessForm struct {
 	Name string
-	Cmd  string
-	// Prompt is the agent one-shot alternative to Cmd (ADR-0011): exactly one
-	// of the two is set, and Args belong to Cmd only (Validate enforces both).
+	// Harness is the harness-kind enum (crush/claude-code/codex/generic;
+	// blank means the default, crush). It selects the adapter, which supplies
+	// the executable for a long-running harness and the argv synthesis for a
+	// prompt one-shot (ADR-0011). Validate normalizes blank → "crush".
+	Harness string
+	// Prompt is the agent one-shot instruction; Args belong to a long-running
+	// harness only (Validate enforces the split).
 	Prompt string
 	// Model is the agent model selection (issue #57): requires Prompt — a cmd
 	// harness passes --model through Args itself — and is a single token
@@ -74,38 +78,38 @@ func NewHarnessForm() HarnessForm {
 }
 
 // Validate checks the minimum the daemon config parser requires (a name and
-// exactly one of cmd/prompt, a known backend, non-negative delay) so the form
+// a known harness kind, a known backend, non-negative delay) so the form
 // catches errors before writing TOML the daemon would reject on reload.
 func (f HarnessForm) Validate() error {
 	if strings.TrimSpace(f.Name) == "" {
 		return fmt.Errorf("name is required")
 	}
-	cmdSet := strings.TrimSpace(f.Cmd) != ""
 	promptSet := strings.TrimSpace(f.Prompt) != ""
-	switch {
-	case !cmdSet && !promptSet:
-		return fmt.Errorf("cmd is required (or prompt for an agent one-shot)")
-	case cmdSet && promptSet:
-		return fmt.Errorf("cmd and prompt are mutually exclusive")
-	case promptSet && len(f.Args) > 0:
+	switch f.Harness {
+	case "", "crush", "claude-code", "codex", "generic":
+		f.Harness = orDefault(f.Harness, "crush")
+	default:
+		return fmt.Errorf("harness must be one of: crush, claude-code, codex, generic")
+	}
+	if promptSet && len(f.Args) > 0 {
 		return fmt.Errorf("prompt and args are mutually exclusive")
 	}
 	if model := strings.TrimSpace(f.Model); model != "" {
 		if !promptSet {
-			return fmt.Errorf("model requires prompt (for a cmd harness, pass --model in args)")
+			return fmt.Errorf("model requires prompt (for a long-running harness, pass --model in args)")
 		}
 		if strings.ContainsFunc(model, unicode.IsSpace) {
 			return fmt.Errorf("model must be a single token (no whitespace)")
 		}
 	}
 	if f.AutoAccept && !promptSet {
-		return fmt.Errorf("auto_accept requires prompt (for a cmd harness, pass the tool's flag in args)")
+		return fmt.Errorf("auto_accept requires prompt (for a long-running harness, pass the tool's flag in args)")
 	}
 	if f.MaxTurns < 0 {
 		return fmt.Errorf("max_turns must not be negative")
 	}
 	if f.MaxTurns > 0 && !promptSet {
-		return fmt.Errorf("max_turns requires prompt (for a cmd harness, pass --max-turns in args)")
+		return fmt.Errorf("max_turns requires prompt (for a long-running harness, pass --max-turns in args)")
 	}
 	if f.Backend != "" && !core.Backend(f.Backend).Valid() {
 		return fmt.Errorf("backend must be native or tmux")
@@ -145,7 +149,7 @@ func (f HarnessForm) TOML() string {
 	fmt.Fprintf(&b, "[harness.%s]\n", f.Name)
 	prompt := strings.TrimSpace(f.Prompt)
 	if prompt != "" {
-		// Prompt harness: `prompt` replaces cmd/args entirely (Validate
+		// Prompt harness: `prompt` replaces args entirely (Validate
 		// enforces the exclusivity; the daemon synthesizes the argv at spawn,
 		// ADR-0011). `model`, `auto_accept`, and `max_turns` ride beside it as
 		// config truth — never as synthesized args (issues #57, #58, #59).
@@ -171,7 +175,6 @@ func (f HarnessForm) TOML() string {
 			fmt.Fprintf(&b, "schedule = %s\n", strconv.Quote(schedule))
 		}
 	} else {
-		fmt.Fprintf(&b, "cmd = %s\n", strconv.Quote(f.Cmd))
 		if len(f.Args) > 0 {
 			parts := make([]string, len(f.Args))
 			for i, a := range f.Args {
@@ -237,7 +240,7 @@ func AppendHarness(existing []byte, f HarnessForm) []byte {
 func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi := formInputs{
 		name:        sel.Name,
-		cmd:         sel.Cmd,
+		harness:     sel.Adapter,
 		prompt:      sel.Prompt,
 		model:       sel.Model,
 		autoAccept:  sel.AutoAccept,
@@ -255,7 +258,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	if !ok {
 		return fi
 	}
-	fi.cmd = h.Cmd
+	fi.harness = h.Adapter
 	fi.prompt = h.Prompt
 	fi.model = h.Model
 	fi.autoAccept = h.AutoAccept
@@ -280,7 +283,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 func (fi formInputs) toForm() HarnessForm {
 	f := HarnessForm{
 		Name:        strings.TrimSpace(fi.name),
-		Cmd:         strings.TrimSpace(fi.cmd),
+		Harness:     strings.TrimSpace(fi.harness),
 		Prompt:      strings.TrimSpace(fi.prompt),
 		Model:       strings.TrimSpace(fi.model),
 		AutoAccept:  fi.autoAccept,

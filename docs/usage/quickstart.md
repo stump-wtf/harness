@@ -32,7 +32,7 @@ always-on harness:
 
 ```toml
 [harness.heartbeat]
-cmd = "sh"
+harness = "generic"
 args = ["-c", "while true; do echo $(date); sleep 60; done"]
 description = "prints the time once a minute"
 enabled = true

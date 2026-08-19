@@ -9,7 +9,7 @@ import (
 func TestScheduleRequiresPrompt(t *testing.T) {
 	toml := `
 [harness.scheduled]
-cmd = "echo hi"
+harness = "generic"
 schedule = "0 */6 * * *"
 `
 	_, err := Parse([]byte(toml), "test.toml")

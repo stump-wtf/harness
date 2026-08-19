@@ -111,7 +111,7 @@ func TestHandleListTrajectoriesHarvestDisabled(t *testing.T) {
 	svc := trajectory.NewService(nil) // registry not needed — fails before
 	cfg := &core.Config{
 		Harnesses: map[string]core.Harness{
-			"agent": {Name: "agent", Cmd: "claude", HarvestTrajectory: false},
+			"agent": {Name: "agent", Adapter: "claude-code", HarvestTrajectory: false},
 		},
 	}
 
@@ -138,7 +138,7 @@ func TestHandleGetTrajectoryHarvestDisabled(t *testing.T) {
 	svc := trajectory.NewService(nil)
 	cfg := &core.Config{
 		Harnesses: map[string]core.Harness{
-			"agent": {Name: "agent", Cmd: "claude", HarvestTrajectory: false},
+			"agent": {Name: "agent", Adapter: "claude-code", HarvestTrajectory: false},
 		},
 	}
 

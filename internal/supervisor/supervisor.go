@@ -722,7 +722,7 @@ func (s *Supervisor) applyConfig(h core.Harness) {
 // time, so a policy-only edit applies immediately — staging it would leave the
 // old policy governing the very next exit and demand a pointless restart.
 func runAffecting(a, b core.Harness) bool {
-	if a.Cmd != b.Cmd || a.Prompt != b.Prompt || a.Model != b.Model ||
+	if a.Adapter != b.Adapter || a.Prompt != b.Prompt || a.Model != b.Model ||
 		a.AutoAccept != b.AutoAccept || a.MaxTurns != b.MaxTurns || a.Quiet != b.Quiet ||
 		a.Workdir != b.Workdir || a.EnvFile != b.EnvFile ||
 		a.RestartDelay != b.RestartDelay || a.Backend != b.Backend || a.TmuxSocket != b.TmuxSocket {

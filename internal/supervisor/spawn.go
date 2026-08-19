@@ -193,20 +193,18 @@ func execArgv(h core.Harness, workdir string) (string, []string) {
 // entirely and returns the configured cmd/args with {workdir} expansion.
 // Governing: issue #74 (adapter-aware prompt synthesis).
 func execArgvWithRegistry(h core.Harness, workdir string, reg *adapter.Registry) (string, []string) {
-	if h.Cmd == "" && h.Prompt != "" {
+	if h.Prompt != "" {
 		opts := core.AgentOpts{
 			Model:      h.Model,
 			AutoAccept: h.AutoAccept,
 			MaxTurns:   h.MaxTurns,
 			Quiet:      h.Quiet,
 		}
-		a := reg.Resolve(h)
-		if a == nil {
-			return core.AgentCommand(h.Prompt, opts)
-		}
-		return a.PromptCommand(h.Prompt, opts)
+		return reg.Resolve(h).PromptCommand(h.Prompt, opts)
 	}
-	return h.Cmd, expandArgs(h.Args, workdir)
+	// Long-running harness: the adapter owns the executable (the `harness`
+	// enum key); configured args are appended after it.
+	return reg.Resolve(h).Executable(), expandArgs(h.Args, workdir)
 }
 
 // process is a live spawned harness: its PTY, the command handle (for signals

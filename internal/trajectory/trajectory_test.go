@@ -33,8 +33,8 @@ func configWith(harnesses ...core.Harness) *core.Config {
 	return cfg
 }
 
-func cmdHarness(name, cmd string) core.Harness {
-	return core.Harness{Name: name, Cmd: cmd}
+func cmdHarness(name, adapter string) core.Harness {
+	return core.Harness{Name: name, Adapter: adapter}
 }
 
 // withFakeHome sets HOME to a temp dir for the test and returns the path.
@@ -136,7 +136,7 @@ func TestListOptInScrollbackFallback(t *testing.T) {
 
 	h := core.Harness{
 		Name:              "worker",
-		Cmd:               "my-custom-tool",
+		Adapter:           "generic",
 		HarvestTrajectory: true,
 	}
 	cfg := configWith(h)
@@ -166,7 +166,7 @@ func TestListOptInNoScrollbackFile(t *testing.T) {
 	svc := newTestService(t)
 	h := core.Harness{
 		Name:              "worker",
-		Cmd:               "my-custom-tool",
+		Adapter:           "generic",
 		HarvestTrajectory: true,
 	}
 	cfg := configWith(h)
@@ -193,7 +193,7 @@ func TestGetScrollbackFallback(t *testing.T) {
 
 	h := core.Harness{
 		Name:              "worker",
-		Cmd:               "my-custom-tool",
+		Adapter:           "generic",
 		HarvestTrajectory: true,
 	}
 	cfg := configWith(h)
@@ -240,7 +240,7 @@ func TestListNativeTrajectoryClaudeCode(t *testing.T) {
 	svc := newTestService(t)
 	h := core.Harness{
 		Name:              "agent",
-		Cmd:               "claude",
+		Adapter:           "claude-code",
 		Workdir:           cwd,
 		HarvestTrajectory: true,
 	}
@@ -282,8 +282,7 @@ func TestGetNativeTrajectory(t *testing.T) {
 	svc := newTestService(t)
 	h := core.Harness{
 		Name:              "agent",
-		Cmd:               "claude",
-		Agent:             "claude-code",
+		Adapter:           "claude-code",
 		HarvestTrajectory: true,
 	}
 	cfg := configWith(h)
@@ -322,7 +321,7 @@ func TestOptInAfterReload(t *testing.T) {
 	// Config v1: harvest disabled.
 	cfgV1 := configWith(core.Harness{
 		Name:              "worker",
-		Cmd:               "my-tool",
+		Adapter:           "generic",
 		HarvestTrajectory: false,
 	})
 
@@ -335,7 +334,7 @@ func TestOptInAfterReload(t *testing.T) {
 	// restart.
 	cfgV2 := configWith(core.Harness{
 		Name:              "worker",
-		Cmd:               "my-tool",
+		Adapter:           "generic",
 		HarvestTrajectory: true,
 	})
 
@@ -365,7 +364,7 @@ func TestGetReadOnly(t *testing.T) {
 	svc := newTestService(t)
 	h := core.Harness{
 		Name:              "agent",
-		Cmd:               "claude",
+		Adapter:           "claude-code",
 		HarvestTrajectory: true,
 	}
 	cfg := configWith(h)
