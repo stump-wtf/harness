@@ -77,7 +77,7 @@ func (m *Model) content() string {
 			return m.overlayBox(formTitle(m.editing), m.form.View())
 		}
 	case overlayConfirm:
-		return m.viewConfirm()
+		return m.overlayModal(base, m.viewConfirm())
 	}
 	return base
 }
@@ -770,6 +770,27 @@ func (m *Model) viewConfirm() string {
 	body := m.confirm.prompt + "\n\n  " +
 		m.theme.StateStyle(core.StateFailed).Render("y / ↵ confirm") + "    esc cancel"
 	return m.overlayBox("Confirm", body)
+}
+
+// overlayModal composites a dialog centered on top of the surface it
+// interrupts (#239): the dashboard (or attached view) stays visible behind a
+// centered confirm box, so the operator can see which harness they are about
+// to stop while they answer. Built on Lip Gloss v2 Canvas + Layer — the base
+// is a full-window layer, the dialog a second layer offset to the center and
+// ordered above it by z-index. Without a known window (m.w or m.h still 0
+// before the first WindowSizeMsg) there is nothing to center on, so the
+// dialog renders alone rather than at a bogus origin.
+func (m *Model) overlayModal(base, box string) string {
+	if m.w <= 0 || m.h <= 0 {
+		return box
+	}
+	canvas := lipgloss.NewCanvas(m.w, m.h)
+	under := lipgloss.NewLayer(base)
+	over := lipgloss.NewLayer(box).
+		X(maxInt(0, (m.w-lipgloss.Width(box))/2)).
+		Y(maxInt(0, (m.h-lipgloss.Height(box))/2)).
+		Z(1)
+	return canvas.Compose(lipgloss.NewCompositor(under, over)).Render()
 }
 
 // viewNoDaemon renders the no-daemon inline offer (SPEC-0001 scenario "Daemon
