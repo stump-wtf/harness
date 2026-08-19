@@ -8,9 +8,11 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -77,6 +79,13 @@ type rawServer struct {
 	AuthorizedKeysFile string            `toml:"authorized_keys_file"`
 	HostKeyPath        string            `toml:"host_key"`
 	Keys               []rawAuthzKeyTOML `toml:"key"`
+	// HarnessD is an optional directory whose *.toml files are loaded as
+	// additional harness definitions after the main config. Each file may
+	// contain [harness.*] tables only (no [server], [profile.*], or [daemon]).
+	// Files are sorted lexicographically; duplicate harness names across files
+	// or with the main config are rejected. This lets operators add/remove
+	// harness configs one file at a time without editing the main config.
+	HarnessD string `toml:"harness_d"`
 }
 
 // rawAuthzKeyTOML is a [[server.key]] sub-table: an SSH public-key line with an
@@ -163,6 +172,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 	}
 	var pending []pendingProfile
 	var serverSeen, daemonSeen bool
+	var harnessDPath string
 
 	for _, h := range headers {
 		switch {
@@ -201,6 +211,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 				return nil, err
 			}
 			cfg.Server = sc
+			harnessDPath = strings.TrimSpace(rs.HarnessD)
 
 		case len(h.parts) == 1:
 			// Bare [name] table — backward-compatible harness (ADR-0006).
@@ -265,6 +276,16 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 				return nil, newError(filename, pp.line,
 					"profile %q includes scheduled harness %q (\"schedule\" and profile membership are mutually exclusive)", pp.profile.Name, member)
 			}
+		}
+	}
+
+	// Load additional harness definitions from [server] harness_d directory.
+	// Each *.toml file may contain [harness.*] tables only — no [server],
+	// [profile.*], or [daemon]. Files are sorted lexicographically for
+	// deterministic merge order; duplicate names are rejected.
+	if harnessDPath != "" {
+		if err := loadHarnessD(cfg, harnessDPath); err != nil {
+			return nil, err
 		}
 	}
 
@@ -569,6 +590,89 @@ func buildServer(filename string, line int, rs rawServer) (core.ServerConfig, er
 			"[server]: enabled = true requires authorized_keys or authorized_keys_file (ADR-0008: no unauthenticated remote access)")
 	}
 	return sc, nil
+}
+
+// loadHarnessD reads all *.toml files from dir and merges their [harness.*]
+// definitions into cfg. Files are sorted lexicographically for deterministic
+// ordering. Each file may only contain [harness.*] tables — [server],
+// [profile.*], and [daemon] are rejected with a source-located error.
+func loadHarnessD(cfg *core.Config, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("[server] harness_d %q: %w", dir, err)
+	}
+
+	// Collect and sort *.toml filenames for deterministic merge order.
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".toml") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		path := filepath.Join(dir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("harness_d %s: %w", path, err)
+		}
+		if err := parseHarnessDFile(cfg, data, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// parseHarnessDFile parses a single harness.d TOML file and registers its
+// [harness.*] definitions on cfg. Only [harness.*] tables are permitted.
+func parseHarnessDFile(cfg *core.Config, data []byte, filename string) error {
+	var top map[string]toml.Primitive
+	md, err := toml.Decode(string(data), &top)
+	if err != nil {
+		return syntaxError(filename, err)
+	}
+
+	// Decode the [harness] namespace to access individual members.
+	var harnessNS map[string]toml.Primitive
+	if p, ok := top["harness"]; ok {
+		if err := md.PrimitiveDecode(p, &harnessNS); err != nil {
+			return newError(filename, lineOf(scanTables(data), "harness"), "[harness]: %v", err)
+		}
+	}
+
+	headers := scanTables(data)
+	defined := definedPaths(md)
+	for _, h := range headers {
+		key := strings.Join(h.parts, ".")
+		if !defined[key] {
+			continue
+		}
+
+		switch {
+		case len(h.parts) == 1 && h.parts[0] == "harness":
+			continue // namespace parent
+
+		case len(h.parts) == 2 && h.parts[0] == "harness":
+			name := h.parts[1]
+			p, ok := harnessNS[name]
+			if !ok {
+				continue
+			}
+			var rh rawHarness
+			if err := md.PrimitiveDecode(p, &rh); err != nil {
+				return newError(filename, h.line, "[harness.%s]: %v", name, err)
+			}
+			if err := addHarness(cfg, filename, name, h.line, rh); err != nil {
+				return err
+			}
+
+		default:
+			return newError(filename, h.line,
+				"harness.d file must not contain [%s] (only [harness.*] allowed)", key)
+		}
+	}
+	return nil
 }
 
 // syntaxError converts a BurntSushi decode error into a location-carrying

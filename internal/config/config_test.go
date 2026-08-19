@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1030,5 +1031,160 @@ func TestRemovedKeysAreRejectedInProjectFiles(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `"cmd" was replaced`) {
 		t.Errorf("error %q does not mention the migration", err.Error())
+	}
+}
+
+// ---- harness.d directory loading ------------------------------------------
+
+func TestHarnessDLoadsAdditionalHarnesses(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write two harness.d files with distinct harness definitions.
+	if err := os.WriteFile(filepath.Join(dir, "alpha.toml"), []byte(`
+[harness.alpha-check]
+harness = "generic"
+args = ["echo", "alpha"]
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "beta.toml"), []byte(`
+[harness.beta-check]
+harness = "generic"
+args = ["echo", "beta"]
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	main := fmt.Sprintf(`
+[server]
+harness_d = %q
+
+[harness.main-check]
+harness = "generic"
+args = ["echo", "main"]
+`, dir)
+
+	cfg, err := Parse([]byte(main), "test.toml")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	// All three harnesses should be present.
+	for _, name := range []string{"main-check", "alpha-check", "beta-check"} {
+		if _, ok := cfg.Harnesses[name]; !ok {
+			t.Errorf("harness %q not found in config", name)
+		}
+	}
+}
+
+func TestHarnessDRejectsServerTable(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bad.toml"), []byte(`
+[server]
+enabled = true
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	main := fmt.Sprintf(`
+[server]
+harness_d = %q
+`, dir)
+
+	_, err := Parse([]byte(main), "test.toml")
+	if err == nil {
+		t.Fatal("expected error for [server] in harness.d file")
+	}
+	if !strings.Contains(err.Error(), "must not contain [server]") {
+		t.Errorf("error %q does not mention the forbidden table", err.Error())
+	}
+}
+
+func TestHarnessDRejectsDuplicateNames(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "dup.toml"), []byte(`
+[harness.my-harness]
+harness = "generic"
+args = ["echo", "dup"]
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	main := fmt.Sprintf(`
+[server]
+harness_d = %q
+
+[harness.my-harness]
+harness = "generic"
+args = ["echo", "main"]
+`, dir)
+
+	_, err := Parse([]byte(main), "test.toml")
+	if err == nil {
+		t.Fatal("expected error for duplicate harness name")
+	}
+	if !strings.Contains(err.Error(), "duplicate harness") {
+		t.Errorf("error %q does not mention duplicate", err.Error())
+	}
+}
+
+func TestHarnessDMissingDirectory(t *testing.T) {
+	main := `
+[server]
+harness_d = "/nonexistent/path/that/does/not/exist"
+`
+	_, err := Parse([]byte(main), "test.toml")
+	if err == nil {
+		t.Fatal("expected error for missing harness_d directory")
+	}
+	if !strings.Contains(err.Error(), "harness_d") {
+		t.Errorf("error %q does not mention harness_d", err.Error())
+	}
+}
+
+func TestHarnessDEmptyDirectoryIsOK(t *testing.T) {
+	dir := t.TempDir()
+	main := fmt.Sprintf(`
+[server]
+harness_d = %q
+`, dir)
+
+	cfg, err := Parse([]byte(main), "test.toml")
+	if err != nil {
+		t.Fatalf("empty harness_d dir should not error: %v", err)
+	}
+	if len(cfg.Harnesses) != 0 {
+		t.Errorf("expected 0 harnesses, got %d", len(cfg.Harnesses))
+	}
+}
+
+func TestHarnessDSkipsNonTomlFiles(t *testing.T) {
+	dir := t.TempDir()
+	// Write a .toml and a .txt — only .toml should be loaded.
+	if err := os.WriteFile(filepath.Join(dir, "good.toml"), []byte(`
+[harness.good]
+harness = "generic"
+args = ["echo", "good"]
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("not toml"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	main := fmt.Sprintf(`
+[server]
+harness_d = %q
+`, dir)
+
+	cfg, err := Parse([]byte(main), "test.toml")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if _, ok := cfg.Harnesses["good"]; !ok {
+		t.Error("good harness not found")
+	}
+	if len(cfg.Harnesses) != 1 {
+		t.Errorf("expected 1 harness, got %d", len(cfg.Harnesses))
 	}
 }
