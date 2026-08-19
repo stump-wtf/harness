@@ -310,8 +310,13 @@ func installMarginClamps(e *vt.Emulator) {
 			bottom = height
 		}
 		if bottom > height {
+			// The flag is cleared by the re-emitted sequence's own pass
+			// through this handler; clear it here too so a Write that never
+			// reaches the handler cannot leave it armed, which would pass the
+			// NEXT oversized region straight through to the panic.
 			clampR = true
-			e.Write([]byte(fmt.Sprintf("\x1b[%d;%dr", top, height)))
+			_, _ = e.Write([]byte(fmt.Sprintf("\x1b[%d;%dr", top, height)))
+			clampR = false
 			return true
 		}
 		return false
@@ -337,7 +342,8 @@ func installMarginClamps(e *vt.Emulator) {
 		}
 		if right > width {
 			clampS = true
-			e.Write([]byte(fmt.Sprintf("\x1b[%d;%ds", left, width)))
+			_, _ = e.Write([]byte(fmt.Sprintf("\x1b[%d;%ds", left, width)))
+			clampS = false
 			return true
 		}
 		return false

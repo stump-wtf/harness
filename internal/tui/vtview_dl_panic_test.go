@@ -44,10 +44,10 @@ func TestVTViewScrollUpWithOversizedScrollRegion(t *testing.T) {
 // index past the end of the line slice.
 func TestVTViewInsertCharWithOversizedHorizontalMargins(t *testing.T) {
 	v := newVTView(80, 24)
-	v.write([]byte("\x1b[?69h"))    // enable left-right margin mode
-	v.write([]byte("\x1b[1;90s"))   // right=90 > width=80
-	v.write([]byte("\x1b[12;80H"))  // cursor at right edge
-	v.write([]byte("\x1b[@"))       // ICH 1
+	v.write([]byte("\x1b[?69h"))   // enable left-right margin mode
+	v.write([]byte("\x1b[1;90s"))  // right=90 > width=80
+	v.write([]byte("\x1b[12;80H")) // cursor at right edge
+	v.write([]byte("\x1b[@"))      // ICH 1
 	_ = v.render()
 }
 
