@@ -43,11 +43,15 @@ harness daemon-info           # daemon version, proto, PID, uptime, socket, acti
 ```
 
 `list` and `describe` also surface **schedule metadata** for scheduled
-one-shots (see [Scheduled jobs](#scheduled-jobs) under Configuration): when any
-harness carries a `schedule`, the table grows `schedule` and `next run`
-columns, and `describe` shows the cron spec plus when the next firing is due.
-The columns disappear entirely when nothing is scheduled, so unscheduled
-fleets keep their compact table.
+one-shots (see [Scheduled jobs](#scheduled-jobs) under Configuration). In the
+listing, a scheduled harness is marked inline rather than by extra columns: its
+state glyph becomes a clock (⏱, in the same colour, so the state still reads at
+a glance) and its next firing is appended to the description as a relative time
+— `sweeps the fleet · in 4h3m`. `describe` shows the full picture: the cron
+spec verbatim plus the absolute time of the next firing.
+
+The cron spec itself is config, not status, so it stays off the listing
+surface; reach for `describe` or `--json` when you need it.
 
 `describe` additionally lists the harness's **live attach sessions** — who is
 attached right now, and whether each session is read-only.
@@ -59,8 +63,8 @@ attached right now, and whether each session is read-only.
 Scheduled one-shots fire daemon-side on a cron schedule — no verb to remember,
 just configure `schedule` on a `prompt` harness (see
 [Configuration → Scheduled one-shots](./configuration#scheduled-one-shots)).
-`harness list` / `harness describe` show each job's schedule and next firing
-time.
+`harness list` flags each job with a clock glyph and its next firing time;
+`harness describe` adds the cron spec.
 
 ## Logs
 

@@ -106,3 +106,40 @@ func TestPrintHarnessTableOmitsScheduleColumnsWhenUnused(t *testing.T) {
 		t.Errorf("description wrapped away:\n%s", out)
 	}
 }
+
+// TestDescriptionCellStylesSurviveWrapping pins the rendering bug behind the
+// inline next-run: DESCRIPTION is the wrapping column, and wrapWords breaks on
+// spaces without any notion of style spans. Styling "in 1h30m" as one run put
+// the opening escape on one line and its reset on the next whenever the break
+// fell between the two words, so the attribute bled past the row on a color
+// terminal (reproduced in the real CLI at 80 columns for 6 of 16 sampled
+// description lengths).
+//
+// Every rendered line must close whatever it opens, at every description
+// length that shifts the wrap boundary across the appended time.
+func TestDescriptionCellStylesSurviveWrapping(t *testing.T) {
+	const base = "sweeps the fleet and reports anything unhealthy every six hours to the operator"
+	next := time.Now().Add(90 * time.Minute).Format(time.RFC3339)
+
+	for n := 1; n <= len(base); n++ {
+		var buf bytes.Buffer
+		tbl := NewTable(&buf, "NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
+		// Force the styled path: a real TTY colors, a *bytes.Buffer does not.
+		tbl.colored = true
+		tbl.Row("stumpcloud-sweep", tbl.stateCell("stopped", "0 */6 * * *"),
+			tbl.enabledCell(false), "0", tbl.pidCell(0),
+			tbl.descriptionCell(base[:n], next))
+		if err := tbl.Flush(); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+		for i, line := range strings.Split(buf.String(), "\n") {
+			// lipgloss closes with a bare ESC[m; anything else is an opener.
+			resets := strings.Count(line, "\x1b[m")
+			opens := strings.Count(line, "\x1b[") - resets
+			if opens != resets {
+				t.Fatalf("description len %d, line %d leaves %d style(s) unclosed: %q",
+					n, i, opens-resets, strings.ReplaceAll(line, "\x1b", "<ESC>"))
+			}
+		}
+	}
+}

@@ -105,8 +105,9 @@ Rules:
 - Mutually exclusive with `enabled = true` and with profile membership.
 - Global config only — project files reject the key.
 
-`harness list` and `harness describe` show each scheduled harness's cron spec
-and next-run time (the columns appear only when something is scheduled).
+`harness list` marks a scheduled harness inline — a clock glyph in place of the
+state glyph, and the next firing appended to its description (`· in 4h3m`).
+`harness describe` adds the cron spec and the absolute next-run time.
 
 ## Agent adapters
 

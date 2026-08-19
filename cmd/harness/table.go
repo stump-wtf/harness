@@ -594,7 +594,7 @@ func (t *Table) descriptionCell(desc, nextRun string) string {
 		if cell != "" {
 			cell += " · "
 		}
-		cell += t.accentBold(nr)
+		cell += t.accentBoldWords(nr)
 	}
 	return cell
 }
@@ -686,6 +686,26 @@ func (t *Table) accentBold(s string) string {
 		return s
 	}
 	return lipgloss.NewStyle().Foreground(t.pal.Accent).Bold(true).Render(s)
+}
+
+// accentBoldWords styles each whitespace-separated word of s independently,
+// for content that lands in a WRAPPING column.
+//
+// DESCRIPTION is the one flex column, and wrapWords breaks it on spaces with
+// no notion of style spans. Styling "in 1h30m" as a single run puts the
+// opening escape on one line and its reset on the next whenever the break
+// falls between the two words — the attribute then bleeds past the row on a
+// color terminal, since nothing closes it before the line ends. Styling per
+// word keeps every rendered line self-contained wherever the break lands.
+func (t *Table) accentBoldWords(s string) string {
+	if !t.colored {
+		return s
+	}
+	words := strings.Fields(s)
+	for i, w := range words {
+		words[i] = t.accentBold(w)
+	}
+	return strings.Join(words, " ")
 }
 
 func (t *Table) dimItalic(s string) string {
