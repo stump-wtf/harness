@@ -57,6 +57,10 @@ function writeFixture() {
   };
 
   domain('alpha', 'SPEC-0001', 'Alpha', 'Alpha stands alone.');
+  // A spec.md converted from an ADR whose H1 was never renumbered. Its ID must
+  // not be registered in the spec mapping: transformSpecReferences runs first,
+  // so it would capture every ADR-0001 mention on the site.
+  domain('stale', 'ADR-0001', 'Stale Conversion', 'Converted, never renumbered.');
   domain('beta', 'SPEC-0002', 'Beta', 'Beta builds on SPEC-0001.');
   // The prose here mentions `### Requirement:` and then cites an ADR on the
   // same line — the shape that used to register "ADR" as a spec prefix.
@@ -92,15 +96,20 @@ function writeFixture() {
   return { root, site };
 }
 
-async function build() {
+// Takes the test context so the fixture is torn down via t.after(), which runs
+// even when an assertion throws. A trailing rmSync would leak the tmpdir on
+// exactly the runs worth re-reading.
+async function build(t) {
   const { root, site } = writeFixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   await plugin({ siteDir: site, siteConfig: { baseUrl: '/harness/', title: 'Harness' } }, {}).loadContent();
   const read = (rel) => fs.readFileSync(path.join(root, 'docs-generated', rel), 'utf-8');
-  return { root, read };
+  const generated = (rel) => path.join(root, 'docs-generated', rel);
+  return { read, generated };
 }
 
-test('every SPEC reference resolves to its own spec directory', async () => {
-  const { root, read } = await build();
+test('every SPEC reference resolves to its own spec directory', async (t) => {
+  const { read } = await build(t);
 
   const beta = read('specs/beta/spec.mdx');
   assert.match(beta, /href="\/harness\/specs\/alpha\/spec"/);
@@ -112,22 +121,30 @@ test('every SPEC reference resolves to its own spec directory', async () => {
   // The regression: with the artifact ID keyed by prefix, all of these pointed
   // at whichever domain was read last.
   assert.doesNotMatch(gamma, /href="[^"]*\/specs\/gamma\/spec"[^>]*>SPEC-000[12]</);
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('artifact references carry no fragment', async () => {
-  const { root, read } = await build();
+test('artifact references carry no fragment', async (t) => {
+  const { read } = await build(t);
 
   // A spec page's H1 anchor is derived from the whole heading text
   // ("spec-0001-alpha"), so `#spec-0001` pointed at nothing.
   assert.doesNotMatch(read('specs/beta/spec.mdx'), /#spec-0001/);
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('a spec citing an ADR does not claim the ADR prefix', async () => {
-  const { root, read } = await build();
+test('a spec H1 carrying an ADR number does not claim that ID', async (t) => {
+  const { read } = await build(t);
+
+  const gamma = read('specs/gamma/spec.mdx');
+  // Still the ADR page, and no spec route claims the ID. Registering it
+  // produced `<a href="/specs/stale/spec"><a href="/decisions/...">ADR-0001</a></a>`,
+  // so the nested-anchor shape is the assertion that actually bites.
+  assert.match(gamma, /href="\/harness\/decisions\/ADR-0001-example"/);
+  assert.doesNotMatch(gamma, /href="[^"]*\/specs\/stale/);
+  assert.doesNotMatch(gamma, /<a [^>]*><a /);
+});
+
+test('a spec citing an ADR does not claim the ADR prefix', async (t) => {
+  const { read } = await build(t);
 
   const gamma = read('specs/gamma/spec.mdx');
   assert.match(gamma, /href="\/harness\/decisions\/ADR-0001-example"/);
@@ -135,16 +152,14 @@ test('a spec citing an ADR does not claim the ADR prefix', async () => {
   // and wrapped the ADR link in a second anchor pointing at a spec page.
   assert.doesNotMatch(gamma, /href="[^"]*#adr-0001"/);
   assert.doesNotMatch(gamma, /<a [^>]*><a /);
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('a design-less domain is referenced at its flat page', async () => {
-  const { root, read } = await build();
+test('a design-less domain is referenced at its flat page', async (t) => {
+  const { read, generated } = await build(t);
 
   // What the transform actually emits for a spec.md-only domain.
-  assert.ok(fs.existsSync(path.join(root, 'docs-generated/specs/delta.mdx')));
-  assert.ok(!fs.existsSync(path.join(root, 'docs-generated/specs/delta/spec.mdx')));
+  assert.ok(fs.existsSync(generated('specs/delta.mdx')));
+  assert.ok(!fs.existsSync(generated('specs/delta/spec.mdx')));
 
   // The regression: the mapping assumed every domain was nested, so this
   // cross-reference pointed at /specs/delta/spec — a route with no page.
@@ -156,8 +171,6 @@ test('a design-less domain is referenced at its flat page', async () => {
   const index = read('specs/index.mdx');
   assert.match(index, /\[Specification\]\(\.\/delta\)/);
   assert.doesNotMatch(index, /\(\.\/delta\/spec\)/);
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
 // --- Already-linked references stay untouched --------------------------------
@@ -166,29 +179,25 @@ test('a design-less domain is referenced at its flat page', async () => {
 // or an anchor an earlier pass emitted produces `<a><a>...</a></a>`. That is
 // invalid HTML, and the SSG's minifier rejects it rather than repairing it.
 
-test('a reference inside inline code is left alone', async () => {
-  const { root, read } = await build();
+test('a reference inside inline code is left alone', async (t) => {
+  const { read } = await build(t);
 
   const epsilon = read('specs/epsilon/spec.mdx');
   assert.match(epsilon, /`SPEC-0002`/);
   assert.match(epsilon, /`ADR-0001`/);
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('a reference inside a markdown link is left alone', async () => {
-  const { root, read } = await build();
+test('a reference inside a markdown link is left alone', async (t) => {
+  const { read } = await build(t);
 
   const epsilon = read('specs/epsilon/spec.mdx');
   // The label keeps its original text; only the .md suffix is stripped.
   assert.match(epsilon, /\[SPEC-0002\]\(\/specs\/beta\/spec\)/);
   assert.match(epsilon, /\[ADR-0001\]\(\.\.\/\.\.\/adrs\/ADR-0001-example\)/);
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('a reference inside an emitted anchor is left alone', async () => {
-  const { root, read } = await build();
+test('a reference inside an emitted anchor is left alone', async (t) => {
+  const { read } = await build(t);
 
   const epsilon = read('specs/epsilon/spec.mdx');
   // Both halves of the anchor matter. `<[^>]+>` alone ranges the bare tag, so
@@ -203,18 +212,14 @@ test('a reference inside an emitted anchor is left alone', async () => {
     epsilon,
     /Prior art: <a href="\/harness\/decisions\/ADR-0001-example" className="rfc-ref">[^<]*ADR-0001<\/a> covers it\./
   );
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('an unprotected reference on the same line still linkifies', async () => {
-  const { root, read } = await build();
+test('an unprotected reference on the same line still linkifies', async (t) => {
+  const { read } = await build(t);
 
   // The guard is span-scoped, not line-scoped: one protected span must not
   // suppress a bare mention elsewhere on the same line.
   const epsilon = read('specs/epsilon/spec.mdx');
   assert.match(epsilon, /`SPEC-0002` against bare <a href="\/harness\/specs\/alpha\/spec"[^>]*>SPEC-0001</);
   assert.match(epsilon, /`ADR-0001` against bare <a href="\/harness\/decisions\/ADR-0001-example"[^>]*>[^<]*ADR-0001</);
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
