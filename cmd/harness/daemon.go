@@ -53,9 +53,21 @@ func runDaemon(o daemonOpts) {
 
 	configureDaemonLogger(o.logLevel, o.logFile)
 
+	// A missing config file is not an error: SPEC-0010 REQ "Fileless Operation"
+	// requires a container configured entirely through HARNESS_* to come up and
+	// serve, reporting zero harnesses. A file that EXISTS but does not parse
+	// stays fatal — that is a broken deployment, not an absent one, and
+	// silently starting empty would hide it.
 	cfg, err := config.Load(o.configPath)
 	if err != nil {
-		os.Exit(cliui.Fatal(err))
+		if !cliui.IsMissingConfig(err) {
+			os.Exit(cliui.Fatal(err))
+		}
+		log.Info("no config file; starting with no harnesses",
+			"path", o.configPath,
+			"hint", "define harnesses in a harness.toml, or point --config/HARNESS_CONFIG at one",
+		)
+		cfg = &core.Config{}
 	}
 
 	// The attach data plane: one Mux (x/vt emulator + scrollback ring) per

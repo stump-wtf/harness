@@ -28,6 +28,7 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/settings"
 )
 
 // check is one row in the doctor table.
@@ -48,10 +49,21 @@ type doctorResult struct {
 	// Profile (#99) and Autostart are conditional rows: present only when the
 	// condition fires. Both already counted toward the summary tally, but had no
 	// object here, so `--json` reported `warned: 1` with nothing to point at.
-	Profile   *checkResult  `json:"profile,omitempty"`
-	Autostart *checkResult  `json:"autostart,omitempty"`
-	Ssh       *checkResult  `json:"ssh,omitempty"`
-	Summary   summaryResult `json:"summary"`
+	Profile   *checkResult `json:"profile,omitempty"`
+	Autostart *checkResult `json:"autostart,omitempty"`
+	Ssh       *checkResult `json:"ssh,omitempty"`
+	// Settings reports every process setting with the source that supplied it,
+	// so "which one won — my flag, HARNESS_*, the file, or the default?" is
+	// answerable without reading code. It is not a health check and does not
+	// affect the tally (SPEC-0010 REQ "Source Attribution").
+	Settings map[string]settingResult `json:"settings,omitempty"`
+	Summary  summaryResult            `json:"summary"`
+}
+
+// settingResult is one resolved process setting in the --json report.
+type settingResult struct {
+	Value  string `json:"value"`
+	Source string `json:"source"` // "flag" | "env" | "file" | "default"
 }
 
 type checkResult struct {
@@ -130,7 +142,13 @@ func runDoctor(o verbOpts) int {
 		}
 		rows = append(rows, row)
 		// No point continuing: every later check needs the daemon.
-		emitDoctor(os.Stdout, os.Stderr, rows)
+		// Resolved process settings and where each came from. Failure to resolve
+		// them is not fatal to the report — doctor's job is to tell you what it can
+		// see, and a bad HARNESS_* value has already been reported by whatever
+		// command tried to use it.
+		resolved, _ := resolveReport(nil)
+
+		emitDoctor(os.Stdout, os.Stderr, rows, resolved)
 		return 1
 	}
 	defer c.Close()
@@ -268,7 +286,13 @@ func runDoctor(o verbOpts) int {
 		}
 	}
 
-	emitDoctor(os.Stdout, os.Stderr, rows)
+	// Resolved process settings and where each came from. Failure to resolve
+	// them is not fatal to the report — doctor's job is to tell you what it can
+	// see, and a bad HARNESS_* value has already been reported by whatever
+	// command tried to use it.
+	resolved, _ := resolveReport(nil)
+
+	emitDoctor(os.Stdout, os.Stderr, rows, resolved)
 
 	// Exit non-zero if any row failed.
 	for _, r := range rows {
@@ -328,16 +352,17 @@ func sshCheck(sc core.ServerConfig, di *protocol.DaemonInfo) check {
 // emitDoctor renders the rows either as JSON on stdout (when --json) or as
 // a human tabular report on stderr. Split out so it can be unit-tested with
 // an injected writer.
-func emitDoctor(stdout, stderr io.Writer, rows []check) {
+func emitDoctor(stdout, stderr io.Writer, rows []check, resolved []settings.Resolved) {
 	if cliui.JSON() {
-		emitDoctorJSON(stdout, rows)
+		emitDoctorJSON(stdout, rows, resolved)
 		return
 	}
 	printDoctorTable(stderr, rows)
+	printSettingsTable(stderr, resolved)
 }
 
 // emitDoctorJSON serializes the check rows as a doctorResult object.
-func emitDoctorJSON(w io.Writer, rows []check) {
+func emitDoctorJSON(w io.Writer, rows []check, resolved []settings.Resolved) {
 	var (
 		pass, warn, fail int
 		res              doctorResult
@@ -380,10 +405,44 @@ func emitDoctorJSON(w io.Writer, rows []check) {
 			res.Ssh = &c
 		}
 	}
+	if len(resolved) > 0 {
+		res.Settings = make(map[string]settingResult, len(resolved))
+		for _, r := range resolved {
+			res.Settings[r.Setting.Name] = settingResult{Value: r.String(), Source: string(r.Source)}
+		}
+	}
 	res.Summary = summaryResult{Passed: pass, Warned: warn, Failed: fail}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(res)
+}
+
+// printSettingsTable renders the resolved process settings and the source that
+// supplied each. Separate from the check table because these are not pass/fail
+// health checks — they are "here is what the process actually resolved", which
+// is the first thing worth knowing when behaviour surprises someone.
+//
+// Governing: ADR-0016, SPEC-0010 REQ "Source Attribution".
+func printSettingsTable(w io.Writer, resolved []settings.Resolved) {
+	if len(resolved) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	t := NewTable(w, "SETTING", "SOURCE", "VALUE")
+	for _, r := range resolved {
+		source := string(r.Source)
+		if t.colored && r.Source != settings.SourceDefault {
+			// Anything that is not the compiled default was set by someone, so
+			// it is the interesting half of the report.
+			source = lipgloss.NewStyle().Foreground(t.pal.Accent).Render(source)
+		}
+		value := r.String()
+		if value == "" {
+			value = t.dimItalic("(unset)")
+		}
+		t.Row(r.Setting.Name, source, value)
+	}
+	_ = t.Flush()
 }
 
 // printDoctorTable writes the rows plus a summary tally as a single table

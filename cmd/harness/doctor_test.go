@@ -163,7 +163,7 @@ func TestEmitDoctorJSONShape(t *testing.T) {
 		{name: "harnesses", level: cliui.LevelError, detail: "1 failed", hint: "restart x"},
 	}
 	var buf bytes.Buffer
-	emitDoctorJSON(&buf, rows)
+	emitDoctorJSON(&buf, rows, nil)
 
 	var res doctorResult
 	if err := json.Unmarshal(buf.Bytes(), &res); err != nil {
@@ -192,7 +192,7 @@ func TestEmitDoctorJSONAllPassed(t *testing.T) {
 		{name: "harnesses", level: cliui.LevelSuccess, detail: "all good"},
 	}
 	var buf bytes.Buffer
-	emitDoctorJSON(&buf, rows)
+	emitDoctorJSON(&buf, rows, nil)
 
 	var res doctorResult
 	if err := json.Unmarshal(buf.Bytes(), &res); err != nil {
