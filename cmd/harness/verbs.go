@@ -61,58 +61,31 @@ func renderHarnessList(c *client.Client, o verbOpts, project string) error {
 // printHarnessTable renders the shared harness status table used by `list`,
 // `ps`, and the `up` one-shot status output (SPEC-0004 REQ "Bring Up"), so
 // every listing surface stays one product.
+//
+// Scheduled harnesses are marked inline rather than by dedicated columns:
+// their STATE glyph swaps to a clock (same palette color, so the state still
+// reads at a glance) and the human-readable next-run time ("in 2h", "due")
+// is appended to DESCRIPTION, highlighted. The cron spec itself stays
+// available via `describe` and `--json` — it is config, not status.
 func printHarnessTable(w io.Writer, hs []protocol.HarnessInfo) error {
-	// The schedule columns are conditional. They cost 26 of the table's
-	// 80-cell budget, which comes out of DESCRIPTION (the only flex column) —
-	// rendered unconditionally they collapse it to ~3 cells and shred every
-	// description into a column of two-letter fragments, on every listing, for
-	// every user who has no scheduled harness at all. Show them when there is
-	// something to show.
-	scheduled := false
+	t := NewTable(w, "NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
 	for _, h := range hs {
-		if h.Schedule != "" {
-			scheduled = true
-			break
-		}
-	}
-
-	headers := []string{"NAME", "STATE"}
-	if scheduled {
-		headers = append(headers, "SCHEDULE", "NEXT")
-	}
-	headers = append(headers, "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
-
-	t := NewTable(w, headers...)
-	for _, h := range hs {
-		cells := []string{h.Name, t.stateCell(h.State)}
-		if scheduled {
-			cells = append(cells, scheduleCell(h.Schedule), nextRunCell(h.NextRun))
-		}
-		cells = append(cells,
+		t.Row(
+			h.Name,
+			t.stateCell(h.State, h.Schedule),
 			t.enabledCell(h.Enabled),
 			fmt.Sprintf("%d", h.RestartCount),
 			t.pidCell(h.PID),
-			h.Description,
+			t.descriptionCell(h.Description, h.NextRun),
 		)
-		t.Row(cells...)
 	}
 	return t.Flush()
 }
 
-// scheduleCell renders the schedule column: the cron spec (or "—" for an
-// always-on/manual harness). The spec is shown verbatim rather than
-// humanized — "0 */6 * * *" is what the user wrote in harness.toml, so it
-// stays greppable and matches the config round-trip.
-func scheduleCell(spec string) string {
-	if spec == "" {
-		return "-"
-	}
-	return spec
-}
-
-// nextRunCell renders the NEXT column as a relative time from now ("in 3h",
+// nextRunCell renders a human-readable next-run time ("in 3h",
 // "in 12m", "due") so a glance answers "how long until it fires" without
-// mental timezone math. Absolute time stays available via describe/--json.
+// mental timezone math. Absolute time and the cron spec stay available via
+// describe/--json.
 func nextRunCell(nextRun string) string {
 	if nextRun == "" {
 		return "-"

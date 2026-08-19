@@ -196,11 +196,6 @@ func defaultColumnWidths(headers []string, budget, nameWidth int) (widths []int,
 		"CHECK":     12,
 		"STATUS":    10,
 		"AUTOSTART": 10,
-		// SCHEDULE holds a cron spec ("0 */6 * * *") or "-": a structured
-		// identifier, cut is safe.
-		"SCHEDULE": 16,
-		// NEXT holds a short relative time ("in 3h", "due", "-").
-		"NEXT": 10,
 	}
 	widths = make([]int, n)
 	truncate = make([]bool, n)
@@ -564,18 +559,44 @@ func (t *Table) bold(s string) string {
 // --- cell helpers (methods on Table so they consult t.colored, which is ---
 // --- keyed off the table's actual writer — see useColorFor, PR #23 M2). ---
 
+// scheduleGlyph is the clock a scheduled harness shows in place of its
+// state glyph. The palette color is unchanged — color still carries the
+// state; the glyph shape carries "this harness is cron-fired".
+const scheduleGlyph = "⏱"
+
 // stateCell renders "● running" in the state's palette color (paired glyph +
 // label per SPEC-0001). The glyph always accompanies the color so a mono
-// terminal that drops the color still fully conveys the state.
-func (t *Table) stateCell(state string) string {
+// terminal that drops the color still fully conveys the state. A non-empty
+// schedule swaps the state glyph for a clock (same color) so a scheduled
+// harness is legible as such at a glance.
+func (t *Table) stateCell(state string, schedule ...string) string {
 	s := core.State(state)
 	glyph := stateGlyphFor(s)
+	if len(schedule) > 0 && schedule[0] != "" {
+		glyph = scheduleGlyph
+	}
 	label := string(s)
 	if !t.colored {
 		return fmt.Sprintf("%s %s", glyph, label)
 	}
 	return lipgloss.NewStyle().Foreground(stateColor(s, t.pal)).Bold(true).
 		Render(fmt.Sprintf("%s %s", glyph, label))
+}
+
+// descriptionCell renders the DESCRIPTION cell, appending the
+// human-readable next-run time ("in 2h", "due") for a scheduled harness —
+// highlighted in the accent color so the schedule stands out of the prose.
+// nextRunCell returns "-" when there is nothing to show, which leaves an
+// unscheduled (or not-yet-computed) row exactly as before.
+func (t *Table) descriptionCell(desc, nextRun string) string {
+	cell := desc
+	if nr := nextRunCell(nextRun); nr != "-" {
+		if cell != "" {
+			cell += " · "
+		}
+		cell += t.accentBold(nr)
+	}
+	return cell
 }
 
 // stateGlyphOnly renders just the colored glyph for leading-column use.

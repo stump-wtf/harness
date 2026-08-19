@@ -1,8 +1,9 @@
 package main
 
 // Governing: ADR-0013 (schedule surfaced on the listing surfaces); SPEC-0003
-// (state legibility — the SCHEDULE/NEXT columns are metadata, so they render
-// plain and degrade to "-" in the non-scheduled case rather than shouting).
+// (state legibility — scheduled harnesses swap their state glyph for a clock
+// and carry the next-run time inline in DESCRIPTION, highlighted, rather
+// than in dedicated columns).
 
 import (
 	"bytes"
@@ -12,15 +13,6 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
-
-func TestScheduleCell(t *testing.T) {
-	if got := scheduleCell(""); got != "-" {
-		t.Errorf("empty schedule: got %q, want %q", got, "-")
-	}
-	if got := scheduleCell("0 */6 * * *"); got != "0 */6 * * *" {
-		t.Errorf("cron spec must render verbatim, got %q", got)
-	}
-}
 
 func TestNextRunCell(t *testing.T) {
 	cases := []struct {
@@ -61,7 +53,7 @@ func TestShortDuration(t *testing.T) {
 	}
 }
 
-func TestPrintHarnessTableIncludesScheduleColumns(t *testing.T) {
+func TestPrintHarnessTableMarksScheduledInline(t *testing.T) {
 	var buf bytes.Buffer
 	hs := []protocol.HarnessInfo{
 		{Name: "sweep", State: "stopped", Schedule: "0 */6 * * *", NextRun: time.Now().Add(2 * time.Hour).Format(time.RFC3339)},
@@ -71,18 +63,28 @@ func TestPrintHarnessTableIncludesScheduleColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{"SCHEDULE", "NEXT", "0 */6 * * *", "in 2h", "-"} {
+	// The scheduled row carries the clock glyph and the highlighted next-run
+	// time in DESCRIPTION; no SCHEDULE/NEXT columns exist anymore.
+	for _, want := range []string{"⏱ stopped", "in 2h"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in table:\n%s", want, out)
 		}
 	}
+	// The unscheduled row keeps its plain state glyph.
+	if !strings.Contains(out, "● running") {
+		t.Errorf("unscheduled row lost its state glyph:\n%s", out)
+	}
+	for _, unwanted := range []string{"SCHEDULE", "NEXT", "0 */6 * * *"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("schedule column/data leaked into table (%q):\n%s", unwanted, out)
+		}
+	}
 }
 
-// TestPrintHarnessTableOmitsScheduleColumnsWhenUnused is the other half: the
-// columns cost 26 of the table's 80-cell budget, all of it taken from
-// DESCRIPTION (the only flex column). Rendered for a fleet with no schedules
-// they buy two columns of "-" and leave descriptions shredded into
-// two-letter fragments.
+// TestPrintHarnessTableOmitsScheduleColumnsWhenUnused is the other half:
+// with no scheduled harness there is nothing schedule-shaped on screen at
+// all — no clock glyph, no next-run badge — and DESCRIPTION keeps its full
+// budget.
 func TestPrintHarnessTableOmitsScheduleColumnsWhenUnused(t *testing.T) {
 	var buf bytes.Buffer
 	hs := []protocol.HarnessInfo{
