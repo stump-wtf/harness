@@ -30,7 +30,8 @@ const plugin = require('./index');
 
 // A fixture tree in the layout the plugin expects: siteDir with ../docs/adrs
 // and ../docs/openspec/specs beside it. Each domain carries both spec.md and
-// design.md, which is what puts its pages at /specs/<domain>/spec.
+// design.md, which is what puts its pages at /specs/<domain>/spec — a domain
+// with only one of the two is written flat, at /specs/<domain>.
 function writeFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sdd-spec-refs-'));
   const site = path.join(root, 'site');
@@ -71,15 +72,19 @@ function writeFixture() {
   return { root, site };
 }
 
-async function build() {
+// Takes the test context so the fixture is torn down via t.after(), which runs
+// even when an assertion throws. A trailing rmSync would leak the tmpdir on
+// exactly the runs worth re-reading.
+async function build(t) {
   const { root, site } = writeFixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   await plugin({ siteDir: site, siteConfig: { baseUrl: '/harness/', title: 'Harness' } }, {}).loadContent();
   const read = (rel) => fs.readFileSync(path.join(root, 'docs-generated', rel), 'utf-8');
-  return { root, read };
+  return { read };
 }
 
-test('every SPEC reference resolves to its own spec directory', async () => {
-  const { root, read } = await build();
+test('every SPEC reference resolves to its own spec directory', async (t) => {
+  const { read } = await build(t);
 
   const beta = read('specs/beta/spec.mdx');
   assert.match(beta, /href="\/harness\/specs\/alpha\/spec"/);
@@ -91,22 +96,18 @@ test('every SPEC reference resolves to its own spec directory', async () => {
   // The regression: with the artifact ID keyed by prefix, all of these pointed
   // at whichever domain was read last.
   assert.doesNotMatch(gamma, /href="[^"]*\/specs\/gamma\/spec"[^>]*>SPEC-000[12]</);
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('artifact references carry no fragment', async () => {
-  const { root, read } = await build();
+test('artifact references carry no fragment', async (t) => {
+  const { read } = await build(t);
 
   // A spec page's H1 anchor is derived from the whole heading text
   // ("spec-0001-alpha"), so `#spec-0001` pointed at nothing.
   assert.doesNotMatch(read('specs/beta/spec.mdx'), /#spec-0001/);
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('a spec H1 carrying an ADR number does not claim that ID', async () => {
-  const { root, read } = await build();
+test('a spec H1 carrying an ADR number does not claim that ID', async (t) => {
+  const { read } = await build(t);
 
   const gamma = read('specs/gamma/spec.mdx');
   // Still the ADR page, and no spec route claims the ID. Registering it
@@ -115,12 +116,10 @@ test('a spec H1 carrying an ADR number does not claim that ID', async () => {
   assert.match(gamma, /href="\/harness\/decisions\/ADR-0001-example"/);
   assert.doesNotMatch(gamma, /href="[^"]*\/specs\/stale/);
   assert.doesNotMatch(gamma, /<a [^>]*><a /);
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('a spec citing an ADR does not claim the ADR prefix', async () => {
-  const { root, read } = await build();
+test('a spec citing an ADR does not claim the ADR prefix', async (t) => {
+  const { read } = await build(t);
 
   const gamma = read('specs/gamma/spec.mdx');
   assert.match(gamma, /href="\/harness\/decisions\/ADR-0001-example"/);
@@ -128,6 +127,4 @@ test('a spec citing an ADR does not claim the ADR prefix', async () => {
   // and wrapped the ADR link in a second anchor pointing at a spec page.
   assert.doesNotMatch(gamma, /href="[^"]*#adr-0001"/);
   assert.doesNotMatch(gamma, /<a [^>]*><a /);
-
-  fs.rmSync(root, { recursive: true, force: true });
 });
