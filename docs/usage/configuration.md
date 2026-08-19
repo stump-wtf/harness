@@ -199,6 +199,44 @@ harnesses = ["heartbeat", "my-agent"]
 Profiles are a global concern — they are not allowed in a project file (see
 [Projects](./projects)).
 
+## Drop-in harness files (`harness_d`)
+
+Instead of editing one growing `harness.toml`, point at a directory and add or
+remove a harness one file at a time:
+
+```toml
+[server]
+harness_d = "~/.config/harness/harness.d"
+```
+
+Then drop files like `~/.config/harness/harness.d/backup-daily.toml`:
+
+```toml
+[harness.backup-daily]
+harness = "crush"
+prompt = "run the daily backup"
+schedule = "0 2 * * *"
+```
+
+- Only `*.toml` files are read; anything else in the directory is ignored.
+- Files are merged in lexicographic order, so a numeric prefix (`10-`, `20-`)
+  pins the order if you care about it.
+- A drop-in may contain **`[harness.*]` tables only**. `[server]`,
+  `[profile.*]`, `[daemon]`, and bare `[name]` tables are rejected with the
+  offending file and line.
+- Duplicate harness names — between two drop-ins, or with the main file — are
+  rejected rather than silently overwritten.
+- A leading `~` expands to your home directory, and a relative path resolves
+  against the directory holding `harness.toml` (not the daemon's working
+  directory, which under systemd is not the same thing).
+- The directory must exist. A missing `harness_d` fails the config load rather
+  than being treated as empty, so a typo cannot silently drop every drop-in.
+- `[profile.*]` tables in the main file may reference drop-in harnesses.
+
+Drop-in files are **not** watched for changes. Auto-reload (`watch_config`)
+watches `harness.toml` only, so after adding or removing a drop-in run
+`harness reload` (or touch the main config).
+
 ## Remote access (`[server]`)
 
 The optional SSH front door exposes the same dashboard over the network:

@@ -1188,3 +1188,117 @@ harness_d = %q
 		t.Errorf("expected 1 harness, got %d", len(cfg.Harnesses))
 	}
 }
+
+// TestHarnessDResolvesTildeAndRelativePaths covers the two path forms an
+// operator actually writes. Both used to reach os.ReadDir verbatim: "~/..."
+// was opened as a literal directory named "~", and a relative path resolved
+// against the daemon's working directory, which under systemd (ADR-0005) is
+// not the config's directory. Either way the whole config failed to load.
+func TestHarnessDResolvesTildeAndRelativePaths(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	if got, want := resolveConfigPath("~/x/harness.d", "/etc/harness/harness.toml"), filepath.Join(home, "x/harness.d"); got != want {
+		t.Errorf("tilde: resolveConfigPath = %q, want %q", got, want)
+	}
+	if got, want := resolveConfigPath("harness.d", "/etc/harness/harness.toml"), "/etc/harness/harness.d"; got != want {
+		t.Errorf("relative: resolveConfigPath = %q, want %q", got, want)
+	}
+	if got, want := resolveConfigPath("/abs/harness.d", "/etc/harness/harness.toml"), "/abs/harness.d"; got != want {
+		t.Errorf("absolute: resolveConfigPath = %q, want %q", got, want)
+	}
+}
+
+// TestHarnessDRelativeToConfigDir is the end-to-end form: harness_d = "harness.d"
+// sitting next to harness.toml must load even though the process cwd is
+// elsewhere.
+func TestHarnessDRelativeToConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	dropIn := filepath.Join(dir, "harness.d")
+	if err := os.MkdirAll(dropIn, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dropIn, "a.toml"), []byte(`
+[harness.relative-drop-in]
+harness = "generic"
+args = ["echo", "hi"]
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Parse([]byte("[server]\nharness_d = \"harness.d\"\n"), filepath.Join(dir, "harness.toml"))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if _, ok := cfg.Harnesses["relative-drop-in"]; !ok {
+		t.Errorf("relative harness_d did not load; got %v", cfg.HarnessOrder)
+	}
+}
+
+// TestHarnessDHarnessesAreVisibleToProfiles pins the load order. harness.d used
+// to be merged after profile membership was validated, so a [profile.*] in the
+// main config naming a drop-in harness failed with "references unknown harness"
+// — which defeats the point of the directory.
+func TestHarnessDHarnessesAreVisibleToProfiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "drop.toml"), []byte(`
+[harness.dropped-in]
+harness = "generic"
+args = ["echo", "hi"]
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	main := fmt.Sprintf(`
+[server]
+harness_d = %q
+
+[profile.everything]
+harnesses = ["dropped-in"]
+`, dir)
+
+	cfg, err := Parse([]byte(main), "test.toml")
+	if err != nil {
+		t.Fatalf("profile referencing a harness.d harness should parse: %v", err)
+	}
+	p, ok := cfg.Profiles["everything"]
+	if !ok {
+		t.Fatal("profile everything missing")
+	}
+	if !reflect.DeepEqual(p.Harnesses, []string{"dropped-in"}) {
+		t.Errorf("profile members = %v, want [dropped-in]", p.Harnesses)
+	}
+}
+
+// TestHarnessDScheduledHarnessStillExcludedFromProfiles confirms moving the
+// harness.d load ahead of profile validation widened the check rather than
+// skipping it: the schedule/profile exclusion (issue #66) now also catches a
+// scheduled drop-in.
+func TestHarnessDScheduledHarnessStillExcludedFromProfiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "cron.toml"), []byte(`
+[harness.nightly]
+harness = "crush"
+prompt = "run the nightly backup"
+schedule = "0 2 * * *"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	main := fmt.Sprintf(`
+[server]
+harness_d = %q
+
+[profile.everything]
+harnesses = ["nightly"]
+`, dir)
+
+	_, err := Parse([]byte(main), "test.toml")
+	if err == nil {
+		t.Fatal("expected error for scheduled harness in a profile")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("error %q does not mention the schedule/profile exclusion", err.Error())
+	}
+}

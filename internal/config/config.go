@@ -85,6 +85,8 @@ type rawServer struct {
 	// Files are sorted lexicographically; duplicate harness names across files
 	// or with the main config are rejected. This lets operators add/remove
 	// harness configs one file at a time without editing the main config.
+	// A leading ~ expands to the home directory and a relative path resolves
+	// against the config file's own directory (see resolveConfigPath).
 	HarnessD string `toml:"harness_d"`
 }
 
@@ -260,6 +262,20 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 		}
 	}
 
+	// Load additional harness definitions from [server] harness_d directory.
+	// Each *.toml file may contain [harness.*] tables only — no [server],
+	// [profile.*], or [daemon]. Files are sorted lexicographically for
+	// deterministic merge order; duplicate names are rejected.
+	//
+	// This runs BEFORE profile validation, not after: a [profile.*] in the main
+	// config naming a drop-in harness is the whole point of the directory, and
+	// validating membership first rejected it as an unknown harness.
+	if harnessDPath != "" {
+		if err := loadHarnessD(cfg, resolveConfigPath(harnessDPath, filename)); err != nil {
+			return nil, err
+		}
+	}
+
 	// Validate profile membership now that all harnesses are registered.
 	for _, pp := range pending {
 		for _, member := range pp.profile.Harnesses {
@@ -276,16 +292,6 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 				return nil, newError(filename, pp.line,
 					"profile %q includes scheduled harness %q (\"schedule\" and profile membership are mutually exclusive)", pp.profile.Name, member)
 			}
-		}
-	}
-
-	// Load additional harness definitions from [server] harness_d directory.
-	// Each *.toml file may contain [harness.*] tables only — no [server],
-	// [profile.*], or [daemon]. Files are sorted lexicographically for
-	// deterministic merge order; duplicate names are rejected.
-	if harnessDPath != "" {
-		if err := loadHarnessD(cfg, harnessDPath); err != nil {
-			return nil, err
 		}
 	}
 
@@ -590,6 +596,35 @@ func buildServer(filename string, line int, rs rawServer) (core.ServerConfig, er
 			"[server]: enabled = true requires authorized_keys or authorized_keys_file (ADR-0008: no unauthenticated remote access)")
 	}
 	return sc, nil
+}
+
+// resolveConfigPath turns a path read out of the config file into one the
+// process can actually open: a leading ~ becomes the user's home directory, and
+// a relative path resolves against the directory holding the config file rather
+// than the daemon's working directory (ADR-0005 runs it from systemd, where cwd
+// is not the config's directory and nothing relative would resolve).
+func resolveConfigPath(p, configFile string) string {
+	p = expandHome(p)
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(filepath.Dir(configFile), p)
+}
+
+// expandHome expands a leading ~ (or ~/) in p to the user's home directory.
+func expandHome(p string) string {
+	if p == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+		return p
+	}
+	if strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, p[2:])
+		}
+	}
+	return p
 }
 
 // loadHarnessD reads all *.toml files from dir and merges their [harness.*]
