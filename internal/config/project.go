@@ -243,7 +243,11 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 	}
 
 	// Fail loudly on unknown keys (issue #2) — same contract as the global
-	// parser.
+	// parser. Array tables first: a project file has no [server], so any
+	// [[…]] header is unrecognized and must not be reported as a bad key.
+	if err := checkArrayTables(data, filename, false); err != nil {
+		return nil, err
+	}
 	if err := checkUndecoded(md, data, filename); err != nil {
 		return nil, err
 	}

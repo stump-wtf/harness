@@ -149,6 +149,19 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 	}
 	headers = realHeaders
 
+	// Array-of-tables headers never reach the switch below, so validate them
+	// here — before checkUndecoded can misattribute their contents.
+	hasServer := false
+	for _, h := range headers {
+		if len(h.parts) == 1 && h.parts[0] == "server" {
+			hasServer = true
+			break
+		}
+	}
+	if err := checkArrayTables(data, filename, hasServer); err != nil {
+		return nil, err
+	}
+
 	// Decode the [harness.*] and [profile.*] namespaces lazily.
 	var harnessNS, profileNS map[string]toml.Primitive
 	if p, ok := top["harness"]; ok {
@@ -713,6 +726,9 @@ func parseHarnessDFile(cfg *core.Config, data []byte, filename string) error {
 				"harness.d file must not contain [%s] (only [harness.*] allowed)", key)
 		}
 	}
+	if err := checkArrayTables(data, filename, false); err != nil {
+		return err
+	}
 	return checkUndecoded(md, data, filename)
 }
 
@@ -805,9 +821,13 @@ type tableHeader struct {
 }
 
 // headerRe matches a standard table header line ("[a.b]"), tolerating leading
-// whitespace and a trailing comment. Array-of-tables ("[[…]]") is excluded —
-// the schema has no array tables.
+// whitespace and a trailing comment. Array-of-tables ("[[…]]") is excluded and
+// handled by arrayHeaderRe / checkArrayTables instead.
 var headerRe = regexp.MustCompile(`^\s*\[\s*([^\[\]]+?)\s*\]\s*(?:#.*)?$`)
+
+// arrayHeaderRe matches an array-of-tables header line ("[[a.b]]"), tolerating
+// leading whitespace and a trailing comment.
+var arrayHeaderRe = regexp.MustCompile(`^\s*\[\[\s*([^\[\]]+?)\s*\]\]\s*(?:#.*)?$`)
 
 // scanTables extracts every table header in file order with its line number.
 // Ordering and line attribution come from the source text (deterministic),
@@ -822,6 +842,45 @@ func scanTables(data []byte) []tableHeader {
 		out = append(out, tableHeader{parts: splitKey(m[1]), line: i + 1})
 	}
 	return out
+}
+
+// scanArrayTables extracts every array-of-tables header in file order with its
+// line number, the [[…]] counterpart to scanTables.
+func scanArrayTables(data []byte) []tableHeader {
+	var out []tableHeader
+	for i, line := range strings.Split(string(data), "\n") {
+		m := arrayHeaderRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		out = append(out, tableHeader{parts: splitKey(m[1]), line: i + 1})
+	}
+	return out
+}
+
+// checkArrayTables validates array-of-tables headers, which scanTables skips
+// and the header switch therefore never sees.
+//
+// [[server.key]] beneath a declared [server] is the only array table in the
+// schema (ADR-0008 per-key read-only scoping); serverKeyOK says whether this
+// file may carry one. Every other array header used to be dropped in silence.
+// Left unvalidated it now reaches checkUndecoded, which reports the table's
+// *contents* and so names a perfectly valid key as unknown — "[[harness.foo]]"
+// reporting `unknown key "harness"` sends the reader hunting a typo that is
+// not there.
+func checkArrayTables(data []byte, filename string, serverKeyOK bool) error {
+	for _, h := range scanArrayTables(data) {
+		path := strings.Join(h.parts, ".")
+		switch {
+		case path == "server.key" && serverKeyOK:
+			continue
+		case path == "server.key":
+			return newError(filename, h.line, "[[server.key]] requires a [server] table")
+		default:
+			return newError(filename, h.line, "unrecognized table [[%s]]", path)
+		}
+	}
+	return nil
 }
 
 // splitKey splits a dotted TOML key into parts, stripping optional quotes on

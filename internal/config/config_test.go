@@ -1411,3 +1411,107 @@ harnesses = ["nightly"]
 		t.Errorf("error %q does not mention the schedule/profile exclusion", err.Error())
 	}
 }
+
+// TestArrayTableRejected covers the array-of-tables headers that scanTables
+// deliberately skips. Before checkArrayTables they never reached the header
+// switch, so the strict unknown-key check reported their *contents* — naming
+// `harness` or `key` (both perfectly valid in those tables) as unknown keys
+// and sending the reader after a typo that does not exist.
+func TestArrayTableRejected(t *testing.T) {
+	tests := []struct {
+		name    string
+		src     string
+		wantMsg string
+		wantLn  int
+	}{
+		{
+			name:    "array-of-tables harness",
+			src:     "[[harness.foo]]\nharness = \"generic\"\n",
+			wantMsg: "unrecognized table [[harness.foo]]",
+			wantLn:  1,
+		},
+		{
+			name:    "array-of-tables bare harness",
+			src:     "[[build]]\nharness = \"generic\"\n",
+			wantMsg: "unrecognized table [[build]]",
+			wantLn:  1,
+		},
+		{
+			name:    "server key without a server table",
+			src:     "[[server.key]]\nkey = \"ssh-ed25519 AAAA\"\nread_only = true\n",
+			wantMsg: "[[server.key]] requires a [server] table",
+			wantLn:  1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.src), "bad.toml")
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			var ce *Error
+			if !errors.As(err, &ce) {
+				t.Fatalf("error is %T, want *config.Error", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Errorf("error %q does not contain %q", err.Error(), tt.wantMsg)
+			}
+			if got := ce.LineNumber(); got != tt.wantLn {
+				t.Errorf("line = %d, want %d (%v)", got, tt.wantLn, err)
+			}
+		})
+	}
+}
+
+// TestServerKeyArrayAccepted guards the one array table the schema does have:
+// [[server.key]] under a declared [server] must still parse, and an unknown
+// key *inside* it must still be reported as an unknown key rather than being
+// swallowed by the array-table check.
+func TestServerKeyArrayAccepted(t *testing.T) {
+	src := "[server]\nenabled = true\nlisten = \"127.0.0.1:23234\"\n\n" +
+		"[[server.key]]\nkey = \"ssh-ed25519 AAAA\"\nread_only = true\n"
+	cfg, err := Parse([]byte(src), "ok.toml")
+	if err != nil {
+		t.Fatalf("valid [[server.key]] config failed to parse: %v", err)
+	}
+	if len(cfg.Server.AuthorizedKeys) != 1 {
+		t.Fatalf("authorized keys = %d, want 1", len(cfg.Server.AuthorizedKeys))
+	}
+	if !cfg.Server.AuthorizedKeys[0].ReadOnly {
+		t.Error("read_only did not survive the parse")
+	}
+
+	bad := src + "bogus = 1\n"
+	_, err = Parse([]byte(bad), "bad.toml")
+	if err == nil {
+		t.Fatal("expected an unknown-key error inside [[server.key]], got nil")
+	}
+	if !strings.Contains(err.Error(), `unknown key "bogus" in [server.key]`) {
+		t.Errorf("error %q does not name the unknown key in [server.key]", err.Error())
+	}
+}
+
+// TestHarnessDRejectsArrayTable covers the drop-in path: an array-of-tables
+// header in a harness.d file must be named as such, not reported as a bad key.
+func TestHarnessDRejectsArrayTable(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "arr.toml"), []byte(`
+[[harness.dropin]]
+harness = "generic"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	main := fmt.Sprintf(`
+[server]
+harness_d = %q
+`, dir)
+
+	_, err := Parse([]byte(main), "test.toml")
+	if err == nil {
+		t.Fatal("expected error for an array-of-tables harness in a drop-in")
+	}
+	if !strings.Contains(err.Error(), "unrecognized table [[harness.dropin]]") {
+		t.Errorf("error %q does not name the array table", err.Error())
+	}
+}

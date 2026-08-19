@@ -738,3 +738,24 @@ mcp_allow = ["read", "write"]
 		t.Errorf("message %q does not contain 'not supported in project files'", ce.Msg)
 	}
 }
+
+// TestParseProject_RejectArrayTable mirrors TestArrayTableRejected for project
+// files: [[…]] headers are skipped by scanTables, so without checkArrayTables
+// they surfaced as an "unknown key" naming a valid key.
+func TestParseProject_RejectArrayTable(t *testing.T) {
+	data := []byte("[[harness.agent]]\nharness = \"claude-code\"\n")
+	_, err := ParseProject(data, "/tmp/repo/harness.toml")
+	if err == nil {
+		t.Fatal("expected an error for an array-of-tables harness, got nil")
+	}
+	var cerr *Error
+	if !errors.As(err, &cerr) {
+		t.Fatalf("expected *Error, got %T: %v", err, err)
+	}
+	if !strings.Contains(cerr.Msg, "unrecognized table [[harness.agent]]") {
+		t.Errorf("error should name the array table: %s", cerr.Msg)
+	}
+	if cerr.Line != 1 {
+		t.Errorf("line = %d, want 1 (%v)", cerr.Line, cerr.Msg)
+	}
+}
