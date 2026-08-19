@@ -4,7 +4,7 @@ package buildinfo
 // while the client is rebuilt from main constantly, and proto version can
 // never detect build drift (the wire format genuinely didn't change across 57
 // commits). This is the one place that decides what client/daemon build skew
-// is worth saying, so doctor, daemon-info, and the TUI banner all speak in one
+// is worth saying, so doctor, `daemon status`, and the TUI banner all speak in one
 // voice. Deliberately advisory only: the halves are wire-compatible within a
 // proto major, and nothing anywhere gates a connection on it.
 

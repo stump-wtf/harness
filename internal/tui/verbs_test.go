@@ -48,7 +48,7 @@ func TestPaletteMirrorsCLI(t *testing.T) {
 	cliVerbs := map[string]bool{
 		"attach": true, "start": true, "stop": true, "restart": true,
 		"describe": true, "logs": true, "profile": true, "reload": true,
-		"list": true, "profiles": true, "daemon-info": true,
+		"list": true, "profiles": true,
 		"new": true, "edit": true, "delete": true,
 	}
 	have := map[string]bool{}

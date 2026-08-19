@@ -56,7 +56,6 @@ var helpText = struct {
 		{"profiles", "list profiles (active one flagged)"},
 		{"use-profile NAME", "activate a profile"},
 		{"reload", "re-read the daemon config"},
-		{"daemon-info", "show daemon status"},
 		{"doctor", "run health checks (config, daemon, harnesses)"},
 		{"attach NAME [--ro]", "attach to a harness's terminal"},
 	},
@@ -71,7 +70,7 @@ var helpText = struct {
 	daemonCmds: [][2]string{
 		{"daemon start", "run the supervision daemon (ADR-0005 ExecStart; alias: run)"},
 		{"daemon stop", "gracefully stop the running daemon"},
-		{"daemon status", "alias for daemon-info"},
+		{"daemon status", "show daemon status"},
 	},
 	flagsHead: "flags:",
 	flags: [][2]string{
@@ -101,7 +100,7 @@ var daemonHelpText = struct {
 	subs: [][2]string{
 		{"start", "run the supervision daemon in the foreground (alias: run; bare \"harness daemon\" defaults to start)"},
 		{"stop", "gracefully stop the running daemon (SIGTERM)"},
-		{"status", "show daemon status (alias: daemon-info)"},
+		{"status", "show daemon status"},
 	},
 	flagHead: "start/run flags:",
 	flags: [][2]string{

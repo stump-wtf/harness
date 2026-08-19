@@ -272,8 +272,6 @@ func run(verb string, o verbOpts) error {
 		return withClient(o, requireName(o), cmdUseProfile)
 	case "reload":
 		return withClient(o, nil, cmdReload)
-	case "daemon-info":
-		return withClient(o, nil, cmdDaemonInfo)
 	case "attach":
 		// Attach launches its own Bubble Tea program (alt-screen) and manages
 		// its own daemon connection, so it doesn't go through withClient. The

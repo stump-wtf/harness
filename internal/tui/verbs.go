@@ -17,7 +17,7 @@ import (
 type TargetKind int
 
 const (
-	// TargetNone: the verb takes no argument (list, reload, daemon-info, new).
+	// TargetNone: the verb takes no argument (list, reload, new).
 	TargetNone TargetKind = iota
 	// TargetHarness: the verb targets one harness (start, stop, attach, …).
 	TargetHarness
@@ -52,7 +52,6 @@ func CLIVerbs() []Verb {
 		{Name: "list", Target: TargetNone, Desc: "list harnesses"},
 		{Name: "profiles", Target: TargetNone, Desc: "list profiles"},
 		{Name: "reload", Target: TargetNone, Desc: "reload the daemon config"},
-		{Name: "daemon-info", Target: TargetNone, Desc: "show daemon status"},
 	}
 }
 

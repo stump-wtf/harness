@@ -188,11 +188,11 @@ func TestRunVerbProfileWithoutTargetIsNoop(t *testing.T) {
 	}
 }
 
-// TestRunVerbReadOnlyVerbsRefresh covers list/profiles/daemon-info, which all
-// collapse to "go re-read state". They must still issue that fetch — a palette
-// entry that does nothing at all is worse than one that is missing.
+// TestRunVerbReadOnlyVerbsRefresh covers list/profiles, which all collapse to
+// "go re-read state". They must still issue that fetch — a palette entry that
+// does nothing at all is worse than one that is missing.
 func TestRunVerbReadOnlyVerbsRefresh(t *testing.T) {
-	for _, verb := range []string{"list", "profiles", "daemon-info"} {
+	for _, verb := range []string{"list", "profiles"} {
 		t.Run(verb, func(t *testing.T) {
 			m, _ := verbFixture()
 			_, cmd := m.runVerb(verb, "")
@@ -226,7 +226,7 @@ func TestRunVerbWithoutControllerIsSafe(t *testing.T) {
 	// The lifecycle verbs go through performAction, which has its own nil
 	// guard; they belong here as much as the ones that guard inline.
 	verbs := []string{
-		"profile", "reload", "list", "profiles", "daemon-info",
+		"profile", "reload", "list", "profiles",
 		"start", "stop", "restart", "delete",
 	}
 	for _, verb := range verbs {

@@ -338,8 +338,8 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 	}
 	t := NewTable(os.Stdout, "FIELD", "VALUE")
 	t.Row("version", t.accentBold(di.Version))
-	// The client half of the version picture (#181): daemon-info is where
-	// build skew gets diagnosed, so show both sides and flag disagreement.
+	// The client half of the version picture (#181): `daemon status` is
+	// where build skew gets diagnosed, so show both sides and flag disagreement.
 	t.Row("client", t.faintPlain(buildinfo.Version))
 	if notice := buildinfo.SkewNotice(di.Version, buildinfo.Version); notice != "" {
 		t.Row("skew", t.amberBold(notice))
@@ -360,7 +360,7 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 }
 
 // cmdStopDaemon asks the running daemon to shut down by sending SIGTERM to
-// its PID (fetched via daemon-info). This is the counterpart to
+// its PID (fetched via `daemon status`). This is the counterpart to
 // `harness daemon --detach`: the pair gives you stop-daemon → daemon --detach
 // as a clean restart cycle. The daemon's own signal handler does the graceful
 // shutdown (close socket, stop harnesses, flush state).

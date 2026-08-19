@@ -133,7 +133,7 @@ func (m *Model) runVerb(verb, target string) (tea.Model, tea.Cmd) {
 		if m.ctrl != nil {
 			return m, doReload(m.ctrl)
 		}
-	case "list", "profiles", "daemon-info":
+	case "list", "profiles":
 		if m.ctrl != nil {
 			return m, fetchState(m.ctrl)
 		}

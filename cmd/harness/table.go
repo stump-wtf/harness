@@ -4,7 +4,7 @@ package main
 // color across every CLI surface — color is decorative, the glyph carries
 // meaning, so a mono terminal still reads); ADR-0001 (Charmbracelet stack:
 // lipgloss + theme own the visual language). This file is the shared table
-// renderer used by `list`, `describe`, `profiles`, `daemon-info`, and
+// renderer used by `list`, `describe`, `profiles`, and
 // `doctor` so every CLI table looks like one product: bold header, rounded
 // separator rules, colored cells when on a TTY, plain text otherwise.
 //
@@ -96,7 +96,7 @@ func renderedWidth(budget, nCols int) int {
 
 // useColorFor reports whether w is a terminal we should style for and we're
 // not in --json mode. Tables write to either stdout (list/describe/profiles/
-// daemon-info) or stderr (doctor); styling must key off the *actual*
+// `daemon status`) or stderr (doctor); styling must key off the *actual*
 // destination so `harness list | cat` doesn't leak ANSI into the pipe (stdout
 // is now a pipe, not a TTY, even though stderr still is) and `harness list
 // 2>/dev/null` keeps color on a real terminal. See M2 in PR #23 review.

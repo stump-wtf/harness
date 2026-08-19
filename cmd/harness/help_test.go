@@ -39,7 +39,6 @@ func TestPlainUsageContent(t *testing.T) {
 		"profiles",
 		"use-profile NAME",
 		"reload",
-		"daemon-info",
 		"doctor",
 		"attach NAME [--ro]",
 		"project commands",

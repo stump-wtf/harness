@@ -2,7 +2,7 @@ package buildinfo
 
 // Governing: stump.wtf/harness#181 — the daemon is deliberately long-lived
 // while the client is rebuilt constantly, and proto version can never detect
-// build drift. SkewNotice is the single voice for doctor, daemon-info, and the
+// build drift. SkewNotice is the single voice for doctor, `daemon status`, and the
 // TUI banner; these pin what it decides is worth saying.
 
 import (
