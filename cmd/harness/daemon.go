@@ -78,7 +78,7 @@ func runDaemon(o daemonOpts) {
 	reg := attach.NewRegistry(o.ringLines)
 	mgr := supervisor.NewManager(cfg, supervisor.ManagerOptions{
 		ExtraOutFor: reg.WriterFor,
-		// Deregistered project harnesses release their Mux so ephemeral
+		// Deregistered project harnesses release their Mux so removed projects do
 		// projects never leak emulators/scrollback (SPEC-0004 REQ "Tear Down").
 		DropExtraOut: reg.Remove,
 		// A harness (re)started while a client is attached is spawned into a PTY

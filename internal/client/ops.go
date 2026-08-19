@@ -125,6 +125,18 @@ func (c *Client) ProjectDown(project string) (protocol.ProjectDownData, error) {
 	return out, json.Unmarshal(resp.Data, &out)
 }
 
+// Remove stops and deregisters one registered (project) harness (SPEC-0004
+// REQ "Remove"); a global-config or unknown name comes back as a
+// *protocol.ErrorMsg with code not_removable.
+func (c *Client) Remove(name string) (protocol.RemoveData, error) {
+	resp, err := c.call(protocol.ControlReq{Op: protocol.OpRemove, Name: name})
+	if err != nil {
+		return protocol.RemoveData{}, err
+	}
+	var out protocol.RemoveData
+	return out, json.Unmarshal(resp.Data, &out)
+}
+
 // DaemonInfo returns daemon metadata.
 func (c *Client) DaemonInfo() (protocol.DaemonInfo, error) {
 	resp, err := c.call(protocol.ControlReq{Op: protocol.OpDaemonInfo})

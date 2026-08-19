@@ -85,7 +85,7 @@ type Manager struct {
 	// it. Recorded here so boot can log it and doctor can show it.
 	dormantAutostart []string
 
-	// projects tracks every registered (ephemeral) project by name, and
+	// projects tracks every registered project by name, and
 	// provenance maps a registered harness's full name to its owning project
 	// ("" / absent = global config) so `down`/`ps` scope correctly and a global
 	// reload never touches project harnesses. Governing: ADR-0009
@@ -144,7 +144,7 @@ func (m *Manager) Events() (<-chan Event, func()) { return m.bus.Subscribe() }
 // appending it to the render order. Only called single-threaded from
 // NewManager.
 func (m *Manager) addSupervisor(h core.Harness) {
-	m.addSupervisorLocked(h, false)
+	m.addSupervisorLocked(h)
 	m.order = append(m.order, h.Name)
 }
 
@@ -193,6 +193,27 @@ func (m *Manager) Restore() error {
 
 	m.mu.Lock()
 	m.activeProfile = ps.ActiveProfile
+
+	// Re-register persisted projects (SPEC-0004 REQ "Registration
+	// Persistence") so their supervisors exist before the intent loop below
+	// seeds them — same Compose-style contract as the globals: up stays up
+	// across daemon restarts until down/rm. Definitions are registered but
+	// NOT started here; the persisted per-harness intent (written under the
+	// fully-qualified name) plus Autostart brings up the running set. Sorted
+	// by project name for a deterministic registration order.
+	projects := make([]string, 0, len(ps.Projects))
+	for name := range ps.Projects {
+		projects = append(projects, name)
+	}
+	slices.Sort(projects)
+	for _, project := range projects {
+		pp := ps.Projects[project]
+		defs := make([]core.Harness, 0, len(pp.Harnesses))
+		for _, ph := range pp.Harnesses {
+			defs = append(defs, ph.toCore())
+		}
+		m.restoreProjectLocked(project, defs)
+	}
 
 	// Issue #99: detect a persisted profile name that no longer resolves.
 	// Only the flag is set here — the fallback itself happens in the restore
@@ -500,7 +521,7 @@ func (m *Manager) Reload(newCfg *core.Config) {
 		}
 	}
 	for _, h := range toAdd {
-		m.addSupervisorLocked(h, false)
+		m.addSupervisorLocked(h)
 	}
 	// Option A (issue #150): a harness newly introduced by this reload that
 	// has config autostart membership gets runtime intent set and is started,
@@ -545,23 +566,17 @@ func (m *Manager) Reload(newCfg *core.Config) {
 }
 
 // addSupervisorLocked adds a supervisor without appending order (callers
-// manage order). ephemeral marks a project-registered harness (ADR-0009): it
-// gets no persistence OnChange hook because project harnesses are never
-// written to state.json — every markDirty a crash-looping project harness
-// fired would just rewrite a byte-identical file. Lifecycle events still flow
-// through the shared Bus regardless. Caller holds m.mu (or is the
-// single-threaded NewManager construction path).
-func (m *Manager) addSupervisorLocked(h core.Harness, ephemeral bool) {
-	onChange := m.markDirty
-	if ephemeral {
-		onChange = nil
-	}
+// manage order). Project harnesses registered here get the same persistence
+// OnChange hook as global ones: their runtime intent is written to state.json
+// (SPEC-0004 REQ "Registration Persistence"), so a restart restores the
+// running set, not just the definitions.
+func (m *Manager) addSupervisorLocked(h core.Harness) {
 	s := New(h, Options{
 		Policy:      m.policy,
 		Bus:         m.bus,
 		LogCfg:      m.logCfg,
 		ExtraOut:    m.extraOut(h.Name),
-		OnChange:    onChange,
+		OnChange:    m.markDirty,
 		InitialSize: m.initialSizeFor(h.Name),
 	})
 	m.supervisors[h.Name] = s
@@ -578,25 +593,33 @@ func (m *Manager) Close() {
 }
 
 // Save writes the current runtime state to state.json immediately (ADR-0007).
-// Project-registered harnesses are excluded: they are ephemeral, live-and-die
-// with project_up/project_down, and are not restored across a daemon restart
-// (ADR-0009 non-goal; SPEC-0004).
+// Project-registered harnesses are INCLUDED: a project registration is durable
+// Compose-style state (SPEC-0004 REQ "Registration Persistence") — it survives
+// daemon restarts until project_down or remove tears it down — so both their
+// definitions (Projects) and their runtime intent (Harnesses, keyed by the
+// fully-qualified name) are persisted.
 func (m *Manager) Save() error {
-	// Everything Save needs — the active profile and the provenance-filtered
-	// supervisor set — is collected under ONE lock hold, so a concurrent
-	// ProjectDown or UseProfile cannot interleave between the snapshot and the
-	// filter and smuggle an ephemeral project harness (or a stale profile)
-	// into state.json.
+	// Everything Save needs — the active profile, the supervisor set, and the
+	// project definitions — is collected under ONE lock hold, so a concurrent
+	// ProjectDown or UseProfile cannot interleave between the snapshot pieces
+	// and smuggle a torn-down project (or a stale profile) into state.json.
 	m.mu.Lock()
 	activeProfile := m.activeProfile
 	sups := make([]*Supervisor, 0, len(m.supervisors))
 	for _, name := range m.order {
-		if m.provenance[name] != "" {
-			continue // ephemeral project harness (ADR-0009)
-		}
 		if s, ok := m.supervisors[name]; ok {
 			sups = append(sups, s)
 		}
+	}
+	projects := make(map[string]persistedProject, len(m.projects))
+	for name, rec := range m.projects {
+		pp := persistedProject{Harnesses: make([]persistedProjectHarness, 0, len(rec.order))}
+		for _, full := range rec.order {
+			if h, ok := rec.harnesses[full]; ok {
+				pp.Harnesses = append(pp.Harnesses, toPersistedProjectHarness(h))
+			}
+		}
+		projects[name] = pp
 	}
 	m.mu.Unlock()
 
@@ -604,6 +627,7 @@ func (m *Manager) Save() error {
 		Version:       stateSchemaVersion,
 		ActiveProfile: activeProfile,
 		Harnesses:     map[string]persistedHarness{},
+		Projects:      projects,
 	}
 	for _, s := range sups {
 		snap := s.Snapshot()

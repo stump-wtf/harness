@@ -81,11 +81,14 @@ const (
 	OpDaemonInfo Op = "daemon_info"
 
 	// Project compose ops. Governing: ADR-0009 (project-scoped compose),
-	// SPEC-0004 REQ "Project Control Operations". project_up registers and
-	// starts (or reconciles) a project's harnesses under the <project>/<name>
-	// namespace; project_down stops and deregisters them.
+	// SPEC-0004 REQ "Project Control Operations" and REQ "Remove".
+	// project_up registers and starts (or reconciles) a project's harnesses
+	// under the <project>/<name> namespace; project_down stops and
+	// deregisters them; remove stops and deregisters ONE registered harness
+	// (the single-member tear-down `harness rm` maps to).
 	OpProjectUp   Op = "project_up"
 	OpProjectDown Op = "project_down"
+	OpRemove      Op = "remove"
 )
 
 // ControlReq is a control-plane request. ID correlates the response; Name
@@ -278,6 +281,14 @@ type ProjectDownData struct {
 	Removed []string `json:"removed"`
 }
 
+// RemoveData is the remove response payload: the fully-qualified harness
+// name that was stopped and deregistered, and the owning project (SPEC-0004
+// REQ "Remove"). Governing: ADR-0009.
+type RemoveData struct {
+	Name    string `json:"name"`
+	Project string `json:"project,omitempty"`
+}
+
 // DaemonInfo is the daemon_info response payload.
 type DaemonInfo struct {
 	Version         string `json:"version"`
@@ -344,6 +355,10 @@ const (
 	// ErrInvalidProject: project_up carried an invalid project name or harness
 	// definition; nothing was registered.
 	ErrInvalidProject ErrCode = "invalid_project"
+	// ErrNotRemovable: remove named a harness the daemon does not own outright
+	// (a global-config harness, authored in harness.toml) or an unknown name;
+	// no state changed (SPEC-0004 REQ "Remove").
+	ErrNotRemovable ErrCode = "not_removable"
 )
 
 // ErrorMsg is a structured error frame body. ID echoes the request it answers

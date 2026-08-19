@@ -27,6 +27,110 @@ type persistedState struct {
 	Version       int                         `json:"version"`
 	ActiveProfile string                      `json:"active_profile,omitempty"`
 	Harnesses     map[string]persistedHarness `json:"harnesses"`
+	// Projects holds the registered project definitions (SPEC-0004 REQ
+	// "Registration Persistence"): a project brought up with project_up
+	// stays registered across daemon restarts until project_down or remove
+	// tears it down, Compose-style. Keyed by project name; the slice
+	// preserves project-file order.
+	Projects map[string]persistedProject `json:"projects,omitempty"`
+}
+
+// persistedProject is one registered project's definition set, in order.
+type persistedProject struct {
+	Harnesses []persistedProjectHarness `json:"harnesses"`
+}
+
+// persistedProjectHarness is the persisted form of one project harness
+// definition — exactly the fields a project_up wire payload can carry, plus
+// the tmux socket. Runtime state (enabled intent, counters) lives in the
+// shared Harnesses map under the fully-qualified name, so project and
+// global harnesses restore through the same path.
+type persistedProjectHarness struct {
+	Name           string   `json:"name"`
+	Harness        string   `json:"harness,omitempty"`
+	Args           []string `json:"args,omitempty"`
+	Prompt         string   `json:"prompt,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	AutoAccept     bool     `json:"auto_accept,omitempty"`
+	MaxTurns       int      `json:"max_turns,omitempty"`
+	Quiet          *bool    `json:"quiet,omitempty"`
+	Workdir        string   `json:"workdir,omitempty"`
+	EnvFile        string   `json:"env_file,omitempty"`
+	RestartDelayMs int64    `json:"restart_delay_ms,omitempty"`
+	Restart        string   `json:"restart,omitempty"`
+	Backend        string   `json:"backend,omitempty"`
+	Description    string   `json:"description,omitempty"`
+	Enabled        bool     `json:"enabled,omitempty"`
+	TmuxSocket     string   `json:"tmux_socket,omitempty"`
+}
+
+// toPersistedProject captures a project record's definitions in persisted
+// form. h is the namespaced core.Harness exactly as registered.
+func toPersistedProjectHarness(h core.Harness) persistedProjectHarness {
+	var quiet *bool
+	if h.Prompt != "" {
+		// Only meaningful for a prompt harness; nil keeps a bare cmd harness's
+		// state file free of the headless one-shot default.
+		q := h.Quiet
+		quiet = &q
+	}
+	return persistedProjectHarness{
+		Name:           h.Name,
+		Harness:        h.Adapter,
+		Args:           h.Args,
+		Prompt:         h.Prompt,
+		Model:          h.Model,
+		AutoAccept:     h.AutoAccept,
+		MaxTurns:       h.MaxTurns,
+		Quiet:          quiet,
+		Workdir:        h.Workdir,
+		EnvFile:        h.EnvFile,
+		RestartDelayMs: h.RestartDelay.Milliseconds(),
+		Restart:        string(h.Restart),
+		Backend:        string(h.Backend),
+		Description:    h.Description,
+		Enabled:        h.Enabled,
+		TmuxSocket:     h.TmuxSocket,
+	}
+}
+
+// toCore reverses toPersistedProjectHarness. Defaults mirror the wire
+// mapping in the daemon (harnessFromWire): absent backend/restart fall back
+// to the config-parser defaults rather than the empty string.
+func (p persistedProjectHarness) toCore() core.Harness {
+	backend := core.Backend(p.Backend)
+	if p.Backend == "" {
+		backend = core.BackendNative
+	}
+	restart := core.RestartPolicy(p.Restart)
+	if p.Restart == "" {
+		restart = core.RestartAlways
+		if p.Prompt != "" {
+			restart = core.RestartNo
+		}
+	}
+	quiet := true
+	if p.Quiet != nil {
+		quiet = *p.Quiet
+	}
+	return core.Harness{
+		Name:         p.Name,
+		Adapter:      p.Harness,
+		Args:         p.Args,
+		Prompt:       p.Prompt,
+		Model:        p.Model,
+		AutoAccept:   p.AutoAccept,
+		MaxTurns:     p.MaxTurns,
+		Quiet:        quiet,
+		Workdir:      p.Workdir,
+		EnvFile:      p.EnvFile,
+		RestartDelay: time.Duration(p.RestartDelayMs) * time.Millisecond,
+		Restart:      restart,
+		Backend:      backend,
+		Description:  p.Description,
+		Enabled:      p.Enabled,
+		TmuxSocket:   p.TmuxSocket,
+	}
 }
 
 // persistedHarness is one harness's durable runtime state (ADR-0007). No config

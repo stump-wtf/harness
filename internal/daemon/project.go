@@ -72,6 +72,33 @@ func (c *conn) opProjectDown(req protocol.ControlReq) {
 	c.respond(req, protocol.ProjectDownData{Project: req.Name, Removed: removed})
 }
 
+// opRemove stops and deregisters ONE registered harness (SPEC-0004 REQ
+// "Remove") — the single-member counterpart to project_down that `harness rm`
+// maps to. A global-config harness is refused with not_removable: those are
+// authored in harness.toml (ADR-0006) and leave via edit + reload, not a
+// runtime op.
+func (c *conn) opRemove(req protocol.ControlReq) {
+	project := c.srv.mgr.ProjectOf(req.Name)
+	if project == "" {
+		log.Warn("remove refused", "harness", req.Name)
+		_ = c.pc.WriteError(req.ID, protocol.ErrNotRemovable,
+			"remove %q: not a registered harness (global-config harnesses are owned by harness.toml)", req.Name)
+		return
+	}
+	if err := c.srv.mgr.RemoveHarness(req.Name); err != nil {
+		log.Warn("remove failed", "harness", req.Name, "err", err)
+		code := protocol.ErrInternal
+		if errors.Is(err, supervisor.ErrNotRemovable) {
+			code = protocol.ErrNotRemovable
+		}
+		_ = c.pc.WriteError(req.ID, code, "%s", err.Error())
+		return
+	}
+	log.Info("remove", "harness", req.Name, "project", project)
+	c.srv.broadcast(protocol.EventMsg{Kind: protocol.EvConfigReload})
+	c.respond(req, protocol.RemoveData{Name: req.Name, Project: project})
+}
+
 // writeProjectError maps the supervisor/config sentinels onto the SPEC-0004
 // wire codes and writes the structured ERROR frame (machine code + human
 // message the CLI can surface verbatim).

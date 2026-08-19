@@ -73,6 +73,12 @@ func run(verb string, o verbOpts) error {
 		// Tear the project down (SPEC-0004 REQ "Tear Down"). NAME is an
 		// optional explicit project (covers a deleted project file).
 		return cmdDown(o)
+	case "rm":
+		// Remove ONE registered harness (SPEC-0004 REQ "Remove") — the
+		// single-member tear-down. Scoped like every other name-taking verb:
+		// a bare NAME inside a project resolves to <project>/NAME. The
+		// command tree's nameRequired arity already rejects a missing name.
+		return withClient(o, nil, projectScoped(verb, false, cmdRm))
 	case "describe":
 		// Scoped like every other name-taking verb: a bare NAME inside a
 		// project resolves to <project>/NAME (SPEC-0004).

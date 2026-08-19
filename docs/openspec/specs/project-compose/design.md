@@ -6,11 +6,13 @@ Harness today has exactly one place harnesses are defined: the global
 `~/.config/harness/harness.toml` the daemon owns as its config-of-record
 (ADR-0006), plus `[profile.*]` tables as durable, switchable *views* over that
 global set. There is no repo-local way to say "these are the agents this project
-needs — bring them up." **ADR-0009** decided to add that as an *ephemeral
+needs — bring them up." **ADR-0009** decided to add that as a *daemon-managed
 project* concept modeled on `docker compose`: a repo-root `harness.toml`,
 discovered by walking up from `cwd`, whose harnesses are registered with the
-running daemon under a `<project>/<harness>` namespace on `up` and forgotten on
-`down`, with the global config left untouched.
+running daemon under a `<project>/<harness>` namespace on `up`, stay up — across
+daemon restarts — until `down` (whole project) or `rm` (one member) tears them
+down, with the global config left untouched. (The 2026-07 cut was runtime-only;
+that deferral was resolved 2026-08-19 — see Registration Persistence.)
 
 This spec (SPEC-0004) formalizes that behavior. It leans on SPEC-0002 (the
 control-plane protocol it extends with two ops) and SPEC-0003 (the lifecycle
@@ -33,10 +35,10 @@ introducing a second config dialect.
 
 ### Non-Goals
 
-- **Project autostart-on-restart.** Whether the daemon should persist which
-  projects were `up` and re-`up` them after a restart is explicitly deferred to a
-  follow-up ADR. The initial cut is runtime-only, matching Compose's "compose up
-  doesn't survive a dockerd restart."
+- **Ad-hoc/ephemeral scratchpad harnesses.** Projects are the *durable*
+  Compose-style concept: `up` stays up — across daemon restarts — until an
+  explicit `down`/`rm`. Throwaway sessions that die with `harness rm` and never
+  persist are a separate mechanism with its own ADR/spec, not this one.
 - **Foreground/attached `up`.** A `docker compose up` (no `-d`) style interleaved
   log stream is out of scope; Harness is daemon-centric and viewing is the TUI /
   `attach`. A future `--attach`/`--tui` flag is possible but unspecified here.
@@ -148,9 +150,12 @@ sequenceDiagram
   explicit provenance per harness so `down` and `ps` scope correctly; a global
   harness and a project harness can never be conflated because their names
   (bare vs. `project/`) differ.
-- **Runtime-only registrations vanish on daemon restart** → Accepted and
-  documented as a non-goal; a rebooted daemon restores global config but not
-  previously-`up` projects. Project-autostart persistence is a deferred ADR.
+- **~~Runtime-only registrations vanish on daemon restart~~** → Reversed
+  (2026-08-19): registrations now persist to state.json (definitions +
+  per-harness intent) and are re-registered on daemon start, restoring the
+  running set exactly as global harness state restores (ADR-0007). The
+  original draft accepted this as a non-goal; real usage showed `up` must be a
+  durable gesture, Compose-style, and the deferral was resolved.
 - **Partial `project_up` failure** → Registration is validated up front (name
   collision, forbidden tables) and applied atomically enough that a mid-way
   failure reports a structured error without leaving a half-registered project;

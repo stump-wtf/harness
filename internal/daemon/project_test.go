@@ -473,3 +473,38 @@ func waitForState(t *testing.T, c interface {
 	}
 	t.Fatalf("timed out waiting for %s to reach %s", name, want)
 }
+
+// TestRemoveRoundTrip is SPEC-0004 REQ "Remove": remove tears down one
+// registered harness (reply echoes name + project), and a global-config
+// harness is refused with the structured not_removable code.
+func TestRemoveRoundTrip(t *testing.T) {
+	td := newTestDaemon(t, sleeperTOML)
+	c := td.dial(t, nil)
+
+	if _, err := c.ProjectUp("reduit", []protocol.ProjectHarness{sleeperDef("agent"), sleeperDef("reviewer")}); err != nil {
+		t.Fatalf("ProjectUp: %v", err)
+	}
+	data, err := c.Remove("reduit/agent")
+	if err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if data.Name != "reduit/agent" || data.Project != "reduit" {
+		t.Errorf("RemoveData = %+v, want reduit/agent of reduit", data)
+	}
+	hs, err := c.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, h := range hs {
+		if h.Name == "reduit/agent" {
+			t.Error("reduit/agent still listed after remove")
+		}
+	}
+
+	// A global-config harness is config-owned: structured refusal.
+	if _, err := c.Remove("sleeper"); err == nil {
+		t.Fatal("Remove(global) succeeded; want not_removable")
+	} else if code := errCodeOf(t, err); code != protocol.ErrNotRemovable {
+		t.Errorf("Remove(global) code = %s, want not_removable", code)
+	}
+}

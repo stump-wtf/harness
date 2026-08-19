@@ -1,15 +1,20 @@
 package supervisor
 
 // Governing: ADR-0009 (project-scoped config and compose commands), SPEC-0004
-// REQ "Project Naming And Namespacing" and REQ "Project Control Operations".
+// REQ "Project Naming And Namespacing", REQ "Project Control Operations",
+// and REQ "Registration Persistence".
 //
-// A project is an *ephemeral* set of harnesses registered daemon-wide under the
-// `<project>/<harness>` namespace by project_up and forgotten by project_down.
-// The Manager tracks per-harness provenance (global config vs. project:NAME) so
-// tear-down and scoping never touch global harnesses, and a global reload never
-// touches project ones. ProjectUp validates everything up front and mutates the
-// registry atomically under the manager lock, so a failure registers nothing
-// (SPEC-0004 REQ "Error Handling Standards": no partially-registered project).
+// A project is a daemon-managed set of harnesses registered under the
+// `<project>/<harness>` namespace by project_up and torn down by
+// project_down (whole project) or remove (single member). Registrations are
+// Compose-style durable state: they persist in state.json and are re-registered
+// on daemon boot, staying up until an explicit tear-down — they are NOT
+// ad-hoc. The Manager tracks per-harness provenance (global config vs.
+// project:NAME) so tear-down and scoping never touch global harnesses, and a
+// global reload never touches project ones. ProjectUp validates everything up
+// front and mutates the registry atomically under the manager lock, so a
+// failure registers nothing (SPEC-0004 REQ "Error Handling Standards": no
+// partially-registered project).
 
 import (
 	"errors"
@@ -148,7 +153,7 @@ func (m *Manager) ProjectUp(project string, defs []core.Harness) (ProjectUpResul
 			}
 			continue
 		}
-		m.addSupervisorLocked(h, true)
+		m.addSupervisorLocked(h)
 		m.order = append(m.order, full)
 		m.provenance[full] = project
 		if h.Enabled {
@@ -176,8 +181,9 @@ func (m *Manager) ProjectUp(project string, defs []core.Harness) (ProjectUpResul
 	for _, s := range toStart {
 		s.Start()
 	}
-	// No persistence hook here: project harnesses are never written to
-	// state.json (ADR-0009), so there is nothing to mark dirty.
+	// The registered set changed on disk (SPEC-0004 REQ "Registration
+	// Persistence") — schedule a state.json flush.
+	m.markDirty()
 	return ProjectUpResult{Names: names, Changed: changed}, nil
 }
 
@@ -213,9 +219,78 @@ func (m *Manager) ProjectDown(project string) ([]string, error) {
 	for _, full := range removedNames {
 		m.releaseHarnessResources(full)
 	}
-	// No markDirty: Save excludes project harnesses (ADR-0009), so state.json
-	// is unchanged by construction.
+	// The project left the registry — flush the registration out of
+	// state.json too (SPEC-0004 REQ "Registration Persistence").
+	m.markDirty()
 	return removedNames, nil
+}
+
+// restoreProjectLocked re-registers a persisted project at boot without
+// starting anything (SPEC-0004 REQ "Registration Persistence"). defs carry
+// their FULL namespaced names exactly as persisted — no re-namespacing, no
+// validation round-trip (they were validated by the ProjectUp that registered
+// them; state.json is daemon-owned). Caller holds m.mu. Best-effort per
+// harness: a name that somehow collides with an existing supervisor is
+// skipped rather than clobbering it.
+func (m *Manager) restoreProjectLocked(project string, defs []core.Harness) {
+	rec, registered := m.projects[project]
+	if !registered {
+		rec = &projectRecord{name: project, harnesses: map[string]core.Harness{}}
+		m.projects[project] = rec
+	}
+	for _, h := range defs {
+		if _, taken := m.supervisors[h.Name]; taken {
+			continue
+		}
+		m.addSupervisorLocked(h)
+		m.order = append(m.order, h.Name)
+		m.provenance[h.Name] = project
+		rec.harnesses[h.Name] = h
+		rec.order = append(rec.order, h.Name)
+	}
+}
+
+// ErrNotRemovable is the sentinel for remove on a harness the daemon does not
+// own outright: global-config harnesses are authored in harness.toml
+// (ADR-0006) and must be removed there (then reload), not torn down by a
+// runtime op. Callers branch with errors.Is.
+var ErrNotRemovable = errors.New("harness is not removable: global-config harnesses are owned by harness.toml")
+
+// RemoveHarness stops and deregisters one project-registered harness
+// (SPEC-0004 REQ "Remove") — the single-member counterpart to ProjectDown.
+// Removing the last member drops the now-empty project record too. A global
+// harness name returns ErrNotRemovable; an unknown name returns an error
+// wrapping ErrUnknownProject semantics per provenance lookup.
+func (m *Manager) RemoveHarness(name string) error {
+	m.mu.Lock()
+	project := m.provenance[name]
+	if project == "" {
+		m.mu.Unlock()
+		if _, ok := m.cfg.Harnesses[name]; ok {
+			return fmt.Errorf("remove %q: %w", name, ErrNotRemovable)
+		}
+		return fmt.Errorf("remove %q: unknown harness", name)
+	}
+	rec := m.projects[project]
+	s := m.supervisors[name]
+	delete(m.supervisors, name)
+	delete(m.provenance, name)
+	m.dropFromOrderLocked([]string{name})
+	if rec != nil {
+		delete(rec.harnesses, name)
+		rec.order = slices.DeleteFunc(rec.order, func(n string) bool { return n == name })
+		if len(rec.order) == 0 {
+			delete(m.projects, project)
+		}
+	}
+	m.mu.Unlock()
+
+	if s != nil {
+		s.Shutdown()
+	}
+	m.releaseHarnessResources(name)
+	m.markDirty()
+	return nil
 }
 
 // shutdownAll stops supervisors in parallel and waits for all of them. Each

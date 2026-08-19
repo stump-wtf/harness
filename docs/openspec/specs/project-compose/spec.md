@@ -10,13 +10,16 @@ requires: [SPEC-0002, SPEC-0003]
 ## Overview
 
 A per-project, repo-root `harness.toml` plus a Compose-style verb vocabulary
-(`up`, `down`, `ps`, `logs`, `start`, `stop`, `restart`) that brings a project's
-harnesses up under the running daemon without touching the global config. See
-**ADR-0009**. The project file reuses the ADR-0006 `[harness.*]` schema; the
-daemon registers a project's harnesses under a `<project>/<harness>` namespace as
-an **ephemeral** set that lives and dies with `up`/`down`. Lifecycle, PTYs, and
+(`up`, `down`, `rm`, `ps`, `logs`, `start`, `stop`, `restart`) that brings a
+project's harnesses up under the running daemon without touching the global
+config. See **ADR-0009**. The project file reuses the ADR-0006 `[harness.*]`
+schema; the daemon registers a project's harnesses under a `<project>/<harness>`
+namespace as a **daemon-managed, durable** set: up stays up — across daemon
+restarts — until an explicit `down` (whole project) or `rm` (one member),
+exactly like `docker compose`. Projects are deliberately NOT the ad-hoc
+mechanism; ephemeral scratchpads are a separate concern. Lifecycle, PTYs, and
 scrollback remain the daemon's job (SPEC-0003); the new work here is discovery,
-the `[project]` header, namespacing, two new control operations, and the verb
+the `[project]` header, namespacing, the control operations, and the verb
 semantics.
 
 ## Requirements
@@ -153,7 +156,8 @@ flagged to apply on next restart per SPEC-0003 (never silently bounced).
 `harness down` SHALL send a `project_down` control request for the discovered
 project. The daemon SHALL stop every harness registered under that project's
 namespace and then **deregister** them, so the daemon retains no record of the
-project afterward. `down` SHALL be destructive by design — distinct from
+project afterward — including its persisted registration (see Registration
+Persistence). `down` SHALL be destructive by design — distinct from
 non-destructive profile hopping (ADR-0006) — and SHALL leave the global config
 file byte-for-byte unchanged.
 
@@ -162,6 +166,13 @@ file byte-for-byte unchanged.
 - **WHEN** `harness down` runs for project `reduit`
 - **THEN** `reduit/agent` and `reduit/reviewer` are stopped and removed from the
   daemon's registry, and a subsequent `harness ps` for that project lists nothing
+
+#### Scenario: Down ends persistence too
+
+- **WHEN** `harness down` runs for project `reduit` and the daemon is then
+  restarted
+- **THEN** `reduit` is NOT re-registered: the persisted registration was
+  deleted by `down`, not just the live one
 
 #### Scenario: Global config untouched
 
@@ -176,8 +187,8 @@ file byte-for-byte unchanged.
 on that project's harnesses via the existing SPEC-0002 control operations
 filtered to the project namespace. `ps` SHALL list only the project's harnesses
 and their states. `start`, `stop`, and `restart` SHALL be non-destructive:
-deregistration SHALL remain exclusive to `down`. A bare `name` argument to these
-verbs SHALL refer to the project-local name and be resolved to
+deregistration SHALL remain exclusive to `down` and `rm`. A bare `name` argument
+to these verbs SHALL refer to the project-local name and be resolved to
 `<project>/<name>`.
 
 #### Scenario: ps is project-scoped
@@ -197,15 +208,74 @@ verbs SHALL refer to the project-local name and be resolved to
 - **WHEN** `harness restart agent` runs in project `reduit`
 - **THEN** the daemon restarts `reduit/agent`
 
+### Requirement: Registration Persistence
+
+A project registration SHALL be durable daemon state, not ad-hoc: the daemon
+SHALL persist each registered project's definitions and its harnesses' runtime
+intent to its state file, and on daemon start SHALL re-register every persisted
+project and restore its harnesses' running set exactly as it does for
+global-config harnesses (ADR-0007). A registration SHALL survive any number of
+daemon restarts and SHALL be ended only by an explicit tear-down (`down` for the
+whole project, `rm` for one member). The global config file SHALL remain
+byte-for-byte unchanged by persistence — state.json holds the registration, not
+the TOML.
+
+#### Scenario: Registration survives a daemon restart
+
+- **WHEN** `harness up` registers `reduit`, the daemon is stopped and started
+  again, and no `down` was issued
+- **THEN** `reduit/agent` is registered and running again, with its restart
+  counters and last-exit history intact
+
+#### Scenario: Stopped member stays stopped across a restart
+
+- **WHEN** `reduit/agent` was stopped (but not removed) when the daemon
+  restarted
+- **THEN** it is registered but NOT started — the persisted intent is restored,
+  Compose-style, not blanket-autostarted
+
+### Requirement: Remove (`harness rm`)
+
+`harness rm NAME` SHALL send a `remove` control request (SPEC-0002) for one
+registered harness: the daemon SHALL stop it, deregister it, release its attach
+and log resources, and delete its persisted registration — the single-member
+counterpart to `down`. Removing the last member of a project SHALL drop the
+now-empty project record. `rm` SHALL refuse a global-config harness with a
+structured `not_removable` error (those are authored in harness.toml and leave
+via edit + reload) and SHALL refuse an unknown name with the same code. A bare
+NAME inside a project SHALL resolve to `<project>/NAME` like every other
+name-taking verb.
+
+#### Scenario: Remove one member
+
+- **WHEN** `harness rm agent` runs in project `reduit` with `agent` and
+  `reviewer` registered
+- **THEN** `reduit/agent` is stopped and deregistered while `reduit/reviewer`
+  keeps running
+
+#### Scenario: Remove the last member drops the project
+
+- **WHEN** `harness rm` removes the only remaining member of `reduit`
+- **THEN** the `reduit` project record is gone and a later `harness down reduit`
+  fails with unknown_project
+
+#### Scenario: Global harness refused
+
+- **WHEN** `harness rm sleeper` names a harness from the global config
+- **THEN** the daemon replies with a structured `not_removable` error and
+  changes no state
+
 ### Requirement: Project Control Operations
 
-The daemon control plane (SPEC-0002) SHALL add two operations: `project_up
+The daemon control plane (SPEC-0002) SHALL add three operations: `project_up
 { name, harnesses }`, which registers and starts a project's harnesses under the
-project namespace, and `project_down { name }`, which stops and deregisters
-them. Both SHALL return structured `ERROR` frames on failure (unknown project for
-`down`, name collision or invalid definition for `up`) with a machine code and a
-human message the CLI can surface verbatim. `project_up` SHALL be idempotent in
-the reconcile sense defined by the Bring Up requirement.
+project namespace; `project_down { name }`, which stops and deregisters them;
+and `remove { name }`, which stops and deregisters ONE registered harness (the
+wire form of `harness rm`). All SHALL return structured `ERROR` frames on
+failure (unknown project for `down`, name collision or invalid definition for
+`up`, not_removable for `remove` on a global or unknown harness) with a machine
+code and a human message the CLI can surface verbatim. `project_up` SHALL be
+idempotent in the reconcile sense defined by the Bring Up requirement.
 
 #### Scenario: project_up round-trip
 

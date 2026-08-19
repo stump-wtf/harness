@@ -115,6 +115,23 @@ func isUnknownProject(err error) bool {
 	return errors.As(err, &em) && em.Code == protocol.ErrUnknownProject
 }
 
+// cmdRm implements `harness rm NAME` (SPEC-0004 REQ "Remove"): stop and
+// deregister ONE registered harness — the single-member counterpart to
+// `down`. Removing the last member of a project drops the now-empty project.
+// A global-config harness is refused by the daemon (not_removable): those are
+// authored in harness.toml and leave via edit + reload, never a runtime op.
+func cmdRm(c *client.Client, o verbOpts) error {
+	data, err := c.Remove(o.name)
+	if err != nil {
+		return fmt.Errorf("harness rm: %w", err)
+	}
+	if o.json {
+		return printJSON(data)
+	}
+	fmt.Printf("removed %s (project %s)\n", data.Name, data.Project)
+	return nil
+}
+
 // cmdPs implements `harness ps` (SPEC-0004 REQ "Project-Scoped Verbs"):
 // inside a project it lists only that project's harnesses; outside a project
 // it is a plain alias for `list` (global scope, unchanged behavior — the

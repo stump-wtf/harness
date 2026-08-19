@@ -201,7 +201,7 @@ func isBackupOf(name, path string) bool {
 // removeLogArtifacts deletes a harness's on-disk log tree: the active
 // <dir>/<name>.log, every rotated backup, and — for a namespaced project
 // harness — the project's log subdirectory if it is now empty. The Manager
-// calls this when a project harness is deregistered so ephemeral projects do
+// calls this when a project harness is deregistered so torn-down projects do
 // not leak unreachable log files forever (SPEC-0004 REQ "Tear Down": the
 // daemon retains no record of the project afterward). Best-effort: removal
 // failures are ignored, exactly like pruneBackups.

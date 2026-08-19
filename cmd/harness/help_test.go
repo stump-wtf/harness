@@ -44,6 +44,7 @@ func TestPlainUsageContent(t *testing.T) {
 		"project commands",
 		"up",
 		"down [PROJECT]",
+		"rm NAME",
 		"ps",
 		"daemon subcommands",
 		"daemon start",

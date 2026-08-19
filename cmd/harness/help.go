@@ -63,6 +63,7 @@ var helpText = struct {
 	projectCmds: [][2]string{
 		{"up", "register + start the project's harnesses (detached; takes no arguments)"},
 		{"down [PROJECT]", "stop + deregister the project's harnesses"},
+		{"rm NAME", "stop + deregister one registered harness"},
 		{"ps", "list the project's harnesses (alias for list outside a project; takes no arguments)"},
 	},
 	projectNote: "inside a project, a bare NAME to describe/logs/start/stop/restart/attach\nalways resolves to <project>/NAME (a NAME containing \"/\" is taken as fully\nqualified); to address a global harness by its bare name, run the verb\noutside the project directory.",

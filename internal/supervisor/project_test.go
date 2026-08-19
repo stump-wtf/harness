@@ -585,11 +585,12 @@ func TestReloadIgnoresGlobalNameShadowingProjectHarness(t *testing.T) {
 
 // ---- ADR-0009: project harnesses never reach state.json --------------------
 
-// TestSaveExcludesProjectHarnessesUnderChurn: Save runs concurrently with
-// project up/down churn and profile switches; state.json must never contain a
-// project harness entry, and the whole dance must stay race-clean under
-// `go test -race`.
-func TestSaveExcludesProjectHarnessesUnderChurn(t *testing.T) {
+// TestSavePersistsProjectsUnderChurn: Save runs concurrently with project
+// up/down churn and profile switches; state.json must never be torn (the
+// registered set and the per-harness state agree under one lock hold), and the
+// whole dance must stay race-clean under `go test -race` (SPEC-0004 REQ
+// "Registration Persistence").
+func TestSavePersistsProjectsUnderChurn(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.json")
 	m := NewManager(managerCfg(shHarness("global", loopScript, 0)), ManagerOptions{
@@ -631,7 +632,9 @@ func TestSaveExcludesProjectHarnessesUnderChurn(t *testing.T) {
 	close(stop)
 	wg.Wait()
 
-	// A final up + save: the registered project harness must be excluded.
+	// A final up + save: the registration AND its runtime state must be
+	// persisted, alongside the global harness (SPEC-0004 REQ "Registration
+	// Persistence").
 	if _, err := m.ProjectUp("reduit", defs); err != nil {
 		t.Fatalf("final ProjectUp: %v", err)
 	}
@@ -642,10 +645,126 @@ func TestSaveExcludesProjectHarnessesUnderChurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read state.json: %v", err)
 	}
-	if strings.Contains(string(data), "reduit/") {
-		t.Errorf("project harness persisted to state.json (ADR-0009):\n%s", data)
+	if !strings.Contains(string(data), "reduit/agent") {
+		t.Errorf("registered project harness missing from state.json:\n%s", data)
+	}
+	if !strings.Contains(string(data), "\"reduit\"") {
+		t.Errorf("project registration missing from state.json:\n%s", data)
 	}
 	if !strings.Contains(string(data), "global") {
 		t.Errorf("global harness missing from state.json:\n%s", data)
+	}
+
+	// And project_down flushes the registration back out.
+	if _, err := m.ProjectDown("reduit"); err != nil {
+		t.Fatalf("final ProjectDown: %v", err)
+	}
+	if err := m.Save(); err != nil {
+		t.Fatalf("Save after down: %v", err)
+	}
+	data, err = os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("re-read state.json: %v", err)
+	}
+	if strings.Contains(string(data), "reduit") {
+		t.Errorf("torn-down project still in state.json:\n%s", data)
+	}
+}
+
+// ---- SPEC-0004 REQ "Registration Persistence" -----------------------------
+
+// TestProjectRegistrationSurvivesRestart: a project brought up persists its
+// registration AND its runtime state to state.json; a fresh Manager Restore +
+// Autostart re-registers it and brings the running set back, Compose-style —
+// until project_down tears it down (SPEC-0004 REQ "Registration Persistence").
+func TestProjectRegistrationSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	cfg := managerCfg(shHarness("global", loopScript, 0))
+
+	m1 := NewManager(cfg, ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    filepath.Join(dir, "logs"),
+	})
+	if _, err := m1.ProjectUp("reduit", projectDefs("agent")); err != nil {
+		t.Fatalf("ProjectUp: %v", err)
+	}
+	waitFor(t, 3*time.Second, "project harness running", func() bool {
+		s, _ := m1.Snapshot("reduit/agent")
+		return s.State == core.StateRunning
+	})
+	if err := m1.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	m1.Close()
+
+	// A fresh manager over the same config + state.json re-registers the
+	// project and Autostart brings the enabled member back up.
+	m2 := NewManager(cfg, ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    filepath.Join(dir, "logs"),
+	})
+	t.Cleanup(m2.Close)
+	if err := m2.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if got := m2.ProjectOf("reduit/agent"); got != "reduit" {
+		t.Fatalf("after Restore, ProjectOf(reduit/agent) = %q, want reduit", got)
+	}
+	m2.Autostart()
+	waitFor(t, 3*time.Second, "restored project harness running again", func() bool {
+		s, _ := m2.Snapshot("reduit/agent")
+		return s.State == core.StateRunning
+	})
+
+	// And down still tears the whole thing down — persistence ends at an
+	// explicit down, not at a restart.
+	if _, err := m2.ProjectDown("reduit"); err != nil {
+		t.Fatalf("ProjectDown: %v", err)
+	}
+	if _, ok := m2.Snapshot("reduit/agent"); ok {
+		t.Error("reduit/agent still registered after down")
+	}
+}
+
+// TestRemoveHarness: remove tears down ONE project member; removing the last
+// member drops the empty project; a global-config harness is refused
+// (SPEC-0004 REQ "Remove").
+func TestRemoveHarness(t *testing.T) {
+	m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
+	if _, err := m.ProjectUp("reduit", projectDefs("agent", "reviewer")); err != nil {
+		t.Fatalf("ProjectUp: %v", err)
+	}
+
+	if err := m.RemoveHarness("reduit/agent"); err != nil {
+		t.Fatalf("RemoveHarness(reduit/agent): %v", err)
+	}
+	if _, ok := m.Snapshot("reduit/agent"); ok {
+		t.Error("reduit/agent still registered after remove")
+	}
+	if _, ok := m.Snapshot("reduit/reviewer"); !ok {
+		t.Error("reduit/reviewer removed by sibling remove")
+	}
+	names, _ := m.ProjectHarnesses("reduit")
+	if len(names) != 1 || names[0] != "reduit/reviewer" {
+		t.Errorf("ProjectHarnesses after remove = %v, want [reduit/reviewer]", names)
+	}
+
+	// Removing the last member drops the now-empty project record.
+	if err := m.RemoveHarness("reduit/reviewer"); err != nil {
+		t.Fatalf("RemoveHarness(reduit/reviewer): %v", err)
+	}
+	if _, ok := m.ProjectHarnesses("reduit"); ok {
+		t.Error("empty project record survived removing its last member")
+	}
+
+	// A global-config harness is config-owned: refused, not torn down.
+	if err := m.RemoveHarness("global"); !errors.Is(err, ErrNotRemovable) {
+		t.Errorf("RemoveHarness(global) = %v, want ErrNotRemovable", err)
+	}
+	if _, ok := m.Snapshot("global"); !ok {
+		t.Error("global harness vanished after a refused remove")
 	}
 }

@@ -115,6 +115,7 @@ func newRootCmd() *cobra.Command {
 		newSimpleCmd(g, "ps", "list the project's harnesses", nameNone),
 		newSimpleCmd(g, "up", "register + start the project's harnesses", nameNone),
 		newSimpleCmd(g, "down", "stop + deregister the project's harnesses", nameOptional),
+		newSimpleCmd(g, "rm", "stop + deregister one registered harness", nameRequired),
 		newSimpleCmd(g, "describe", "show one harness in detail", nameRequired),
 		newSimpleCmd(g, "profiles", "list profiles (active one flagged)", nameNone),
 		newSimpleCmd(g, "use-profile", "activate a profile", nameRequired),

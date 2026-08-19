@@ -65,12 +65,14 @@ both define a `claude` harness collide?
 
 ## Decision Outcome
 
-Chosen option: **Option 1 — ephemeral project registration**, because it gives
+Chosen option: **Option 1 — daemon-managed project registration** (revised
+2026-08-19 from the original runtime-only cut: registrations are now *durable*
+Compose-style state; see Registration Persistence below), because it gives
 the Compose ergonomic while keeping the two concerns cleanly separated: the
 **global file** stays the durable, dotfiles-tracked config-of-record (ADR-0006
 is unchanged), and a **project** is a *transient, daemon-registered set* that
 lives and dies with `up`/`down`. Profiles remain the global "switchable view"
-concept; projects are the "repo-local, ephemeral" concept — siblings, not the
+concept; projects are the "repo-local, daemon-managed" concept — siblings, not the
 same thing.
 
 ### Project file: same schema, new location, project header
@@ -130,12 +132,13 @@ project:
 | Command | Behavior |
 | --- | --- |
 | `harness up` | Discover + register project, start all its harnesses (detached), print status table. Idempotent: re-running reconciles (adds new, restarts changed). |
-| `harness down` | Stop **and deregister** every harness in the project; the daemon forgets them. Destructive by design (unlike non-destructive profile hopping). |
+| `harness down` | Stop **and deregister** every harness in the project; the daemon forgets them, persisted registration included. Destructive by design (unlike non-destructive profile hopping). |
+| `harness rm [NAME]` | Stop **and deregister** ONE registered harness; removing the last member drops the empty project. The single-member tear-down. |
 | `harness ps` | List just this project's harnesses and states. |
 | `harness logs [name]` | Scrollback for the project (or one member). |
-| `harness start`/`stop`/`restart [name]` | Non-destructive lifecycle on project members (deregistration stays exclusive to `down`). |
+| `harness start`/`stop`/`restart [name]` | Non-destructive lifecycle on project members (deregistration stays exclusive to `down`/`rm`). |
 
-`up`/`down` are new control ops (`project_up`, `project_down`); `ps`/`logs`/
+`up`/`down`/`rm` map to control ops (`project_up`, `project_down`, `remove`); `ps`/`logs`/
 `start`/`stop`/`restart` reuse the existing `list`/`logs`/`start`/`stop`/
 `restart` ops filtered by project namespace. `harness up`/`down` require a
 running daemon exactly as every other client verb does (ADR-0002).
@@ -155,10 +158,13 @@ running daemon exactly as every other client verb does (ADR-0002).
   (global file + N ephemeral projects) and its registry/state model (ADR-0007)
   must track provenance ("this harness came from project reduit, deregister on
   down") — more state than a single flat config.
-* Bad, because a project registration is **runtime-only** and does not survive a
-  daemon restart the way global `autostart` profiles do; a rebooted daemon comes
-  back with global config but *not* previously-`up` projects (see Confirmation /
-  deferred re-up-on-restart).
+* ~~Bad, because a project registration is **runtime-only** and does not survive
+  a daemon restart~~ — **resolved 2026-08-19**: registrations now persist to
+  state.json (definitions + per-harness intent) and are re-registered on daemon
+  start, so `up` stays up across restarts until an explicit `down`/`rm`, exactly
+  like Compose containers under a restarted dockerd with a restart policy. The
+  2026-07 original cut was runtime-only; real usage showed that made `up` an
+  ad-hoc gesture rather than a Compose one.
 * Neutral, because the shared `harness.toml` basename requires a deliberate
   location-based discrimination rule rather than a filename one — documented
   above, but a real edge developers can trip on.
@@ -170,29 +176,34 @@ running daemon exactly as every other client verb does (ADR-0002).
   ops, and the `up`/`down`/`ps` verb semantics as testable requirements +
   scenarios.
 * Acceptance tests: `up` in a repo registers `<project>/*` and starts them;
-  `down` removes them and leaves the global config file byte-identical; two
-  projects defining the same bare name coexist; a project file carrying
-  `[server]`/`[profile.*]` is rejected; discovery never adopts the XDG global
-  file as a project.
-* **Deferred:** whether the daemon should *persist* which projects were `up` and
-  re-`up` them on restart (a "project autostart") is left to a follow-up
-  decision; the initial cut is runtime-only, matching Compose's "compose up
-  doesn't survive a dockerd restart" behavior.
+  `down` removes them and leaves the global config file byte-identical; a daemon
+  restart re-registers an `up` project and restores its running set while a
+  stopped member stays stopped; `rm` removes one member and drops an
+  emptied project, and refuses a global harness; two projects defining the same
+  bare name coexist; a project file carrying `[server]`/`[profile.*]` is
+  rejected; discovery never adopts the XDG global file as a project.
+* **Resolved (was Deferred):** the daemon *persists* which projects were `up`
+  and re-registers them on restart, restoring each member's intent like any
+  global harness (ADR-0007 state model; SPEC-0004 REQ "Registration
+  Persistence"). The 2026-07 draft deferred this and shipped runtime-only; the
+  deferral is over.
 
 ## Pros and Cons of the Options
 
 ### Option 1 — Ephemeral project registration
 
 Repo-root file, discovered by up-walk, pushed to the daemon as a namespaced,
-transient set via new `project_up`/`project_down` ops.
+daemon-managed set via `project_up`/`project_down`/`remove` ops, persisted
+across daemon restarts until an explicit tear-down.
 
 * Good, because global config-of-record (ADR-0006) is never mutated.
 * Good, because it's the closest analogue to the `docker compose` mental model
   the request explicitly asks for.
 * Good, because `<project>/` namespacing solves collisions structurally.
 * Neutral, because it introduces provenance tracking in the daemon registry.
-* Bad, because project registrations are runtime-only (lost on daemon restart)
-  unless a later ADR adds project-autostart persistence.
+* ~~Bad, because project registrations are runtime-only (lost on daemon
+  restart)~~ — resolved 2026-08-19; registrations persist (see Decision
+  Outcome).
 
 ### Option 2 — Project *is* a profile
 
