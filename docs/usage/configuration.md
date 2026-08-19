@@ -221,6 +221,101 @@ read_only = true
 
 See [Remote access](./remote) for setup and security notes.
 
+## Environment variables
+
+Process-level settings — where the socket lives, how loud the log is, whether
+the SSH server is on — can come from the environment instead of a flag or this
+file. That is what makes Harness deployable as a container or a systemd unit
+without baking in a config file.
+
+| Variable | Flag | Type | Default |
+|---|---|---|---|
+| `HARNESS_SOCKET` | `--socket` | path | `$XDG_RUNTIME_DIR/harness.sock` |
+| `HARNESS_CONFIG` | `--config` | path | `$XDG_CONFIG_HOME/harness/harness.toml` |
+| `HARNESS_JSON` | `--json` | bool | `false` |
+| `HARNESS_LOG_LEVEL` | `--log-level` | `debug`/`info`/`warn`/`error` | `info` |
+| `HARNESS_LOG_FILE` | `--log-file` | path | stderr |
+| `HARNESS_SCROLLBACK` | `--scrollback` | int | 10000 |
+| `HARNESS_SSH` | `--ssh` | bool | `false` |
+| `HARNESS_SSH_LISTEN` | `--ssh-listen` | `host:port` | unset |
+| `HARNESS_WATCH_CONFIG` | — | bool | `true` |
+
+Booleans accept `1`, `0`, `true`, `false`, `yes`, `no`, `on`, `off`.
+
+### Precedence
+
+An explicit flag beats an environment variable, which beats this file, which
+beats the compiled default:
+
+```
+--socket /tmp/y.sock   >   HARNESS_SOCKET=/tmp/x.sock   >   harness.toml   >   default
+```
+
+"Explicit" means you actually typed the flag. Leaving a flag alone does not
+suppress an environment variable, so `HARNESS_LOG_LEVEL=debug harness daemon run`
+starts at debug even though `--log-level` has a default of `info`.
+
+An exported-but-empty variable is treated as unset, because
+`export HARNESS_SOCKET=$SOME_UNSET_VAR` is a shell accident rather than a request
+for an empty socket path.
+
+A bad value is a hard failure, never a silent fallback:
+
+```
+HARNESS_SCROLLBACK=lots harness daemon run
+# HARNESS_SCROLLBACK: invalid value "lots": expected an integer
+```
+
+### Which source won?
+
+`harness doctor` reports every setting with the source that supplied it, so you
+never have to guess:
+
+```bash
+harness doctor
+```
+
+```
+SETTING       SOURCE    VALUE
+socket        env       /run/harness.sock
+config        default   /home/you/.config/harness/harness.toml
+log-level     flag      debug
+ssh           file      true
+```
+
+`harness doctor --json` carries the same data under `.settings` for scripts.
+
+### Harnesses stay in the file
+
+There is no environment variable that defines a harness or a profile. Those are
+collections, and mangling them into variable names is not reliably reversible —
+`HARNESS_HARNESS_CLAUDE_SRC_WORKDIR` cannot tell you whether the harness is
+`claude-src` or `claude_src`. So:
+
+**A container can run a fully-configured daemon with no `harness.toml` at all,
+but it cannot define a harness without one.** A missing file is not an error;
+the daemon comes up and reports zero harnesses. A file that exists but does not
+parse is still an error.
+
+### Secrets do not go here
+
+No `HARNESS_*` variable takes a token, key, or password. Per-harness secrets
+belong in `env_file`, which is read by the harness rather than by Harness
+itself. See [Remote access](./remote) for the SSH key handling.
+
+`HARNESS_DETACH_READY_FD` is reserved: it is internal plumbing between
+`harness daemon --detach` and the process it forks, not a setting.
+
+### systemd
+
+```ini
+[Service]
+Environment=HARNESS_SOCKET=/run/harness/harness.sock
+Environment=HARNESS_LOG_LEVEL=info
+Environment=HARNESS_CONFIG=/etc/harness/harness.toml
+ExecStart=/usr/local/bin/harness daemon run
+```
+
 ## After editing
 
 `harness reload` re-reads the config and reconciles running harnesses without a

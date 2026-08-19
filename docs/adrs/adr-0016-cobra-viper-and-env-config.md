@@ -122,9 +122,12 @@ harness without one.**
 * Good, because shell completion and `harness help <verb>` come from Cobra for
   free, where today the usage text is hand-maintained in `usage()`.
 * Good, because precedence is stated in one place and testable as one table.
-* Bad, because it adds two sizeable dependencies to a tree that has stayed
-  deliberately small (Cobra pulls `pflag`; Viper pulls `afero`, `cast`, and a
-  mapstructure/parser stack).
+* Bad, because it adds two sizeable dependencies to a tree ADR-0001 kept
+  deliberately small. Measured, not estimated: the module graph goes from 52 to
+  66 entries. Cobra brings `pflag` and `mousetrap`; Viper brings `afero`,
+  `cast`, `mapstructure`, `locafero`, `conc`, `gotenv`, a second TOML parser
+  (`pelletier/go-toml`, alongside the `BurntSushi/toml` already in use), and a
+  YAML parser this project will never call.
 * Bad, because the CLI surface is rewritten, and a rewrite of argv handling is
   exactly where regressions hide — every verb, flag, and the interleaved
   positional behaviour need tests before the swap, not after.
@@ -164,7 +167,9 @@ harness without one.**
   hand-maintained `os.Getenv` ladder per setting
 * Good, because line-numbered validation errors survive untouched
 * Neutral, because it accepts two config readers as the price of that
-* Bad, because it is the largest dependency addition in the project's history
+* Bad, because it is the largest dependency addition in the project's history:
+  +14 modules, including a second TOML parser and a YAML parser that are dead
+  weight here
 
 ### Option 2: Viper for everything
 
