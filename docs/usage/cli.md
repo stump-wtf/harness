@@ -88,7 +88,7 @@ is active at a time; `harness list` flags it with `*`. See
 
 ```sh
 harness reload                # re-read config, reconcile running harnesses
-harness doctor                # health check battery (config, daemon, harnesses, versions)
+harness doctor                # health check battery (config, daemon, versions, remote SSH, harnesses)
 ```
 
 `reload` picks up config changes without restarting the daemon. `describe`

@@ -208,6 +208,9 @@ func runDaemon(args []string) {
 	// via [server] or the -ssh flag. Secrets never touch this path — only public
 	// keys and the persisted host key (ADR-0008).
 	remoteSrv := startRemote(cfg.Server, *sshEnable, *sshListen, srv.SocketPath(), *configPath)
+	if remoteSrv != nil {
+		srv.SetRemote(remoteSrv.Addr(), remoteSrv.Keys())
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)

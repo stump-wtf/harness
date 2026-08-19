@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
+	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
 // stringErr is a minimal error for testing isMissing without pulling in os.
@@ -206,4 +208,49 @@ func TestEmitDoctorJSONAllPassed(t *testing.T) {
 
 func writeMinimalConfig(path string) error {
 	return os.WriteFile(path, []byte("[harness.demo]\ncmd = \"echo hi\"\nenabled = false\n"), 0o644)
+}
+
+// --- remote SSH check unit tests -------------------------------------------
+
+func TestSshCheckDisabledAndOff(t *testing.T) {
+	t.Parallel()
+	row := sshCheck(core.ServerConfig{}, nil)
+	if row.level != cliui.LevelSuccess || !strings.Contains(row.detail, "off") {
+		t.Errorf("disabled+off = %+v, want success/off", row)
+	}
+}
+
+func TestSshCheckForcedOnByFlag(t *testing.T) {
+	t.Parallel()
+	row := sshCheck(core.ServerConfig{}, &protocol.DaemonInfo{SshAddr: "127.0.0.1:2222", SshKeys: 1})
+	if row.level != cliui.LevelSuccess || !strings.Contains(row.detail, "--ssh") {
+		t.Errorf("flag-forced = %+v, want success annotated with --ssh", row)
+	}
+}
+
+func TestSshCheckEnabledButNotListening(t *testing.T) {
+	t.Parallel()
+	row := sshCheck(core.ServerConfig{Enabled: true}, &protocol.DaemonInfo{})
+	if row.level != cliui.LevelError || row.hint == "" {
+		t.Errorf("enabled+down = %+v, want error with hint", row)
+	}
+}
+
+func TestSshCheckEnabledAndListening(t *testing.T) {
+	t.Parallel()
+	row := sshCheck(core.ServerConfig{Enabled: true}, &protocol.DaemonInfo{SshAddr: "0.0.0.0:23234", SshKeys: 2})
+	if row.level != cliui.LevelSuccess || !strings.Contains(row.detail, "2 key(s)") {
+		t.Errorf("enabled+up = %+v, want success with key count", row)
+	}
+}
+
+// An OLD daemon (pre ssh_addr) still answers daemon_info without the field;
+// the check must degrade to the enabled-but-unverifiable path rather than
+// panic or silently pass.
+func TestSshCheckEnabledAgainstOldDaemon(t *testing.T) {
+	t.Parallel()
+	row := sshCheck(core.ServerConfig{Enabled: true}, nil)
+	if row.level != cliui.LevelError {
+		t.Errorf("old-daemon = %+v, want error (cannot distinguish refused from off)", row)
+	}
 }

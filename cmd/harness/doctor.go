@@ -27,6 +27,7 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
 // check is one row in the doctor table.
@@ -49,6 +50,7 @@ type doctorResult struct {
 	// object here, so `--json` reported `warned: 1` with nothing to point at.
 	Profile   *checkResult  `json:"profile,omitempty"`
 	Autostart *checkResult  `json:"autostart,omitempty"`
+	Ssh       *checkResult  `json:"ssh,omitempty"`
 	Summary   summaryResult `json:"summary"`
 }
 
@@ -168,7 +170,16 @@ func runDoctor(o verbOpts) int {
 		}
 	}
 
-	// --- Check 4: harnesses in healthy state -------------------------------
+	// --- Check 4: remote SSH server -----------------------------------------
+	// Governing: ADR-0004 (the optional Wish cockpit) + ADR-0008 (public-key
+	// only, refuses an empty allowlist). The row cross-checks config intent
+	// against the daemon's live listener, so "enabled but refused to start"
+	// (empty allowlist, bind failure) is visible without reading daemon logs.
+	if cfg != nil {
+		rows = append(rows, sshCheck(cfg.Server, &di))
+	}
+
+	// --- Check 5: harnesses in healthy state -------------------------------
 	// Governing: SPEC-0003 (the state model and its healthy/degraded/failed
 	// tiers drive the per-row level here).
 	//
@@ -259,6 +270,47 @@ func runDoctor(o verbOpts) int {
 	return 0
 }
 
+// sshCheck builds the remote-SSH row by cross-checking the config's [server]
+// intent against what the daemon reports as actually listening. The daemon
+// only sets SshAddr when the Wish server truly started, so the four outcomes
+// are: disabled-and-off (pass), forced-on via --ssh despite config (pass,
+// annotated), enabled-but-not-listening (fail — the daemon refused to start
+// it, most often an empty allowlist per ADR-0008), and listening (pass, with
+// the allowlist size).
+func sshCheck(sc core.ServerConfig, di *protocol.DaemonInfo) check {
+	listening := ""
+	keys := 0
+	if di != nil {
+		listening = di.SshAddr
+		keys = di.SshKeys
+	}
+	switch {
+	case !sc.Enabled && listening == "":
+		return check{name: "ssh", level: cliui.LevelSuccess, detail: "off (not enabled in config)"}
+	case !sc.Enabled && listening != "":
+		// Only reachable when the daemon was started with --ssh, which
+		// overrides config; annotate so the row does not look contradictory.
+		return check{
+			name:   "ssh",
+			level:  cliui.LevelSuccess,
+			detail: fmt.Sprintf("listening on %s · %d key(s) (forced on by --ssh flag)", listening, keys),
+		}
+	case sc.Enabled && listening == "":
+		return check{
+			name:   "ssh",
+			level:  cliui.LevelError,
+			detail: "enabled in config but not listening",
+			hint:   "check the daemon log — an empty authorized-keys allowlist refuses to start (ADR-0008)",
+		}
+	default:
+		return check{
+			name:   "ssh",
+			level:  cliui.LevelSuccess,
+			detail: fmt.Sprintf("listening on %s · %d key(s)", listening, keys),
+		}
+	}
+}
+
 // emitDoctor renders the rows either as JSON on stdout (when --json) or as
 // a human tabular report on stderr. Split out so it can be unit-tested with
 // an injected writer.
@@ -309,6 +361,9 @@ func emitDoctorJSON(w io.Writer, rows []check) {
 		case "autostart":
 			c := cr
 			res.Autostart = &c
+		case "ssh":
+			c := cr
+			res.Ssh = &c
 		}
 	}
 	res.Summary = summaryResult{Passed: pass, Warned: warn, Failed: fail}

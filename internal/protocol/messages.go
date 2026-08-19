@@ -288,6 +288,14 @@ type DaemonInfo struct {
 	// is healthy. Clients surface it so `autostart = true` next to a harness
 	// that never starts is not silent.
 	DormantAutostart []string `json:"dormant_autostart,omitempty"`
+	// SshAddr is the bind address of the running remote Wish SSH server
+	// (ADR-0004), or empty when it is not running. SshKeys is the size of
+	// its resolved public-key allowlist. Set by the daemon only when the
+	// server actually started (config enabled or --ssh), so a client can
+	// distinguish "off" from "enabled but refused to start" (empty
+	// allowlist, ADR-0008).
+	SshAddr string `json:"ssh_addr,omitempty"`
+	SshKeys int    `json:"ssh_keys,omitempty"`
 }
 
 // ---- Structured errors (SPEC-0002 REQ "Control Operations") --------------

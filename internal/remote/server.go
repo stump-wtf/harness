@@ -73,6 +73,7 @@ func DefaultHostKeyPath() string {
 type Server struct {
 	ssh  *ssh.Server
 	addr string
+	keys int // resolved allowlist size, reported via Keys() for daemon_info
 }
 
 // New builds (but does not start) the SSH server: it resolves the allowlist,
@@ -106,7 +107,7 @@ func New(opts Options) (*Server, error) {
 		}
 	}
 
-	s := &Server{addr: listen}
+	s := &Server{addr: listen, keys: len(allow)}
 
 	// Public-key auth: only allowlisted keys may connect, and the matched key's
 	// read-only flag is stashed on the session context for the TUI to honour.
@@ -189,6 +190,11 @@ func New(opts Options) (*Server, error) {
 
 // Addr returns the configured bind address.
 func (s *Server) Addr() string { return s.addr }
+
+// Keys reports the resolved public-key allowlist size (ADR-0008). Surfaced by
+// `harness doctor` so an accidentally-empty allowlist is visible without
+// reading daemon logs.
+func (s *Server) Keys() int { return s.keys }
 
 // Serve binds the listener and serves until Shutdown. It blocks; run it in a
 // goroutine. A clean shutdown returns ssh.ErrServerClosed, which Serve maps to

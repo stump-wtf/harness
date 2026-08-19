@@ -250,7 +250,7 @@ func (c *conn) opReload(req protocol.ControlReq) {
 // opDaemonInfo returns daemon metadata.
 func (c *conn) opDaemonInfo() protocol.DaemonInfo {
 	resolved := c.srv.mgr.ProfileResolved()
-	return protocol.DaemonInfo{
+	res := protocol.DaemonInfo{
 		Version:       c.srv.version,
 		ProtoVersion:  protocol.ProtoVersion,
 		PID:           os.Getpid(),
@@ -263,6 +263,13 @@ func (c *conn) opDaemonInfo() protocol.DaemonInfo {
 		ProfileResolved:  &resolved,
 		DormantAutostart: c.srv.mgr.DormantAutostart(),
 	}
+	// Remote SSH (ADR-0004): report the live listener only when it actually
+	// started, so clients can distinguish "off" from "enabled but refused".
+	if addr, keys := c.srv.Remote(); addr != "" {
+		res.SshAddr = addr
+		res.SshKeys = keys
+	}
+	return res
 }
 
 // timeSince returns whole seconds elapsed since t.

@@ -68,6 +68,13 @@ type Server struct {
 	subMu sync.Mutex
 	subs  map[chan protocol.EventMsg]struct{}
 
+	// remoteMu guards the remote-SSH status fields below. SetRemote is
+	// called by the daemon entrypoint AFTER NewServer, once startRemote has
+	// decided whether the Wish server is up, so opDaemonInfo can report it.
+	remoteMu   sync.Mutex
+	remoteAddr string
+	remoteKeys int
+
 	// connMu guards the set of live client connections and the closing flag.
 	// Close() closes each raw socket to unblock its ReadFrame loop; without this
 	// a blocked reader never returns and wg.Wait() hangs at shutdown (a
@@ -147,6 +154,23 @@ func (s *Server) Listen() error {
 
 // SocketPath returns the bound socket path.
 func (s *Server) SocketPath() string { return s.socketPath }
+
+// SetRemote records the running remote SSH server's bind address and allowlist
+// size for daemon_info. Call with an empty addr to mark it as not running.
+func (s *Server) SetRemote(addr string, keys int) {
+	s.remoteMu.Lock()
+	defer s.remoteMu.Unlock()
+	s.remoteAddr = addr
+	s.remoteKeys = keys
+}
+
+// Remote reports the running remote SSH server's bind address ("" when off)
+// and its resolved allowlist size.
+func (s *Server) Remote() (string, int) {
+	s.remoteMu.Lock()
+	defer s.remoteMu.Unlock()
+	return s.remoteAddr, s.remoteKeys
+}
 
 // Serve accepts connections until Close. It also starts the event relay that
 // fans Manager lifecycle events out to subscribed connections. Blocks until the
