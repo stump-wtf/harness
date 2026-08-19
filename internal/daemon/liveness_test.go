@@ -332,7 +332,14 @@ description = "never stops talking"
 // a quiet harness's output, so nothing blocked. This test removes that luck by
 // keeping output flowing, which fills any platform's buffer.
 func TestWedgedClientReapedWhileOutputBacksUp(t *testing.T) {
-	td := newTestDaemon(t, chattyTOML, reapFast)
+	// reapPatient, not reapFast: this test has to observe the wedged client
+	// ATTACHED (two sessions) before the reaper takes it, and reapFast's 75ms
+	// silence budget is shorter than the attach round-trip can take on a
+	// loaded -race runner — the eviction this test is about would then happen
+	// before the assertion could see the state it evicts from, failing with
+	// "sessions = 1, want 2". 500ms keeps the same behaviour under test with
+	// room to watch it.
+	td := newTestDaemon(t, chattyTOML, reapPatient)
 	if _, err := td.dial(t, nil).Start("chatty"); err != nil {
 		t.Fatalf("start: %v", err)
 	}

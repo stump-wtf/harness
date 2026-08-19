@@ -41,6 +41,10 @@ type Mux struct {
 	name     string
 	onResize func(cols, rows int)
 	onInput  func(p []byte)
+	// nudgeDelays is this Mux's copy of the SIGWINCH re-assert schedule, taken
+	// at construction so the goroutine never reads the package var (see
+	// newMux).
+	nudgeDelays []time.Duration
 	// onNudge re-delivers SIGWINCH to the guest's process group (#182). It may
 	// be nil (tests).
 	onNudge func()
@@ -72,11 +76,19 @@ func newMux(name string, ringLines int, onResize func(cols, rows int), onInput f
 		onResize: onResize,
 		onInput:  onInput,
 		onNudge:  onNudge,
-		term:     vt.NewEmulator(defaultCols, defaultRows),
-		ring:     newRing(ringLines),
-		cols:     defaultCols,
-		rows:     defaultRows,
-		sessions: make(map[*Session]struct{}),
+		// Captured per-Mux at construction rather than read from the package
+		// var inside the goroutine: reassertWinch outlives the caller by the
+		// length of the whole schedule, so a test that shrinks the global for
+		// determinism would otherwise be writing it while a previous test's
+		// nudge goroutine is still ranging over it (a real -race failure, and
+		// an intermittent one, since it depends on which goroutines are still
+		// asleep).
+		nudgeDelays: winchNudgeDelays,
+		term:        vt.NewEmulator(defaultCols, defaultRows),
+		ring:        newRing(ringLines),
+		cols:        defaultCols,
+		rows:        defaultRows,
+		sessions:    make(map[*Session]struct{}),
 	}
 	go m.pumpReplies()
 	return m
@@ -141,7 +153,7 @@ var winchNudgeDelays = []time.Duration{
 // reassertWinch fires onNudge on the nudge schedule. Bounded, so a Mux that is
 // never closed still leaks nothing.
 func (m *Mux) reassertWinch() {
-	for _, d := range winchNudgeDelays {
+	for _, d := range m.nudgeDelays {
 		time.Sleep(d)
 		if m.onNudge == nil {
 			return
