@@ -45,26 +45,27 @@ workdir = "~/src/my-project"
 description = "long-running agent in ~/src/my-project"
 enabled = false
 
-# An agent one-shot: give the harness a prompt instead of a cmd and the
+# An agent one-shot: give the harness a prompt instead of args and the
 # daemon synthesizes the agent invocation at spawn time (currently
 # `crush run --quiet <prompt>`). `prompt` is mutually exclusive with
-# `cmd`/`args`. One-shots default to restart = "no" — a completed run must
+# `args`. One-shots default to restart = "no" — a completed run must
 # not respawn; set restart explicitly to opt back into supervision.
 [harness.deploy-check]
+harness = "claude-code"
 prompt = "check the deployments and report anything unhealthy"
 model = "claude-opus-5"  # optional: which model the agent runs (requires prompt)
 # auto_accept runs the agent unattended (currently crush's --yolo flag,
 # synthesized at spawn). WARNING: this bypasses ALL of the agent's permission
 # prompts — only enable it for trusted, headless runs. Requires `prompt`; a
-# cmd harness passes its tool's own flag through `args` instead.
+# long-running harness passes its tool's own flag through `args` instead.
 auto_accept = true
 # max_turns caps how many iterations the agent may run before it stops — the
-# budget guard for unattended one-shots (requires `prompt`; a cmd harness
+# budget guard for unattended one-shots (requires `prompt`; a long-running harness
 # passes its tool's flag through `args`). 0 or omitted means unlimited.
 max_turns = 20
 # quiet runs the one-shot headless (suppresses agent output). It is the
 # default for a prompt harness, so set quiet = false to have the agent stream
-# its output to whatever attaches instead. Requires `prompt`; a cmd harness
+# its output to whatever attaches instead. Requires `prompt`; a long-running harness
 # passes its tool's own tone flag through `args`.
 # quiet = false
 workdir = "~/src/my-project"
@@ -81,6 +82,7 @@ enabled = false
 # files).
 #
 # [harness.stumpcloud-sweep]
+# harness = "crush"
 # prompt = "check all StumpCloud services and report anything unhealthy"
 # auto_accept = true
 # schedule = "0 */6 * * *"   # every 6 hours
@@ -89,12 +91,12 @@ enabled = false
 # Harness kinds (ADR-0011, SPEC-0006): the `harness` key is an enum selecting
 # the adapter, which owns the executable a long-running harness runs (args are
 # appended after it) and the CLI-specific argv synthesized for a prompt
-# one-shot. Defaults to "crush" when omitted. "generic" runs sh, so its args
+# one-shot. REQUIRED -- there is no default. "generic" runs sh, so its args
 # are sh's args -- write args = ["-c", "<command line>"] to run an arbitrary
 # command (no projection, scrollback-only trajectory).
 # Valid values: "crush", "claude-code", "codex", "generic".
 #
-# harness = "claude-code"
+# harness = "claude-code"   # required on every [harness.*] table
 
 # Trajectory harvesting (SPEC-0006 REQ "Harvest Opt-In"): expose this harness's
 # session transcripts read-only through the facade (list_trajectories /

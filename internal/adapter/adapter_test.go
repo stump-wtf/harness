@@ -73,16 +73,17 @@ func TestResolveExplicitAgent(t *testing.T) {
 	}
 }
 
-func TestResolveEmptyDefaultsToCrush(t *testing.T) {
+func TestResolveUnsetOrUnknownIsGeneric(t *testing.T) {
 	r := NewRegistryWithDefaults()
 
-	// The `harness` enum key defaults to crush: a harness with no adapter set
-	// (the common prompt one-shot) resolves to Crush, whose PromptCommand
-	// synthesizes `crush run …` (ADR-0011).
+	// The `harness` enum key is required and validated at both front doors, so
+	// an empty adapter should never reach Resolve. If one does, it must not be
+	// guessed into an agent: Resolve is the last stop before something is
+	// executed, and Generic runs what it is given without harvesting anything.
 	h := core.Harness{Prompt: "do the thing"}
 	a := r.Resolve(h)
-	if a.Name() != "crush" {
-		t.Fatalf("Resolve(empty) = %q, want crush", a.Name())
+	if a.Name() != "generic" {
+		t.Fatalf("Resolve(empty) = %q, want generic", a.Name())
 	}
 	// An unknown value maps defensively to Generic (config validation
 	// rejects it before this point; Resolve never returns nil).

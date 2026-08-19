@@ -336,7 +336,13 @@ func validateProjectDefs(project string, defs []core.Harness) error {
 		// The `harness` enum + prompt invariants — the same ones the config
 		// parsers enforce. Re-checked here because the wire is a second front
 		// door into the registry (ADR-0011).
-		case h.Adapter != "" && h.Adapter != "crush" && h.Adapter != "claude-code" &&
+		// `harness` is required and has no default, on the wire as much as in
+		// the file: an empty kind here would otherwise reach Resolve and pick
+		// an agent for a caller that never named one.
+		case h.Adapter == "":
+			return fmt.Errorf("project up %q: harness %q: %w: missing harness kind (want one of: crush, claude-code, codex, generic)",
+				project, h.Name, ErrInvalidProjectDef)
+		case h.Adapter != "crush" && h.Adapter != "claude-code" &&
 			h.Adapter != "codex" && h.Adapter != "generic":
 			return fmt.Errorf("project up %q: harness %q: %w: unknown harness kind %q",
 				project, h.Name, ErrInvalidProjectDef, h.Adapter)

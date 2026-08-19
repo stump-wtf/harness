@@ -221,7 +221,26 @@ func TestProjectUpInvalidDefsNoPartialState(t *testing.T) {
 	}
 }
 
-// TestProjectUpAcceptsPromptHarness: a prompt-only definition (empty Cmd) is a
+// TestProjectUpRejectsMissingHarnessKind: the wire is a second front door into
+// the registry, so it enforces the same required `harness` key the config
+// parsers do — otherwise a caller that named no kind would have one picked for
+// it at Resolve time.
+func TestProjectUpRejectsMissingHarnessKind(t *testing.T) {
+	m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
+	def := core.Harness{
+		Name:    "oneshot",
+		Prompt:  "do the thing",
+		Backend: core.BackendNative,
+		Restart: core.RestartNo,
+	}
+	if _, err := m.ProjectUp("reduit", []core.Harness{def}); err == nil {
+		t.Fatal("ProjectUp accepted a harness with no kind")
+	} else if !strings.Contains(err.Error(), "missing harness kind") {
+		t.Fatalf("ProjectUp error = %v, want it to name the missing kind", err)
+	}
+}
+
+// TestProjectUpAcceptsPromptHarness: a prompt-only definition (no args) is a
 // valid project harness — its argv is synthesized at spawn (ADR-0011), so the
 // registration path must not hard-require cmd. Registered disabled so the test
 // never actually launches an agent CLI.
@@ -229,6 +248,7 @@ func TestProjectUpAcceptsPromptHarness(t *testing.T) {
 	m := newTestManager(t, managerCfg(shHarness("global", loopScript, 0)))
 	def := core.Harness{
 		Name:    "oneshot",
+		Adapter: "crush",
 		Prompt:  "do the thing",
 		Backend: core.BackendNative,
 		Restart: core.RestartNo,

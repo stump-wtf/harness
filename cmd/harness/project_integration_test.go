@@ -758,6 +758,7 @@ func TestWireHarnessesCarriesEnabledAndOrder(t *testing.T) {
 // default travels explicitly so the daemon never re-defaults it to always.
 func TestWireHarnessesCarriesPrompt(t *testing.T) {
 	dir := writeProjectDir(t, `[harness.oneshot]
+harness = "crush"
 prompt = "summarize the day"
 enabled = false
 `)
@@ -783,6 +784,7 @@ enabled = false
 // #57), so no client ever re-persists a synthesized flag.
 func TestWireHarnessesCarriesModel(t *testing.T) {
 	dir := writeProjectDir(t, `[harness.oneshot]
+harness = "crush"
 prompt = "summarize the day"
 model = "claude-opus-5"
 enabled = false
@@ -806,6 +808,7 @@ enabled = false
 // #58), so no client ever re-persists a synthesized flag.
 func TestWireHarnessesCarriesAutoAccept(t *testing.T) {
 	dir := writeProjectDir(t, `[harness.oneshot]
+harness = "crush"
 prompt = "summarize the day"
 auto_accept = true
 enabled = false

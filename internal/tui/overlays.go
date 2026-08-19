@@ -349,7 +349,7 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 	return huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("name").Value(&fi.name),
-			huh.NewInput().Title("harness (crush/claude-code/codex/generic)").Value(&fi.harness),
+			huh.NewInput().Title("harness — required (crush/claude-code/codex/generic)").Value(&fi.harness),
 			huh.NewInput().Title("prompt (agent one-shot; instead of cmd/args)").Value(&fi.prompt),
 			huh.NewInput().Title("model (agent model id; requires prompt)").Value(&fi.model),
 			huh.NewConfirm().Title("auto_accept (agent yolo mode; requires prompt)").Value(&fi.autoAccept),

@@ -301,19 +301,19 @@ func TestParsePromptHarness(t *testing.T) {
 	}{
 		{
 			name:        "prompt stored, restart defaults to no",
-			toml:        "[harness.agent]\nprompt = \"check deployments\"\n",
+			toml:        "[harness.agent]\nharness = \"crush\"\nprompt = \"check deployments\"\n",
 			wantPrompt:  "check deployments",
 			wantRestart: core.RestartNo,
 		},
 		{
 			name:        "explicit restart overrides the one-shot default",
-			toml:        "[harness.agent]\nprompt = \"check deployments\"\nrestart = \"on-failure\"\n",
+			toml:        "[harness.agent]\nharness = \"crush\"\nprompt = \"check deployments\"\nrestart = \"on-failure\"\n",
 			wantPrompt:  "check deployments",
 			wantRestart: core.RestartOnFailure,
 		},
 		{
 			name:        "surrounding whitespace is trimmed",
-			toml:        "[harness.agent]\nprompt = \"  check deployments \"\n",
+			toml:        "[harness.agent]\nharness = \"crush\"\nprompt = \"  check deployments \"\n",
 			wantPrompt:  "check deployments",
 			wantRestart: core.RestartNo,
 		},
@@ -360,13 +360,13 @@ func TestParsePromptErrors(t *testing.T) {
 		},
 		{
 			name:     "prompt and args are mutually exclusive",
-			toml:     "[harness.bad]\nprompt = \"hello\"\nargs = [\"run\"]\n",
+			toml:     "[harness.bad]\nharness = \"crush\"\nprompt = \"hello\"\nargs = [\"run\"]\n",
 			wantLine: 1,
 			wantSub:  `"prompt" and "args" are mutually exclusive`,
 		},
 		{
 			name:     "whitespace-only prompt names the blank prompt",
-			toml:     "[harness.blank]\nprompt = \"   \"\n",
+			toml:     "[harness.blank]\nharness = \"crush\"\nprompt = \"   \"\n",
 			wantLine: 1,
 			wantSub:  `"prompt" must not be blank`,
 		},
@@ -405,7 +405,7 @@ func TestParseModelHarness(t *testing.T) {
 	}{
 		{
 			name:      "model stored on a prompt harness, args untouched",
-			toml:      "[harness.agent]\nprompt = \"check deployments\"\nmodel = \"claude-opus-5\"\n",
+			toml:      "[harness.agent]\nharness = \"crush\"\nprompt = \"check deployments\"\nmodel = \"claude-opus-5\"\n",
 			wantModel: "claude-opus-5",
 		},
 		{
@@ -416,7 +416,7 @@ func TestParseModelHarness(t *testing.T) {
 		},
 		{
 			name:      "surrounding whitespace is trimmed",
-			toml:      "[harness.agent]\nprompt = \"check deployments\"\nmodel = \" claude-opus-5 \"\n",
+			toml:      "[harness.agent]\nharness = \"crush\"\nprompt = \"check deployments\"\nmodel = \" claude-opus-5 \"\n",
 			wantModel: "claude-opus-5",
 		},
 	}
@@ -460,19 +460,19 @@ func TestParseModelErrors(t *testing.T) {
 		},
 		{
 			name:     "whitespace-only model names the blank model",
-			toml:     "[harness.bad]\nprompt = \"hi\"\nmodel = \"   \"\n",
+			toml:     "[harness.bad]\nharness = \"crush\"\nprompt = \"hi\"\nmodel = \"   \"\n",
 			wantLine: 1,
 			wantSub:  `"model" must not be blank`,
 		},
 		{
 			name:     "internal whitespace is rejected",
-			toml:     "[harness.bad]\nprompt = \"hi\"\nmodel = \"claude opus 5\"\n",
+			toml:     "[harness.bad]\nharness = \"crush\"\nprompt = \"hi\"\nmodel = \"claude opus 5\"\n",
 			wantLine: 1,
 			wantSub:  `"model" must be a single token`,
 		},
 		{
 			name:     "model requires prompt",
-			toml:     "[harness.bad]\nmodel = \"claude-opus-5\"\n",
+			toml:     "[harness.bad]\nharness = \"crush\"\nmodel = \"claude-opus-5\"\n",
 			wantLine: 1,
 			wantSub:  `requires "prompt"`,
 		},
@@ -513,7 +513,7 @@ func TestParseAutoAcceptHarness(t *testing.T) {
 	}{
 		{
 			name:           "auto_accept stored on a prompt harness, args untouched",
-			toml:           "[harness.agent]\nprompt = \"check deployments\"\nauto_accept = true\n",
+			toml:           "[harness.agent]\nharness = \"crush\"\nprompt = \"check deployments\"\nauto_accept = true\n",
 			wantAutoAccept: true,
 			wantRestart:    core.RestartNo,
 		},
@@ -524,7 +524,7 @@ func TestParseAutoAcceptHarness(t *testing.T) {
 			// repeated billed yolo runs. An explicit `restart = ...` still
 			// wins.
 			name:           "auto_accept prompt harness defaults to restart no",
-			toml:           "[harness.agent]\nprompt = \"summarize the day\"\nauto_accept = true\n",
+			toml:           "[harness.agent]\nharness = \"crush\"\nprompt = \"summarize the day\"\nauto_accept = true\n",
 			wantAutoAccept: true,
 			wantRestart:    core.RestartNo,
 		},
@@ -585,7 +585,7 @@ func TestParseAutoAcceptErrors(t *testing.T) {
 		},
 		{
 			name:     "auto_accept requires prompt",
-			toml:     "[harness.bad]\nauto_accept = true\n",
+			toml:     "[harness.bad]\nharness = \"crush\"\nauto_accept = true\n",
 			wantLine: 1,
 			wantSub:  `requires "prompt"`,
 		},
@@ -627,18 +627,18 @@ func TestParseMaxTurnsHarness(t *testing.T) {
 	}{
 		{
 			name:         "max_turns stored on a prompt harness, args untouched",
-			toml:         "[harness.agent]\nprompt = \"check deployments\"\nmax_turns = 5\n",
+			toml:         "[harness.agent]\nharness = \"crush\"\nprompt = \"check deployments\"\nmax_turns = 5\n",
 			wantMaxTurns: 5,
 			wantRestart:  core.RestartNo,
 		},
 		{
 			name:        "absent max_turns defaults to 0 (unlimited)",
-			toml:        "[harness.agent]\nprompt = \"check deployments\"\n",
+			toml:        "[harness.agent]\nharness = \"crush\"\nprompt = \"check deployments\"\n",
 			wantRestart: core.RestartNo,
 		},
 		{
 			name:         "explicit zero is allowed and stays unlimited",
-			toml:         "[harness.agent]\nprompt = \"check deployments\"\nmax_turns = 0\n",
+			toml:         "[harness.agent]\nharness = \"crush\"\nprompt = \"check deployments\"\nmax_turns = 0\n",
 			wantMaxTurns: 0,
 			wantRestart:  core.RestartNo,
 		},
@@ -683,7 +683,7 @@ func TestParseMaxTurnsErrors(t *testing.T) {
 		},
 		{
 			name:     "negative max_turns is rejected",
-			toml:     "[harness.bad]\nprompt = \"ok\"\nmax_turns = -1\n",
+			toml:     "[harness.bad]\nharness = \"crush\"\nprompt = \"ok\"\nmax_turns = -1\n",
 			wantLine: 1,
 			wantSub:  `"max_turns" must not be negative`,
 		},
@@ -720,17 +720,17 @@ func TestParseQuietHarness(t *testing.T) {
 	}{
 		{
 			name:      "prompt harness defaults to quiet",
-			toml:      "[harness.agent]\nprompt = \"check deployments\"\n",
+			toml:      "[harness.agent]\nharness = \"crush\"\nprompt = \"check deployments\"\n",
 			wantQuiet: true,
 		},
 		{
 			name:      "explicit quiet keeps the default",
-			toml:      "[harness.agent]\nprompt = \"check deployments\"\nquiet = true\n",
+			toml:      "[harness.agent]\nharness = \"crush\"\nprompt = \"check deployments\"\nquiet = true\n",
 			wantQuiet: true,
 		},
 		{
 			name:      "explicit quiet=false streams output to an attach",
-			toml:      "[harness.agent]\nprompt = \"check deployments\"\nquiet = false\n",
+			toml:      "[harness.agent]\nharness = \"crush\"\nprompt = \"check deployments\"\nquiet = false\n",
 			wantQuiet: false,
 		},
 		{
@@ -998,7 +998,7 @@ func TestRemovedKeysAreRejected(t *testing.T) {
 	}{
 		{
 			name:    "cmd",
-			toml:    "[harness.web]\ncmd = \"npm\"\nargs = [\"run\", \"dev\"]\n",
+			toml:    "[harness.web]\nharness = \"crush\"\ncmd = \"npm\"\nargs = [\"run\", \"dev\"]\n",
 			wantSub: `"cmd" was replaced by the "harness" enum`,
 		},
 		{
@@ -1024,7 +1024,7 @@ func TestRemovedKeysAreRejected(t *testing.T) {
 // too — a repo checked out with a pre-enum harness.toml is exactly the case
 // that would otherwise silently start crush.
 func TestRemovedKeysAreRejectedInProjectFiles(t *testing.T) {
-	_, err := ParseProject([]byte("name = \"proj\"\n\n[harness.api]\ncmd = \"uvicorn\"\n"), "/tmp/repo/harness.toml")
+	_, err := ParseProject([]byte("name = \"proj\"\n\n[harness.api]\nharness = \"crush\"\ncmd = \"uvicorn\"\n"), "/tmp/repo/harness.toml")
 	if err == nil {
 		t.Fatal("project file with cmd loaded without error")
 	}

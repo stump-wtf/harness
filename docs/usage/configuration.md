@@ -27,7 +27,7 @@ enabled = false
 
 | Field | Meaning |
 |-------|---------|
-| `harness` | the harness kind, an enum: `crush` (the default), `claude-code`, `codex`, `generic`. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args: use `args = ["-c", "<command line>"]` to run an arbitrary command |
+| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `generic`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args: use `args = ["-c", "<command line>"]` to run an arbitrary command |
 | `args` | argument list appended after the adapter's executable |
 | `workdir` | working directory (**required** for most commands) |
 | `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config) |
@@ -111,8 +111,16 @@ state glyph, and the next firing appended to its description (`· in 4h3m`).
 
 ## Agent adapters
 
-The `harness` key is an enum selecting the adapter (ADR-0011, SPEC-0006):
-`crush` (the default when omitted), `claude-code`, `codex`, `generic`. The
+The `harness` key is a **required** enum selecting the adapter (ADR-0011,
+SPEC-0006): `crush`, `claude-code`, `codex`, `generic`. It has no default —
+what a harness runs is the most consequential thing it declares, so a table
+that omits the key is a config error rather than an agent nobody asked for:
+
+```
+harness "web": missing required key "harness" (want one of: crush, claude-code,
+codex, generic — use "generic" with args = ["-c", "…"] for an arbitrary command)
+```
+ The
 adapter owns both the tool-specific behaviour (trajectory discovery) and the
 executable a long-running harness runs; it also synthesizes the CLI-specific
 argv for prompt one-shots. `generic` means "none of the above" — its executable is `sh`, so an

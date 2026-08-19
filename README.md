@@ -63,10 +63,14 @@ Define what to supervise in `~/.config/harness/harness.toml`:
 
 ```toml
 [harness.heartbeat]
-cmd = "sh"
+harness = "generic"
 args = ["-c", "while true; do echo $(date); sleep 60; done"]
 enabled = true
 ```
+
+`harness` is required and names the kind: `crush`, `claude-code`, or `codex`
+for an agent CLI, `generic` for anything else (it runs `sh`, so an arbitrary
+command goes in `args` as `["-c", "…"]`).
 
 Then `harness doctor` verifies config, daemon, and state. The full config
 reference and every verb are in the docs above.

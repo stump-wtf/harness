@@ -98,16 +98,16 @@ func (r *Registry) Names() []string {
 	return []string{"claude-code", "crush", "codex", "generic"}
 }
 
-// Resolve selects the adapter for a harness: the `harness` enum key when
-// set, otherwise the default (Crush — the config layer normalizes empty to
-// "crush", but Resolve defends the wire path too). Per SPEC-0006 REQ
-// "Adapter Selection", an adapter key naming an unknown value is an error;
-// config validation rejects it up front, and Resolve defensively maps an
-// unknown value to Generic rather than nil.
+// Resolve selects the adapter for a harness from its `harness` enum key. Per
+// SPEC-0006 REQ "Adapter Selection", the key is required and validated at
+// both front doors (config parse and the project-up wire), so neither an
+// empty nor an unknown value should reach here.
+//
+// Both are nonetheless mapped to Generic rather than to an agent. Resolve is
+// the last stop before something gets executed, and the safe answer to "which
+// agent did they mean?" is not to guess one — Generic runs what it is given
+// and harvests no trajectory.
 func (r *Registry) Resolve(h core.Harness) Adapter {
-	if h.Adapter == "" {
-		return r.entries["crush"]
-	}
 	if a, ok := r.entries[h.Adapter]; ok {
 		return a
 	}

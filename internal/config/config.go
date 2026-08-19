@@ -313,23 +313,29 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	}
 
 	// The `harness` enum key selects the adapter (and, for a long-running
-	// harness, the executable it runs); it defaults to "crush". A prompt
-	// harness stores only the prompt: its argv is synthesized at spawn time
-	// from the same adapter (ADR-0011), never desugared here — the file stays
-	// the source of truth (ADR-0006).
+	// harness, the executable it runs). It is REQUIRED and has no default: an
+	// omitted key used to mean "crush", so a typo'd table name, a half-written
+	// stanza, or a stray `[harness.x]` silently launched an agent instead of
+	// failing the load. What runs is the single most consequential thing a
+	// harness declares — it is worth one explicit word. A prompt harness
+	// stores only the prompt: its argv is synthesized at spawn time from the
+	// same adapter (ADR-0011), never desugared here — the file stays the
+	// source of truth (ADR-0006).
 	adapter := strings.TrimSpace(rh.Harness)
-	if rh.Harness != "" && adapter == "" {
+	switch {
+	case rh.Harness == "":
+		return newError(filename, line,
+			"harness %q: missing required key \"harness\" (want one of: crush, claude-code, codex, generic — use \"generic\" with args = [\"-c\", \"…\"] for an arbitrary command)",
+			name)
+	case adapter == "":
 		return newError(filename, line, "harness %q: \"harness\" must not be blank", name)
 	}
 	switch adapter {
-	case "", "crush", "claude-code", "codex", "generic":
+	case "crush", "claude-code", "codex", "generic":
 	default:
 		return newError(filename, line,
 			"harness %q: unknown harness kind %q (want one of: crush, claude-code, codex, generic)",
 			name, adapter)
-	}
-	if adapter == "" {
-		adapter = "crush"
 	}
 	prompt := strings.TrimSpace(rh.Prompt)
 	switch {

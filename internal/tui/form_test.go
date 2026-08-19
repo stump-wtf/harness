@@ -71,6 +71,7 @@ func TestHarnessFormRoundTrip(t *testing.T) {
 func TestHarnessFormRoundTripPrompt(t *testing.T) {
 	f := HarnessForm{
 		Name:        "deploy-check",
+		Harness:     "crush",
 		Prompt:      "check the deployments and report anything unhealthy",
 		Workdir:     "~/src/my-project",
 		Restart:     string(core.RestartNo),
@@ -113,7 +114,7 @@ func TestHarnessFormRoundTripPrompt(t *testing.T) {
 func TestEditPromptHarnessRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "harness.toml")
-	original := "[harness.deploy-check]\nprompt = \"check the deployments and report anything unhealthy\"\n"
+	original := "[harness.deploy-check]\nharness = \"crush\"\nprompt = \"check the deployments and report anything unhealthy\"\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -164,6 +165,7 @@ func TestEditPromptHarnessRoundTrip(t *testing.T) {
 func TestHarnessFormRoundTripModel(t *testing.T) {
 	f := HarnessForm{
 		Name:    "deploy-check",
+		Harness: "crush",
 		Prompt:  "check the deployments and report anything unhealthy",
 		Model:   "claude-opus-5",
 		Backend: "native",
@@ -202,7 +204,7 @@ func TestHarnessFormRoundTripModel(t *testing.T) {
 func TestEditModelHarnessRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "harness.toml")
-	original := "[harness.deploy-check]\nprompt = \"check the deployments\"\nmodel = \"claude-opus-5\"\n"
+	original := "[harness.deploy-check]\nharness = \"crush\"\nprompt = \"check the deployments\"\nmodel = \"claude-opus-5\"\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -256,6 +258,7 @@ func TestEditModelHarnessRoundTrip(t *testing.T) {
 func TestHarnessFormRoundTripAutoAccept(t *testing.T) {
 	f := HarnessForm{
 		Name:       "deploy-check",
+		Harness:    "crush",
 		Prompt:     "check the deployments and report anything unhealthy",
 		AutoAccept: true,
 		Backend:    "native",
@@ -291,7 +294,7 @@ func TestHarnessFormRoundTripAutoAccept(t *testing.T) {
 func TestEditAutoAcceptHarnessRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "harness.toml")
-	original := "[harness.deploy-check]\nprompt = \"check the deployments\"\nauto_accept = true\n"
+	original := "[harness.deploy-check]\nharness = \"crush\"\nprompt = \"check the deployments\"\nauto_accept = true\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -342,6 +345,7 @@ func TestEditAutoAcceptHarnessRoundTrip(t *testing.T) {
 func TestHarnessFormRoundTripMaxTurns(t *testing.T) {
 	f := HarnessForm{
 		Name:     "deploy-check",
+		Harness:  "crush",
 		Prompt:   "check the deployments and report anything unhealthy",
 		MaxTurns: 7,
 		Backend:  "native",
@@ -377,7 +381,7 @@ func TestHarnessFormRoundTripMaxTurns(t *testing.T) {
 func TestEditMaxTurnsHarnessRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "harness.toml")
-	original := "[harness.deploy-check]\nprompt = \"check the deployments\"\nmax_turns = 7\n"
+	original := "[harness.deploy-check]\nharness = \"crush\"\nprompt = \"check the deployments\"\nmax_turns = 7\n"
 	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -416,6 +420,7 @@ func TestEditMaxTurnsHarnessRoundTrip(t *testing.T) {
 func TestHarnessFormRoundTripSchedule(t *testing.T) {
 	f := HarnessForm{
 		Name:     "stumpcloud-sweep",
+		Harness:  "crush",
 		Prompt:   "check all services and report anything unhealthy",
 		Schedule: "0 */6 * * *",
 		Restart:  "no",
@@ -449,6 +454,7 @@ func TestHarnessFormValidateScheduleRules(t *testing.T) {
 	base := func() HarnessForm {
 		return HarnessForm{
 			Name:     "sweep",
+			Harness:  "crush",
 			Prompt:   "check things",
 			Schedule: "0 */6 * * *",
 			Restart:  "no",
@@ -485,6 +491,7 @@ func TestEditScheduledHarnessRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "harness.toml")
 	original := strings.Join([]string{
 		"[harness.stumpcloud-sweep]",
+		`harness = "crush"`,
 		`prompt = "check all services and report anything unhealthy"`,
 		"auto_accept = true",
 		`schedule = "0 */6 * * *"`,
@@ -637,26 +644,31 @@ func TestFormValidate(t *testing.T) {
 	if err := (HarnessForm{Name: "x", Harness: "crush", Prompt: "z", Args: []string{"a"}}).Validate(); err == nil {
 		t.Error("prompt+args should fail (mutually exclusive)")
 	}
-	if err := (HarnessForm{Name: "x", Prompt: "z", Args: []string{"a"}}).Validate(); err == nil {
+	if err := (HarnessForm{Name: "x", Harness: "crush", Prompt: "z", Args: []string{"a"}}).Validate(); err == nil {
 		t.Error("prompt+args should fail (args belong to cmd)")
 	}
-	if err := (HarnessForm{Name: "x", Prompt: "do the thing"}).Validate(); err != nil {
+	if err := (HarnessForm{Name: "x", Harness: "crush", Prompt: "do the thing"}).Validate(); err != nil {
 		t.Errorf("prompt-only form should validate: %v", err)
 	}
 	if err := (HarnessForm{Name: "x", Harness: "generic", Model: "m"}).Validate(); err == nil {
 		t.Error("cmd+model should fail (model requires prompt)")
 	}
-	if err := (HarnessForm{Name: "x", Prompt: "p", Model: "a b"}).Validate(); err == nil {
+	if err := (HarnessForm{Name: "x", Harness: "crush", Prompt: "p", Model: "a b"}).Validate(); err == nil {
 		t.Error("multi-token model should fail")
 	}
-	if err := (HarnessForm{Name: "x", Prompt: "p", Model: "claude-opus-5"}).Validate(); err != nil {
+	if err := (HarnessForm{Name: "x", Harness: "crush", Prompt: "p", Model: "claude-opus-5"}).Validate(); err != nil {
 		t.Errorf("prompt+model form should validate: %v", err)
 	}
 	if err := (HarnessForm{Name: "x", Harness: "generic", AutoAccept: true}).Validate(); err == nil {
 		t.Error("cmd+auto_accept should fail (auto_accept requires prompt)")
 	}
-	if err := (HarnessForm{Name: "x", Prompt: "p", AutoAccept: true}).Validate(); err != nil {
+	if err := (HarnessForm{Name: "x", Harness: "crush", Prompt: "p", AutoAccept: true}).Validate(); err != nil {
 		t.Errorf("prompt+auto_accept form should validate: %v", err)
+	}
+	// `harness` has no default: a form that never picked one must not quietly
+	// become a crush agent on save.
+	if err := (HarnessForm{Name: "x", Args: []string{"-c", "sleep 1"}}).Validate(); err == nil {
+		t.Error("blank harness should fail (the key is required)")
 	}
 }
 

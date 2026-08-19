@@ -155,8 +155,9 @@ they get one adapter interface. Given a harness, an adapter answers:
 
 `claude-code`, `crush`, `codex`, `generic`. The daemon holds a registry and
 knows nothing about any entry — structurally identical to the existing
-`backend = "tmux" | "native"` field. So: `agent = "claude-code"` as a sibling,
-auto-detected from `cmd` when unset. This is the detector `CLAUDE.md` promised.
+`backend = "tmux" | "native"` field. So: `harness = "claude-code"` as the key
+itself — required, with no inference and no default. This is the detector
+`CLAUDE.md` promised.
 
 ### Distillation: measure repetition, not quality
 

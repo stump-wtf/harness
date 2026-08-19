@@ -28,10 +28,11 @@ import (
 // match the TOML unit (config.rawHarness.RestartDelay).
 type HarnessForm struct {
 	Name string
-	// Harness is the harness-kind enum (crush/claude-code/codex/generic;
-	// blank means the default, crush). It selects the adapter, which supplies
-	// the executable for a long-running harness and the argv synthesis for a
-	// prompt one-shot (ADR-0011). Validate normalizes blank → "crush".
+	// Harness is the harness-kind enum (crush/claude-code/codex/generic). It
+	// selects the adapter, which supplies the executable for a long-running
+	// harness and the argv synthesis for a prompt one-shot (ADR-0011). It is
+	// REQUIRED — there is no default, so Validate rejects a blank one rather
+	// than picking an agent on the user's behalf.
 	Harness string
 	// Prompt is the agent one-shot instruction; Args belong to a long-running
 	// harness only (Validate enforces the split).
@@ -86,8 +87,9 @@ func (f HarnessForm) Validate() error {
 	}
 	promptSet := strings.TrimSpace(f.Prompt) != ""
 	switch f.Harness {
-	case "", "crush", "claude-code", "codex", "generic":
-		f.Harness = orDefault(f.Harness, "crush")
+	case "crush", "claude-code", "codex", "generic":
+	case "":
+		return fmt.Errorf("harness is required (one of: crush, claude-code, codex, generic)")
 	default:
 		return fmt.Errorf("harness must be one of: crush, claude-code, codex, generic")
 	}
@@ -147,6 +149,9 @@ func (f HarnessForm) Validate() error {
 func (f HarnessForm) TOML() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[harness.%s]\n", f.Name)
+	// `harness` is required and has no default, so it is always written —
+	// unlike every optional field below, which is emitted only when set.
+	fmt.Fprintf(&b, "harness = %s\n", strconv.Quote(f.Harness))
 	prompt := strings.TrimSpace(f.Prompt)
 	if prompt != "" {
 		// Prompt harness: `prompt` replaces args entirely (Validate

@@ -302,6 +302,7 @@ harness = "cursor"
 func TestParseProject_PromptHarness(t *testing.T) {
 	data := []byte(`
 [harness.agent]
+harness = "crush"
 prompt = "summarize the day"
 `)
 	proj, err := ParseProject(data, "/tmp/myrepo/harness.toml")
@@ -328,8 +329,8 @@ prompt = "summarize the day"
 // files too, with the same located-error contract as the global parser.
 func TestParseProject_PromptErrors(t *testing.T) {
 	tests := []struct{ name, toml, wantSub string }{
-		{"prompt and args", "[harness.bad]\nprompt = \"hi\"\nargs = [\"x\"]\n", `"prompt" and "args" are mutually exclusive`},
-		{"blank prompt", "[harness.bad]\nprompt = \" \"\n", `"prompt" must not be blank`},
+		{"prompt and args", "[harness.bad]\nharness = \"crush\"\nprompt = \"hi\"\nargs = [\"x\"]\n", `"prompt" and "args" are mutually exclusive`},
+		{"blank prompt", "[harness.bad]\nharness = \"crush\"\nprompt = \" \"\n", `"prompt" must not be blank`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -361,6 +362,7 @@ func TestParseProject_PromptErrors(t *testing.T) {
 func TestParseProject_ModelHarness(t *testing.T) {
 	data := []byte(`
 [harness.agent]
+harness = "crush"
 prompt = "summarize the day"
 model = "claude-opus-5"
 `)
@@ -386,8 +388,8 @@ model = "claude-opus-5"
 func TestParseProject_ModelErrors(t *testing.T) {
 	tests := []struct{ name, toml, wantSub string }{
 		{"model with cmd", "[harness.bad]\nharness = \"generic\"\nmodel = \"m\"\n", `"model" requires "prompt"`},
-		{"blank model", "[harness.bad]\nprompt = \"hi\"\nmodel = \" \"\n", `"model" must not be blank`},
-		{"multi-token model", "[harness.bad]\nprompt = \"hi\"\nmodel = \"a b\"\n", `"model" must be a single token`},
+		{"blank model", "[harness.bad]\nharness = \"crush\"\nprompt = \"hi\"\nmodel = \" \"\n", `"model" must not be blank`},
+		{"multi-token model", "[harness.bad]\nharness = \"crush\"\nprompt = \"hi\"\nmodel = \"a b\"\n", `"model" must be a single token`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -419,6 +421,7 @@ func TestParseProject_ModelErrors(t *testing.T) {
 func TestParseProject_AutoAcceptHarness(t *testing.T) {
 	data := []byte(`
 [harness.agent]
+harness = "crush"
 prompt = "summarize the day"
 auto_accept = true
 `)
@@ -542,7 +545,7 @@ func TestSamePath_ResolvesSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	file := filepath.Join(realDir, "harness.toml")
-	if err := os.WriteFile(file, []byte("[harness.x]\ncmd=\"y\"\n"), 0644); err != nil {
+	if err := os.WriteFile(file, []byte("[harness.x]\nharness = \"crush\"\ncmd=\"y\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(tmpDir, "link")

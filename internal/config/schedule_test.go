@@ -26,6 +26,7 @@ schedule = "0 */6 * * *"
 func TestScheduleMutuallyExclusiveWithEnabled(t *testing.T) {
 	toml := `
 [harness.scheduled]
+harness = "crush"
 prompt = "do the thing"
 schedule = "0 */6 * * *"
 enabled = true
@@ -44,6 +45,7 @@ enabled = true
 func TestScheduleAcceptedWithPrompt(t *testing.T) {
 	toml := `
 [harness.scheduled]
+harness = "crush"
 prompt = "do the thing"
 schedule = "0 */6 * * *"
 `
@@ -68,6 +70,7 @@ schedule = "0 */6 * * *"
 func TestScheduleBlankRejected(t *testing.T) {
 	toml := `
 [harness.scheduled]
+harness = "crush"
 prompt = "do the thing"
 schedule = "  "
 `
@@ -87,6 +90,7 @@ func TestScheduleInvalidCronRejected(t *testing.T) {
 	for _, spec := range []string{"not-a-cron", "0 */6 * *", "@evry 6h"} {
 		toml := `
 [harness.scheduled]
+harness = "crush"
 prompt = "do the thing"
 schedule = "` + spec + `"
 `
@@ -107,6 +111,7 @@ func TestScheduleRestartAlwaysRejected(t *testing.T) {
 	for _, policy := range []string{"always", "unless-stopped"} {
 		toml := `
 [harness.scheduled]
+harness = "crush"
 prompt = "do the thing"
 schedule = "0 */6 * * *"
 restart = "` + policy + `"
@@ -126,6 +131,7 @@ restart = "` + policy + `"
 func TestScheduleRestartOnFailureAccepted(t *testing.T) {
 	toml := `
 [harness.scheduled]
+harness = "crush"
 prompt = "do the thing"
 schedule = "0 */6 * * *"
 restart = "on-failure"
@@ -141,6 +147,7 @@ restart = "on-failure"
 func TestScheduleInProfileRejected(t *testing.T) {
 	toml := `
 [harness.scheduled]
+harness = "crush"
 prompt = "do the thing"
 schedule = "0 */6 * * *"
 
@@ -163,6 +170,7 @@ autostart = true
 func TestScheduleInProjectFileRejected(t *testing.T) {
 	toml := `
 [harness.sweep]
+harness = "crush"
 prompt = "do the thing"
 schedule = "0 */6 * * *"
 `
@@ -180,6 +188,7 @@ schedule = "0 */6 * * *"
 func TestScheduleDisabledWithEnabledFalse(t *testing.T) {
 	toml := `
 [harness.scheduled]
+harness = "crush"
 prompt = "do the thing"
 schedule = "0 */6 * * *"
 enabled = false

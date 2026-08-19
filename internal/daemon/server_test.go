@@ -508,6 +508,7 @@ func TestLogsCarriesGuestViewport(t *testing.T) {
 func TestListCarriesScheduleMetadata(t *testing.T) {
 	const toml = `
 [harness.sweep]
+harness = "crush"
 prompt = "do the sweep"
 auto_accept = true
 schedule = "0 */6 * * *"
