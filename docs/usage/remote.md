@@ -37,8 +37,12 @@ Put the public key of the device you'll connect from in
 `authorized_keys_file` (or list it inline under `[[server.key]]`), then:
 
 ```sh
-ssh -p 23234 user@host
+ssh -p 23234 host
 ```
+
+There is no user involved — the server never inspects the SSH username, and
+auth is the key alone. (Any username the client sends is accepted alongside a
+valid key; omit it and ssh simply defaults to your local one.)
 
 You land in the full TUI dashboard, attached to the daemon over the network.
 
