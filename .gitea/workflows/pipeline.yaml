@@ -1,9 +1,9 @@
 ---
 # The single end-to-end pipeline. One run, one dependency graph:
 #
-#   secret scan → lint → test → build → ai review
-#                                          │  (merge to main only)
-#                                    Gitea Pages
+#   secret scan → lint → test → build ┬→ ai review   (PRs only)
+#                                     └→ docs site   (builds everywhere,
+#                                                     deploys only from main)
 #
 # Replaces three workflows that raced with no ordering between them
 # (aibot.yml, gitleaks.yaml, ci.yaml). Stage bodies live in stump.wtf/ci; this
@@ -14,8 +14,12 @@
 #   * AI review LAST, behind the build. As its own workflow it fired the moment
 #     a PR opened and spent tokens reviewing code not yet shown to compile or
 #     pass tests.
-#   * Publishing is fenced to a push on main via the `main-only` gate, so a PR
-#     (including from a fork) can build the docs site but never deploy it.
+#   * The docs site builds on EVERY event and deploys only from main. The fence
+#     lives inside static-site.yaml, on the deploy step alone, so a PR
+#     (including one from a fork) proves the site still compiles and stops
+#     there. An earlier version fenced the whole `pages` job behind a
+#     `main-only` gate job, which meant a docs-only PR merged without the site
+#     ever being built.
 name: pipeline
 
 on:
@@ -61,18 +65,7 @@ jobs:
     uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/aibot.yaml@main
     secrets: inherit
 
-  # ---- 6. merge-to-main gate ----------------------------------------------
-  # One explicit gate rather than the same `if:` repeated on each release
-  # stage, so the fence is stated once and cannot drift.
-  main-only:
-    needs: [build]
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Gate
-        run: echo "on main with a green build — releasing" >> "$GITHUB_STEP_SUMMARY"
-
-  # ---- 7. Gitea Pages ------------------------------------------------------
+  # ---- 6. docs site: build always, deploy from main ------------------------
   # The LAN-side twin of the GitHub Pages deploy in .github/workflows/pages.yml.
   # Same build, same baseUrl (/harness/); only `url` differs, so the site_url
   # input is exported to the build as DOCS_URL. Without it the published site
@@ -86,8 +79,15 @@ jobs:
   # different toolchains. The shared default of 22 does build this site (run 3348
   # proved it), but Docusaurus is version-sensitive — node 23 fails outright on
   # ProgressPlugin validation — so the version is stated rather than inherited.
+  #
+  # `needs: [build]`, NOT a main-only gate. static-site.yaml already fences its
+  # deploy step on the caller's ref being refs/heads/main; on a pull_request the
+  # ref is refs/pull/<n>/merge, so the job builds and the deploy step skips. A
+  # caller-side gate on top of that bought nothing and cost everything: it made
+  # `pages` a skipped job on every PR, so a docs-only change could not fail CI
+  # no matter what it broke in docs-site/.
   pages:
-    needs: [main-only]
+    needs: [build]
     uses: https://gitea.stump.rocks/stump.wtf/ci/.gitea/workflows/static-site.yaml@main
     with:
       working_directory: docs-site
