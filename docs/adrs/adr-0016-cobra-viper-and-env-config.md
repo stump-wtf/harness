@@ -248,6 +248,24 @@ graph TD
   ADR-0006 config surface, with an env override reserved for a later revision."
   This is that revision; the chatroom toggle lands as `HARNESS_REDUCED_MOTION`
   under the same rules once the chatroom itself is built.
+* **This is a house pattern, not a novel decision.** Two sibling repos already
+  made it, and both are worth reading before revisiting this one:
+  * `msgbrowse` ADR-0009 *"Configuration & CLI — Cobra (commands) + Viper
+    (config)"* reaches the same two conclusions independently: precedence
+    `defaults < file < env < flags`, and **`pflag.Changed`-aware binding** as the
+    mechanism, for the same reason given above ("a flag only wins when typed").
+    It also carries a 2026-07 amendment softening its secrets rule for a desktop
+    UI — a useful precedent if Harness ever grows a settings surface, though
+    ADR-0008 keeps credentials out of `HARNESS_*` here.
+  * `joe-links` ADR-0004 *"CLI Framework — Cobra + Viper with JOE_ Environment
+    Variable Prefix"* takes the lighter path: `SetEnvPrefix` + `AutomaticEnv`
+    with no explicit registry. That is the right trade for a service whose
+    settings are all plain scalars with no empty-vs-unset subtlety; Harness
+    needs the explicit table because SPEC-0010 requires empty-is-absent and an
+    enumerable set for `doctor` attribution.
+
+  The convergence is the point: three repos, three independent passes, same
+  precedence order. Diverging from it here would need a specific reason.
 * Migration is staged deliberately: characterization tests over today's CLI
   behaviour first, then the Cobra swap, then Viper. Landing all three at once
   makes a bisect useless.
