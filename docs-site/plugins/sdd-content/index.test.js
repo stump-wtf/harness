@@ -54,6 +54,10 @@ function writeFixture() {
   };
 
   domain('alpha', 'SPEC-0001', 'Alpha', 'Alpha stands alone.');
+  // A spec.md converted from an ADR whose H1 was never renumbered. Its ID must
+  // not be registered in the spec mapping: transformSpecReferences runs first,
+  // so it would capture every ADR-0001 mention on the site.
+  domain('stale', 'ADR-0001', 'Stale Conversion', 'Converted, never renumbered.');
   domain('beta', 'SPEC-0002', 'Beta', 'Beta builds on SPEC-0001.');
   // The prose here mentions `### Requirement:` and then cites an ADR on the
   // same line — the shape that used to register "ADR" as a spec prefix.
@@ -97,6 +101,20 @@ test('artifact references carry no fragment', async () => {
   // A spec page's H1 anchor is derived from the whole heading text
   // ("spec-0001-alpha"), so `#spec-0001` pointed at nothing.
   assert.doesNotMatch(read('specs/beta/spec.mdx'), /#spec-0001/);
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a spec H1 carrying an ADR number does not claim that ID', async () => {
+  const { root, read } = await build();
+
+  const gamma = read('specs/gamma/spec.mdx');
+  // Still the ADR page, and no spec route claims the ID. Registering it
+  // produced `<a href="/specs/stale/spec"><a href="/decisions/...">ADR-0001</a></a>`,
+  // so the nested-anchor shape is the assertion that actually bites.
+  assert.match(gamma, /href="\/harness\/decisions\/ADR-0001-example"/);
+  assert.doesNotMatch(gamma, /href="[^"]*\/specs\/stale/);
+  assert.doesNotMatch(gamma, /<a [^>]*><a /);
 
   fs.rmSync(root, { recursive: true, force: true });
 });
