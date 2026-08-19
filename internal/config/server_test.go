@@ -4,6 +4,13 @@ package config
 // exercise the parse contract: inline keys default read-write, [[server.key]]
 // sub-tables carry read_only, an enabled server with no key source is rejected
 // (no unauthenticated remote access), and a disabled/absent table is inert.
+// Tilde expansion of authorized_keys_file/host_key is covered here too, since
+// an unexpanded path is what silently disables the SSH front door.
+//
+// @joestump-agent 08/19/2026 - Made the tilde-expansion table assert on a named
+// field instead of gating the comparison on a non-empty want. The old shape
+// meant the "" case asserted nothing, so a regression folding "" into the bare
+// ~ branch would pass CI while defeating the ADR-0008 no-key-source guard.
 
 import (
 	"os"
@@ -136,11 +143,14 @@ func TestServerTildeExpansion(t *testing.T) {
 		t.Skipf("cannot determine home dir: %v", err)
 	}
 
+	// field names which parsed path the case asserts on, so every case —
+	// including the empty-path one — makes a real assertion. Gating the
+	// comparison on a non-empty want silently skipped the "" case.
 	tests := []struct {
-		name     string
-		config   string
-		wantFile string
-		wantKey  string
+		name   string
+		config string
+		field  string // "authorized_keys_file" or "host_key"
+		want   string
 	}{
 		{
 			name: "tilde-slash in authorized_keys_file",
@@ -150,7 +160,8 @@ enabled = true
 authorized_keys_file = "~/.ssh/harness_authorized_keys"
 authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
 `,
-			wantFile: filepath.Join(home, ".ssh/harness_authorized_keys"),
+			field: "authorized_keys_file",
+			want:  filepath.Join(home, ".ssh/harness_authorized_keys"),
 		},
 		{
 			name: "tilde-slash in host_key",
@@ -160,7 +171,8 @@ enabled = true
 host_key = "~/harness_hostkey"
 authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
 `,
-			wantKey: filepath.Join(home, "harness_hostkey"),
+			field: "host_key",
+			want:  filepath.Join(home, "harness_hostkey"),
 		},
 		{
 			name: "bare tilde in authorized_keys_file",
@@ -170,7 +182,8 @@ enabled = true
 authorized_keys_file = "~"
 authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
 `,
-			wantFile: home,
+			field: "authorized_keys_file",
+			want:  home,
 		},
 		{
 			name: "absolute path unchanged",
@@ -180,16 +193,28 @@ enabled = true
 authorized_keys_file = "/etc/ssh/authorized_keys"
 authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
 `,
-			wantFile: "/etc/ssh/authorized_keys",
+			field: "authorized_keys_file",
+			want:  "/etc/ssh/authorized_keys",
 		},
 		{
-			name: "empty path stays empty",
+			name: "unset authorized_keys_file stays empty",
 			config: `
 [server]
 enabled = true
 authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
 `,
-			wantFile: "",
+			field: "authorized_keys_file",
+			want:  "",
+		},
+		{
+			name: "unset host_key stays empty",
+			config: `
+[server]
+enabled = true
+authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
+`,
+			field: "host_key",
+			want:  "",
 		},
 	}
 
@@ -199,11 +224,17 @@ authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			if tc.wantFile != "" && cfg.Server.AuthorizedKeysFile != tc.wantFile {
-				t.Errorf("AuthorizedKeysFile = %q, want %q", cfg.Server.AuthorizedKeysFile, tc.wantFile)
+			var got string
+			switch tc.field {
+			case "authorized_keys_file":
+				got = cfg.Server.AuthorizedKeysFile
+			case "host_key":
+				got = cfg.Server.HostKeyPath
+			default:
+				t.Fatalf("unknown field %q", tc.field)
 			}
-			if tc.wantKey != "" && cfg.Server.HostKeyPath != tc.wantKey {
-				t.Errorf("HostKeyPath = %q, want %q", cfg.Server.HostKeyPath, tc.wantKey)
+			if got != tc.want {
+				t.Errorf("%s = %q, want %q", tc.field, got, tc.want)
 			}
 		})
 	}
