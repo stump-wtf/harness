@@ -275,6 +275,16 @@ func (m *Model) toggleEnabled() (tea.Model, tea.Cmd) {
 	if !ok || m.ctrl == nil {
 		return m, nil
 	}
+	if sel.Schedule != "" {
+		// Enabling a scheduled harness starts the one-shot now AND persists
+		// enabled intent, which Autostart honors on the next daemon boot —
+		// exactly the state the config parser refuses to load (`schedule` and
+		// `enabled = true` are mutually exclusive, ADR-0013). One keystroke
+		// must not convert a cron job into an autostarting agent behind the
+		// config file's back; `s` still runs it once on demand.
+		m.status = sel.Name + " is scheduled — it fires on its cron (press s to run it now)"
+		return m, nil
+	}
 	if sel.Enabled {
 		return m, doDisable(m.ctrl, sel.Name)
 	}

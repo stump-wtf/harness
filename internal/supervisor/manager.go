@@ -303,23 +303,15 @@ func (m *Manager) Restart(name string) bool {
 	return false
 }
 
-// Enable sets a harness's enabled intent and starts it if stopped.
-func (m *Manager) Enable(name string) bool {
-	if s := m.get(name); s != nil {
-		s.Start()
-		return true
-	}
-	return false
-}
+// Enable sets a harness's enabled intent and starts it if stopped. It is
+// Start under another name — cmdStart is what carries the intent — and
+// delegates rather than repeating the body, which is how it keeps Start's
+// dormant-autostart clearing instead of quietly diverging from it.
+func (m *Manager) Enable(name string) bool { return m.Start(name) }
 
-// Disable clears a harness's enabled intent and stops it if running.
-func (m *Manager) Disable(name string) bool {
-	if s := m.get(name); s != nil {
-		s.Stop()
-		return true
-	}
-	return false
-}
+// Disable clears a harness's enabled intent and stops it if running (cmdStop
+// carries the intent; see Enable).
+func (m *Manager) Disable(name string) bool { return m.Stop(name) }
 
 // Resize resizes a single harness's live PTY (ADR-0003), ok=false if unknown.
 func (m *Manager) Resize(name string, cols, rows int) bool {

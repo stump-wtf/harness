@@ -380,7 +380,14 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 	}
 	name := h.Name
 	state := string(h.State)
-	if !h.Enabled {
+	switch {
+	case h.Schedule != "":
+		// A scheduled one-shot is ALWAYS Enabled=false — config rejects
+		// `schedule` alongside `enabled = true` — so the disabled label would
+		// be wrong on every cron job, reading as "someone turned this off"
+		// for a harness that fires on its own (ADR-0013).
+		state += " (scheduled)"
+	case !h.Enabled:
 		state += " (disabled)"
 	}
 	rest := restartMarker(h.RestartCount)

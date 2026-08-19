@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -877,5 +878,86 @@ func TestViewDeclaresTerminalFeatures(t *testing.T) {
 	}
 	if v.MouseMode != tea.MouseModeCellMotion {
 		t.Errorf("MouseMode = %v, want MouseModeCellMotion", v.MouseMode)
+	}
+}
+
+// TestToggleEnablesAndDisables covers the `t` key both ways. The feature
+// shipped with the fakes recording Enable/Disable and nothing asserting them.
+func TestToggleEnablesAndDisables(t *testing.T) {
+	cases := []struct {
+		name        string
+		enabled     bool
+		wantEnable  []string
+		wantDisable []string
+	}{
+		{name: "disabled harness is enabled", enabled: false, wantEnable: []string{"backup-watch"}},
+		{name: "enabled harness is disabled", enabled: true, wantDisable: []string{"backup-watch"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fc := &fakeController{harnesses: []protocol.HarnessInfo{
+				{Name: "backup-watch", State: "stopped", Enabled: tc.enabled},
+			}}
+			m := New(Options{})
+			m.ctrl = fc
+			m.harnesses = fc.harnesses
+
+			_, cmd := m.onKey(runeKey("t"))
+			drain(cmd)
+
+			fc.mu.Lock()
+			defer fc.mu.Unlock()
+			if got := strings.Join(fc.enableCalls, ","); got != strings.Join(tc.wantEnable, ",") {
+				t.Errorf("enableCalls = %v, want %v", fc.enableCalls, tc.wantEnable)
+			}
+			if got := strings.Join(fc.disableCalls, ","); got != strings.Join(tc.wantDisable, ",") {
+				t.Errorf("disableCalls = %v, want %v", fc.disableCalls, tc.wantDisable)
+			}
+		})
+	}
+}
+
+// TestToggleRefusesScheduledHarness: a scheduled one-shot is always
+// Enabled=false (config rejects `schedule` with `enabled = true`), so the
+// toggle would read it as "disabled" and enable it — starting the run now and
+// persisting an intent that Autostart honors at the next daemon boot, landing
+// the daemon in exactly the state the config parser refuses to load.
+func TestToggleRefusesScheduledHarness(t *testing.T) {
+	fc := &fakeController{harnesses: []protocol.HarnessInfo{
+		{Name: "sweep", State: "stopped", Enabled: false, Schedule: "0 */6 * * *"},
+	}}
+	m := New(Options{})
+	m.ctrl = fc
+	m.harnesses = fc.harnesses
+
+	_, cmd := m.onKey(runeKey("t"))
+	drain(cmd)
+
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	if len(fc.enableCalls) != 0 || len(fc.disableCalls) != 0 {
+		t.Fatalf("scheduled harness was toggled: enable=%v disable=%v", fc.enableCalls, fc.disableCalls)
+	}
+	if !strings.Contains(m.status, "scheduled") {
+		t.Errorf("status = %q, want it to explain the refusal", m.status)
+	}
+}
+
+// TestRenderRowLabelsDisabledAndScheduled: "(disabled)" must not be hung on a
+// cron job that is merely waiting to fire.
+func TestRenderRowLabelsDisabledAndScheduled(t *testing.T) {
+	m := New(Options{})
+	m.w, m.h = 100, 40
+
+	disabled := m.renderRow(protocol.HarnessInfo{Name: "backup-watch", State: "stopped"}, false)
+	if !strings.Contains(disabled, "(disabled)") {
+		t.Errorf("disabled row = %q, want the disabled label", disabled)
+	}
+	sched := m.renderRow(protocol.HarnessInfo{Name: "sweep", State: "stopped", Schedule: "0 */6 * * *"}, false)
+	if strings.Contains(sched, "(disabled)") {
+		t.Errorf("scheduled row = %q, must not read as disabled", sched)
+	}
+	if !strings.Contains(sched, "(scheduled)") {
+		t.Errorf("scheduled row = %q, want the scheduled label", sched)
 	}
 }
