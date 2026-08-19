@@ -242,6 +242,12 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 		projName = sanitizeProjectName(filepath.Base(root))
 	}
 
+	// Fail loudly on unknown keys (issue #2) — same contract as the global
+	// parser.
+	if err := checkUndecoded(md, data, filename); err != nil {
+		return nil, err
+	}
+
 	return &Project{
 		Name:       projName,
 		Root:       root,

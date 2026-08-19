@@ -142,6 +142,26 @@ enabled = false
 	}
 }
 
+// TestParseProject_RejectUnknownKey is issue #2's contract applied to the
+// project file: a typo in a project harness table fails loudly.
+func TestParseProject_RejectUnknownKey(t *testing.T) {
+	data := []byte("[harness.agent]\nharness = \"claude-code\"\nworkir = \"/repo\"\n")
+	_, err := ParseProject(data, "/tmp/repo/harness.toml")
+	if err == nil {
+		t.Fatal("expected unknown-key error, got nil")
+	}
+	var cerr *Error
+	if !errors.As(err, &cerr) {
+		t.Fatalf("expected *Error, got %T: %v", err, err)
+	}
+	if !strings.Contains(cerr.Msg, `"workir"`) {
+		t.Errorf("error should name the unknown key: %s", cerr.Msg)
+	}
+	if cerr.Line != 3 {
+		t.Errorf("line = %d, want 3 (%v)", cerr.Line, cerr.Msg)
+	}
+}
+
 func TestParseProject_RejectProfile(t *testing.T) {
 	data := []byte(`
 [harness.agent]

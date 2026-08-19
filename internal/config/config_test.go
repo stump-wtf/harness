@@ -242,6 +242,115 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
+// TestUnknownKeyRejected is the acceptance criterion for issue #2: a typo or
+// stale key inside a known table must fail the parse with a *config.Error
+// naming the key, instead of being silently dropped and leaving the harness
+// running with a wrong default.
+func TestUnknownKeyRejected(t *testing.T) {
+	tests := []struct {
+		name    string
+		src     string
+		wantMsg string
+		wantLn  int
+	}{
+		{
+			name:    "typo in harness table",
+			src:     "[harness.deploy-check]\nharness = \"generic\"\nworkir = \"/srv/app\"\n",
+			wantMsg: `unknown key "workir" in [harness.deploy-check]`,
+			wantLn:  3,
+		},
+		{
+			name:    "stale key in bare harness table",
+			src:     "[build]\nharness = \"generic\"\nenviorment_file = \"/x\"\n",
+			wantMsg: `unknown key "enviorment_file" in [build]`,
+			wantLn:  3,
+		},
+		{
+			name:    "typo in daemon table",
+			src:     "[daemon]\nrestart_dely = 5\n",
+			wantMsg: `unknown key "restart_dely" in [daemon]`,
+			wantLn:  2,
+		},
+		{
+			name:    "typo in server table",
+			src:     "[server]\nlisten_addr = \"127.0.0.1:1\"\n",
+			wantMsg: `unknown key "listen_addr" in [server]`,
+			wantLn:  2,
+		},
+		{
+			name:    "typo in profile table",
+			src:     "[harness.build]\nharness = \"generic\"\n[profile.default]\nharnessess = [\"build\"]\n",
+			wantMsg: `unknown key "harnessess" in [profile.default]`,
+			wantLn:  4,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse([]byte(tt.src), "bad.toml")
+			if err == nil {
+				t.Fatal("expected unknown-key error, got nil")
+			}
+			var ce *Error
+			if !errors.As(err, &ce) {
+				t.Fatalf("error is %T, want *config.Error", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Errorf("error %q does not contain %q", err.Error(), tt.wantMsg)
+			}
+			if got := ce.LineNumber(); got != tt.wantLn {
+				t.Errorf("line = %d, want %d (%v)", got, tt.wantLn, err)
+			}
+		})
+	}
+}
+
+// TestValidConfigStillParses guards against the strict check rejecting keys
+// the schema legitimately uses, including the [[server.key]] sub-tables.
+func TestValidConfigStillParses(t *testing.T) {
+	src := `
+[harness.build]
+harness = "generic"
+args = ["-c", "true"]
+workdir = "/srv/app"
+env_file = "/etc/env"
+restart_delay = 5
+description = "builds"
+tmux_socket = "main"
+mcp_allow = ["cairn:read"]
+
+[profile.default]
+harnesses = ["build"]
+autostart = true
+
+[daemon]
+watch_config = true
+otel_endpoint = "http://localhost:4317"
+
+[server]
+enabled = true
+listen = "127.0.0.1:2200"
+authorized_keys = ["ssh-ed25519 AAA key"]
+authorized_keys_file = "/etc/ssh/authorized_keys"
+host_key = "/etc/harness/host_key"
+
+[[server.key]]
+key = "ssh-ed25519 BBB key"
+read_only = true
+`
+	if _, err := Parse([]byte(src), "good.toml"); err != nil {
+		t.Fatalf("valid config rejected: %v", err)
+	}
+}
+
+// TestRemovedKeysKeepMigrationError confirms the strict unknown-key check
+// did not swallow the dedicated cmd/agent migration errors.
+func TestRemovedKeysKeepMigrationError(t *testing.T) {
+	_, err := Parse([]byte("[old]\nharness = \"generic\"\ncmd = \"npm\"\n"), "old.toml")
+	if err == nil || !strings.Contains(err.Error(), "cmd") {
+		t.Fatalf("want cmd migration error, got %v", err)
+	}
+}
+
 // TestParseRestartPolicy exercises the restart = "..." directive. An omitted
 // key normalizes to the always default so the config layer emits exactly one
 // in-memory spelling per behavior.

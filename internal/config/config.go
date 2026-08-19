@@ -262,6 +262,12 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 		}
 	}
 
+	// Fail loudly on any key the schema does not know (issue #2): a typo in
+	// a known table was previously silently dropped.
+	if err := checkUndecoded(md, data, filename); err != nil {
+		return nil, err
+	}
+
 	// Load additional harness definitions from [server] harness_d directory.
 	// Each *.toml file may contain [harness.*] tables only — no [server],
 	// [profile.*], or [daemon]. Files are sorted lexicographically for
@@ -707,7 +713,63 @@ func parseHarnessDFile(cfg *core.Config, data []byte, filename string) error {
 				"harness.d file must not contain [%s] (only [harness.*] allowed)", key)
 		}
 	}
-	return nil
+	return checkUndecoded(md, data, filename)
+}
+
+// checkUndecoded turns BurntSushi's undecoded-key report into a loud,
+// source-located error. The lazy PrimitiveDecode dance above only marks keys
+// as decoded when they land in a raw struct field, so anything left over is
+// a key the schema does not know — a typo (`workir`), a stale key from an
+// old config, or a documented-but-unbuilt feature. All of those previously
+// produced a harness running with a silently wrong default (issue #2).
+//
+// Key order from Undecoded() is map-derived and not stable; sort for
+// deterministic errors. The line number is a best-effort scan for the key's
+// assignment in the source text (0 when not found).
+func checkUndecoded(md toml.MetaData, data []byte, filename string) error {
+	undecoded := md.Undecoded()
+	if len(undecoded) == 0 {
+		return nil
+	}
+	sort.Slice(undecoded, func(i, j int) bool {
+		return undecoded[i].String() < undecoded[j].String()
+	})
+	k := undecoded[0]
+	table := strings.Join([]string(k[:len(k)-1]), ".")
+	where := "config"
+	if table != "" {
+		where = "[" + table + "]"
+	}
+	return newError(filename, lineOfKey(data, k), "unknown key %q in %s", k[len(k)-1], where)
+}
+
+// keyAssignRe matches an assignment to a bare or quoted TOML key at the
+// start of a line, used to attribute an unknown-key error to a line number.
+var keyAssignRe = regexp.MustCompile(`^\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_-]+))\s*=`)
+
+// lineOfKey finds the 1-based line of the first assignment to the final
+// segment of key in data, or 0. Best effort: the schema has no duplicate
+// leaf keys within one table in practice, and a wrong-but-nearby line beats
+// no line at all.
+func lineOfKey(data []byte, key toml.Key) int {
+	want := key[len(key)-1]
+	for i, line := range strings.Split(string(data), "\n") {
+		m := keyAssignRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		name := m[1]
+		if name == "" {
+			name = m[2]
+		}
+		if name == "" {
+			name = m[3]
+		}
+		if name == want {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // syntaxError converts a BurntSushi decode error into a location-carrying
