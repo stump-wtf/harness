@@ -142,11 +142,9 @@ func runDoctor(o verbOpts) int {
 		}
 		rows = append(rows, row)
 		// No point continuing: every later check needs the daemon.
-		// Resolved process settings and where each came from. Failure to resolve
-		// them is not fatal to the report — doctor's job is to tell you what it can
-		// see, and a bad HARNESS_* value has already been reported by whatever
-		// command tried to use it.
-		resolved, _ := resolveReport(nil)
+		// Resolved process settings and where each came from. A resolve failure
+		// is non-fatal but reported — see resolvedSettings.
+		rows, resolved := resolvedSettings(rows)
 
 		emitDoctor(os.Stdout, os.Stderr, rows, resolved)
 		return 1
@@ -286,11 +284,9 @@ func runDoctor(o verbOpts) int {
 		}
 	}
 
-	// Resolved process settings and where each came from. Failure to resolve
-	// them is not fatal to the report — doctor's job is to tell you what it can
-	// see, and a bad HARNESS_* value has already been reported by whatever
-	// command tried to use it.
-	resolved, _ := resolveReport(nil)
+	// Resolved process settings and where each came from. A resolve failure is
+	// non-fatal but reported — see resolvedSettings.
+	rows, resolved := resolvedSettings(rows)
 
 	emitDoctor(os.Stdout, os.Stderr, rows, resolved)
 
@@ -499,4 +495,30 @@ func printDoctorTable(w io.Writer, rows []check) {
 	}
 	t.RowFull("summary", tally)
 	_ = t.Flush()
+}
+
+// resolvedSettings returns the settings report and, when resolution fails, a row
+// saying so.
+//
+// Resolution failure stays non-fatal — doctor's job is to report what it can
+// see. But discarding the error outright dropped the entire settings table with
+// nothing in its place: `HARNESS_LOG_LEVEL=lots harness doctor` printed a report
+// that looked complete and simply had no SETTING section. That is the opposite
+// of diagnosis, because doctor is precisely what an operator runs to find out
+// why a HARNESS_* value is not taking effect — the earlier comment's assumption
+// that "whatever command tried to use it" already reported the problem does not
+// hold when doctor is the first thing they run.
+//
+// @joestump-agent 08/19/2026 - Surface the resolve failure instead of hiding it.
+func resolvedSettings(rows []check) ([]check, []settings.Resolved) {
+	resolved, err := resolveReport(nil)
+	if err != nil {
+		rows = append(rows, check{
+			name:   "settings",
+			level:  cliui.LevelWarn,
+			detail: err.Error(),
+			hint:   "fix or unset that value — the daemon will refuse to start while it is set",
+		})
+	}
+	return rows, resolved
 }

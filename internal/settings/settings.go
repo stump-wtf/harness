@@ -131,17 +131,18 @@ type Resolver struct {
 	v        *viper.Viper
 	flags    *pflag.FlagSet
 	defaults map[string]any
-	fileErr  error
 }
 
 // New builds a Resolver seeded with the registry's compiled defaults. Callers
 // override a default with SetDefault when it is computed at runtime (the socket
 // and config paths depend on the XDG environment, and scrollback comes from the
 // attach package).
+// No SetEnvPrefix/SetEnvKeyReplacer here: both only take effect through
+// AutomaticEnv or BindEnv, and the package comment above explains why neither is
+// used. Configuring them anyway was inert, and read as though the environment
+// layer came from Viper when Resolve reads os.LookupEnv directly.
 func New() *Resolver {
 	v := viper.New()
-	v.SetEnvPrefix("HARNESS")
-	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 
 	r := &Resolver{v: v, defaults: map[string]any{}}
 	for _, s := range Registry {
@@ -163,21 +164,17 @@ func (r *Resolver) SetDefault(name string, value any) { r.defaults[name] = value
 // package comment.
 func (r *Resolver) ReadConfigFile(path string) error {
 	if path == "" {
-		r.fileErr = ErrNoConfigFile
 		return ErrNoConfigFile
 	}
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
-			r.fileErr = ErrNoConfigFile
 			return ErrNoConfigFile
 		}
-		r.fileErr = err
 		return err
 	}
 	r.v.SetConfigFile(path)
 	r.v.SetConfigType("toml")
 	if err := r.v.ReadInConfig(); err != nil {
-		r.fileErr = err
 		return fmt.Errorf("read config %s: %w", path, err)
 	}
 	return nil
@@ -297,9 +294,17 @@ func parse(s Setting, raw, origin string) (any, error) {
 		return i, nil
 
 	default:
-		if s.Name == "log-level" && !validLogLevel(raw) {
-			return nil, fmt.Errorf("%s: invalid value %q: expected one of %s",
-				origin, raw, strings.Join(logLevels, ", "))
+		if s.Name == "log-level" {
+			if !validLogLevel(raw) {
+				return nil, fmt.Errorf("%s: invalid value %q: expected one of %s",
+					origin, raw, strings.Join(logLevels, ", "))
+			}
+			// validLogLevel accepts any casing, so normalize before handing the
+			// value on. configureDaemonLogger switches on the exact string and
+			// falls through to info on anything it does not recognize, so
+			// returning "DEBUG" verbatim accepted the setting and then ignored
+			// it — no error, doctor reporting DEBUG, the daemon logging at info.
+			return strings.ToLower(raw), nil
 		}
 		return raw, nil
 	}

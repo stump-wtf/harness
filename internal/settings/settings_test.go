@@ -342,3 +342,25 @@ func TestNoCredentialSettings(t *testing.T) {
 		}
 	}
 }
+
+// A log level is accepted case-insensitively, so it must also be normalized.
+// validLogLevel used strings.EqualFold while parse returned the raw spelling,
+// so HARNESS_LOG_LEVEL=DEBUG passed validation and then fell through
+// configureDaemonLogger's case-sensitive switch to its default — info. The
+// operator got no error, `doctor` reported DEBUG, and the daemon logged at
+// info. Accepting a spelling and then ignoring it is the failure this pins.
+//
+// @joestump-agent 08/19/2026 - Added with the log-level normalization fix.
+func TestLogLevelIsNormalizedToLowerCase(t *testing.T) {
+	for _, raw := range []string{"DEBUG", "Debug", "dEbUg"} {
+		t.Setenv("HARNESS_LOG_LEVEL", raw)
+		r := New()
+		got, err := r.Resolve("log-level")
+		if err != nil {
+			t.Fatalf("HARNESS_LOG_LEVEL=%s: unexpected error: %v", raw, err)
+		}
+		if got.Value != "debug" {
+			t.Errorf("HARNESS_LOG_LEVEL=%s resolved to %q, want %q", raw, got.Value, "debug")
+		}
+	}
+}
