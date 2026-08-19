@@ -38,6 +38,37 @@ func TestScratchpadDefKindDispatch(t *testing.T) {
 	}
 }
 
+// TestRunCmdFlagParsing pins the SetInterspersed(false) behavior: flags after
+// the first positional are left in args for the invoked command (the
+// `harness run htop -t` regression), while run's own flags still parse when
+// they lead the invocation.
+func TestRunCmdFlagParsing(t *testing.T) {
+	cases := []struct {
+		name     string
+		argv     []string
+		wantArgs []string
+		kind     string
+	}{
+		{"flag after positional stays an arg", []string{"htop", "-t"}, []string{"htop", "-t"}, ""},
+		{"leading flags still parse", []string{"--kind", "codex", "model-x"}, []string{"model-x"}, "codex"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newRunCmd(&globalOpts{})
+			if err := cmd.ParseFlags(tc.argv); err != nil {
+				t.Fatalf("ParseFlags(%v): %v", tc.argv, err)
+			}
+			got := cmd.Flags().Args()
+			if !reflect.DeepEqual(got, tc.wantArgs) {
+				t.Errorf("args = %v, want %v", got, tc.wantArgs)
+			}
+			if k, _ := cmd.Flags().GetString("kind"); k != tc.kind {
+				t.Errorf("kind = %q, want %q", k, tc.kind)
+			}
+		})
+	}
+}
+
 func TestScratchpadDefNameOverride(t *testing.T) {
 	def, slug := scratchpadDef("", "mypad", []string{"claude"})
 	if def.Name != "mypad" || slug != "mypad" {

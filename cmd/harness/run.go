@@ -54,6 +54,12 @@ func newRunCmd(g *globalOpts) *cobra.Command {
 			})
 		},
 	}
+	// Interspersed parsing is off (SPEC-0011 REQ "Scratchpad Creation"):
+	// positionals after the first belong to the invoked command, not to
+	// `run` — `harness run htop -t` must reach the daemon as `-c "htop -t"`,
+	// not die on cobra's unknown-shorthand-flag error. Run's own flags
+	// (--kind, --name, --workdir) still parse when they lead the invocation.
+	cmd.Flags().SetInterspersed(false)
 	cmd.Flags().StringVar(&workdir, "workdir", "", "working directory (default: the caller's cwd)")
 	cmd.Flags().StringVar(&kind, "kind", "", "harness kind override (crush, claude-code, codex, generic)")
 	cmd.Flags().StringVar(&name, "name", "", "name slug override (a random suffix is still appended)")
