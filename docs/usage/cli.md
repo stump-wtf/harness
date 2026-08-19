@@ -38,8 +38,8 @@ the same protocol version.
 ```sh
 harness list                  # table of every harness: name, state, enabled, restarts, PID
 harness ps                    # inside a project: only that project's harnesses
-harness describe <name>       # one harness in detail (state, cmd, backend, flapping, ...)
-harness daemon-info           # daemon version, proto, PID, uptime, socket, active profile
+harness describe <name>       # one harness in detail (state, harness kind, backend, flapping, ...)
+harness daemon status         # daemon version, proto, PID, uptime, socket, active profile
 ```
 
 `list` and `describe` also surface **schedule metadata** for scheduled
