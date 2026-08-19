@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -355,17 +356,26 @@ func TestCmdUpDaemonUnreachable(t *testing.T) {
 
 // TestUpPsRejectStrayArgs: `up` and `ps` operate on the discovered scope only
 // — a positional would be silently swallowed (acting on the wrong target with
-// exit 0), so the dispatcher rejects it before any discovery or dialing.
-// `down [PROJECT]` keeps its documented positional.
+// exit 0), so it is rejected before any discovery or dialing.
+//
+// The rejection lives in the command tree's nameArity (ADR-0016) rather than in
+// run(), so this drives the tree. Asserting against run() directly would now
+// pass through to discovery and dial, which is precisely the swallowing this
+// test exists to prevent.
 func TestUpPsRejectStrayArgs(t *testing.T) {
 	for _, verb := range []string{"up", "ps"} {
-		err := run(verb, verbOpts{name: "b"})
+		root := newRootCmd()
+		root.SetArgs([]string{verb, "b"})
+		root.SetOut(io.Discard)
+		root.SetErr(io.Discard)
+
+		err := root.Execute()
 		if err == nil {
-			t.Errorf("run(%q) with a positional = nil, want error", verb)
+			t.Errorf("`harness %s b` = nil, want error", verb)
 			continue
 		}
 		if !strings.Contains(err.Error(), "takes no arguments") {
-			t.Errorf("run(%q) error = %q, want 'takes no arguments'", verb, err)
+			t.Errorf("`harness %s b` error = %q, want 'takes no arguments'", verb, err)
 		}
 	}
 }

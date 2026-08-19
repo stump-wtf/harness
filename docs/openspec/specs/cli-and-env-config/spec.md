@@ -55,6 +55,10 @@ Harness MUST NOT read harness or profile definitions from the environment. No
 `HARNESS_*` variable SHALL define, modify, or remove a `[harness.*]` or
 `[profile.*]` table.
 
+`HARNESS_DETACH_READY_FD` is RESERVED. It predates this spec as internal IPC
+between `harness daemon --detach` and its forked child, it is not operator
+configuration, and it MUST NOT be reassigned or documented as a setting.
+
 #### Scenario: Environment supplies the socket
 
 - **WHEN** `HARNESS_SOCKET=/tmp/x.sock` is set and no `--socket` flag is given
@@ -71,6 +75,12 @@ Harness MUST NOT read harness or profile definitions from the environment. No
 - **WHEN** `HARNESS_SOCKET=""` is set (present but empty)
 - **THEN** the setting SHALL fall through to the next source in precedence, and
   the empty string SHALL NOT be used as a socket path
+
+#### Scenario: Reserved internal name is not a setting
+
+- **WHEN** the recognized-variable table is enumerated for documentation or for
+  `harness doctor` source attribution
+- **THEN** `HARNESS_DETACH_READY_FD` SHALL NOT appear as a configurable setting
 
 #### Scenario: Harness definitions are file-only
 

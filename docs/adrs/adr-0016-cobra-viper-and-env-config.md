@@ -14,9 +14,12 @@ governs: [SPEC-0010]
 Harness has no environment-variable configuration. Every process-level setting —
 socket path, config path, log level, log file, scrollback depth, the SSH server
 and its listen address — is reachable only through a command-line flag or the
-TOML file. The only environment variables the binary reads at all are `TERM`,
-`TMUX`, and the `XDG_*` set, and those are path/terminal discovery, not
-configuration.
+TOML file. The only environment variables the binary reads are `TERM`, `TMUX`, the `XDG_*`
+set — path and terminal discovery, not configuration — and one internal marker,
+`HARNESS_DETACH_READY_FD`, which `detachDaemon` sets on the forked child so it
+knows to signal readiness back to the parent. That marker is the sole existing
+inhabitant of the `HARNESS_*` namespace, and it is IPC plumbing rather than
+anything an operator sets.
 
 That makes Harness awkward in exactly the places a supervisor belongs. A systemd
 unit has to carry a flag string; a container image has to bake or mount a TOML
@@ -131,7 +134,8 @@ harness without one.**
   reader does not "unify" it by accident.
 * Neutral, because `HARNESS_*` becomes a namespace with a rule: it is for
   process settings, and it is not where secrets go (ADR-0008 still owns those
-  via `env_file`).
+  via `env_file`). The one name already in use, `HARNESS_DETACH_READY_FD`, is
+  internal and is reserved rather than reused.
 
 ### Confirmation
 

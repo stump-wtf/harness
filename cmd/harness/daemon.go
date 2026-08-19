@@ -15,8 +15,6 @@ package main
 
 import (
 	"context"
-	"flag"
-	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -32,7 +30,6 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/daemon"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 	"gitea.stump.rocks/stump.wtf/harness/internal/remote"
 	"gitea.stump.rocks/stump.wtf/harness/internal/scheduler"
 	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
@@ -46,43 +43,17 @@ import (
 // colorized output); ADR-0005 (the daemon is normally supervised by init;
 // `--detach` is a dev convenience that forks into the background and redirects
 // stdio to a logfile).
-func runDaemon(args []string) {
-	fs := flag.NewFlagSet("harness daemon", flag.ExitOnError)
-	configPath := fs.String("config", config.DefaultPath(), "path to harness.toml")
-	socketPath := fs.String("socket", protocol.DefaultSocketPath(), "control/data plane socket path")
-	ringLines := fs.Int("scrollback", attach.DefaultRingLines, "per-harness scrollback ring depth (lines)")
-	sshEnable := fs.Bool("ssh", false, "enable the remote Wish SSH server (ADR-0004; overrides [server] enabled)")
-	sshListen := fs.String("ssh-listen", "", "SSH bind address host:port (overrides [server] listen)")
-	logLevel := fs.String("log-level", "info", "log level: debug, info, warn, error")
-	logFile := fs.String("log-file", "", "append logs to this file instead of stderr")
-	detach := fs.Bool("detach", false, "fork into the background; redirect stdio to --log-file (dev convenience; prefer systemd in production)")
-	showVersion := fs.Bool("version", false, "print version and exit")
-	_ = fs.Parse(args)
+func runDaemon(o daemonOpts) {
+	// Flag parsing, --version, and --detach are handled by the Cobra command
+	// (daemon_cmd.go) and the settings ladder (settings_wire.go), so by the
+	// time we get here every value is resolved and this function no longer
+	// cares whether it came from a flag, HARNESS_*, the file, or a default.
+	//
+	// Governing: ADR-0016, SPEC-0010 REQ "Precedence Order".
 
-	if *showVersion {
-		fmt.Printf("harness daemon %s\n", buildinfo.Version)
-		return
-	}
+	configureDaemonLogger(o.logLevel, o.logFile)
 
-	// --detach: fork into the background. We re-exec ourselves without
-	// --detach, with stdio redirected to the logfile, and the parent exits
-	// once the child signals readiness (binds the socket). This is a dev
-	// convenience; in production ADR-0005 wants systemd (or launchd) owning
-	// the daemon.
-	if *detach {
-		if err := detachDaemon(args); err != nil {
-			os.Exit(cliui.Fatal(err))
-		}
-		return
-	}
-
-	// Configure the daemon-wide logger (ADR-0001: charmbracelet/log). It
-	// writes to stderr by default (so systemd captures it) or to --log-file;
-	// level is configurable. The TTY-aware styling mirrors cliui's contract —
-	// structured logs read like the rest of the product.
-	configureDaemonLogger(*logLevel, *logFile)
-
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(o.configPath)
 	if err != nil {
 		os.Exit(cliui.Fatal(err))
 	}
@@ -92,7 +63,7 @@ func runDaemon(args []string) {
 	// into its Mux via the ExtraOut hook, alongside the durable log (ADR-0003/
 	// ADR-0007). The Registry's controller (the Manager) applies the
 	// smallest-attached-wins resize and delivers read-write keystrokes.
-	reg := attach.NewRegistry(*ringLines)
+	reg := attach.NewRegistry(o.ringLines)
 	mgr := supervisor.NewManager(cfg, supervisor.ManagerOptions{
 		ExtraOutFor: reg.WriterFor,
 		// Deregistered project harnesses release their Mux so ephemeral
@@ -161,12 +132,12 @@ func runDaemon(args []string) {
 		Manager:    mgr,
 		Registry:   reg,
 		Scheduler:  sched,
-		SocketPath: *socketPath,
-		ConfigPath: *configPath,
+		SocketPath: o.socketPath,
+		ConfigPath: o.configPath,
 		Version:    buildinfo.Version,
 	})
 	if err := srv.Listen(); err != nil {
-		log.Error("listen failed", "socket", *socketPath, "err", err)
+		log.Error("listen failed", "socket", o.socketPath, "err", err)
 		signalDetached('e') // tell the waiting parent we failed
 		mgr.Close()
 		os.Exit(1)
@@ -174,7 +145,7 @@ func runDaemon(args []string) {
 
 	log.Info("serving",
 		"socket", srv.SocketPath(),
-		"config", *configPath,
+		"config", o.configPath,
 		"harnesses", len(cfg.Harnesses),
 		"version", buildinfo.Version,
 	)
@@ -186,13 +157,13 @@ func runDaemon(args []string) {
 	// opt-out is [daemon] watch_config = false.
 	var cfgWatcher *supervisor.ConfigWatcher
 	if cfg.Daemon.WatchConfigEnabled() {
-		cw, err := supervisor.NewConfigWatcher(mgr, *configPath)
+		cw, err := supervisor.NewConfigWatcher(mgr, o.configPath)
 		if err != nil {
 			log.Warn("config watcher disabled (could not start)", "err", err)
 		} else {
 			cw.Start()
 			cfgWatcher = cw
-			log.Info("watching config for changes", "config", *configPath)
+			log.Info("watching config for changes", "config", o.configPath)
 		}
 	}
 
@@ -207,7 +178,7 @@ func runDaemon(args []string) {
 	// TUI in-process as a local client of the socket above. Off unless enabled
 	// via [server] or the -ssh flag. Secrets never touch this path — only public
 	// keys and the persisted host key (ADR-0008).
-	remoteSrv := startRemote(cfg.Server, *sshEnable, *sshListen, srv.SocketPath(), *configPath)
+	remoteSrv := startRemote(cfg.Server, o.sshEnable, o.sshListen, srv.SocketPath(), o.configPath)
 	if remoteSrv != nil {
 		srv.SetRemote(remoteSrv.Addr(), remoteSrv.Keys())
 	}
@@ -218,7 +189,7 @@ func runDaemon(args []string) {
 		s := <-sig
 		if s == syscall.SIGHUP {
 			log.Info("received SIGHUP, reloading config")
-			if err := mgr.ReloadFromFile(*configPath); err != nil {
+			if err := mgr.ReloadFromFile(o.configPath); err != nil {
 				log.Warn("config reload failed", "err", err)
 			} else {
 				log.Info("config reloaded")
