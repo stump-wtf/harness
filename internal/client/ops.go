@@ -137,6 +137,18 @@ func (c *Client) Remove(name string) (protocol.RemoveData, error) {
 	return out, json.Unmarshal(resp.Data, &out)
 }
 
+// ScratchRun registers and starts one ad-hoc scratchpad under a
+// daemon-minted random name (SPEC-0011; ADR-0017). def carries the definition
+// (name is the optional slug override); the reply holds the minted name.
+func (c *Client) ScratchRun(def protocol.ProjectHarness, slug string) (protocol.ScratchRunData, error) {
+	resp, err := c.call(protocol.ControlReq{Op: protocol.OpScratchRun, Name: slug, Harnesses: []protocol.ProjectHarness{def}})
+	if err != nil {
+		return protocol.ScratchRunData{}, err
+	}
+	var out protocol.ScratchRunData
+	return out, json.Unmarshal(resp.Data, &out)
+}
+
 // DaemonInfo returns daemon metadata.
 func (c *Client) DaemonInfo() (protocol.DaemonInfo, error) {
 	resp, err := c.call(protocol.ControlReq{Op: protocol.OpDaemonInfo})

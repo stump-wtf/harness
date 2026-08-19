@@ -9,6 +9,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -506,5 +507,35 @@ func TestRemoveRoundTrip(t *testing.T) {
 		t.Fatal("Remove(global) succeeded; want not_removable")
 	} else if code := errCodeOf(t, err); code != protocol.ErrNotRemovable {
 		t.Errorf("Remove(global) code = %s, want not_removable", code)
+	}
+}
+
+// TestScratchRunRoundTrip is SPEC-0011 REQ "Control Operation": scratch_run
+// over a real socket mints a name, starts the harness, and projects scratch
+// provenance; rm tears it down; an empty payload is a structured refusal.
+func TestScratchRunRoundTrip(t *testing.T) {
+	td := newTestDaemon(t, sleeperTOML)
+	c := td.dial(t, nil)
+
+	def := protocol.ProjectHarness{Harness: "generic", Args: []string{"-c", "sleep 60"}}
+	data, err := c.ScratchRun(def, "claude-opus-5")
+	if err != nil {
+		t.Fatalf("ScratchRun: %v", err)
+	}
+	if !strings.HasPrefix(data.Name, "claude-opus-5-") || len(data.Name) != len("claude-opus-5-")+4 {
+		t.Errorf("minted name %q, want claude-opus-5-<4 chars>", data.Name)
+	}
+	if data.Info.Project != "scratch" {
+		t.Errorf("provenance = %q, want scratch", data.Info.Project)
+	}
+	if _, err := c.Remove(data.Name); err != nil {
+		t.Fatalf("Remove(scratchpad): %v", err)
+	}
+
+	// Validation: an unknown kind is a structured refusal.
+	if _, err := c.ScratchRun(protocol.ProjectHarness{Harness: "nope"}, ""); err == nil {
+		t.Fatal("unknown kind accepted")
+	} else if code := errCodeOf(t, err); code != protocol.ErrInvalidProject {
+		t.Errorf("code = %s, want invalid_project", code)
 	}
 }

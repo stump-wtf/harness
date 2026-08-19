@@ -99,6 +99,42 @@ func (c *conn) opRemove(req protocol.ControlReq) {
 	c.respond(req, protocol.RemoveData{Name: req.Name, Project: project})
 }
 
+// opScratchRun registers and starts ONE ad-hoc scratchpad under a
+// daemon-minted random name (SPEC-0011 REQ "Control Operation"; ADR-0017).
+// The definition rides Harnesses[0] (the same wire shape project_up uses);
+// req.Name is the optional slug override. Never persisted; torn down by
+// remove.
+func (c *conn) opScratchRun(req protocol.ControlReq) {
+	if len(req.Harnesses) != 1 {
+		_ = c.pc.WriteError(req.ID, protocol.ErrInvalidProject,
+			"scratch_run: exactly one harness definition required (got %d)", len(req.Harnesses))
+		return
+	}
+	ph := req.Harnesses[0]
+	h := harnessFromWire(ph)
+	// Session semantics (ADR-0017): unless the wire explicitly chose a
+	// restart policy, a scratchpad defaults to "no" — an exited session stays
+	// inspectable until rm, never respawned. harnessFromWire already applied
+	// the config-parser default, so undo it when the wire field was empty.
+	if ph.Restart == "" {
+		h.Restart = core.RestartNo
+	}
+	name, err := c.srv.mgr.ScratchRun(h, req.Name)
+	if err != nil {
+		log.Warn("scratch run failed", "err", err)
+		c.writeProjectError(req, err)
+		return
+	}
+	snap, ok := c.srv.mgr.Snapshot(name)
+	if !ok {
+		_ = c.pc.WriteError(req.ID, protocol.ErrInternal, "scratch_run: %q vanished after registration", name)
+		return
+	}
+	log.Info("scratch run", "harness", name)
+	c.srv.broadcast(protocol.EventMsg{Kind: protocol.EvConfigReload})
+	c.respond(req, protocol.ScratchRunData{Name: name, Info: c.infoFor(snap)})
+}
+
 // writeProjectError maps the supervisor/config sentinels onto the SPEC-0004
 // wire codes and writes the structured ERROR frame (machine code + human
 // message the CLI can surface verbatim).

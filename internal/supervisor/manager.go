@@ -92,6 +92,10 @@ type Manager struct {
 	// (project-scoped compose), SPEC-0004 REQ "Project Naming And Namespacing".
 	projects   map[string]*projectRecord
 	provenance map[string]string
+	// scratchDefs holds the registered scratchpad definitions by minted name
+	// (ADR-0017) so HarnessRecord/HarnessDef resolve them like any other
+	// harness — provenance "scratch" has no projectRecord to read from.
+	scratchDefs map[string]core.Harness
 
 	dirty  chan struct{}
 	closed chan struct{}
@@ -124,6 +128,7 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 		cfg:          cfg,
 		supervisors:  make(map[string]*Supervisor),
 		projects:     make(map[string]*projectRecord),
+		scratchDefs:  make(map[string]core.Harness),
 		provenance:   make(map[string]string),
 		dirty:        make(chan struct{}, 1),
 		closed:       make(chan struct{}),
@@ -582,6 +587,22 @@ func (m *Manager) addSupervisorLocked(h core.Harness) {
 	m.supervisors[h.Name] = s
 }
 
+// addEphemeralSupervisorLocked is addSupervisorLocked for the scratch class
+// (ADR-0017): identical supervision, but no persistence OnChange hook — a
+// scratchpad never writes state.json, so there is nothing to mark dirty and
+// every markDirty an exiting scratchpad fired would just rewrite a
+// byte-identical file. Caller holds m.mu.
+func (m *Manager) addEphemeralSupervisorLocked(h core.Harness) {
+	s := New(h, Options{
+		Policy:      m.policy,
+		Bus:         m.bus,
+		LogCfg:      m.logCfg,
+		ExtraOut:    m.extraOut(h.Name),
+		InitialSize: m.initialSizeFor(h.Name),
+	})
+	m.supervisors[h.Name] = s
+}
+
 // Close stops every harness, flushes final state, and tears down the manager.
 func (m *Manager) Close() {
 	for _, s := range m.snapshotSupervisors() {
@@ -607,6 +628,9 @@ func (m *Manager) Save() error {
 	activeProfile := m.activeProfile
 	sups := make([]*Supervisor, 0, len(m.supervisors))
 	for _, name := range m.order {
+		if m.provenance[name] == ProvenanceScratch {
+			continue // scratchpads are never persisted (ADR-0017, SPEC-0011)
+		}
 		if s, ok := m.supervisors[name]; ok {
 			sups = append(sups, s)
 		}

@@ -89,6 +89,12 @@ const (
 	OpProjectUp   Op = "project_up"
 	OpProjectDown Op = "project_down"
 	OpRemove      Op = "remove"
+
+	// Scratchpad op. Governing: ADR-0017 (ephemeral scratchpads), SPEC-0011
+	// REQ "Control Operation": scratch_run registers and starts ONE ad-hoc
+	// harness under a daemon-minted random name with scratch provenance; it
+	// is never persisted and dies with the daemon.
+	OpScratchRun Op = "scratch_run"
 )
 
 // ControlReq is a control-plane request. ID correlates the response; Name
@@ -287,6 +293,14 @@ type ProjectDownData struct {
 type RemoveData struct {
 	Name    string `json:"name"`
 	Project string `json:"project,omitempty"`
+}
+
+// ScratchRunData is the scratch_run response payload: the daemon-minted name
+// and the scratchpad's fresh state (SPEC-0011 REQ "Control Operation").
+// Governing: ADR-0017.
+type ScratchRunData struct {
+	Name string      `json:"name"`
+	Info HarnessInfo `json:"harness"`
 }
 
 // DaemonInfo is the daemon_info response payload.

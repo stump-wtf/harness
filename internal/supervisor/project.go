@@ -275,6 +275,7 @@ func (m *Manager) RemoveHarness(name string) error {
 	s := m.supervisors[name]
 	delete(m.supervisors, name)
 	delete(m.provenance, name)
+	delete(m.scratchDefs, name)
 	m.dropFromOrderLocked([]string{name})
 	if rec != nil {
 		delete(rec.harnesses, name)
@@ -353,6 +354,12 @@ func (m *Manager) HarnessRecord(name string) (core.Harness, string, bool) {
 	// project record, never the global config (ADR-0009) — even if a
 	// same-named global key were injected into the config.
 	if project := m.provenance[name]; project != "" {
+		if project == ProvenanceScratch {
+			if h, ok := m.scratchDefs[name]; ok {
+				return h, project, true
+			}
+			return core.Harness{}, project, false
+		}
 		if rec := m.projects[project]; rec != nil {
 			if h, ok := rec.harnesses[name]; ok {
 				return h, project, true
@@ -397,44 +404,53 @@ func validateProjectDefs(project string, defs []core.Harness) error {
 	}
 	seen := make(map[string]bool, len(defs))
 	for _, h := range defs {
-		switch {
-		case strings.TrimSpace(h.Name) == "":
-			return fmt.Errorf("project up %q: %w: harness with empty name", project, ErrInvalidProjectDef)
-		case strings.Contains(h.Name, "/"):
-			return fmt.Errorf("project up %q: harness %q: %w: name must not contain %q",
-				project, h.Name, ErrInvalidProjectDef, "/")
-		case h.Name == "." || h.Name == "..":
-			return fmt.Errorf("project up %q: harness %q: %w: name is reserved",
-				project, h.Name, ErrInvalidProjectDef)
-		case seen[h.Name]:
+		if seen[h.Name] {
 			return fmt.Errorf("project up %q: %w: duplicate harness %q", project, ErrInvalidProjectDef, h.Name)
-		// The `harness` enum + prompt invariants — the same ones the config
-		// parsers enforce. Re-checked here because the wire is a second front
-		// door into the registry (ADR-0011).
-		// `harness` is required and has no default, on the wire as much as in
-		// the file: an empty kind here would otherwise reach Resolve and pick
-		// an agent for a caller that never named one.
-		case h.Adapter == "":
-			return fmt.Errorf("project up %q: harness %q: %w: missing harness kind (want one of: crush, claude-code, codex, generic)",
-				project, h.Name, ErrInvalidProjectDef)
-		case h.Adapter != "crush" && h.Adapter != "claude-code" &&
-			h.Adapter != "codex" && h.Adapter != "generic":
-			return fmt.Errorf("project up %q: harness %q: %w: unknown harness kind %q",
-				project, h.Name, ErrInvalidProjectDef, h.Adapter)
-		case strings.TrimSpace(h.Prompt) != "" && len(h.Args) > 0:
-			return fmt.Errorf("project up %q: harness %q: %w: prompt and args are mutually exclusive",
-				project, h.Name, ErrInvalidProjectDef)
-		case !h.Backend.Valid():
-			return fmt.Errorf("project up %q: harness %q: %w: invalid backend %q",
-				project, h.Name, ErrInvalidProjectDef, h.Backend)
-		case !h.Restart.Valid():
-			return fmt.Errorf("project up %q: harness %q: %w: invalid restart policy %q",
-				project, h.Name, ErrInvalidProjectDef, h.Restart)
-		case h.RestartDelay < 0:
-			return fmt.Errorf("project up %q: harness %q: %w: negative restart delay",
-				project, h.Name, ErrInvalidProjectDef)
+		}
+		if err := validateHarnessDef(project, h); err != nil {
+			return err
 		}
 		seen[h.Name] = true
+	}
+	return nil
+}
+
+// validateHarnessDef applies the per-definition rules shared by project_up and
+// scratch_run (the wire is a second front door into the registry, so the
+// `harness` enum + prompt invariants the config parsers enforce are re-checked
+// here — ADR-0011). src labels the error ("project up %q" / "scratchpad").
+func validateHarnessDef(src string, h core.Harness) error {
+	switch {
+	case strings.TrimSpace(h.Name) == "":
+		return fmt.Errorf("%s: %w: harness with empty name", src, ErrInvalidProjectDef)
+	case strings.Contains(h.Name, "/"):
+		return fmt.Errorf("%s: harness %q: %w: name must not contain %q",
+			src, h.Name, ErrInvalidProjectDef, "/")
+	case h.Name == "." || h.Name == "..":
+		return fmt.Errorf("%s: harness %q: %w: name is reserved",
+			src, h.Name, ErrInvalidProjectDef)
+	// `harness` is required and has no default, on the wire as much as in
+	// the file: an empty kind here would otherwise reach Resolve and pick
+	// an agent for a caller that never named one.
+	case h.Adapter == "":
+		return fmt.Errorf("%s: harness %q: %w: missing harness kind (want one of: crush, claude-code, codex, generic)",
+			src, h.Name, ErrInvalidProjectDef)
+	case h.Adapter != "crush" && h.Adapter != "claude-code" &&
+		h.Adapter != "codex" && h.Adapter != "generic":
+		return fmt.Errorf("%s: harness %q: %w: unknown harness kind %q",
+			src, h.Name, ErrInvalidProjectDef, h.Adapter)
+	case strings.TrimSpace(h.Prompt) != "" && len(h.Args) > 0:
+		return fmt.Errorf("%s: harness %q: %w: prompt and args are mutually exclusive",
+			src, h.Name, ErrInvalidProjectDef)
+	case !h.Backend.Valid():
+		return fmt.Errorf("%s: harness %q: %w: invalid backend %q",
+			src, h.Name, ErrInvalidProjectDef, h.Backend)
+	case !h.Restart.Valid():
+		return fmt.Errorf("%s: harness %q: %w: invalid restart policy %q",
+			src, h.Name, ErrInvalidProjectDef, h.Restart)
+	case h.RestartDelay < 0:
+		return fmt.Errorf("%s: harness %q: %w: negative restart delay",
+			src, h.Name, ErrInvalidProjectDef)
 	}
 	return nil
 }

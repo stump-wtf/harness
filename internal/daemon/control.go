@@ -52,6 +52,8 @@ func (c *conn) handleControl(payload []byte) {
 		c.opProjectDown(req)
 	case protocol.OpRemove:
 		c.opRemove(req)
+	case protocol.OpScratchRun:
+		c.opScratchRun(req)
 	default:
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownOp, "unknown op %q", req.Op)
 	}
