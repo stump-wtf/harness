@@ -120,10 +120,17 @@ func isUnknownProject(err error) bool {
 // `down`. Removing the last member of a project drops the now-empty project.
 // A global-config harness is refused by the daemon (not_removable): those are
 // authored in harness.toml and leave via edit + reload, never a runtime op.
+//
+// The daemon error is returned unwrapped: rm is dispatched through
+// projectScoped, which already applies the "harness rm: " verb-context wrap
+// that every sibling verb (describe/start/stop/logs) relies on. Wrapping here
+// too printed it twice.
+//
+// @joestump-agent 08/19/2026 - Dropped the redundant verb wrap.
 func cmdRm(c *client.Client, o verbOpts) error {
 	data, err := c.Remove(o.name)
 	if err != nil {
-		return fmt.Errorf("harness rm: %w", err)
+		return err
 	}
 	if o.json {
 		return printJSON(data)

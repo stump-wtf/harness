@@ -849,3 +849,57 @@ func TestFilterProjectHarnesses(t *testing.T) {
 		t.Errorf("filter = %+v, want just proj/agent", got)
 	}
 }
+
+// TestCmdRmProjectScoped: `rm` rides the same projectScoped wrapper as the
+// other name-taking verbs, so a bare NAME inside a project removes
+// <project>/NAME. It also pins the error shape: projectScoped applies the
+// "harness rm: " verb-context wrap, so cmdRm must NOT wrap again — the
+// original emitted "harness rm: harness rm: ..." on every failure, the only
+// verb in the tree that did.
+func TestCmdRmProjectScoped(t *testing.T) {
+	cliui.SetJSON(true)
+	t.Cleanup(func() { cliui.SetJSON(false) })
+	socket, _ := bootTestDaemon(t)
+	chdir(t, writeProjectFile(t))
+	o := verbOpts{socket: socket, json: true}
+
+	if _, err := captureStdout(t, func() error { return cmdUp(o) }); err != nil {
+		t.Fatal(err)
+	}
+	c := dialTest(t, socket)
+	waitForRunning(t, c, "proj/agent")
+
+	// Bare local name resolves to proj/agent and removes just it.
+	rm := verbOpts{socket: socket, json: true, name: "agent"}
+	if _, err := captureStdout(t, func() error {
+		return withClient(rm, nil, projectScoped("rm", false, cmdRm))
+	}); err != nil {
+		t.Fatalf("scoped rm: %v", err)
+	}
+	if _, err := c.Describe("proj/agent"); err == nil {
+		t.Error("proj/agent still registered after rm")
+	}
+	if _, err := c.Describe("proj/helper"); err != nil {
+		t.Errorf("rm agent also removed proj/helper: %v", err)
+	}
+
+	// A global-config harness is refused with a structured not_removable, and
+	// the message carries exactly ONE verb-context prefix.
+	rm.name = "demo/nope" // qualified, so it bypasses project scoping
+	_, err := captureStdout(t, func() error {
+		return withClient(rm, nil, projectScoped("rm", false, cmdRm))
+	})
+	if err == nil {
+		t.Fatal("rm of an unregistered harness succeeded")
+	}
+	var em *protocol.ErrorMsg
+	if !errors.As(err, &em) {
+		t.Fatalf("rm error = %v (%T), want wrapped *protocol.ErrorMsg", err, err)
+	}
+	if em.Code != protocol.ErrNotRemovable {
+		t.Errorf("code = %q, want %q", em.Code, protocol.ErrNotRemovable)
+	}
+	if n := strings.Count(err.Error(), "harness rm:"); n != 1 {
+		t.Errorf("error %q has %d %q prefixes, want exactly 1", err, n, "harness rm:")
+	}
+}
