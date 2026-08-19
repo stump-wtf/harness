@@ -186,14 +186,28 @@ func (m *lifecycleModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// View renders the live frame, and deliberately renders nothing once the run
+// is over.
+//
+// Bubble Tea v2 does NOT erase its last frame on exit: graceful shutdown calls
+// p.render(model) one final time, and the inline renderer's close only issues
+// EraseScreenBelow from the frame's bottom row, so every line above it stays
+// on screen. Rendering the summary in that frame and then printing finalView
+// underneath it put the same block in the terminal twice. An empty final frame
+// leaves finalView as the single permanent record — without clearing the
+// screen, which would take the user's earlier output with it.
 func (m *lifecycleModel) View() tea.View {
+	if m.quitting {
+		return tea.NewView("")
+	}
 	return tea.NewView(m.content())
 }
 
 // finalView is the frame that stays in the terminal after the program exits:
 // the completed rows and summary, without the live spinner/progress chrome.
-// Bubble Tea v2 clears its last frame on exit, so the caller prints this
-// after Run returns — the run leaves a permanent record, not a flash.
+// The caller prints it after Run returns; View renders an empty final frame so
+// this is the only copy — the run leaves a permanent record, not a flash and
+// not a double.
 func (m *lifecycleModel) finalView() string {
 	m.quitting = true
 	return m.content()
@@ -296,6 +310,13 @@ func (m *lifecycleModel) result() error {
 }
 
 // runLifecycleAnimated renders the animated --all run and reports its verdict.
+//
+// @joestump-agent 08/19/2026 - The first fix for the duplicated summary block
+// cleared the whole screen (ESC[2J ESC[H) before printing finalView. That did
+// remove the duplicate, but it also erased everything the user had on screen
+// before the command ran. The duplicate is now prevented at the source: View
+// renders an empty frame once quitting is set, so Bubble Tea has nothing to
+// leave behind.
 func runLifecycleAnimated(verb string, c *client.Client, names []string) error {
 	m := newLifecycleModel(verb, c, names)
 	if _, err := tea.NewProgram(m).Run(); err != nil {
@@ -303,14 +324,10 @@ func runLifecycleAnimated(verb string, c *client.Client, names []string) error {
 		// errors collected so far plus the render failure itself.
 		m.errs = append(m.errs, fmt.Sprintf("render: %v", err))
 	}
-	// Bubble Tea v2's graceful shutdown re-renders the final model state via
-	// p.render(model) before stopRenderer, which writes the completed rows +
-	// summary to stdout. The renderer then erases that frame on close (inline
-	// mode: EraseScreenBelow), but the erase is unreliable across terminals
-	// and timing windows — producing a duplicate of the final output. We own
-	// the permanent record via finalView below, so clear the last frame
-	// explicitly before printing it.
-	fmt.Print("\033[2J\033[H")
+	// Print, not Println: the final frame already ends in a newline, and the
+	// extra one leaves a blank line hanging under every run. View renders
+	// nothing once quitting is set, so the frame Bubble Tea leaves behind is
+	// empty and this is the only copy that reaches the terminal.
 	fmt.Print(m.finalView())
 	return m.result()
 }

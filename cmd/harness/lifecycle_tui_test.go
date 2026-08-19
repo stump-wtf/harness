@@ -7,6 +7,8 @@ package main
 // ctrl-c interrupt.
 
 import (
+	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -142,5 +144,43 @@ func TestLifecycleResultExitStatus(t *testing.T) {
 	err = mi.(*lifecycleModel).result()
 	if err == nil || !strings.Contains(err.Error(), "interrupted") || !strings.Contains(err.Error(), "boom") {
 		t.Errorf("result = %v, want both the interrupt and the failure", err)
+	}
+}
+
+// TestLifecycleViewEmptyWhenQuitting pins the fix for the duplicated summary
+// block. Bubble Tea leaves its last rendered frame in the terminal, and the
+// caller prints finalView underneath it — so the moment View renders the
+// summary while quitting, the user sees it twice. The earlier fix for this
+// cleared the whole screen instead, which erased the user's prior output.
+func TestLifecycleViewEmptyWhenQuitting(t *testing.T) {
+	m := newLifecycleModel("start", nil, []string{"alpha"})
+	if got := m.View().Content; got == "" {
+		t.Fatal("a live run must render a frame")
+	}
+	mi, _ := m.Update(opDoneMsg{idx: 0, info: protocol.HarnessInfo{State: "running"}})
+	m = mi.(*lifecycleModel)
+	if !m.quitting {
+		t.Fatal("last op must set quitting")
+	}
+	if got := m.View().Content; got != "" {
+		t.Fatalf("final frame must be empty or it duplicates finalView, got %q", got)
+	}
+	if out := m.finalView(); !strings.Contains(out, "1 harnesses started") {
+		t.Errorf("finalView is the permanent record:\n%s", out)
+	}
+}
+
+// TestLifecycleAnimatedNeverClearsScreen guards the regression the screen-clear
+// fix introduced: no code path in the animated run may emit a full-screen erase,
+// which would take the user's earlier terminal output with it.
+func TestLifecycleAnimatedNeverClearsScreen(t *testing.T) {
+	src, err := os.ReadFile("lifecycle_tui.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{`\033[2J`, `\x1b[2J`, "ansi.EraseEntireScreen"} {
+		if bytes.Contains(src, []byte(bad)) {
+			t.Errorf("animated lifecycle must not emit a full-screen erase (%s)", bad)
+		}
 	}
 }
