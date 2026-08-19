@@ -21,7 +21,7 @@ flowchart LR
     CLI["harness run claude opus-5"] -->|"scratch_run {harness,args,workdir?}"| D[daemon control]
     D -->|Mint name under lock<br/>claude-opus-5-x4yx| R[registry]
     R -->|provenance=scratch| S[supervisor]
-    S --> PTY / scrollback / attach
+    S --> T["PTY / scrollback / attach"]
     CLI2["harness rm NAME"] -->|remove| R
 ```
 
@@ -48,7 +48,10 @@ flowchart LR
   collapse repeats, trim, cap at 40 chars. Suffix: 4 random base36 chars from
   `crypto/rand`.
 - `Save` skips names whose provenance is `scratch` (like the pre-2026-08-19
-  project exclusion, but for the scratch class only).
+  project exclusion, but for the scratch class only). Because the sentinel
+  lives in the same string-keyed map as project ownership, the project name
+  `scratch` is reserved — `project_up` refuses it — so `Save` can never
+  silently drop a real project's harnesses.
 - `Restore` never re-registers scratchpads (nothing persisted to read).
 - Restart policy forced to `no` (session semantics) unless the definition says
   otherwise via the wire `restart` field.
@@ -62,8 +65,9 @@ flowchart LR
 ### Client / CLI (`cmd/harness`)
 
 - Cobra command `run`: `Args: cobra.MinimumNArgs(1)`, flags `--workdir`,
-  `--kind`, `--name`. First positional dispatch: known kind → kind + rest as
-  args; otherwise `generic` with all positionals as argv (`--kind` overrides).
+  `--kind`, `--name`. First positional dispatch: known kind (via a small
+  alias table — `claude` → `claude-code`) → kind + rest as args; otherwise
+  `generic` with all positionals as one `sh -c` command (`--kind` overrides).
 - Prints the minted name (JSON mode prints `ScratchRunData`).
 - `rm` and `attach`/`logs`/`describe` need no changes — scratchpads are
   ordinary supervisors.

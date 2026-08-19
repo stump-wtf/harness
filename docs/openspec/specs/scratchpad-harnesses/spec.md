@@ -23,9 +23,11 @@ torn down with `harness rm`. See **ADR-0017**.
 `harness run [--workdir DIR] [--name SLUG] [--kind KIND] ARG [ARG...]` SHALL
 require a running daemon, map its positionals onto a harness definition (first
 positional selects the harness kind per ADR-0011's enum — `crush`,
-`claude-code`, `codex`, `generic` — and remaining positionals are its args; a
-first positional that is not a known kind SHALL be treated as a `generic`
-command with all positionals as its argv, overridable by `--kind`), and send a
+`claude-code`, `codex`, `generic` — through a small alias table (`claude` →
+`claude-code`; the word people type, not the enum value) and remaining
+positionals are its args; a first positional that is not a known kind or
+alias SHALL be treated as a `generic` command with all positionals as its
+argv, overridable by `--kind`), and send a
 `scratch_run` control request (SPEC-0002) carrying the definition. The daemon
 SHALL register the supervisor, start it, and reply with the minted name and
 fresh state; the client SHALL print the name. `--workdir` SHALL resolve
@@ -38,6 +40,13 @@ sending).
 - **THEN** the daemon registers and starts a scratchpad named
   `claude-opus-5-<suffix>` (4 random base36 characters) with `scratch`
   provenance, and the command prints the name
+
+#### Scenario: Project named `scratch` refused
+
+- **WHEN** `harness project up` targets a project whose name is `scratch`
+  (e.g. a project rooted at `~/src/scratch`)
+- **THEN** it is refused with the reserved-name validation error, because
+  `scratch` is the provenance sentinel and must never name a real project
 
 #### Scenario: Generic command scratchpad
 

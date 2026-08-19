@@ -70,7 +70,8 @@ files.
 `harness run [flags] ARG...` maps its positionals onto the harness argv the
 same way a `[harness.NAME]` table's `harness` + `args` keys would: the first
 positional selects the harness kind (`crush`, `claude-code`, `codex`,
-`generic` — a bare unknown word is treated as a `generic` command to run,
+`generic`, with `claude` aliased to `claude-code` — the word people type —
+and a bare unknown word treated as a `generic` command to run,
 so `harness run claude opus-5` and `harness run htop` both work), the rest are
 its args. The daemon mints the name: `<slug>-<suffix>`, where the slug is the
 sanitized invocation (e.g. `claude-opus-5`) and the suffix is 4 random base36
@@ -82,7 +83,10 @@ care; uniqueness is still enforced by the suffix.
 
 `scratch_run` registers the supervisor with provenance `scratch` and starts it.
 Scratchpads are **never written to state.json** — on daemon restart they are
-gone, exactly like a tmux server dying takes its sessions. Teardown is the
+gone, exactly like a tmux server dying takes its sessions. Because the
+provenance value `scratch` doubles as the sentinel `Save` excludes, the
+project name `scratch` is reserved (refused at `project_up`), so the
+sentinel can never collide with a real project. Teardown is the
 existing `remove` op (`harness rm`), which accepts any provenance-tagged
 (registered) harness. A scratchpad whose process exits stays registered until
 rm (state `exited`); the default restart policy for a scratchpad is `no`,

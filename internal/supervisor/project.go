@@ -399,6 +399,15 @@ func validateProjectDefs(project string, defs []core.Harness) error {
 		return fmt.Errorf("project up %q: %w: project name %q is reserved",
 			project, ErrInvalidProjectDef, project)
 	}
+	// "scratch" is reserved too: it is the provenance sentinel marking a
+	// scratchpad (scratch.go ProvenanceScratch), and a project of the same
+	// name would write the same value into the provenance map — Save would
+	// silently drop its harnesses and ProjectOf would misbadge them
+	// (ADR-0017; the collision flagged in the #236 review).
+	if project == ProvenanceScratch {
+		return fmt.Errorf("project up %q: %w: project name %q is reserved",
+			project, ErrInvalidProjectDef, project)
+	}
 	if len(defs) == 0 {
 		return fmt.Errorf("project up %q: %w: no harnesses defined", project, ErrInvalidProjectDef)
 	}

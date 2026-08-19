@@ -178,6 +178,9 @@ func TestProjectUpInvalidDefsNoPartialState(t *testing.T) {
 		// global harness's log file.
 		{"dot project name", ".", projectDefs("agent")},
 		{"dotdot project name", "..", projectDefs("agent")},
+		// "scratch" is reserved as the scratchpad provenance sentinel — a
+		// project of that name would collide with it in the provenance map.
+		{"scratch project name", "scratch", projectDefs("agent")},
 		{"no harnesses", "reduit", nil},
 		{"empty harness name", "reduit", []core.Harness{shHarness("", loopScript, 0)}},
 		{"slash in harness name", "reduit", []core.Harness{shHarness("a/b", loopScript, 0)}},
