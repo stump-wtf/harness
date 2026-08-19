@@ -1,8 +1,9 @@
 ---
 status: proposed
 date: 2026-08-19
-decision-makers: [@joestump]
-governs: [SPEC-0015]
+decision-makers: [joestump]
+governs: [SPEC-0009]
+related: [ADR-0001, ADR-0003, ADR-0011]
 ---
 
 # ADR-0015: Unified Chatroom TUI for Multi-Harness Agent Output
@@ -56,7 +57,7 @@ Chosen option: **Option 1 — New chatroom view within Harness TUI**, because it
 
 ### Confirmation
 
-* Harness TUI launches with new "chatroom" view accessible via keybinding (e.g., `Ctrl+R` or view switcher)
+* Harness TUI launches with a new "chatroom" mode reachable from the Dashboard, its entry key declared through the Bubbles `key.Binding` registry SPEC-0001 REQ "Keybinding Registry" already mandates
 * Chatroom view connects to `tail.Watcher` with `DefaultAdapters()` on enter
 * Events from all 5 harnesses appear in unified chronological stream
 * Each harness shows as distinct username (e.g., `@crush-signal`, `@claude-code`)
@@ -105,27 +106,27 @@ Chosen option: **Option 1 — New chatroom view within Harness TUI**, because it
 ```mermaid
 graph TD
     subgraph "Agent Harnesses"
-        CC[Claude Code\n~/.claude/projects/]
-        CX[Codex\n~/.codex/sessions/]
-        CR[Crush\n~/.local/share/crush/]
-        OC[OpenCode\n~/.opencode/]
-        PI[Pi\n~/.pi/agent/sessions/]
+        CC["Claude Code<br/>~/.claude/projects/"]
+        CX["Codex<br/>~/.codex/sessions/"]
+        CR["Crush<br/>~/.local/share/crush/"]
+        OC["OpenCode<br/>~/.opencode/"]
+        PI["Pi<br/>~/.pi/agent/sessions/"]
     end
 
     subgraph "agent-trace (library)"
-        AD[Adapters\n5 implementations]
-        LW[ListSessions]
-        PS[Parse / ParseSince]
-        WT[tail.Watcher\nEvent channel]
+        AD["Adapters<br/>5 implementations"]
+        LW["ListSessions"]
+        PS["Parse / ParseSince"]
+        WT["tail.Watcher<br/>Event channel"]
     end
 
     subgraph "Harness TUI (bubbletea)"
-        MAIN[Main Model\nView Router]
-        CHAT[Chatroom View\nModel + View]
-        EM[Event Merger\nChronological sort]
-        VP[Viewport\nChat + Activity panels]
-        KB[Keyboard Handler\nScroll, filter, pause]
-        DAEMON[Harness Daemon\nSupervision]
+        MAIN["Mode Machine<br/>Dashboard / Attached / Chatroom"]
+        CHAT["Chatroom mode<br/>Model + View"]
+        EM["Event Merger<br/>Chronological sort"]
+        VP["Viewport<br/>Chat + Activity panels"]
+        KB["Keybinding registry<br/>Scroll, filter, pause"]
+        DAEMON["Harness Daemon<br/>Supervision"]
     end
 
     CC --> AD
@@ -147,10 +148,10 @@ graph TD
 
 ## More Information
 
-* Related to SPEC-0015 which formalizes the requirements for the chatroom TUI view within Harness
+* Related to SPEC-0009 which formalizes the requirements for the chatroom TUI view within Harness
 * Leverages existing `tail.Watcher`, `tail.Adapter`, `tail.Event`, `classify.Event`, `classify.Mark` types from agent-trace
-* New chatroom view will be in `internal/tui/views/chatroom/` within Harness
+* New chatroom code will live under `internal/tui/` within Harness; the exact package layout is deferred to implementation, since `internal/tui` is a flat package today with no `views/` tree
 * Uses Harness's existing bubbletea setup, theming (lipgloss), and viewport components
 * Harness usernames: `@claude-code`, `@codex`, `@crush-signal`, `@opencode`, `@pi`
-* Color scheme per harness for visual distinction (compatible with Harness theme system)
+* Colors drawn from the existing `internal/tui/theme` palette (Accent, Mint, Amber, Cyan, Pink) so the chatroom degrades through the same `colorprofile` path as the rest of the TUI
 * Integrates with Harness daemon for supervision/lifecycle management

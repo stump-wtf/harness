@@ -2,9 +2,11 @@
 status: draft
 date: 2026-08-19
 implements: [ADR-0015]
+extends: [SPEC-0001]
+requires: [SPEC-0006]
 ---
 
-# SPEC-0015: Chatroom TUI View for Harness
+# SPEC-0009: Chatroom TUI View for Harness
 
 ## Overview
 
@@ -13,6 +15,12 @@ This specification defines a new "chatroom" view within the Harness TUI that agg
 The chatroom view is a new mode in the Harness TUI (bubbletea-based), accessible via keybinding from the main view. It leverages `agent-trace`'s `tail.Watcher` to consume live events.
 
 See ADR-0015 for the architectural decision context.
+
+This spec **extends SPEC-0001**. SPEC-0001 REQ "Mode Machine" declares two primary
+modes — Dashboard and Attached; the chatroom is a third, and that requirement is
+amended accordingly. Every binding below is a default, declared through the
+Bubbles `key.Binding` registry that SPEC-0001 REQ "Keybinding Registry" already
+requires, so `?` renders them and a future config can remap them.
 
 ## Requirements
 
@@ -71,12 +79,16 @@ Each harness SHALL have a distinct visual identity in the chatroom.
 #### Scenario: Harness Color
 
 - **WHEN** rendering an event from a harness
-- **THEN** the username and message SHALL use a distinct color per harness, compatible with Harness's lipgloss theme system:
-  - `@claude-code`: Purple (theme.Accent or #BB86FC)
-  - `@codex`: Green (theme.Success or #03DAC6)
-  - `@crush-signal`: Orange (theme.Warning or #FFB74D)
-  - `@opencode`: Blue (theme.Info or #64B5F6)
-  - `@pi`: Pink (theme.Highlight or #F06292)
+- **THEN** the username and message SHALL use a distinct color per harness, drawn from the
+  existing `internal/tui/theme` palette (`theme.Colors`) so the chatroom resolves and degrades
+  through the same light/dark and `colorprofile` path as the rest of the TUI:
+  - `@claude-code`: `Accent` (Charm purple — `#5A3FD6` light / `#7D56F4` dark)
+  - `@codex`: `Mint` (`#009E70` / `#00F0A8`)
+  - `@crush-signal`: `Amber` (`#B26A00` / `#FFB454`)
+  - `@opencode`: `Cyan` (`#0E8FB0` / `#4EE6FF`)
+  - `@pi`: `Pink` (`#D6247A` / `#FF5FA2`)
+- **THEN** no new palette token SHALL be introduced for harness identity; `Coral` stays reserved
+  for failure emphasis per SPEC-0001 REQ "State Presentation"
 
 ### Requirement: Tool Call Rendering
 
@@ -184,32 +196,38 @@ The chatroom view SHALL handle terminal resize events gracefully.
 - **THEN** the chatroom view SHALL reflow layout (chat panel, activity panel, status bar)
 - **THEN** scroll position SHALL be preserved relative to bottom
 
-### Requirement: High-Contrast Mode
+### Requirement: Degraded And Monochrome Terminals
 
-The chatroom view SHALL support a high-contrast color mode for accessibility.
+The chatroom view SHALL remain fully legible when color is reduced or absent, using the
+degradation path SPEC-0001 REQ "State Presentation" already defines rather than a new one.
 
-#### Scenario: High Contrast
+#### Scenario: Mono terminal
 
-- **WHEN** the `HARNESS_HIGH_CONTRAST=1` environment variable is set (Harness convention)
-- **THEN** the chatroom view SHALL use high-contrast colors (white/black, bold/underline for badges)
-- **THEN** harness distinction SHALL use text prefixes + formatting instead of color alone
+- **WHEN** the TUI runs in a monochrome terminal or a degraded SSH client, so the theme's
+  `colorprofile` resolves palette entries to nil
+- **THEN** every chatroom message SHALL remain attributable from its `@harness` username prefix,
+  its badge text, and its timestamp alone, with no color carrying meaning by itself
 
 ### Requirement: Reduced Motion
 
-The chatroom view SHALL support reduced motion for accessibility.
+The chatroom view SHALL support reduced motion for accessibility. Harness reads no
+`HARNESS_*` environment variables today (only `TERM`, `TMUX`, and the `XDG_*` set), so this
+introduces a new toggle rather than reusing an existing one; it SHALL be expressed as a
+config key on the ADR-0006 config surface, with an env override reserved for a later revision.
 
 #### Scenario: Reduced Motion
 
-- **WHEN** the `HARNESS_REDUCED_MOTION=1` environment variable is set
+- **WHEN** reduced motion is enabled
 - **THEN** auto-scroll animations SHALL be disabled (instant jump to new events)
 
 ## Security Requirements
 
-This spec is NOT web-facing — it is a local terminal application with no network exposure. No security requirements section is injected.
+None. The chatroom is a local terminal view that reads on-disk trajectory files through
+`agent-trace`; it opens no listener and makes no network call.
 
 ## Accessibility Requirements
 
-This spec IS UI-facing (terminal UI within Harness). The following accessibility requirements apply per WCAG 2.1 AA adapted for TUI:
+The following apply per WCAG 2.1 AA, adapted for a TUI:
 
 ### Requirement: Keyboard Operability
 
@@ -219,9 +237,9 @@ All chatroom functions SHALL be operable via keyboard alone (no mouse required).
 
 Harness identity SHALL NOT rely on color alone — username prefix (`@harness`) and/or formatting (bold, underline) MUST always be present.
 
-### Requirement: High Contrast Mode
+### Requirement: Degraded And Monochrome Terminals
 
-As specified in "High-Contrast Mode" requirement above.
+As specified in "Degraded And Monochrome Terminals" requirement above.
 
 ### Requirement: Screen Reader Compatible Output
 
@@ -249,4 +267,4 @@ All errors from `tail.Watcher`, adapters, and bubbletea SHALL be wrapped with co
 
 ## Design
 
-This spec is paired with `design.md` which covers the architecture, decisions, and implementation details.
+This spec is paired with `design.md`, which covers the architecture, decisions, and implementation details.
