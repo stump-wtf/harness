@@ -196,9 +196,31 @@ func (s *Server) Addr() string { return s.addr }
 // reading daemon logs.
 func (s *Server) Keys() int { return s.keys }
 
+// Listen binds the TCP listener up front and returns it, so a caller can tell
+// a successful bind from a failed one before it commits to reporting the
+// server as up.
+//
+// This exists because Serve's bind happens inside the goroutine that runs it:
+// a caller doing `go rs.Serve()` learns about "address already in use" only
+// from a log line, long after it has already told the rest of the daemon the
+// server is listening. `harness doctor` then cheerfully reported a listener
+// that never bound — the exact failure the ssh row exists to catch.
+//
+// The bound address replaces the configured one, so a port of 0 reports the
+// port the OS actually chose rather than a literal ":0".
+func (s *Server) Listen() (net.Listener, error) {
+	ln, err := net.Listen("tcp", s.addr)
+	if err != nil {
+		return nil, err
+	}
+	s.addr = ln.Addr().String()
+	return ln, nil
+}
+
 // Serve binds the listener and serves until Shutdown. It blocks; run it in a
 // goroutine. A clean shutdown returns ssh.ErrServerClosed, which Serve maps to
-// nil.
+// nil. Prefer Listen + ServeListener when the caller needs to know whether the
+// bind succeeded.
 func (s *Server) Serve() error {
 	err := s.ssh.ListenAndServe()
 	if errors.Is(err, ssh.ErrServerClosed) {

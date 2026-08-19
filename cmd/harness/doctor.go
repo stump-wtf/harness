@@ -146,6 +146,7 @@ func runDoctor(o verbOpts) int {
 	// #181). The shared SkewNotice decides what counts as skew: a dev build
 	// next to any daemon is the normal dev workflow and stays silent.
 	di, err := c.DaemonInfo()
+	diOK := err == nil
 	switch {
 	case err != nil:
 		rows = append(rows, check{
@@ -176,7 +177,15 @@ func runDoctor(o verbOpts) int {
 	// against the daemon's live listener, so "enabled but refused to start"
 	// (empty allowlist, bind failure) is visible without reading daemon logs.
 	if cfg != nil {
-		rows = append(rows, sshCheck(cfg.Server, &di))
+		// Pass nil when daemon_info could not be fetched at all: an
+		// unanswered query is not evidence that SSH is down, and reporting it
+		// as a hard failure would blame the wrong thing (the version row
+		// above already carries the real complaint).
+		info := &di
+		if !diOK {
+			info = nil
+		}
+		rows = append(rows, sshCheck(cfg.Server, info))
 	}
 
 	// --- Check 5: harnesses in healthy state -------------------------------
@@ -276,14 +285,19 @@ func runDoctor(o verbOpts) int {
 // are: disabled-and-off (pass), forced-on via --ssh despite config (pass,
 // annotated), enabled-but-not-listening (fail — the daemon refused to start
 // it, most often an empty allowlist per ADR-0008), and listening (pass, with
-// the allowlist size).
+// the allowlist size). A nil di means daemon_info could not be fetched, which
+// is reported as a warning rather than folded into any of those four.
 func sshCheck(sc core.ServerConfig, di *protocol.DaemonInfo) check {
-	listening := ""
-	keys := 0
-	if di != nil {
-		listening = di.SshAddr
-		keys = di.SshKeys
+	if di == nil {
+		// Unknown, not off: the caller could not reach daemon_info.
+		return check{
+			name:   "ssh",
+			level:  cliui.LevelWarn,
+			detail: "unknown — daemon info unavailable",
+		}
 	}
+	listening := di.SshAddr
+	keys := di.SshKeys
 	switch {
 	case !sc.Enabled && listening == "":
 		return check{name: "ssh", level: cliui.LevelSuccess, detail: "off (not enabled in config)"}
@@ -300,7 +314,7 @@ func sshCheck(sc core.ServerConfig, di *protocol.DaemonInfo) check {
 			name:   "ssh",
 			level:  cliui.LevelError,
 			detail: "enabled in config but not listening",
-			hint:   "check the daemon log — an empty authorized-keys allowlist refuses to start (ADR-0008)",
+			hint:   "check the daemon log — the server refuses to start on an empty authorized-keys allowlist (ADR-0008), and a bind failure (address already in use) also leaves it down",
 		}
 	default:
 		return check{

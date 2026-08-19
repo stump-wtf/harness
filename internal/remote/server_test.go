@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -314,4 +315,57 @@ func waitForConns(s *daemon.Server, want int, timeout time.Duration) bool {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return s.ConnCount() == want
+}
+
+// TestListenReportsBindFailure is the regression behind the doctor `ssh` row
+// reading green while nothing was bound: Serve() binds inside the goroutine
+// that runs it, so `go rs.Serve()` cannot tell a live listener from "address
+// already in use". Listen binds up front and hands the error back, which is
+// what lets the daemon decline to report a server that never came up.
+func TestListenReportsBindFailure(t *testing.T) {
+	_, authLine := clientKey(t)
+
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("occupy port: %v", err)
+	}
+	defer occupied.Close()
+
+	s, err := New(Options{
+		Listen:      occupied.Addr().String(),
+		Socket:      "/tmp/nope.sock",
+		HostKeyPath: filepath.Join(t.TempDir(), "hostkey"),
+		Keys:        []core.AuthorizedKey{{Line: authLine}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if ln, err := s.Listen(); err == nil {
+		_ = ln.Close()
+		t.Fatal("Listen on an occupied port returned nil error, want bind failure")
+	}
+}
+
+// TestListenResolvesEphemeralPort: binding port 0 must report the port the OS
+// actually chose, so daemon_info does not advertise a literal ":0".
+func TestListenResolvesEphemeralPort(t *testing.T) {
+	_, authLine := clientKey(t)
+
+	s, err := New(Options{
+		Listen:      "127.0.0.1:0",
+		Socket:      "/tmp/nope.sock",
+		HostKeyPath: filepath.Join(t.TempDir(), "hostkey"),
+		Keys:        []core.AuthorizedKey{{Line: authLine}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ln, err := s.Listen()
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+	if s.Addr() == "127.0.0.1:0" || !strings.HasPrefix(s.Addr(), "127.0.0.1:") {
+		t.Errorf("Addr() = %q, want the resolved 127.0.0.1:<port>", s.Addr())
+	}
 }

@@ -214,7 +214,8 @@ func writeMinimalConfig(path string) error {
 
 func TestSshCheckDisabledAndOff(t *testing.T) {
 	t.Parallel()
-	row := sshCheck(core.ServerConfig{}, nil)
+	// A daemon that answered, with nothing listening — not a nil info.
+	row := sshCheck(core.ServerConfig{}, &protocol.DaemonInfo{})
 	if row.level != cliui.LevelSuccess || !strings.Contains(row.detail, "off") {
 		t.Errorf("disabled+off = %+v, want success/off", row)
 	}
@@ -244,13 +245,27 @@ func TestSshCheckEnabledAndListening(t *testing.T) {
 	}
 }
 
-// An OLD daemon (pre ssh_addr) still answers daemon_info without the field;
-// the check must degrade to the enabled-but-unverifiable path rather than
-// panic or silently pass.
+// An OLD daemon (pre ssh_addr) still answers daemon_info, just without the
+// field — so it arrives as a populated struct whose SshAddr is empty, never as
+// a nil info. The check must degrade to the enabled-but-unverifiable path
+// rather than silently pass.
 func TestSshCheckEnabledAgainstOldDaemon(t *testing.T) {
 	t.Parallel()
-	row := sshCheck(core.ServerConfig{Enabled: true}, nil)
+	row := sshCheck(core.ServerConfig{Enabled: true}, &protocol.DaemonInfo{Version: "0.2.0"})
 	if row.level != cliui.LevelError {
 		t.Errorf("old-daemon = %+v, want error (cannot distinguish refused from off)", row)
+	}
+}
+
+// nil is the one case that is genuinely unknowable: daemon_info could not be
+// fetched at all. Blaming SSH for that is a false failure — the version row
+// already reports the real problem — so the row warns instead.
+func TestSshCheckDaemonInfoUnavailable(t *testing.T) {
+	t.Parallel()
+	for _, sc := range []core.ServerConfig{{}, {Enabled: true}} {
+		row := sshCheck(sc, nil)
+		if row.level != cliui.LevelWarn {
+			t.Errorf("unavailable info (enabled=%v) = %+v, want warn", sc.Enabled, row)
+		}
 	}
 }

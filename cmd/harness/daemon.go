@@ -268,9 +268,18 @@ func startRemote(sc core.ServerConfig, forceOn bool, listenOverride, socket, con
 		log.Warn("remote SSH disabled", "err", err)
 		return nil
 	}
+	// Bind before claiming the server is up. Serve() binds inside the
+	// goroutine, so `go rs.Serve()` cannot distinguish a live listener from
+	// "address already in use" — and a non-nil return here is what tells
+	// daemon_info (and therefore `harness doctor`) that SSH is listening.
+	ln, err := rs.Listen()
+	if err != nil {
+		log.Error("remote SSH disabled: bind failed", "addr", rs.Addr(), "err", err)
+		return nil
+	}
 	log.Info("remote SSH server listening", "addr", rs.Addr())
 	go func() {
-		if err := rs.Serve(); err != nil {
+		if err := rs.ServeListener(ln); err != nil {
 			log.Error("remote SSH server", "err", err)
 		}
 	}()
