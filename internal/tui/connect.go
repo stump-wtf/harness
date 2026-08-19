@@ -79,6 +79,16 @@ func (m *mutexController) Restart(name string) (protocol.HarnessInfo, error) {
 	defer m.mu.Unlock()
 	return m.c.Restart(name)
 }
+func (m *mutexController) Enable(name string) (protocol.HarnessInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.c.Enable(name)
+}
+func (m *mutexController) Disable(name string) (protocol.HarnessInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.c.Disable(name)
+}
 func (m *mutexController) Logs(name string, lines int) (protocol.LogsData, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

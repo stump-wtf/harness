@@ -24,6 +24,8 @@ type Controller interface {
 	Start(name string) (protocol.HarnessInfo, error)
 	Stop(name string) (protocol.HarnessInfo, error)
 	Restart(name string) (protocol.HarnessInfo, error)
+	Enable(name string) (protocol.HarnessInfo, error)
+	Disable(name string) (protocol.HarnessInfo, error)
 	Logs(name string, lines int) (protocol.LogsData, error)
 	Profiles() ([]protocol.ProfileInfo, error)
 	UseProfile(name string) ([]protocol.ProfileInfo, error)

@@ -38,6 +38,16 @@ func (c *Client) Restart(name string) (protocol.HarnessInfo, error) {
 	return c.harnessOp(protocol.OpRestart, name)
 }
 
+// Enable sets a harness's enabled intent to true and starts it if stopped.
+func (c *Client) Enable(name string) (protocol.HarnessInfo, error) {
+	return c.harnessOp(protocol.OpEnable, name)
+}
+
+// Disable clears a harness's enabled intent and stops it if running.
+func (c *Client) Disable(name string) (protocol.HarnessInfo, error) {
+	return c.harnessOp(protocol.OpDisable, name)
+}
+
 // harnessOp runs a single-harness op returning a HarnessInfo.
 func (c *Client) harnessOp(op protocol.Op, name string) (protocol.HarnessInfo, error) {
 	resp, err := c.call(protocol.ControlReq{Op: op, Name: name})

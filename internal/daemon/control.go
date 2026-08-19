@@ -34,6 +34,8 @@ func (c *conn) handleControl(payload []byte) {
 		c.opDescribe(req)
 	case protocol.OpStart, protocol.OpStop, protocol.OpRestart:
 		c.opLifecycle(req)
+	case protocol.OpEnable, protocol.OpDisable:
+		c.opEnableDisable(req)
 	case protocol.OpLogs:
 		c.opLogs(req)
 	case protocol.OpProfiles:
@@ -171,6 +173,25 @@ func (c *conn) opLifecycle(req protocol.ControlReq) {
 		return
 	}
 	// Reply with the fresh snapshot so the client can render the new state.
+	snap, _ := c.srv.mgr.Snapshot(req.Name)
+	c.respond(req, c.infoFor(snap))
+}
+
+// opEnableDisable handles enable/disable. Enable sets intent + starts; disable
+// clears intent + stops. Both are idempotent; an unknown harness is a structured
+// ERROR.
+func (c *conn) opEnableDisable(req protocol.ControlReq) {
+	var ok bool
+	switch req.Op {
+	case protocol.OpEnable:
+		ok = c.srv.mgr.Enable(req.Name)
+	case protocol.OpDisable:
+		ok = c.srv.mgr.Disable(req.Name)
+	}
+	if !ok {
+		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
+		return
+	}
 	snap, _ := c.srv.mgr.Snapshot(req.Name)
 	c.respond(req, c.infoFor(snap))
 }

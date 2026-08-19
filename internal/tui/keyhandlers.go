@@ -216,6 +216,8 @@ func (m *Model) dispatchDashboardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.guardedAction(ActionStop)
 	case key.Matches(msg, m.keys.Restart):
 		return m.guardedAction(ActionRestart)
+	case key.Matches(msg, m.keys.Toggle):
+		return m.toggleEnabled()
 	case key.Matches(msg, m.keys.Delete):
 		return m.guardedAction(ActionDelete)
 	case key.Matches(msg, m.keys.Logs):
@@ -264,6 +266,19 @@ func (m *Model) performAction(a Action, name string) tea.Cmd {
 		return m.deleteHarnessCmd(name)
 	}
 	return doAction(m.ctrl, a, name)
+}
+
+// toggleEnabled enables or disables the selected harness based on its current
+// Enabled state. It is non-destructive so it bypasses the confirm dialog.
+func (m *Model) toggleEnabled() (tea.Model, tea.Cmd) {
+	sel, ok := m.selectedHarness()
+	if !ok || m.ctrl == nil {
+		return m, nil
+	}
+	if sel.Enabled {
+		return m, doDisable(m.ctrl, sel.Name)
+	}
+	return m, doEnable(m.ctrl, sel.Name)
 }
 
 // --- attached mode -------------------------------------------------------

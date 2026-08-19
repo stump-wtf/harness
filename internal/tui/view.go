@@ -380,6 +380,9 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 	}
 	name := h.Name
 	state := string(h.State)
+	if !h.Enabled {
+		state += " (disabled)"
+	}
 	rest := restartMarker(h.RestartCount)
 	next := nextActionText(h)
 

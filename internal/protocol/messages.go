@@ -72,6 +72,8 @@ const (
 	OpStart      Op = "start"
 	OpStop       Op = "stop"
 	OpRestart    Op = "restart"
+	OpEnable     Op = "enable"
+	OpDisable    Op = "disable"
 	OpLogs       Op = "logs"
 	OpProfiles   Op = "profiles"
 	OpUseProfile Op = "use_profile"

@@ -16,13 +16,15 @@ import (
 
 // fakeController is an in-memory Controller recording mutating calls.
 type fakeController struct {
-	mu         sync.Mutex
-	harnesses  []protocol.HarnessInfo
-	profiles   []protocol.ProfileInfo
-	stopCalls  []string
-	startCalls []string
-	rstCalls   []string
-	useProfile string
+	mu           sync.Mutex
+	harnesses    []protocol.HarnessInfo
+	profiles     []protocol.ProfileInfo
+	stopCalls    []string
+	startCalls   []string
+	rstCalls     []string
+	enableCalls  []string
+	disableCalls []string
+	useProfile   string
 	// logCalls counts `logs` fetches. The preview stops polling once its
 	// attach session is streaming the same screen (#200), and a counter is the
 	// only way to see traffic that is supposed to STOP.
@@ -50,6 +52,18 @@ func (f *fakeController) Restart(n string) (protocol.HarnessInfo, error) {
 	defer f.mu.Unlock()
 	f.rstCalls = append(f.rstCalls, n)
 	return protocol.HarnessInfo{Name: n, State: "starting"}, nil
+}
+func (f *fakeController) Enable(n string) (protocol.HarnessInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enableCalls = append(f.enableCalls, n)
+	return protocol.HarnessInfo{Name: n, State: "starting", Enabled: true}, nil
+}
+func (f *fakeController) Disable(n string) (protocol.HarnessInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disableCalls = append(f.disableCalls, n)
+	return protocol.HarnessInfo{Name: n, State: "stopping", Enabled: false}, nil
 }
 func (f *fakeController) Logs(n string, lines int) (protocol.LogsData, error) {
 	f.mu.Lock()

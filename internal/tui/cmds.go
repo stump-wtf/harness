@@ -132,6 +132,22 @@ func doReload(ctrl Controller) tea.Cmd {
 	}
 }
 
+// doEnable sets a harness's enabled intent and starts it.
+func doEnable(ctrl Controller, name string) tea.Cmd {
+	return func() tea.Msg {
+		info, err := ctrl.Enable(name)
+		return opResultMsg{action: ActionToggle, name: name, info: info, err: err}
+	}
+}
+
+// doDisable clears a harness's enabled intent and stops it.
+func doDisable(ctrl Controller, name string) tea.Cmd {
+	return func() tea.Msg {
+		info, err := ctrl.Disable(name)
+		return opResultMsg{action: ActionToggle, name: name, info: info, err: err}
+	}
+}
+
 // doSwitchProfile activates profile name, then (if startStopped) starts its
 // stopped members non-destructively (SPEC-0001 REQ "Profile Switcher").
 func doSwitchProfile(ctrl Controller, name string, startStopped bool, harnesses []protocol.HarnessInfo) tea.Cmd {

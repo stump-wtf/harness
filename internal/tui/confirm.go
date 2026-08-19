@@ -13,6 +13,7 @@ const (
 	ActionStart   Action = "start"
 	ActionStop    Action = "stop"
 	ActionRestart Action = "restart"
+	ActionToggle  Action = "toggle"
 	ActionDelete  Action = "delete"
 )
 

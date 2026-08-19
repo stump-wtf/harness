@@ -83,6 +83,16 @@ func (r *recordingController) Restart(name string) (protocol.HarnessInfo, error)
 	return protocol.HarnessInfo{Name: name, State: "running"}, r.errOut
 }
 
+func (r *recordingController) Enable(name string) (protocol.HarnessInfo, error) {
+	r.note("Enable:" + name)
+	return protocol.HarnessInfo{Name: name, State: "running", Enabled: true}, r.errOut
+}
+
+func (r *recordingController) Disable(name string) (protocol.HarnessInfo, error) {
+	r.note("Disable:" + name)
+	return protocol.HarnessInfo{Name: name, State: "stopped", Enabled: false}, r.errOut
+}
+
 func (r *recordingController) Logs(name string, lines int) (protocol.LogsData, error) {
 	r.note("Logs:" + name)
 	return protocol.LogsData{Name: name, Text: "tail"}, r.errOut

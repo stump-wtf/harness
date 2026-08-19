@@ -29,6 +29,7 @@ type KeyMap struct {
 	Start   key.Binding
 	Stop    key.Binding
 	Restart key.Binding
+	Toggle  key.Binding
 	Edit    key.Binding
 	New     key.Binding
 	Delete  key.Binding
@@ -76,6 +77,7 @@ func Default() KeyMap {
 		Start:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "start")),
 		Stop:    key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "stop")),
 		Restart: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restart")),
+		Toggle:  key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "toggle enabled")),
 		Edit:    key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		New:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
 		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
@@ -150,7 +152,7 @@ func (k KeyMap) AttachedShortHelp() []key.Binding {
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bot},
-		{k.Attach, k.Start, k.Stop, k.Restart, k.Edit, k.New, k.Delete},
+		{k.Attach, k.Start, k.Stop, k.Restart, k.Toggle, k.Edit, k.New, k.Delete},
 		{k.Profile, k.ShowAll, k.Logs, k.Copy, k.Search, k.Palette, k.Help, k.Quit},
 		{k.Detach, k.Scrollback, k.HopPrev, k.HopNext, k.AttStart, k.AttRestart, k.AttHelp},
 		{k.PageUp, k.PageDown, k.Live, k.Confirm, k.Back},
