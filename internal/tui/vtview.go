@@ -9,6 +9,7 @@ package tui
 // (colors + cursor) reproduces faithfully.
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -60,6 +61,7 @@ func newVTView(cols, rows int) *vtView {
 			}
 		},
 	})
+	installMarginClamps(v.term.(*vt.Emulator))
 	go v.pumpReplies()
 	return v
 }
@@ -269,4 +271,75 @@ func fnvHash(s string) uint64 {
 		h *= prime
 	}
 	return h
+}
+
+// installMarginClamps registers pre-filters for DECSTBM ('r') and DECSLRM ('s')
+// that clamp oversized margins to the emulator's current buffer dimensions.
+//
+// x/vt's default handlers accept margin values verbatim without checking them
+// against the buffer size. When a guest emits DECSTBM with a bottom margin
+// larger than the terminal height (common when the daemon's screen is taller
+// than the client viewport, or when restoring a saved scroll region after a
+// resize), the scroll region's Max.Y exceeds len(b.Lines). The next DL/IL/SU
+// then indexes past the end of the line slice in ultraviolet's DeleteLineArea,
+// panicking with "index out of range [N] with length N". The same class of bug
+// exists for DECSLRM and ICH/DCH on the horizontal axis.
+//
+// RegisterCsiHandler appends to a handler list that runs in reverse order, so
+// our filter executes before the default handler. When we detect an oversized
+// margin, we swallow the original sequence (return true) and re-emit a clamped
+// copy via Write. The re-emitted sequence passes through our filter again, but
+// the clampNext flag lets it fall through to the default handler on the second
+// pass. Sequences that are already within bounds return false immediately,
+// passing through to the default handler without any re-emission overhead.
+func installMarginClamps(e *vt.Emulator) {
+	var clampR, clampS bool
+
+	e.RegisterCsiHandler('r', func(params ansi.Params) bool {
+		if clampR {
+			clampR = false
+			return false
+		}
+		top, _, _ := params.Param(0, 1)
+		if top < 1 {
+			top = 1
+		}
+		height := e.Height()
+		bottom, _, _ := params.Param(1, height)
+		if bottom < 1 {
+			bottom = height
+		}
+		if bottom > height {
+			clampR = true
+			e.Write([]byte(fmt.Sprintf("\x1b[%d;%dr", top, height)))
+			return true
+		}
+		return false
+	})
+
+	e.RegisterCsiHandler('s', func(params ansi.Params) bool {
+		// SCOSC (save cursor) is CSI s with zero params — pass through.
+		if len(params) == 0 {
+			return false
+		}
+		if clampS {
+			clampS = false
+			return false
+		}
+		left, _, _ := params.Param(0, 1)
+		if left < 1 {
+			left = 1
+		}
+		width := e.Width()
+		right, _, _ := params.Param(1, width)
+		if right < 1 {
+			right = width
+		}
+		if right > width {
+			clampS = true
+			e.Write([]byte(fmt.Sprintf("\x1b[%d;%ds", left, width)))
+			return true
+		}
+		return false
+	})
 }
