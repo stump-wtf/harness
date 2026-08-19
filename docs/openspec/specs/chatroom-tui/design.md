@@ -1,5 +1,7 @@
 # Design: Chatroom TUI View for Harness
 
+> **Not yet implemented.** Design-stage; no chatroom mode exists in the TUI today. See harness issue #3.
+
 ## Context
 
 This design implements SPEC-0009, which specifies a new "chatroom" view within the Harness TUI. The view consumes events from `agent-trace`'s `tail.Watcher` (which aggregates from 5 harness adapters) and renders them as a chronological chat stream with an activity feed panel.

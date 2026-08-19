@@ -1,5 +1,7 @@
 # Design: Local MCP Surface (facade, broker, prompts)
 
+> **Not yet implemented.** Design-stage; nothing in this spec is built today (the `[mcp.*]` tables are a config parse error). See harness issue #3.
+
 ## Context
 
 Harness supervises agent CLIs but is invisible to them: an agent inside a

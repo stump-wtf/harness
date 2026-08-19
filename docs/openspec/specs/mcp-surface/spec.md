@@ -7,6 +7,8 @@ requires: [SPEC-0002, SPEC-0003, SPEC-0004]
 
 # SPEC-0005: Local MCP Surface (facade, broker, prompts)
 
+> **Not yet implemented.** Design-stage; nothing in this spec is built today (the `[mcp.*]` tables are a config parse error). See harness issue #3.
+
 ## Overview
 
 An MCP server exposed by the daemon that does three things: mirrors the

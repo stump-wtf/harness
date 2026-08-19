@@ -1,5 +1,7 @@
 # Design: Agent Adapters (skill paths, projection, trajectory discovery)
 
+> **Partially implemented.** Only trajectory discovery has shipped; skill paths and projection are design-stage. See harness issue #3.
+
 ## Context
 
 Agent skills are already a portable format — a directory containing `SKILL.md`

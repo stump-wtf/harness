@@ -9,6 +9,8 @@ related: [ADR-0008, ADR-0010, ADR-0011]
 
 # ADR-0012: Cross-harness distillation and the learned skill tier
 
+> **Not yet implemented.** Distillation and the learned-skill tier described here are design-stage; no distiller or learned-skill store exists in the codebase. See harness issue #3.
+
 ## Context and Problem Statement
 
 Once Harness can read every harness's trajectory (ADR-0011) and serve tools to

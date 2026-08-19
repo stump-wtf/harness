@@ -8,6 +8,8 @@ related: [ADR-0001, ADR-0003, ADR-0011]
 
 # ADR-0015: Unified Chatroom TUI for Multi-Harness Agent Output
 
+> **Not yet implemented.** The chatroom TUI mode described here is design-stage; the TUI today has only dashboard and attached modes. See harness issue #3.
+
 ## Context and Problem Statement
 
 How can we provide a unified, real-time "chatroom" style read-only TUI within Harness that aggregates output from all agent harnesses (Claude Code, Codex, Crush, OpenCode, Pi) into a single stream where each harness appears as a distinct "user" (e.g., `@crush-signal`) with their tool calls, results, and user messages displayed as chat messages and activity feed entries?

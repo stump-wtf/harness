@@ -10,6 +10,8 @@ related: [ADR-0003, ADR-0007, ADR-0009]
 
 # ADR-0011: Agent adapters — configured skill paths, spawn-time projection, trajectory discovery
 
+> **Partially implemented.** Only the trajectory-discovery surface has shipped; `skill_paths` / `use_default_skill_paths` and spawn-time skill projection are design-stage and not parsed today (setting them in `harness.toml` is rejected as an unknown key). See harness issue #3.
+
 ## Context and Problem Statement
 
 Agent skills are already a portable format: a directory containing `SKILL.md`

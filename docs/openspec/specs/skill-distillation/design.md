@@ -1,5 +1,7 @@
 # Design: Cross-Harness Skill Distillation
 
+> **Not yet implemented.** Design-stage; no distiller or learned-skill store exists today. See harness issue #3.
+
 ## Context
 
 Once Harness can read every harness's trajectory (SPEC-0006) and serve tools to

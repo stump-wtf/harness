@@ -107,6 +107,11 @@ A flat glob yields ~5× duplication and no way to tell which copy wins.
 Adapter-supplied defaults per provider, plus user-added paths in
 `harness.toml`. You never walk `src/`, so the duplication never arises.
 
+> **Roadmap — not yet implemented.** `skill_paths` /
+> `use_default_skill_paths` are design-stage (ADR-0011): the config parser
+> does not know them today, and setting one in `harness.toml` is rejected as
+> an unknown key. See harness issue #3.
+
 ```toml
 # additive by default; one escape hatch for full control
 skill_paths = ["~/work/team-skills"]

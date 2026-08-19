@@ -10,6 +10,8 @@ related: [ADR-0004, ADR-0005, ADR-0008, ADR-0011]
 
 # ADR-0010: Local MCP surface — control-plane facade, server broker, and side-loaded prompts
 
+> **Not yet implemented.** The `[mcp.*]` broker tables described here are design-stage; the config parser does not recognise them (a `[mcp.gitea]` table is a parse error today). See harness issue #3.
+
 ## Context and Problem Statement
 
 Harness supervises agent CLIs but is invisible to them. An agent inside a

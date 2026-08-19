@@ -7,6 +7,8 @@ requires: [SPEC-0005, SPEC-0006]
 
 # SPEC-0007: Cross-Harness Skill Distillation
 
+> **Not yet implemented.** Design-stage; no distiller or learned-skill store exists today. See harness issue #3.
+
 ## Overview
 
 Detection of patterns recurring across independent harnesses, and the **learned

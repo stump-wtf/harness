@@ -8,6 +8,8 @@ requires: [SPEC-0006]
 
 # SPEC-0009: Chatroom TUI View for Harness
 
+> **Not yet implemented.** Design-stage; no chatroom mode exists in the TUI today. See harness issue #3.
+
 ## Overview
 
 This specification defines a new "chatroom" view within the Harness TUI that aggregates live output from all supported agent harnesses (Claude Code, Codex, Crush, OpenCode, Pi) into a single chronological stream. Each harness appears as a distinct "user" with a username (e.g., `@crush-signal`) and color. Tool calls, tool results, and user messages render as chat messages. An activity feed panel provides a summary timeline.

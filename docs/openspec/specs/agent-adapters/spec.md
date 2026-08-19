@@ -7,6 +7,8 @@ requires: [SPEC-0002, SPEC-0004, SPEC-0005]
 
 # SPEC-0006: Agent Adapters (skill paths, projection, trajectory discovery)
 
+> **Partially implemented.** Only trajectory discovery has shipped; skill paths and projection are design-stage. See harness issue #3.
+
 ## Overview
 
 A per-harness adapter that answers three questions about the tool running inside
