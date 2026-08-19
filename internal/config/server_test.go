@@ -6,6 +6,8 @@ package config
 // (no unauthenticated remote access), and a disabled/absent table is inert.
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -125,5 +127,110 @@ read_only = true
 	}
 	if !sc.AuthorizedKeys[1].ReadOnly {
 		t.Error("[[server.key]] read_only=true should be read-only")
+	}
+}
+
+func TestServerTildeExpansion(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("cannot determine home dir: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		config   string
+		wantFile string
+		wantKey  string
+	}{
+		{
+			name: "tilde-slash in authorized_keys_file",
+			config: `
+[server]
+enabled = true
+authorized_keys_file = "~/.ssh/harness_authorized_keys"
+authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
+`,
+			wantFile: filepath.Join(home, ".ssh/harness_authorized_keys"),
+		},
+		{
+			name: "tilde-slash in host_key",
+			config: `
+[server]
+enabled = true
+host_key = "~/harness_hostkey"
+authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
+`,
+			wantKey: filepath.Join(home, "harness_hostkey"),
+		},
+		{
+			name: "bare tilde in authorized_keys_file",
+			config: `
+[server]
+enabled = true
+authorized_keys_file = "~"
+authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
+`,
+			wantFile: home,
+		},
+		{
+			name: "absolute path unchanged",
+			config: `
+[server]
+enabled = true
+authorized_keys_file = "/etc/ssh/authorized_keys"
+authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
+`,
+			wantFile: "/etc/ssh/authorized_keys",
+		},
+		{
+			name: "empty path stays empty",
+			config: `
+[server]
+enabled = true
+authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITest test@host"]
+`,
+			wantFile: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tc.config), "test.toml")
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if tc.wantFile != "" && cfg.Server.AuthorizedKeysFile != tc.wantFile {
+				t.Errorf("AuthorizedKeysFile = %q, want %q", cfg.Server.AuthorizedKeysFile, tc.wantFile)
+			}
+			if tc.wantKey != "" && cfg.Server.HostKeyPath != tc.wantKey {
+				t.Errorf("HostKeyPath = %q, want %q", cfg.Server.HostKeyPath, tc.wantKey)
+			}
+		})
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("cannot determine home dir: %v", err)
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"~/foo", filepath.Join(home, "foo")},
+		{"~", home},
+		{"/abs/path", "/abs/path"},
+		{"relative/path", "relative/path"},
+		{"", ""},
+		{"~user/foo", "~user/foo"}, // only ~/ and bare ~ are expanded
+	}
+
+	for _, tc := range tests {
+		got := expandHome(tc.input)
+		if got != tc.want {
+			t.Errorf("expandHome(%q) = %q, want %q", tc.input, got, tc.want)
+		}
 	}
 }

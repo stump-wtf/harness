@@ -573,8 +573,8 @@ func buildServer(filename string, line int, rs rawServer) (core.ServerConfig, er
 	sc := core.ServerConfig{
 		Enabled:            rs.Enabled,
 		Listen:             strings.TrimSpace(rs.Listen),
-		AuthorizedKeysFile: strings.TrimSpace(rs.AuthorizedKeysFile),
-		HostKeyPath:        strings.TrimSpace(rs.HostKeyPath),
+		AuthorizedKeysFile: expandHome(strings.TrimSpace(rs.AuthorizedKeysFile)),
+		HostKeyPath:        expandHome(strings.TrimSpace(rs.HostKeyPath)),
 	}
 	for _, k := range rs.AuthorizedKeys {
 		if strings.TrimSpace(k) == "" {
