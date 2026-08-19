@@ -29,8 +29,10 @@ const path = require('node:path');
 const plugin = require('./index');
 
 // A fixture tree in the layout the plugin expects: siteDir with ../docs/adrs
-// and ../docs/openspec/specs beside it. Each domain carries both spec.md and
-// design.md, which is what puts its pages at /specs/<domain>/spec.
+// and ../docs/openspec/specs beside it. A domain carrying both spec.md and
+// design.md is emitted as a category directory, so its pages land at
+// /specs/<domain>/spec; a domain carrying only one of the two is emitted as
+// the single flat page /specs/<domain>.
 function writeFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sdd-spec-refs-'));
   const site = path.join(root, 'site');
@@ -46,11 +48,12 @@ function writeFixture() {
   const body = (id, title, text) =>
     `---\nstatus: active\ndate: 2026-01-01\n---\n\n# ${id}: ${title}\n\n## Overview\n\n${text}\n`;
 
-  const domain = (name, id, title, text) => {
+  // `design: false` leaves the domain with a spec.md only.
+  const domain = (name, id, title, text, { design = true } = {}) => {
     const dir = path.join(root, 'docs/openspec/specs', name);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'spec.md'), body(id, title, text));
-    fs.writeFileSync(path.join(dir, 'design.md'), body(id, `${title} Design`, text));
+    if (design) fs.writeFileSync(path.join(dir, 'design.md'), body(id, `${title} Design`, text));
   };
 
   domain('alpha', 'SPEC-0001', 'Alpha', 'Alpha stands alone.');
@@ -61,8 +64,12 @@ function writeFixture() {
     'gamma',
     'SPEC-0003',
     'Gamma',
-    'Gamma needs SPEC-0001 and SPEC-0002.\n\nOne issue per ### Requirement: section, per ADR-0001.'
+    'Gamma needs SPEC-0001, SPEC-0002 and SPEC-0004.\n\nOne issue per ### Requirement: section, per ADR-0001.'
   );
+  // Only a spec.md, no design.md — this domain renders as the flat page
+  // /specs/delta, so references to SPEC-0004 must not be sent to
+  // /specs/delta/spec, which nothing writes.
+  domain('delta', 'SPEC-0004', 'Delta', 'Delta stands alone.', { design: false });
 
   return { root, site };
 }
@@ -110,6 +117,27 @@ test('a spec citing an ADR does not claim the ADR prefix', async () => {
   // and wrapped the ADR link in a second anchor pointing at a spec page.
   assert.doesNotMatch(gamma, /href="[^"]*#adr-0001"/);
   assert.doesNotMatch(gamma, /<a [^>]*><a /);
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a design-less domain is referenced at its flat page', async () => {
+  const { root, read } = await build();
+
+  // What the transform actually emits for a spec.md-only domain.
+  assert.ok(fs.existsSync(path.join(root, 'docs-generated/specs/delta.mdx')));
+  assert.ok(!fs.existsSync(path.join(root, 'docs-generated/specs/delta/spec.mdx')));
+
+  // The regression: the mapping assumed every domain was nested, so this
+  // cross-reference pointed at /specs/delta/spec — a route with no page.
+  const gamma = read('specs/gamma/spec.mdx');
+  assert.match(gamma, /href="\/harness\/specs\/delta"[^>]*>SPEC-0004</);
+  assert.doesNotMatch(gamma, /href="[^"]*\/specs\/delta\/spec"/);
+
+  // The specs index links the same page the transform wrote.
+  const index = read('specs/index.mdx');
+  assert.match(index, /\[Specification\]\(\.\/delta\)/);
+  assert.doesNotMatch(index, /\(\.\/delta\/spec\)/);
 
   fs.rmSync(root, { recursive: true, force: true });
 });
