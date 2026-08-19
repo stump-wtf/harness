@@ -70,6 +70,24 @@ function writeFixture() {
   // /specs/delta, so references to SPEC-0004 must not be sent to
   // /specs/delta/spec, which nothing writes.
   domain('delta', 'SPEC-0004', 'Delta', 'Delta stands alone.', { design: false });
+  // Every shape the linkifier must leave alone, alongside bare mentions of the
+  // same IDs on the same lines that it must still resolve.
+  domain(
+    'epsilon',
+    'SPEC-0005',
+    'Epsilon',
+    [
+      'Epsilon cites [SPEC-0002](/specs/beta/spec) and [ADR-0001](../../adrs/ADR-0001-example.md).',
+      '',
+      'The literals `SPEC-0002` and `ADR-0001` are prose, not references.',
+      '',
+      'Prior art: <a href="/harness/specs/beta/spec" className="rfc-ref">SPEC-0002</a> covers it.',
+      '',
+      'Prior art: <a href="/harness/decisions/ADR-0001-example" className="rfc-ref">ADR-0001</a> covers it.',
+      '',
+      'Compare `SPEC-0002` against bare SPEC-0001, and `ADR-0001` against bare ADR-0001.',
+    ].join('\n')
+  );
 
   return { root, site };
 }
@@ -138,6 +156,65 @@ test('a design-less domain is referenced at its flat page', async () => {
   const index = read('specs/index.mdx');
   assert.match(index, /\[Specification\]\(\.\/delta\)/);
   assert.doesNotMatch(index, /\(\.\/delta\/spec\)/);
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+// --- Already-linked references stay untouched --------------------------------
+//
+// Linkifying a reference that is already inside inline code, a markdown link,
+// or an anchor an earlier pass emitted produces `<a><a>...</a></a>`. That is
+// invalid HTML, and the SSG's minifier rejects it rather than repairing it.
+
+test('a reference inside inline code is left alone', async () => {
+  const { root, read } = await build();
+
+  const epsilon = read('specs/epsilon/spec.mdx');
+  assert.match(epsilon, /`SPEC-0002`/);
+  assert.match(epsilon, /`ADR-0001`/);
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a reference inside a markdown link is left alone', async () => {
+  const { root, read } = await build();
+
+  const epsilon = read('specs/epsilon/spec.mdx');
+  // The label keeps its original text; only the .md suffix is stripped.
+  assert.match(epsilon, /\[SPEC-0002\]\(\/specs\/beta\/spec\)/);
+  assert.match(epsilon, /\[ADR-0001\]\(\.\.\/\.\.\/adrs\/ADR-0001-example\)/);
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a reference inside an emitted anchor is left alone', async () => {
+  const { root, read } = await build();
+
+  const epsilon = read('specs/epsilon/spec.mdx');
+  // Both halves of the anchor matter. `<[^>]+>` alone ranges the bare tag, so
+  // it covers an ID sitting in the href but not one sitting in the link text —
+  // and the link text is the half that actually nests.
+  assert.doesNotMatch(epsilon, /<a [^>]*><a /);
+  assert.match(
+    epsilon,
+    /Prior art: <a href="\/harness\/specs\/beta\/spec" className="rfc-ref">SPEC-0002<\/a> covers it\./
+  );
+  assert.match(
+    epsilon,
+    /Prior art: <a href="\/harness\/decisions\/ADR-0001-example" className="rfc-ref">[^<]*ADR-0001<\/a> covers it\./
+  );
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('an unprotected reference on the same line still linkifies', async () => {
+  const { root, read } = await build();
+
+  // The guard is span-scoped, not line-scoped: one protected span must not
+  // suppress a bare mention elsewhere on the same line.
+  const epsilon = read('specs/epsilon/spec.mdx');
+  assert.match(epsilon, /`SPEC-0002` against bare <a href="\/harness\/specs\/alpha\/spec"[^>]*>SPEC-0001</);
+  assert.match(epsilon, /`ADR-0001` against bare <a href="\/harness\/decisions\/ADR-0001-example"[^>]*>[^<]*ADR-0001</);
 
   fs.rmSync(root, { recursive: true, force: true });
 });

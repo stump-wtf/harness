@@ -542,7 +542,12 @@ function transformRfc2119Keywords(content) {
 //   [ADR-0006](adr-0006-....md)     already a link; wrapping the label yields
 //                                   <a><a>…</a></a>, which is invalid HTML and
 //                                   which the SSG's minifier rejects outright
-//   <a … >ADR-0006</a>              already transformed on an earlier pass
+//   <a href="/decisions/ADR-0006    an anchor an earlier pass already emitted —
+//   -x">ADR-0006</a>                both the href and the label are off limits
+//
+// Whole <a>…</a> elements are ranged separately from bare tags. `<[^>]+>` alone
+// covers an ID sitting in an href but not one sitting in the link text, which
+// is the half that actually nests.
 //
 // The nesting case was dormant only because adrMapping was empty (see
 // buildAdrMapping): with no entries, nothing was ever linkified. Populating the
@@ -550,7 +555,7 @@ function transformRfc2119Keywords(content) {
 // this guard is a prerequisite for that fix rather than an independent nicety.
 function protectedRanges(line) {
   const ranges = [];
-  for (const re of [/`[^`]*`/g, /\[[^\]]*\]\([^)]*\)/g, /<[^>]+>/g]) {
+  for (const re of [/`[^`]*`/g, /\[[^\]]*\]\([^)]*\)/g, /<a\b[^>]*>.*?<\/a>/g, /<[^>]+>/g]) {
     let m;
     while ((m = re.exec(line)) !== null) ranges.push([m.index, m.index + m[0].length]);
   }
