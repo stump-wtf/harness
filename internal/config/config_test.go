@@ -91,8 +91,8 @@ func TestParseProfiles(t *testing.T) {
 // TestBareEqualsNamespaced asserts the ADR-0006 back-compat promise: a bare
 // [name] table and an explicit [harness.name] table decode identically.
 func TestBareEqualsNamespaced(t *testing.T) {
-	bare := "[foo]\ncmd = \"claude\"\nworkdir = \"~/src\"\n"
-	namespaced := "[harness.foo]\ncmd = \"claude\"\nworkdir = \"~/src\"\n"
+	bare := "[foo]\nharness = \"claude-code\"\nworkdir = \"~/src\"\n"
+	namespaced := "[harness.foo]\nharness = \"claude-code\"\nworkdir = \"~/src\"\n"
 
 	a, err := Parse([]byte(bare), "bare.toml")
 	if err != nil {
@@ -111,7 +111,7 @@ func TestBareEqualsNamespaced(t *testing.T) {
 // bracketed line inside a multi-line string value for a real table header. The
 // decoder's key set is authoritative; a [line] inside a string is not a table.
 func TestMultilineStringWithBracketLine(t *testing.T) {
-	src := "[harness.foo]\ncmd = \"echo\"\ndescription = \"\"\"\n[not a table]\nstill the description\n\"\"\"\n"
+	src := "[harness.foo]\nharness = \"generic\"\ndescription = \"\"\"\n[not a table]\nstill the description\n\"\"\"\n"
 	cfg, err := Parse([]byte(src), "t.toml")
 	if err != nil {
 		t.Fatalf("valid TOML with bracketed line in a string was rejected: %v", err)
@@ -146,25 +146,25 @@ func TestValidationErrors(t *testing.T) {
 		},
 		{
 			name:     "invalid backend",
-			toml:     "[harness.foo]\ncmd = \"x\"\nbackend = \"screen\"\n",
+			toml:     "[harness.foo]\nharness = \"generic\"\nbackend = \"screen\"\n",
 			wantLine: 1,
 			wantSub:  "invalid backend",
 		},
 		{
 			name:     "negative restart_delay",
-			toml:     "# header\n\n[foo]\ncmd = \"x\"\nrestart_delay = -3\n",
+			toml:     "# header\n\n[foo]\nharness = \"generic\"\nrestart_delay = -3\n",
 			wantLine: 3,
 			wantSub:  "restart_delay must not be negative",
 		},
 		{
 			name:     "profile references unknown harness",
-			toml:     "[harness.a]\ncmd = \"x\"\n\n[profile.p]\nharnesses = [\"a\", \"ghost\"]\n",
+			toml:     "[harness.a]\nharness = \"generic\"\n\n[profile.p]\nharnesses = [\"a\", \"ghost\"]\n",
 			wantLine: 4,
 			wantSub:  `references unknown harness "ghost"`,
 		},
 		{
 			name:     "duplicate harness",
-			toml:     "[harness.a]\ncmd = \"x\"\n\n[a]\ncmd = \"y\"\n",
+			toml:     "[harness.a]\nharness = \"generic\"\n\n[a]\nharness = \"generic\"\n",
 			wantLine: 4,
 			wantSub:  `duplicate harness "a"`,
 		},
@@ -173,13 +173,13 @@ func TestValidationErrors(t *testing.T) {
 			// SPEC-0004): a quoted-key global name carrying it could clobber a
 			// registered project harness.
 			name:     "slash in quoted harness name",
-			toml:     "[harness.\"reduit/agent\"]\ncmd = \"x\"\n",
+			toml:     "[harness.\"reduit/agent\"]\nharness = \"generic\"\n",
 			wantLine: 1,
 			wantSub:  `must not contain "/"`,
 		},
 		{
 			name:     "slash in bare quoted table name",
-			toml:     "[\"a/b\"]\ncmd = \"x\"\n",
+			toml:     "[\"a/b\"]\nharness = \"generic\"\n",
 			wantLine: 1,
 			wantSub:  `must not contain "/"`,
 		},
@@ -188,7 +188,7 @@ func TestValidationErrors(t *testing.T) {
 			// with a location before our own duplicate-profile guard is
 			// reached — either way the failure carries the line.
 			name:     "duplicate profile table",
-			toml:     "[harness.a]\ncmd = \"x\"\n\n[profile.p]\nharnesses = [\"a\"]\n\n[profile.p]\nharnesses = [\"a\"]\n",
+			toml:     "[harness.a]\nharness = \"generic\"\n\n[profile.p]\nharnesses = [\"a\"]\n\n[profile.p]\nharnesses = [\"a\"]\n",
 			wantLine: 7,
 			wantSub:  "already been defined",
 		},
@@ -249,11 +249,11 @@ func TestParseRestartPolicy(t *testing.T) {
 		toml string
 		want core.RestartPolicy
 	}{
-		{`[harness.a]` + "\n" + `cmd = "x"` + "\n", core.RestartAlways},
-		{`[harness.a]` + "\n" + `cmd = "x"` + "\n" + `restart = "no"` + "\n", core.RestartNo},
-		{`[harness.a]` + "\n" + `cmd = "x"` + "\n" + `restart = "always"` + "\n", core.RestartAlways},
-		{`[harness.a]` + "\n" + `cmd = "x"` + "\n" + `restart = "unless-stopped"` + "\n", core.RestartUnlessStopped},
-		{`[harness.a]` + "\n" + `cmd = "x"` + "\n" + `restart = "on-failure"` + "\n", core.RestartOnFailure},
+		{`[harness.a]` + "\n" + `harness = "generic"` + "\n", core.RestartAlways},
+		{`[harness.a]` + "\n" + `harness = "generic"` + "\n" + `restart = "no"` + "\n", core.RestartNo},
+		{`[harness.a]` + "\n" + `harness = "generic"` + "\n" + `restart = "always"` + "\n", core.RestartAlways},
+		{`[harness.a]` + "\n" + `harness = "generic"` + "\n" + `restart = "unless-stopped"` + "\n", core.RestartUnlessStopped},
+		{`[harness.a]` + "\n" + `harness = "generic"` + "\n" + `restart = "on-failure"` + "\n", core.RestartOnFailure},
 	}
 	for _, tt := range tests {
 		cfg, err := Parse([]byte(tt.toml), "test.toml")
@@ -273,7 +273,7 @@ func TestParseRestartPolicy(t *testing.T) {
 // TestParseInvalidRestartPolicy confirms an unknown restart policy is rejected
 // at parse time with a location-carrying error.
 func TestParseInvalidRestartPolicy(t *testing.T) {
-	src := "[harness.foo]\ncmd = \"x\"\nrestart = \"until-pigs-fly\"\n"
+	src := "[harness.foo]\nharness = \"generic\"\nrestart = \"until-pigs-fly\"\n"
 	_, err := Parse([]byte(src), "test.toml")
 	if err == nil {
 		t.Fatal("expected error for invalid restart policy")
@@ -410,7 +410,7 @@ func TestParseModelHarness(t *testing.T) {
 		},
 		{
 			name:     "cmd harness without model keeps args verbatim",
-			toml:     "[harness.agent]\ncmd = \"echo\"\nargs = [\"hello\"]\n",
+			toml:     "[harness.agent]\nharness = \"generic\"\nargs = [\"hello\"]\n",
 			wantCmd:  "echo",
 			wantArgs: []string{"hello"},
 		},
@@ -454,7 +454,7 @@ func TestParseModelErrors(t *testing.T) {
 	}{
 		{
 			name:     "model with cmd points at args",
-			toml:     "[harness.bad]\ncmd = \"crush\"\nargs = [\"run\"]\nmodel = \"claude-opus-5\"\n",
+			toml:     "[harness.bad]\nharness = \"crush\"\nargs = [\"run\"]\nmodel = \"claude-opus-5\"\n",
 			wantLine: 1,
 			wantSub:  `"model" requires "prompt"`,
 		},
@@ -530,14 +530,14 @@ func TestParseAutoAcceptHarness(t *testing.T) {
 		},
 		{
 			name:        "absent auto_accept defaults to false",
-			toml:        "[harness.agent]\ncmd = \"echo\"\nargs = [\"hello\"]\n",
+			toml:        "[harness.agent]\nharness = \"generic\"\nargs = [\"hello\"]\n",
 			wantCmd:     "echo",
 			wantArgs:    []string{"hello"},
 			wantRestart: core.RestartAlways,
 		},
 		{
 			name:        "explicit false is allowed on a cmd harness",
-			toml:        "[harness.agent]\ncmd = \"echo\"\nargs = [\"hello\"]\nauto_accept = false\n",
+			toml:        "[harness.agent]\nharness = \"generic\"\nargs = [\"hello\"]\nauto_accept = false\n",
 			wantCmd:     "echo",
 			wantArgs:    []string{"hello"},
 			wantRestart: core.RestartAlways,
@@ -579,7 +579,7 @@ func TestParseAutoAcceptErrors(t *testing.T) {
 	}{
 		{
 			name:     "auto_accept with cmd points at args",
-			toml:     "[harness.bad]\ncmd = \"crush\"\nargs = [\"run\"]\nauto_accept = true\n",
+			toml:     "[harness.bad]\nharness = \"crush\"\nargs = [\"run\"]\nauto_accept = true\n",
 			wantLine: 1,
 			wantSub:  `"auto_accept" requires "prompt"`,
 		},
@@ -677,7 +677,7 @@ func TestParseMaxTurnsErrors(t *testing.T) {
 	}{
 		{
 			name:     "max_turns with cmd points at args",
-			toml:     "[harness.bad]\ncmd = \"crush\"\nargs = [\"run\"]\nmax_turns = 5\n",
+			toml:     "[harness.bad]\nharness = \"crush\"\nargs = [\"run\"]\nmax_turns = 5\n",
 			wantLine: 1,
 			wantSub:  `"max_turns" requires "prompt"`,
 		},
@@ -735,7 +735,7 @@ func TestParseQuietHarness(t *testing.T) {
 		},
 		{
 			name:      "cmd harness is inert (no prompt/no synthesis)",
-			toml:      "[harness.agent]\ncmd = \"echo\"\nargs = [\"hi\"]\n",
+			toml:      "[harness.agent]\nharness = \"generic\"\nargs = [\"hi\"]\n",
 			wantQuiet: false,
 		},
 	}
@@ -768,13 +768,13 @@ func TestParseQuietErrors(t *testing.T) {
 	}{
 		{
 			name:     "quiet=false with cmd points at args",
-			toml:     "[harness.bad]\ncmd = \"crush\"\nargs = [\"run\"]\nquiet = false\n",
+			toml:     "[harness.bad]\nharness = \"crush\"\nargs = [\"run\"]\nquiet = false\n",
 			wantLine: 1,
 			wantSub:  `"quiet" requires "prompt"`,
 		},
 		{
 			name:     "explicit quiet=true with cmd also rejected",
-			toml:     "[harness.bad]\ncmd = \"echo\"\nquiet = true\n",
+			toml:     "[harness.bad]\nharness = \"generic\"\nquiet = true\n",
 			wantLine: 1,
 			wantSub:  `"quiet" requires "prompt"`,
 		},
@@ -980,5 +980,55 @@ watch_config = false
 	}
 	if cfg.Daemon.OTelEndpoint != "" {
 		t.Fatalf("otel_endpoint = %q, want empty", cfg.Daemon.OTelEndpoint)
+	}
+}
+
+// TestRemovedKeysAreRejected pins the migration failure mode of the `harness`
+// enum convergence. TOML decoding here ignores unknown keys, so simply
+// deleting `cmd` and `agent` from rawHarness left every pre-enum config
+// loading CLEAN and then running something else entirely: `cmd = "npm"` with
+// `args = ["run", "dev"]` became the default crush adapter invoked as
+// `crush run dev`, with no error anywhere. Delete-not-deprecate still owes the
+// user a loud failure and a migration path.
+func TestRemovedKeysAreRejected(t *testing.T) {
+	cases := []struct {
+		name    string
+		toml    string
+		wantSub string
+	}{
+		{
+			name:    "cmd",
+			toml:    "[harness.web]\ncmd = \"npm\"\nargs = [\"run\", \"dev\"]\n",
+			wantSub: `"cmd" was replaced by the "harness" enum`,
+		},
+		{
+			name:    "agent",
+			toml:    "[harness.web]\nharness = \"claude-code\"\nagent = \"claude-code\"\n",
+			wantSub: `"agent" was renamed to "harness"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.toml), "t.toml")
+			if err == nil {
+				t.Fatalf("removed key %q loaded without error", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("error %q does not mention the migration (%q)", err.Error(), tc.wantSub)
+			}
+		})
+	}
+}
+
+// A project file shares registerHarness, so it must reject the removed keys
+// too — a repo checked out with a pre-enum harness.toml is exactly the case
+// that would otherwise silently start crush.
+func TestRemovedKeysAreRejectedInProjectFiles(t *testing.T) {
+	_, err := ParseProject([]byte("name = \"proj\"\n\n[harness.api]\ncmd = \"uvicorn\"\n"), "/tmp/repo/harness.toml")
+	if err == nil {
+		t.Fatal("project file with cmd loaded without error")
+	}
+	if !strings.Contains(err.Error(), `"cmd" was replaced`) {
+		t.Errorf("error %q does not mention the migration", err.Error())
 	}
 }

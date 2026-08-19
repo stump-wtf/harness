@@ -4,7 +4,7 @@
 
 # A headless Crush attached to a Signal channel (this machine's Signal arbiter).
 [crush-signal-channel]
-cmd = "crush"
+harness = "crush"
 args = ["--yolo", "--data-dir", "{workdir}", "--channels", "server:signal"]
 workdir = "~/.local/share/crush-signal-channel"   # holds crush.json / .crush state
 env_file = "~/.config/vault/secrets-static.env"   # sourced before launch
@@ -16,6 +16,6 @@ restart_delay = 5
 # it persists under ~/.claude, so you authenticate once on first boot and
 # harnessd just supervises the process.
 # [claude]
-# cmd = "claude"
+# harness = "claude-code"
 # args = ["--remote-control", "--dangerously-skip-permissions"]
 # workdir = "~/src"

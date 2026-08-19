@@ -287,7 +287,7 @@ func TestReloadHookInvokedOnEveryReloadPath(t *testing.T) {
 	}
 
 	good := filepath.Join(t.TempDir(), "good.toml")
-	if err := os.WriteFile(good, []byte("[harness.keep]\ncmd = \"sleep 1\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(good, []byte("[harness.keep]\nharness = \"generic\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.ReloadFromFile(good); err != nil {
@@ -298,7 +298,7 @@ func TestReloadHookInvokedOnEveryReloadPath(t *testing.T) {
 	}
 
 	bad := filepath.Join(t.TempDir(), "bad.toml")
-	if err := os.WriteFile(bad, []byte("[harness.oops\ncmd = \"x\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(bad, []byte("[harness.oops\nharness = \"generic\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.ReloadFromFile(bad); err == nil {
@@ -476,7 +476,7 @@ func TestReloadFromFileKeepsLastGoodOnParseError(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := filepath.Join(t.TempDir(), "bad.toml")
-	if err := os.WriteFile(bad, []byte("[harness.oops\ncmd = \"x\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(bad, []byte("[harness.oops\nharness = \"generic\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.ReloadFromFile(bad); err == nil {

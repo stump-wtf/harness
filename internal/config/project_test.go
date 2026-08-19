@@ -385,7 +385,7 @@ model = "claude-opus-5"
 // files too, with the same located-error contract as the global parser.
 func TestParseProject_ModelErrors(t *testing.T) {
 	tests := []struct{ name, toml, wantSub string }{
-		{"model with cmd", "[harness.bad]\ncmd = \"echo\"\nmodel = \"m\"\n", `"model" requires "prompt"`},
+		{"model with cmd", "[harness.bad]\nharness = \"generic\"\nmodel = \"m\"\n", `"model" requires "prompt"`},
 		{"blank model", "[harness.bad]\nprompt = \"hi\"\nmodel = \" \"\n", `"model" must not be blank`},
 		{"multi-token model", "[harness.bad]\nprompt = \"hi\"\nmodel = \"a b\"\n", `"model" must be a single token`},
 	}
@@ -439,7 +439,7 @@ auto_accept = true
 // project files too, with the same located-error contract as the global
 // parser.
 func TestParseProject_AutoAcceptErrors(t *testing.T) {
-	_, err := ParseProject([]byte("[harness.bad]\ncmd = \"echo\"\nauto_accept = true\n"), "/tmp/repo/harness.toml")
+	_, err := ParseProject([]byte("[harness.bad]\nharness = \"generic\"\nauto_accept = true\n"), "/tmp/repo/harness.toml")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

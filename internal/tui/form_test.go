@@ -33,7 +33,7 @@ func TestHarnessFormRoundTrip(t *testing.T) {
 		t.Fatalf("valid form rejected: %v", err)
 	}
 
-	body := AppendHarness([]byte("[harness.existing]\ncmd = \"true\"\n"), f)
+	body := AppendHarness([]byte("[harness.existing]\nharness = \"generic\"\n"), f)
 	cfg, err := config.Parse(body, "harness.toml")
 	if err != nil {
 		t.Fatalf("config.Parse rejected form TOML: %v\n---\n%s", err, body)
@@ -543,7 +543,7 @@ func TestEditPreservesOmittedFields(t *testing.T) {
 	path := filepath.Join(dir, "harness.toml")
 	original := strings.Join([]string{
 		"[harness.reduit-agent]",
-		`cmd = "crush"`,
+		`harness = "crush"`,
 		`args = ["--yolo", "--data-dir", "/tmp/x"]`,
 		`workdir = "~/.local/share/reduit"`,
 		`env_file = "~/.config/vault/secrets.env"`,
@@ -665,10 +665,10 @@ func TestFormValidate(t *testing.T) {
 func TestRemoveHarnessTOML(t *testing.T) {
 	src := strings.Join([]string{
 		"[harness.keep]",
-		"cmd = \"a\"",
+		"harness = \"generic\"",
 		"",
 		"[harness.drop]",
-		"cmd = \"b\"",
+		"harness = \"generic\"",
 		"description = \"gone\"",
 		"",
 		"[profile.p]",

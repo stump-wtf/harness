@@ -135,7 +135,7 @@ func TestConfigWatcherKeepsLastGoodOnParseError(t *testing.T) {
 	t.Cleanup(cw.Close)
 
 	// Write a malformed config.
-	writeConfig(t, configPath, `[harness.oops\ncmd = "x"`+"\n")
+	writeConfig(t, configPath, `[harness.oops\nharness = "generic"`+"\n")
 
 	// Wait past the debounce window.
 	time.Sleep(2 * time.Second)

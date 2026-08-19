@@ -22,7 +22,7 @@ name = "my-project"
 
 [harness.api]
 harness = "generic"
-args = ["app.main:app"]
+args = ["-c", "uvicorn app.main:app"]
 workdir = "."
 description = "the API"
 enabled = true

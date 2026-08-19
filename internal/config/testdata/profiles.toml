@@ -1,20 +1,20 @@
 # New-style config exercising [harness.*] + [profile.*] tables (ADR-0006).
 
 [harness.claude-src]
-cmd = "claude"
+harness = "claude-code"
 args = ["--remote-control", "--dangerously-skip-permissions"]
 workdir = "~/src"
 description = "Claude Code you drive from your phone"
 
 [harness.crush-signal]
-cmd = "crush"
+harness = "crush"
 args = ["--yolo", "--data-dir", "{workdir}", "--channels", "server:signal"]
 workdir = "~/.local/share/crush-signal-channel"
 env_file = "~/.config/vault/secrets-static.env"
 restart_delay = 5
 
 [harness.reduit-agent]
-cmd = "claude"
+harness = "claude-code"
 args = ["--dangerously-skip-permissions"]
 workdir = "~/src/reduit"
 backend = "tmux"

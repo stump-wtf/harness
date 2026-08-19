@@ -61,7 +61,7 @@ func startDaemonOnSocket(t *testing.T, bin string, env []string) (socket string,
 	dir := shortSockDir(t)
 	socket = filepath.Join(dir, "h.sock")
 	cfg := filepath.Join(dir, "harness.toml")
-	if err := os.WriteFile(cfg, []byte("[harness.demo]\ncmd = \"sh\"\nargs = [\"-c\", \"sleep 600\"]\nenabled = false\n"), 0o644); err != nil {
+	if err := os.WriteFile(cfg, []byte("[harness.demo]\nharness = \"generic\"\nargs = [\"-c\", \"sleep 600\"]\nenabled = false\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

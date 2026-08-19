@@ -207,7 +207,7 @@ func TestEmitDoctorJSONAllPassed(t *testing.T) {
 }
 
 func writeMinimalConfig(path string) error {
-	return os.WriteFile(path, []byte("[harness.demo]\ncmd = \"echo hi\"\nenabled = false\n"), 0o644)
+	return os.WriteFile(path, []byte("[harness.demo]\nharness = \"generic\"\nenabled = false\n"), 0o644)
 }
 
 // --- remote SSH check unit tests -------------------------------------------

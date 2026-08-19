@@ -27,7 +27,7 @@ enabled = false
 
 | Field | Meaning |
 |-------|---------|
-| `harness` | the harness kind, an enum: `crush` (the default), `claude-code`, `codex`, `generic`. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs through `sh` (an arbitrary command), `args = ["/usr/local/bin/x"]` style |
+| `harness` | the harness kind, an enum: `crush` (the default), `claude-code`, `codex`, `generic`. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args: use `args = ["-c", "<command line>"]` to run an arbitrary command |
 | `args` | argument list appended after the adapter's executable |
 | `workdir` | working directory (**required** for most commands) |
 | `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config) |
@@ -115,14 +115,15 @@ The `harness` key is an enum selecting the adapter (ADR-0011, SPEC-0006):
 `crush` (the default when omitted), `claude-code`, `codex`, `generic`. The
 adapter owns both the tool-specific behaviour (trajectory discovery) and the
 executable a long-running harness runs; it also synthesizes the CLI-specific
-argv for prompt one-shots. `generic` means "none of the above" — it runs
-through `sh` (arbitrary commands) and reports no native trajectory
-(scrollback-only).
+argv for prompt one-shots. `generic` means "none of the above" — its executable is `sh`, so an
+arbitrary command is expressed as `args = ["-c", "<command line>"]`, and it
+reports no native trajectory (scrollback-only). Note that `args` are handed to
+`sh` itself: a bare `args = ["/usr/local/bin/thing"]` asks sh to *interpret*
+that file as a shell script, which fails on a compiled binary.
 
 ```toml
 [harness.my-agent]
 harness = "claude-code"
-agent = "claude-code"
 ```
 
 ## Trajectory harvesting & facade scope

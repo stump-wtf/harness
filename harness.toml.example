@@ -89,8 +89,9 @@ enabled = false
 # Harness kinds (ADR-0011, SPEC-0006): the `harness` key is an enum selecting
 # the adapter, which owns the executable a long-running harness runs (args are
 # appended after it) and the CLI-specific argv synthesized for a prompt
-# one-shot. Defaults to "crush" when omitted. "generic" runs through sh
-# (arbitrary commands; no projection, scrollback-only trajectory).
+# one-shot. Defaults to "crush" when omitted. "generic" runs sh, so its args
+# are sh's args -- write args = ["-c", "<command line>"] to run an arbitrary
+# command (no projection, scrollback-only trajectory).
 # Valid values: "crush", "claude-code", "codex", "generic".
 #
 # harness = "claude-code"
@@ -126,7 +127,7 @@ enabled = false
 # come from the daemon's crash-loop policy instead.
 [harness.flaky]
 harness = "generic"
-args = ["/usr/local/bin/maybe-fails"]
+args = ["-c", "exec /usr/local/bin/maybe-fails"]
 workdir = "/srv/flaky"
 restart_delay = 5
 restart = "on-failure"

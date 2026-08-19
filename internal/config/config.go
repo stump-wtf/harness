@@ -43,6 +43,15 @@ type rawHarness struct {
 	Schedule          string   `toml:"schedule"`
 	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
 	MCPAllow          []string `toml:"mcp_allow"`
+
+	// Removed keys, still decoded so their presence can be REJECTED with a
+	// migration error. TOML decoding here ignores unknown keys, so deleting
+	// these fields outright would make a pre-enum config load clean and then
+	// run something else entirely: `cmd = "npm"` + `args = ["run", "dev"]`
+	// silently becomes the default crush adapter invoked as `crush run dev`.
+	// Delete-not-deprecate still owes the user a loud failure.
+	RemovedCmd   string `toml:"cmd"`
+	RemovedAgent string `toml:"agent"`
 }
 
 // rawProfile mirrors a [profile.*] TOML table before validation.
@@ -287,6 +296,20 @@ func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness
 func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHarness, defaultEnabled bool, resolve func(string) string) error {
 	if _, exists := cfg.Harnesses[name]; exists {
 		return newError(filename, line, "duplicate harness %q", name)
+	}
+
+	// Reject the keys the `harness` enum replaced, before anything else: a
+	// config carrying them was written against the old schema, and every
+	// other error message would be a red herring.
+	if strings.TrimSpace(rh.RemovedCmd) != "" {
+		return newError(filename, line,
+			"harness %q: \"cmd\" was replaced by the \"harness\" enum — set harness = \"crush\"|\"claude-code\"|\"codex\" for an agent, or harness = \"generic\" with args = [\"-c\", %q] to run an arbitrary command",
+			name, strings.TrimSpace(rh.RemovedCmd))
+	}
+	if strings.TrimSpace(rh.RemovedAgent) != "" {
+		return newError(filename, line,
+			"harness %q: \"agent\" was renamed to \"harness\" — use harness = %q",
+			name, strings.TrimSpace(rh.RemovedAgent))
 	}
 
 	// The `harness` enum key selects the adapter (and, for a long-running
