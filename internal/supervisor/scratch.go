@@ -116,11 +116,14 @@ func (m *Manager) ScratchRun(h core.Harness, slug string) (string, error) {
 	}
 	h.Name = name
 	m.addEphemeralSupervisorLocked(h)
+	s := m.supervisors[name]
 	m.order = append(m.order, name)
 	m.provenance[name] = ProvenanceScratch
 	m.scratchDefs[name] = h
 	m.mu.Unlock()
 
-	m.supervisors[name].Start()
+	// Start outside the lock (the supervisor's actor loop is independently
+	// synchronized); s was captured under the lock, not re-read from the map.
+	s.Start()
 	return name, nil
 }
