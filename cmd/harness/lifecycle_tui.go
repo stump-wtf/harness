@@ -303,8 +303,14 @@ func runLifecycleAnimated(verb string, c *client.Client, names []string) error {
 		// errors collected so far plus the render failure itself.
 		m.errs = append(m.errs, fmt.Sprintf("render: %v", err))
 	}
-	// Print, not Println: the final frame already ends in a newline, and the
-	// extra one leaves a blank line hanging under every run.
+	// Bubble Tea v2's graceful shutdown re-renders the final model state via
+	// p.render(model) before stopRenderer, which writes the completed rows +
+	// summary to stdout. The renderer then erases that frame on close (inline
+	// mode: EraseScreenBelow), but the erase is unreliable across terminals
+	// and timing windows — producing a duplicate of the final output. We own
+	// the permanent record via finalView below, so clear the last frame
+	// explicitly before printing it.
+	fmt.Print("\033[2J\033[H")
 	fmt.Print(m.finalView())
 	return m.result()
 }
