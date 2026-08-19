@@ -38,9 +38,74 @@ systemctl --user daemon-reload
 systemctl --user enable --now harness.service
 ```
 
-On macOS, use an equivalent launchd LaunchAgent
-(`dev.harness.daemon.plist`) with `ProgramArguments` set to
-`<path>/harness daemon`.
+## Running the daemon as a service on macOS
+
+On macOS the init tier is **launchd**, and the daemon runs as a LaunchAgent
+(owned by your user, started at login). The full equivalent of the systemd
+unit above:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ~/Library/LaunchAgents/dev.harness.daemon.plist -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.harness.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/you/go/bin/harness</string>
+        <string>daemon</string>
+    </array>
+
+    <!-- systemd's Restart=on-failure analogue: relaunch on a non-zero exit.
+         launchd throttles restarts to at most once per 10s by default. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- stdout/stderr of the daemon itself (not of harnesses — those are
+         owned by the daemon's own PTY + scrollback ring). -->
+    <key>StandardOutPath</key>
+    <string>/tmp/harness-daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/harness-daemon.log</string>
+</dict>
+</plist>
+```
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.harness.daemon.plist
+launchctl enable gui/$(id -u)/dev.harness.daemon
+```
+
+Day to day:
+
+```sh
+launchctl print gui/$(id -u)/dev.harness.daemon   # status (the launchd 'journalctl')
+tail -f /tmp/harness-daemon.log                   # daemon log
+launchctl bootout gui/$(id -u)/dev.harness.daemon # stop (survives reboot of the plist)
+```
+
+Two launchd specifics worth knowing:
+
+- **No login shell, no environment.** A LaunchAgent does not source your
+  `~/.zshrc`; if your harnesses need env vars (API tokens, `PATH` additions),
+  set them with an `EnvironmentVariables` dict in the plist or load them from
+  an env file the daemon layers per-harness (see the harness `env_file` field
+  in [Configuration](./configuration)).
+- **GUI session, not SSH sessions.** LaunchAgents run inside your GUI login
+  session. A daemon started this way is up while you are logged in at the
+  console — for an always-on box that auto-logins, that is the same as
+  always-on; for a headless Mac you want that auto-login or an SSH-started
+  daemon instead.
 
 ## What the daemon guarantees
 
