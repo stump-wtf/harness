@@ -232,3 +232,34 @@ func TestScheduledRowKeepsExitCodeWhereItFits(t *testing.T) {
 		}
 	}
 }
+
+// TestNarrowMetaLineMarksTheUnavoidableCut pins the one case fitFields cannot
+// solve by dropping: a first field wider than the entire budget, where there
+// is no field boundary left to cut on.
+//
+// That branch is reachable, not theoretical. The pane floors metaBudget at
+// paneInner(minListWidth) - metaIndent = 18, and an ordinary model name clears
+// it — "model claude-opus-5" is 19 columns — so a 60-column terminal lands
+// there. A silent clamp names a model that does not exist; the ellipsis is
+// what makes the line read as truncated instead of as a value.
+func TestNarrowMetaLineMarksTheUnavoidableCut(t *testing.T) {
+	floor := paneInner(minListWidth) - metaIndent
+
+	h := protocol.HarnessInfo{
+		Name: "sweep", State: "running", Model: "claude-opus-5",
+		Backend: "native", LastExitCode: 0, PID: 42,
+	}
+	what, rest := harnessMeta(h)
+	if w := lipgloss.Width(rest[0]); w <= floor {
+		t.Fatalf("fixture stopped exercising the branch: %q is %d columns, floor is %d",
+			rest[0], w, floor)
+	}
+
+	line := metaLine(what, rest, floor)
+	if w := lipgloss.Width(line); w > floor {
+		t.Errorf("line %q is %d columns, overruns the %d-column floor", line, w, floor)
+	}
+	if !strings.HasSuffix(line, "…") {
+		t.Errorf("unavoidable cut left unmarked: %q, want a trailing ellipsis", line)
+	}
+}

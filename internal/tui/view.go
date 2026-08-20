@@ -459,16 +459,25 @@ func metaLine(what string, rest []string, budget int) string {
 // which is also what metaLine's own contract above promises, that the
 // operationally useful fields are not silently mangled to keep a longer one.
 //
-// The last resort is still a hard clamp: when even the first field overruns
-// the budget there is no field boundary left to cut on. The pane floors
-// metaBudget at 18 (minListWidth 24 - border 2 - metaIndent 4), which the
-// shortest cadence label clears, so that branch is unreachable in practice.
+// The last resort MARKS its cut rather than hiding it: when even the first
+// field overruns the budget there is no field boundary left to drop on, and a
+// silent clamp there is the same misinformation this function exists to stop.
+// "model claude-opus-5" cut to "model claude-opus-" names a model that does
+// not exist; "model claude-opu…" reads as truncated. That branch is reachable,
+// not theoretical — the pane floors metaBudget at 18 (minListWidth 24 -
+// border 2 - metaIndent 4) and an ordinary model name is wider, so a
+// 60-column terminal lands there.
 //
 // Governing: SPEC-0008 REQ "Schedule Visibility" (the cadence this makes room
 // for), SPEC-0001 REQ "Zero And Error States" (the sub-line it shares).
 //
 // @joestump 08/20/2026 - Added reviewing #244, which put the cadence ahead of
 // backend/exit and pushed "exit 0" off the edge as "exit" below ~102 columns.
+//
+// @joestump-agent 08/20/2026 - The last-resort clamp still cut mid-token, so
+// the fix leaked at the pane's own floor: `model claude-opus-5` rendered as
+// `model claude-opus-` on a 60-column terminal. Marked the cut with an
+// ellipsis and pinned the floor in a test.
 func fitFields(rest []string, budget int) string {
 	joined := strings.Join(rest, " · ")
 	if budget <= 0 || lipgloss.Width(joined) <= budget {
@@ -479,7 +488,7 @@ func fitFields(rest []string, budget int) string {
 			return s
 		}
 	}
-	return clampWidth(joined, budget)
+	return ansi.Truncate(joined, budget, "…")
 }
 
 // clampWidth truncates s to at most budget columns; budget <= 0 is unbounded.
