@@ -147,8 +147,10 @@ func LabelOrRaw(schedule string) string {
 	return schedule
 }
 
-// formatCronTime renders an hour:minute pair from cron fields, dropping
-// leading zeros for readability ("09:30" not "9:30", but "0:00" stays).
+// formatCronTime renders an hour:minute pair from cron fields, zero-padding
+// each to two digits so the column reads as a clock ("9"/"30" -> "09:30",
+// "0"/"0" -> "00:00"). Go's %0Ns applies the zero flag to strings, so the
+// cron fields need no numeric conversion first.
 func formatCronTime(hour, minute string) string {
 	return fmt.Sprintf("%02s:%02s", hour, minute)
 }

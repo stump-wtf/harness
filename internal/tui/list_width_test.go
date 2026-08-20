@@ -10,6 +10,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -174,5 +175,60 @@ func TestMultilinePromptStaysOneLine(t *testing.T) {
 	m := widthModel(300, 20, hs...)
 	if n := len(strings.Split(m.viewDashboard(), "\n")); n > m.h {
 		t.Errorf("dashboard rendered %d lines into a %d-row window", n, m.h)
+	}
+}
+
+// TestNarrowMetaLineNeverHalfRendersAField is the #244 regression: the cadence
+// field the cockpit gained sits ahead of backend and exit code, so on a narrow
+// pane the joined tail overran the budget and the clamp cut THROUGH the last
+// field — "exit 0" rendered as "exit", "exi", then "e".
+//
+// A half-rendered field is worse than a missing one because it still reads as
+// a value: "exit" reports an exit code of nothing, and a backend clipped to
+// "e" names something that does not exist. Every field on the line must be
+// either wholly present or wholly absent, at every width.
+func TestNarrowMetaLineNeverHalfRendersAField(t *testing.T) {
+	h := protocol.HarnessInfo{
+		Name: "stumpcloud-sweep", State: "stopped", Schedule: "30 9 * * *",
+		Description: "sweep the fleet and report anything unhealthy",
+		Backend:     "native", LastExitCode: 0,
+	}
+	what, rest := harnessMeta(h)
+
+	// Down to the narrowest budget the pane can actually hand out:
+	// minListWidth(24) - border(2) - metaIndent(4) = 18. Below that fitFields
+	// has no field boundary left and falls back to a hard clamp by design, so
+	// asserting there would pin an unreachable state.
+	for budget := 60; budget >= 18; budget-- {
+		line := metaLine(what, rest, budget)
+		for _, field := range strings.Split(line, " · ") {
+			if field == "" || field == what {
+				continue // the cmd/prompt is elided deliberately, from the left
+			}
+			if strings.HasPrefix(what, field) || strings.HasSuffix(what, field) {
+				continue
+			}
+			if !slices.Contains(rest, field) {
+				t.Errorf("budget=%d produced partial field %q in %q\n(fields: %v)",
+					budget, field, line, rest)
+			}
+		}
+	}
+}
+
+// TestScheduledRowKeepsExitCodeWhereItFits pins the boundary the fix restored:
+// wherever the exit code still fits alongside the cadence it must be whole,
+// and where it does not it must be gone rather than clipped.
+func TestScheduledRowKeepsExitCodeWhereItFits(t *testing.T) {
+	h := protocol.HarnessInfo{
+		Name: "sweep", State: "stopped", Schedule: "30 9 * * *",
+		Backend: "native", LastExitCode: 3,
+	}
+	what, rest := harnessMeta(h)
+	for budget := 80; budget >= 1; budget-- {
+		line := metaLine(what, rest, budget)
+		if strings.Contains(line, "exit") && !strings.Contains(line, "exit 3") {
+			t.Fatalf("budget=%d rendered a truncated exit field: %q", budget, line)
+		}
 	}
 }

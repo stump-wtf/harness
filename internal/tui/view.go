@@ -433,7 +433,7 @@ func (m *Model) renderMetaRow(h protocol.HarnessInfo, budget int) string {
 func metaLine(what string, rest []string, budget int) string {
 	tail := strings.Join(rest, " · ")
 	if what == "" {
-		return clampWidth(tail, budget)
+		return fitFields(rest, budget)
 	}
 	if budget <= 0 {
 		return what + " · " + tail
@@ -444,9 +444,42 @@ func metaLine(what string, rest []string, budget int) string {
 		// information — spend every column on facts instead. The floor gates
 		// the ELISION, not the field: a `/bin/sh` that fits in 7 columns still
 		// renders, and listPaneWidth sized the pane expecting it to.
-		return clampWidth(tail, budget)
+		return fitFields(rest, budget)
 	}
 	return elideLeft(what, room) + " · " + tail
+}
+
+// fitFields joins the metadata fields that fit in budget, dropping whole
+// fields from the right rather than truncating through one.
+//
+// A field cut mid-token is worse than an absent field, because it still reads
+// as a value: "exit 0" clipped to "exit" reports an exit code of nothing, and
+// "native" clipped to "e" names a backend that does not exist. Dropping keeps
+// every field that renders true and says nothing where there is no room —
+// which is also what metaLine's own contract above promises, that the
+// operationally useful fields are not silently mangled to keep a longer one.
+//
+// The last resort is still a hard clamp: when even the first field overruns
+// the budget there is no field boundary left to cut on. The pane floors
+// metaBudget at 18 (minListWidth 24 - border 2 - metaIndent 4), which the
+// shortest cadence label clears, so that branch is unreachable in practice.
+//
+// Governing: SPEC-0008 REQ "Schedule Visibility" (the cadence this makes room
+// for), SPEC-0001 REQ "Zero And Error States" (the sub-line it shares).
+//
+// @joestump 08/20/2026 - Added reviewing #244, which put the cadence ahead of
+// backend/exit and pushed "exit 0" off the edge as "exit" below ~102 columns.
+func fitFields(rest []string, budget int) string {
+	joined := strings.Join(rest, " · ")
+	if budget <= 0 || lipgloss.Width(joined) <= budget {
+		return joined
+	}
+	for n := len(rest) - 1; n > 0; n-- {
+		if s := strings.Join(rest[:n], " · "); lipgloss.Width(s) <= budget {
+			return s
+		}
+	}
+	return clampWidth(joined, budget)
 }
 
 // clampWidth truncates s to at most budget columns; budget <= 0 is unbounded.
