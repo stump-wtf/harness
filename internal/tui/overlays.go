@@ -230,7 +230,15 @@ func (m *Model) onProfileKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // harness (SPEC-0001 REQ "Harness Form"; `e` pre-fills).
 func (m *Model) openForm(editing bool) (tea.Model, tea.Cmd) {
 	m.editing = editing
-	m.fInputs = formInputs{backend: string(core.BackendNative), restart: string(core.RestartAlways)}
+	// mcpAllow is seeded with the parser's default scope rather than left
+	// blank: the form encodes a cleared field as the deny-all `mcp_allow = []`
+	// (see form.go toForm), so a blank `n` form would create harnesses with no
+	// MCP capability at all.
+	m.fInputs = formInputs{
+		backend:  string(core.BackendNative),
+		restart:  string(core.RestartAlways),
+		mcpAllow: defaultMCPAllowInput,
+	}
 	if editing {
 		if sel, ok := m.selectedHarness(); ok {
 			// Pre-fill the WHOLE schema from the config file (file-is-truth,
@@ -379,7 +387,7 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 			huh.NewInput().Title("description").Value(&fi.description),
 			huh.NewConfirm().Title("enabled (autostart)").Value(&fi.enabled),
 			huh.NewConfirm().Title("harvest_trajectory (expose the trajectory read-only over MCP)").Value(&fi.harvestTrajectory),
-			huh.NewInput().Title("mcp_allow (space-separated; read write)").Value(&fi.mcpAllow),
+			huh.NewInput().Title("mcp_allow (space-separated; read write; blank = no capabilities)").Value(&fi.mcpAllow),
 		),
 	).WithShowHelp(false)
 }

@@ -194,6 +194,14 @@ unrelated edit, with no error surfaced to the operator.
 - **THEN** the rewritten table still carries those keys and re-parses to a
   harness equal to the original but for the description
 
+#### Scenario: A deliberately empty capability scope
+
+- **WHEN** an operator presses `e` on a harness configured `mcp_allow = []` —
+  locked out of the MCP facade entirely — and changes an unrelated field
+- **THEN** the rewritten table still carries the empty scope, rather than
+  omitting the key and letting the parser's `["read"]` default silently grant
+  the harness back read-class facade access
+
 #### Scenario: A new schema key
 
 - **WHEN** a field is added to `core.Harness` without a matching form field

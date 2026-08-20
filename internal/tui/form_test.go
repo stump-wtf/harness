@@ -844,10 +844,18 @@ func TestHarnessFormCoversEveryHarnessField(t *testing.T) {
 
 // TestEditPreservesEveryConfigKey is the behavioral half: an unchanged `e` edit
 // of a fully-populated harness must reparse into a byte-identical core.Harness.
-// The two fixtures between them set every key in harnessFormFields — one
-// long-running harness (args/backend/tmux_socket/enabled/mcp_allow) and one
+// The fixtures between them set every key in harnessFormFields — one
+// long-running harness (args/backend/tmux_socket/enabled/mcp_allow), one
 // scheduled prompt one-shot (prompt/model/max_turns/quiet/schedule), since the
-// parser makes those two sets mutually exclusive.
+// parser makes those two sets mutually exclusive, and one deny-all mcp_allow.
+//
+// Limitation worth knowing before trusting this as a whole-class guard: the
+// form binds `args` as a single space-separated string and re-splits it with
+// strings.Fields, so an argument containing whitespace is SPLIT on the way
+// back through, not preserved. That is a pre-existing encoding defect in the
+// input binding rather than a dropped key, so the fixtures deliberately use
+// whitespace-free args; see TestEditSplitsArgsContainingWhitespace, which pins
+// the current lossy behavior so the day it is fixed is a visible change.
 func TestEditPreservesEveryConfigKey(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -869,6 +877,21 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				"enabled = true",
 				"harvest_trajectory = true",
 				`mcp_allow = ["read", "write"]`,
+			},
+		},
+		{
+			// The deny-all scope is its own case: it is the one mcp_allow
+			// value that is BOTH non-default and empty, so an emit rule keyed
+			// on len(scope) > 0 silently upgrades it back to the parser's
+			// ["read"] default — a capability grant, not the capability loss
+			// the rest of this test guards.
+			name: "harness locked out of the MCP facade",
+			table: []string{
+				"[harness.locked]",
+				`harness = "claude-code"`,
+				`prompt = "sweep"`,
+				`schedule = "0 3 * * *"`,
+				"mcp_allow = []",
 			},
 		},
 		{
@@ -923,5 +946,122 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 					before.Harnesses[name], after.Harnesses[name], body)
 			}
 		})
+	}
+}
+
+// TestEditPreservesDenyAllMCPAllow is the regression guard for the one mcp_allow
+// value that fails in the opposite direction from issue #161: `mcp_allow = []`
+// is an operator deliberately locking a harness out of the MCP facade
+// entirely. It is non-default AND empty, so an emit rule keyed on
+// len(scope) > 0 drops the key, and config.Parse then materializes the
+// ["read"] default over it. The harness silently regains read-class facade
+// access because someone edited its description.
+func TestEditPreservesDenyAllMCPAllow(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.toml")
+	original := strings.Join([]string{
+		"[harness.locked]",
+		`harness = "claude-code"`,
+		`prompt = "sweep"`,
+		"mcp_allow = []",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fi := editInputsFor(path, protocol.HarnessInfo{Name: "locked"})
+	if fi.mcpAllow != "" {
+		t.Fatalf("deny-all scope pre-filled as %q, want the empty input", fi.mcpAllow)
+	}
+	fi.description = "locked down"
+	form := fi.toForm()
+	if form.MCPAllow == nil || len(form.MCPAllow) != 0 {
+		t.Fatalf("toForm MCPAllow = %#v, want a non-nil empty scope", form.MCPAllow)
+	}
+	if err := form.Validate(); err != nil {
+		t.Fatalf("edit failed validation: %v", err)
+	}
+	body := AppendHarness([]byte(removeHarnessTOML(original, "locked")), form)
+	cfg, err := config.Parse(body, "harness.toml")
+	if err != nil {
+		t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
+	}
+	if got := cfg.Harnesses["locked"].MCPAllow; len(got) != 0 {
+		t.Errorf("deny-all scope became %v after an unrelated edit "+
+			"(silent capability grant):\n%s", got, body)
+	}
+}
+
+// TestNewHarnessFormDefaultsToReadScope pins the other half of that encoding: a
+// blank mcp_allow input now MEANS deny-all, so both pre-fills must seed the
+// widget with the parser's default. Without the seed, every harness created
+// through `n` would land with no MCP capability at all.
+func TestNewHarnessFormDefaultsToReadScope(t *testing.T) {
+	fi := formInputs{
+		name:     "fresh",
+		harness:  "crush",
+		backend:  string(core.BackendNative),
+		restart:  string(core.RestartAlways),
+		mcpAllow: defaultMCPAllowInput,
+	}
+	form := fi.toForm()
+	if err := form.Validate(); err != nil {
+		t.Fatalf("valid form rejected: %v", err)
+	}
+	body := form.TOML()
+	if strings.Contains(body, "mcp_allow") {
+		t.Errorf("the default scope should not be written as a key:\n%s", body)
+	}
+	cfg, err := config.Parse([]byte(body), "harness.toml")
+	if err != nil {
+		t.Fatalf("config.Parse rejected form TOML: %v\n---\n%s", err, body)
+	}
+	if got := cfg.Harnesses["fresh"].MCPAllow; !reflect.DeepEqual(got, []string{"read"}) {
+		t.Errorf("new harness MCPAllow = %v, want [read]", got)
+	}
+
+	// And the fallback pre-fill, for a harness the daemon knows but whose
+	// table is not in the file, must agree — otherwise the save writes
+	// deny-all over a harness that had the default.
+	missing := editInputsFor(filepath.Join(t.TempDir(), "absent.toml"),
+		protocol.HarnessInfo{Name: "fresh", Adapter: "crush"})
+	if missing.mcpAllow != defaultMCPAllowInput {
+		t.Errorf("fallback pre-fill mcpAllow = %q, want %q", missing.mcpAllow, defaultMCPAllowInput)
+	}
+}
+
+// TestEditSplitsArgsContainingWhitespace documents a KNOWN, pre-existing
+// encoding defect rather than asserting correct behavior: `args` round-trips
+// through a single space-separated input, so an argument containing whitespace
+// comes back split. It is not in issue #161's class (no key is dropped) and
+// fixing it means giving the args widget shell-style quoting, but it is the
+// reason TestEditPreservesEveryConfigKey's fixtures avoid whitespace in args
+// and it should not be discovered again from scratch. When the encoding is
+// fixed, this test fails and is the place to record it.
+func TestEditSplitsArgsContainingWhitespace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.toml")
+	original := strings.Join([]string{
+		"[harness.repl]",
+		`harness = "generic"`,
+		`args = ["-c", "print('hello world')"]`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	form := editInputsFor(path, protocol.HarnessInfo{Name: "repl"}).toForm()
+	body := AppendHarness([]byte(removeHarnessTOML(original, "repl")), form)
+	cfg, err := config.Parse(body, "harness.toml")
+	if err != nil {
+		t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
+	}
+	got := cfg.Harnesses["repl"].Args
+	want := []string{"-c", "print('hello", "world')"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("args = %v, want %v — if this now round-trips losslessly the "+
+			"args input grew quoting; delete this test and drop the caveat on "+
+			"TestEditPreservesEveryConfigKey", got, want)
 	}
 }

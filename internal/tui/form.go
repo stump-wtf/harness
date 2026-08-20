@@ -250,8 +250,13 @@ func (f HarnessForm) TOML() string {
 		b.WriteString("harvest_trajectory = true\n")
 	}
 	// Omit mcp_allow when it equals the parser's default scope so an untouched
-	// edit round-trips without growing keys (same rule as restart above).
-	if allow := f.MCPAllow; len(allow) > 0 && !isDefaultMCPAllow(allow) {
+	// edit round-trips without growing keys (same rule as restart above). An
+	// EMPTY-but-non-nil scope is the deny-all a user wrote as `mcp_allow = []`
+	// and must be emitted verbatim: omitting it hands the harness back the
+	// ["read"] default, which is a silent capability GRANT rather than the
+	// silent loss the rest of issue #161 is about. Only a nil scope — no form
+	// opinion at all — falls through to the parser default.
+	if allow := f.MCPAllow; allow != nil && !isDefaultMCPAllow(allow) {
 		parts := make([]string, len(allow))
 		for i, a := range allow {
 			parts[i] = strconv.Quote(a)
@@ -268,6 +273,12 @@ func (f HarnessForm) TOML() string {
 func isDefaultMCPAllow(scope []string) bool {
 	return len(scope) == 1 && scope[0] == "read"
 }
+
+// defaultMCPAllowInput is the parser's default scope in the form's
+// space-separated input encoding. Both pre-fills seed the mcp_allow widget with
+// it so the field always shows the effective scope and a blank field can carry
+// its own meaning (deny-all).
+const defaultMCPAllowInput = "read"
 
 // AppendHarness appends a new harness table to an existing harness.toml body,
 // separated by a blank line. The daemon then reloads (ADR-0006). This is the
@@ -304,6 +315,10 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 		backend:     orDefault(sel.Backend, string(core.BackendNative)),
 		description: sel.Description,
 		enabled:     sel.Enabled,
+		// The fallback (file unreadable, or the table isn't there yet) must
+		// match the parser's default scope, not blank — blank now means the
+		// deny-all `mcp_allow = []`.
+		mcpAllow: defaultMCPAllowInput,
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -360,9 +375,12 @@ func (fi formInputs) toForm() HarnessForm {
 	if args := strings.Fields(fi.args); len(args) > 0 {
 		f.Args = args
 	}
-	if allow := strings.Fields(fi.mcpAllow); len(allow) > 0 {
-		f.MCPAllow = allow
-	}
+	// Unconditional, unlike args above: strings.Fields returns a non-nil empty
+	// slice for a cleared input, which is how the form expresses the deny-all
+	// `mcp_allow = []` (see TOML). Both the `n` and `e` pre-fills seed this
+	// with the parser's ["read"] default, so a blank field is a deliberate
+	// clear rather than an unset one.
+	f.MCPAllow = strings.Fields(fi.mcpAllow)
 	if d, err := strconv.Atoi(strings.TrimSpace(fi.delay)); err == nil {
 		f.RestartDelay = d
 	}
