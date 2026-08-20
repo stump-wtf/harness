@@ -191,7 +191,6 @@ func defaultColumnWidths(headers []string, budget, nameWidth int) (widths []int,
 		"STATE":     12,
 		"ENABLED":   9,
 		"RESTARTS":  9,
-		"PID":       9,
 		"FIELD":     12,
 		"CHECK":     12,
 		"STATUS":    10,
@@ -583,13 +582,17 @@ func (t *Table) stateCell(state string, schedule ...string) string {
 		Render(fmt.Sprintf("%s %s", glyph, label))
 }
 
-// descriptionCell renders the DESCRIPTION cell, appending the
-// human-readable next-run time ("in 2h", "due") for a scheduled harness —
-// highlighted in the accent color so the schedule stands out of the prose.
+// descriptionCell renders the DESCRIPTION cell, highlighting the schedule
+// label (derived from the raw cron expression) in cyan and appending the
+// human-readable next-run time ("in 2h", "due") in accent. The two colors
+// let an operator distinguish "when it runs" from "how soon" at a glance.
 // nextRunCell returns "-" when there is nothing to show, which leaves an
 // unscheduled (or not-yet-computed) row exactly as before.
-func (t *Table) descriptionCell(desc, nextRun string) string {
+func (t *Table) descriptionCell(desc, schedule, nextRun string) string {
 	cell := desc
+	if label := scheduleLabel(schedule); label != "" {
+		cell = highlightSchedule(cell, label, t)
+	}
 	if nr := nextRunCell(nextRun); nr != "-" {
 		if cell != "" {
 			cell += " · "
@@ -597,6 +600,17 @@ func (t *Table) descriptionCell(desc, nextRun string) string {
 		cell += t.accentBoldWords(nr)
 	}
 	return cell
+}
+
+// highlightSchedule replaces the first occurrence of label in desc with its
+// cyan-bold highlighted form, splitting on whitespace boundaries so wrap
+// resets stay balanced (same strategy as accentBoldWords).
+func highlightSchedule(desc, label string, t *Table) string {
+	idx := strings.Index(desc, label)
+	if idx < 0 {
+		return desc
+	}
+	return desc[:idx] + t.cyanBoldWords(label) + desc[idx+len(label):]
 }
 
 // stateGlyphOnly renders just the colored glyph for leading-column use.
@@ -632,14 +646,6 @@ func (t *Table) flappingCell(on bool) string {
 		return t.amberBold("⚠ flapping")
 	}
 	return t.dimPlain("no")
-}
-
-// pidCell renders "-" in dim when pid <= 0, else the number in faint.
-func (t *Table) pidCell(p int) string {
-	if p <= 0 {
-		return t.dimPlain("-")
-	}
-	return t.faintPlain(fmt.Sprintf("%d", p))
 }
 
 // yesno returns "yes" or "no" — the plain-text form used by callers that
@@ -686,6 +692,28 @@ func (t *Table) accentBold(s string) string {
 		return s
 	}
 	return lipgloss.NewStyle().Foreground(t.pal.Accent).Bold(true).Render(s)
+}
+
+func (t *Table) cyanBold(s string) string {
+	if !t.colored {
+		return s
+	}
+	return lipgloss.NewStyle().Foreground(t.pal.Cyan).Bold(true).Render(s)
+}
+
+// cyanBoldWords styles each whitespace-separated word of s independently in
+// cyan bold, for schedule labels that land in the wrapping DESCRIPTION
+// column. Same per-word strategy as accentBoldWords — see that function's
+// doc for why.
+func (t *Table) cyanBoldWords(s string) string {
+	if !t.colored {
+		return s
+	}
+	words := strings.Fields(s)
+	for i, w := range words {
+		words[i] = t.cyanBold(w)
+	}
+	return strings.Join(words, " ")
 }
 
 // accentBoldWords styles each whitespace-separated word of s independently,

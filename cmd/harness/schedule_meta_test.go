@@ -14,6 +14,29 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
+func TestScheduleLabel(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"every", "@every 6h", "every 6h"},
+		{"daily-descriptor", "@daily", "daily"},
+		{"hourly-descriptor", "@hourly", "hourly"},
+		{"weekly-descriptor", "@weekly", "weekly"},
+		{"daily-cron", "30 9 * * *", "daily 09:30"},
+		{"weekly-cron", "0 7 * * 1", "Mondays 07:00"},
+		{"monthly-cron", "0 0 15 * *", "monthly 00:00"},
+		{"six-hourly", "0 */6 * * *", ""}, // wildcard hour, not a simple label
+	}
+	for _, tc := range cases {
+		if got := scheduleLabel(tc.in); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestNextRunCell(t *testing.T) {
 	cases := []struct {
 		name string
@@ -74,7 +97,7 @@ func TestPrintHarnessTableMarksScheduledInline(t *testing.T) {
 	if !strings.Contains(out, "● running") {
 		t.Errorf("unscheduled row lost its state glyph:\n%s", out)
 	}
-	for _, unwanted := range []string{"SCHEDULE", "NEXT", "0 */6 * * *"} {
+	for _, unwanted := range []string{"SCHEDULE", "NEXT", "PID", "0 */6 * * *"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("schedule column/data leaked into table (%q):\n%s", unwanted, out)
 		}
@@ -123,12 +146,12 @@ func TestDescriptionCellStylesSurviveWrapping(t *testing.T) {
 
 	for n := 1; n <= len(base); n++ {
 		var buf bytes.Buffer
-		tbl := NewTable(&buf, "NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
+		tbl := NewTable(&buf, "NAME", "STATE", "ENABLED", "RESTARTS", "DESCRIPTION")
 		// Force the styled path: a real TTY colors, a *bytes.Buffer does not.
 		tbl.colored = true
 		tbl.Row("stumpcloud-sweep", tbl.stateCell("stopped", "0 */6 * * *"),
-			tbl.enabledCell(false), "0", tbl.pidCell(0),
-			tbl.descriptionCell(base[:n], next))
+			tbl.enabledCell(false), "0",
+			tbl.descriptionCell(base[:n], "0 */6 * * *", next))
 		if err := tbl.Flush(); err != nil {
 			t.Fatalf("flush: %v", err)
 		}

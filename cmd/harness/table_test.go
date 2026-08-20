@@ -63,7 +63,7 @@ func TestTableNameWrapsPastCap(t *testing.T) {
 // (it wraps, so it stays whole) before a flex column goes non-positive.
 func TestTableWideNameNeverStarvesFlexColumn(t *testing.T) {
 	t.Parallel()
-	headers := []string{"NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION"}
+	headers := []string{"NAME", "STATE", "ENABLED", "RESTARTS", "DESCRIPTION"}
 	// Budgets span the clamp range (minTableWidth..default); names span
 	// "comfortably fits" through "past the cap".
 	for _, budget := range []int{minTableWidth, 64, 72, defaultTableWidth} {
@@ -97,11 +97,11 @@ func TestTableWideNameNeverStarvesFlexColumn(t *testing.T) {
 func TestTableRowNeverExceedsBudget(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
-	tt := NewTable(&buf, "NAME", "STATE", "ENABLED", "RESTARTS", "PID", "DESCRIPTION")
+	tt := NewTable(&buf, "NAME", "STATE", "ENABLED", "RESTARTS", "DESCRIPTION")
 	tt.width = 64 // simulate an 80-column terminal
-	tt.Row("claude-code-supervisor-long", "running", "yes", "0", "1234",
+	tt.Row("claude-code-supervisor-long", "running", "yes", "0",
 		"supervises the claude code agent loop and restarts it on exit")
-	tt.Row("short", "running", "yes", "0", "12", "tiny")
+	tt.Row("short", "running", "yes", "0", "tiny")
 	_ = tt.Flush()
 
 	want := renderedWidth(tt.width, len(tt.headers))
