@@ -722,3 +722,206 @@ func TestToFormParsesArgsAndDelay(t *testing.T) {
 		t.Errorf("delay = %d, want 7", f.RestartDelay)
 	}
 }
+
+// TestEditTmuxSocketHarnessRoundTrip is the regression guard for issue #161:
+// `tmux_socket` was a schema key the form did not carry, so the `e` save path —
+// which deletes the whole `[harness.<name>]` table and re-renders it from
+// HarnessForm.TOML() — silently deleted it. A user editing only the description
+// of a tmux harness would detach it from the operator's tmux server on the next
+// reload, with no error shown.
+func TestEditTmuxSocketHarnessRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.toml")
+	original := strings.Join([]string{
+		"[harness.legacy-repl]",
+		`harness = "generic"`,
+		`args = ["python3"]`,
+		`backend = "tmux"`,
+		`tmux_socket = "/tmp/harness-shared.sock"`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The daemon's HarnessInfo projection carries no TmuxSocket, so the
+	// pre-fill must come from the file (ADR-0006 file-is-truth).
+	sel := protocol.HarnessInfo{Name: "legacy-repl", Adapter: "generic", Backend: "tmux"}
+	fi := editInputsFor(path, sel)
+	if fi.tmuxSocket != "/tmp/harness-shared.sock" {
+		t.Fatalf("tmux_socket not pre-filled from file: %q", fi.tmuxSocket)
+	}
+
+	// Edit only the description, as a user would, and save.
+	fi.description = "the legacy repl"
+	form := fi.toForm()
+	if form.TmuxSocket != "/tmp/harness-shared.sock" {
+		t.Fatalf("toForm TmuxSocket = %q, want %q", form.TmuxSocket, "/tmp/harness-shared.sock")
+	}
+	if err := form.Validate(); err != nil {
+		t.Fatalf("edit failed validation: %v", err)
+	}
+	body := []byte(removeHarnessTOML(original, form.Name))
+	body = AppendHarness(body, form)
+	if !strings.Contains(string(body), `tmux_socket = "/tmp/harness-shared.sock"`) {
+		t.Fatalf("tmux_socket key lost on save (the harness would fall back to the default socket):\n%s", body)
+	}
+	cfg, err := config.Parse(body, "harness.toml")
+	if err != nil {
+		t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
+	}
+	if got := cfg.Harnesses["legacy-repl"].TmuxSocket; got != "/tmp/harness-shared.sock" {
+		t.Errorf("TmuxSocket after round-trip = %q, want %q", got, "/tmp/harness-shared.sock")
+	}
+}
+
+// TestTOMLKeepsTmuxSocketOnNativeBackend pins that the write is NOT gated on the
+// current backend. `tmux_socket` is inert under `backend = "native"` (ADR-0006
+// keeps it for compat) and the parser accepts it there, so dropping it while
+// native would make "flip to native, flip back" the same silent data loss
+// issue #161 is about — the operator's socket would be gone by the time the
+// backend mattered again.
+func TestTOMLKeepsTmuxSocketOnNativeBackend(t *testing.T) {
+	f := HarnessForm{
+		Name:       "legacy-repl",
+		Harness:    "generic",
+		Args:       []string{"python3"},
+		Backend:    string(core.BackendNative),
+		TmuxSocket: "/tmp/harness-shared.sock",
+		Restart:    string(core.RestartAlways),
+	}
+	if err := f.Validate(); err != nil {
+		t.Fatalf("valid form rejected: %v", err)
+	}
+	body := f.TOML()
+	if !strings.Contains(body, `tmux_socket = "/tmp/harness-shared.sock"`) {
+		t.Fatalf("tmux_socket dropped on a native harness:\n%s", body)
+	}
+	cfg, err := config.Parse([]byte(body), "harness.toml")
+	if err != nil {
+		t.Fatalf("config.Parse rejected form TOML: %v\n---\n%s", err, body)
+	}
+	if got := cfg.Harnesses["legacy-repl"].TmuxSocket; got != "/tmp/harness-shared.sock" {
+		t.Errorf("TmuxSocket = %q, want it preserved", got)
+	}
+}
+
+// harnessFormFields is every core.Harness field TestEditPreservesEveryConfigKey
+// covers. It is spelled out so adding a field to core.Harness fails this test
+// until the author decides whether the form must carry it — the whole point of
+// issue #161's "audit the rest in the same pass". Name is the table name, and
+// is carried implicitly by the header the rewrite emits.
+var harnessFormFields = []string{
+	"Name", "Adapter", "Args", "Prompt", "Model", "AutoAccept", "Quiet",
+	"MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart", "Backend",
+	"Description", "Enabled", "TmuxSocket", "Schedule", "HarvestTrajectory",
+	"MCPAllow",
+}
+
+// TestHarnessFormCoversEveryHarnessField is the census half of the issue #161
+// guard: it fails when core.Harness grows a field that harnessFormFields does
+// not list, forcing whoever adds it to answer "does the `e` save path preserve
+// this?" before it ships. Without this, every new config key silently joins the
+// set the edit rewrite deletes.
+func TestHarnessFormCoversEveryHarnessField(t *testing.T) {
+	want := make(map[string]bool, len(harnessFormFields))
+	for _, f := range harnessFormFields {
+		want[f] = true
+	}
+	for _, f := range reflect.VisibleFields(reflect.TypeOf(core.Harness{})) {
+		if !want[f.Name] {
+			t.Errorf("core.Harness.%s is not covered by the edit round-trip guard: "+
+				"add it to HarnessForm/formInputs/TOML()/editInputsFor/buildHarnessForm "+
+				"and to harnessFormFields, or the `e` save path will silently delete it "+
+				"from harness.toml (issue #161)", f.Name)
+		}
+		delete(want, f.Name)
+	}
+	for f := range want {
+		t.Errorf("harnessFormFields lists %q, which core.Harness no longer has", f)
+	}
+}
+
+// TestEditPreservesEveryConfigKey is the behavioral half: an unchanged `e` edit
+// of a fully-populated harness must reparse into a byte-identical core.Harness.
+// The two fixtures between them set every key in harnessFormFields — one
+// long-running harness (args/backend/tmux_socket/enabled/mcp_allow) and one
+// scheduled prompt one-shot (prompt/model/max_turns/quiet/schedule), since the
+// parser makes those two sets mutually exclusive.
+func TestEditPreservesEveryConfigKey(t *testing.T) {
+	tests := []struct {
+		name  string
+		table []string
+	}{
+		{
+			name: "long-running harness",
+			table: []string{
+				"[harness.legacy-repl]",
+				`harness = "generic"`,
+				`args = ["python3", "-i"]`,
+				`workdir = "~/src/legacy"`,
+				`env_file = "~/.config/vault/secrets.env"`,
+				"restart_delay = 5",
+				`restart = "on-failure"`,
+				`backend = "tmux"`,
+				`tmux_socket = "/tmp/harness-shared.sock"`,
+				`description = "the legacy repl"`,
+				"enabled = true",
+				"harvest_trajectory = true",
+				`mcp_allow = ["read", "write"]`,
+			},
+		},
+		{
+			name: "scheduled prompt one-shot",
+			table: []string{
+				"[harness.stumpcloud-sweep]",
+				`harness = "claude-code"`,
+				`prompt = "check all services and report anything unhealthy"`,
+				`model = "claude-opus-5"`,
+				"auto_accept = true",
+				"max_turns = 40",
+				"quiet = false",
+				`schedule = "0 */6 * * *"`,
+				`workdir = "~/src/ansible"`,
+				`env_file = "~/.config/vault/secrets.env"`,
+				"restart_delay = 5",
+				`restart = "on-failure"`,
+				`description = "scheduled sweep"`,
+				"harvest_trajectory = true",
+				`mcp_allow = ["read", "write"]`,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			original := strings.Join(append(tc.table, ""), "\n")
+			before, err := config.Parse([]byte(original), "harness.toml")
+			if err != nil {
+				t.Fatalf("fixture does not parse: %v\n---\n%s", err, original)
+			}
+			name := before.HarnessOrder[0]
+
+			dir := t.TempDir()
+			path := filepath.Join(dir, "harness.toml")
+			if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			// The pre-fill sees only the lossy daemon projection plus the file;
+			// the file is what must carry everything (ADR-0006).
+			form := editInputsFor(path, protocol.HarnessInfo{Name: name}).toForm()
+			if err := form.Validate(); err != nil {
+				t.Fatalf("unchanged edit failed validation: %v", err)
+			}
+			body := AppendHarness([]byte(removeHarnessTOML(original, name)), form)
+			after, err := config.Parse(body, "harness.toml")
+			if err != nil {
+				t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
+			}
+			if !reflect.DeepEqual(after.Harnesses[name], before.Harnesses[name]) {
+				t.Errorf("unchanged edit was lossy:\n before: %+v\n  after: %+v\n---\n%s",
+					before.Harnesses[name], after.Harnesses[name], body)
+			}
+		})
+	}
+}

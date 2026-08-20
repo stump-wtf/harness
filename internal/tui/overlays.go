@@ -343,8 +343,12 @@ func (m *Model) onConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // --- helpers --------------------------------------------------------------
 
 // buildHarnessForm constructs the Huh form bound to fi (SPEC-0001 REQ "Harness
-// Form" schema: cmd/prompt/model/auto_accept/args/workdir/env_file/
-// restart_delay/restart/backend/description; schedule for a cron one-shot).
+// Form" schema: harness/prompt/model/auto_accept/max_turns/quiet/args/workdir/
+// env_file/restart_delay/restart/backend/tmux_socket/description/enabled/
+// harvest_trajectory/mcp_allow; schedule for a cron one-shot). Every config key
+// core.Harness carries has a widget here — an unbound key is one the `e` save
+// path silently deletes from harness.toml (issue #161), which
+// TestEditPreservesEveryConfigKey pins.
 func buildHarnessForm(fi *formInputs) *huh.Form {
 	return huh.NewForm(
 		huh.NewGroup(
@@ -371,8 +375,11 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 			huh.NewSelect[string]().Title("backend").
 				Options(huh.NewOption("native", "native"), huh.NewOption("tmux", "tmux")).
 				Value(&fi.backend),
+			huh.NewInput().Title("tmux_socket (tmux backend only; inert on native)").Value(&fi.tmuxSocket),
 			huh.NewInput().Title("description").Value(&fi.description),
 			huh.NewConfirm().Title("enabled (autostart)").Value(&fi.enabled),
+			huh.NewConfirm().Title("harvest_trajectory (expose the trajectory read-only over MCP)").Value(&fi.harvestTrajectory),
+			huh.NewInput().Title("mcp_allow (space-separated; read write)").Value(&fi.mcpAllow),
 		),
 	).WithShowHelp(false)
 }

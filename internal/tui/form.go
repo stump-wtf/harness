@@ -1,12 +1,19 @@
 package tui
 
 // Governing: SPEC-0001 REQ "Harness Form" — n/e open a Huh form over the harness
-// schema (harness/prompt/model/auto_accept/schedule/args/workdir/env_file/
-// restart_delay/restart/backend/description/profile membership) that writes back to
+// schema (harness/prompt/model/auto_accept/max_turns/quiet/schedule/args/workdir/
+// env_file/restart_delay/restart/backend/tmux_socket/description/enabled/
+// harvest_trajectory/mcp_allow/profile membership) that writes back to
 // harness.toml (ADR-0006: file is truth); e
 // pre-fills from the existing harness; then the daemon reloads and the harness
 // appears on the dashboard. This file owns the schema<->TOML serialization; the
 // Huh widget wiring lives in overlays.go.
+//
+// Also governing: SPEC-0001 REQ "Lossless Edit Round-Trip" — the e save path
+// rewrites the whole [harness.<name>] table, so the form must carry EVERY
+// core.Harness config key or the omitted ones are deleted from harness.toml on
+// the next unrelated edit (issue #161). form_test.go's
+// TestHarnessFormCoversEveryHarnessField pins the census.
 
 import (
 	"fmt"
@@ -67,8 +74,23 @@ type HarnessForm struct {
 	RestartDelay int    // seconds
 	Restart      string // core.RestartPolicy; empty = the parse default
 	Backend      string
-	Description  string
-	Enabled      bool
+	// TmuxSocket names the tmux server socket; inert unless Backend == tmux
+	// (ADR-0006 keeps it for backward compatibility). Carried through the form
+	// for the same reason as Schedule: the save path rewrites the whole table,
+	// so a field the form drops detaches the harness from the operator's tmux
+	// server on the next unrelated edit (issue #161).
+	TmuxSocket  string
+	Description string
+	Enabled     bool
+	// HarvestTrajectory opts the harness into read-only trajectory exposure
+	// through the MCP facade (ADR-0008: opt-in, a trajectory may contain
+	// secrets). Round-trip field (issue #161).
+	HarvestTrajectory bool
+	// MCPAllow is the per-harness MCP capability scope (SPEC-0005), defaulting
+	// to ["read"] in the parser. Round-trip field (issue #161): dropping it
+	// silently revokes a harness's write authority — or, worse on the way back,
+	// would re-grant it.
+	MCPAllow []string
 }
 
 // NewHarnessForm is a blank form for `n` with sane defaults (native backend).
@@ -210,13 +232,41 @@ func (f HarnessForm) TOML() string {
 	if f.Backend != "" && f.Backend != string(core.BackendNative) {
 		fmt.Fprintf(&b, "backend = %s\n", strconv.Quote(f.Backend))
 	}
+	// Emitted whenever set, not only under backend = "tmux": the key is inert
+	// on a native harness (ADR-0006) and the parser accepts it there, so
+	// gating the write on the current backend would turn "switch to native,
+	// switch back" into the very data loss this round-trip exists to prevent
+	// (issue #161).
+	if socket := strings.TrimSpace(f.TmuxSocket); socket != "" {
+		fmt.Fprintf(&b, "tmux_socket = %s\n", strconv.Quote(socket))
+	}
 	if f.Description != "" {
 		fmt.Fprintf(&b, "description = %s\n", strconv.Quote(f.Description))
 	}
 	if f.Enabled {
 		b.WriteString("enabled = true\n")
 	}
+	if f.HarvestTrajectory {
+		b.WriteString("harvest_trajectory = true\n")
+	}
+	// Omit mcp_allow when it equals the parser's default scope so an untouched
+	// edit round-trips without growing keys (same rule as restart above).
+	if allow := f.MCPAllow; len(allow) > 0 && !isDefaultMCPAllow(allow) {
+		parts := make([]string, len(allow))
+		for i, a := range allow {
+			parts[i] = strconv.Quote(a)
+		}
+		fmt.Fprintf(&b, "mcp_allow = [%s]\n", strings.Join(parts, ", "))
+	}
 	return b.String()
+}
+
+// isDefaultMCPAllow reports whether scope is exactly the parser's default,
+// ["read"] (SPEC-0005 REQ "Capability Scoping"). config.Parse materializes that
+// default for a table with no mcp_allow key, so the edit pre-fill always sees
+// it and re-emitting it verbatim would add a key the user never wrote.
+func isDefaultMCPAllow(scope []string) bool {
+	return len(scope) == 1 && scope[0] == "read"
 }
 
 // AppendHarness appends a new harness table to an existing harness.toml body,
@@ -278,8 +328,11 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	}
 	fi.restart = orDefault(string(h.Restart), string(core.RestartAlways))
 	fi.backend = orDefault(string(h.Backend), string(core.BackendNative))
+	fi.tmuxSocket = h.TmuxSocket
 	fi.description = h.Description
 	fi.enabled = h.Enabled
+	fi.harvestTrajectory = h.HarvestTrajectory
+	fi.mcpAllow = strings.Join(h.MCPAllow, " ")
 	return fi
 }
 
@@ -298,11 +351,17 @@ func (fi formInputs) toForm() HarnessForm {
 		EnvFile:     strings.TrimSpace(fi.envFile),
 		Restart:     strings.TrimSpace(fi.restart),
 		Backend:     strings.TrimSpace(fi.backend),
+		TmuxSocket:  strings.TrimSpace(fi.tmuxSocket),
 		Description: strings.TrimSpace(fi.description),
 		Enabled:     fi.enabled,
+
+		HarvestTrajectory: fi.harvestTrajectory,
 	}
 	if args := strings.Fields(fi.args); len(args) > 0 {
 		f.Args = args
+	}
+	if allow := strings.Fields(fi.mcpAllow); len(allow) > 0 {
+		f.MCPAllow = allow
 	}
 	if d, err := strconv.Atoi(strings.TrimSpace(fi.delay)); err == nil {
 		f.RestartDelay = d

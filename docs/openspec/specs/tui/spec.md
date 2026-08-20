@@ -161,7 +161,9 @@ harnesses outside the profile keep running (ADR-0006).
 ### Requirement: Harness Form
 
 `n` (new) and `e` (edit) SHALL open a Huh form over the harness schema
-(`cmd`/`args`/`workdir`/`env_file`/`restart_delay`/`backend`/`description`/
+(`harness`/`args`/`prompt`/`model`/`auto_accept`/`max_turns`/`quiet`/
+`schedule`/`workdir`/`env_file`/`restart_delay`/`restart`/`backend`/
+`tmux_socket`/`description`/`enabled`/`harvest_trajectory`/`mcp_allow`/
 profile membership) that writes back to `harness.toml` (ADR-0006 — file is
 truth). `e` SHALL pre-fill from the existing harness. An "edit raw TOML"
 escape hatch SHALL open `$EDITOR`.
@@ -171,6 +173,32 @@ escape hatch SHALL open `$EDITOR`.
 - **WHEN** the user completes the `n` form
 - **THEN** the new harness lands in `harness.toml`, the daemon reloads, and
   the harness appears on the dashboard
+
+### Requirement: Lossless Edit Round-Trip
+
+The `e` save path deletes the whole `[harness.<name>]` table and re-renders it
+from the form, so the form SHALL carry EVERY config key `core.Harness` defines,
+not the subset the daemon's `HarnessInfo` projection exposes. Each key SHALL be
+pre-filled from the config file (ADR-0006 — file is truth) and re-emitted on
+save, so an edit that changes one field leaves every other key byte-identical
+after a reparse.
+
+Adding a key to the harness schema SHALL include adding it to the form; a key
+the form does not carry is silently deleted from `harness.toml` on the next
+unrelated edit, with no error surfaced to the operator.
+
+#### Scenario: Editing an unrelated field
+
+- **WHEN** an operator presses `e` on a harness configured with `tmux_socket`,
+  `harvest_trajectory`, or `mcp_allow` and changes only the description
+- **THEN** the rewritten table still carries those keys and re-parses to a
+  harness equal to the original but for the description
+
+#### Scenario: A new schema key
+
+- **WHEN** a field is added to `core.Harness` without a matching form field
+- **THEN** the form's round-trip guard fails, rather than the omission
+  surfacing later as silent config loss
 
 ### Requirement: Confirmation Guards
 
