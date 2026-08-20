@@ -4,6 +4,10 @@ package main
 // (state legibility — scheduled harnesses swap their state glyph for a clock
 // and carry the next-run time inline in DESCRIPTION, highlighted, rather
 // than in dedicated columns).
+//
+// The cron-label and duration tables live in internal/schedfmt now that the
+// TUI renders them too (#160); what stays here is the table's own rendering
+// and the "-" empty cell that only a table has.
 
 import (
 	"bytes"
@@ -13,29 +17,6 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
-
-func TestScheduleLabel(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"empty", "", ""},
-		{"every", "@every 6h", "every 6h"},
-		{"daily-descriptor", "@daily", "daily"},
-		{"hourly-descriptor", "@hourly", "hourly"},
-		{"weekly-descriptor", "@weekly", "weekly"},
-		{"daily-cron", "30 9 * * *", "daily 09:30"},
-		{"weekly-cron", "0 7 * * 1", "Mondays 07:00"},
-		{"monthly-cron", "0 0 15 * *", "monthly 00:00"},
-		{"six-hourly", "0 */6 * * *", ""}, // wildcard hour, not a simple label
-	}
-	for _, tc := range cases {
-		if got := scheduleLabel(tc.in); got != tc.want {
-			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
-		}
-	}
-}
 
 func TestNextRunCell(t *testing.T) {
 	cases := []struct {
@@ -51,27 +32,6 @@ func TestNextRunCell(t *testing.T) {
 	for _, tc := range cases {
 		if got := nextRunCell(tc.in); got != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
-		}
-	}
-}
-
-func TestShortDuration(t *testing.T) {
-	cases := []struct {
-		in   time.Duration
-		want string
-	}{
-		{45 * time.Second, "45s"},
-		{5 * time.Minute, "5m"},
-		{90 * time.Minute, "1h30m"},
-		{2 * time.Hour, "2h"},
-		// Rounding carries into the next unit rather than reporting "60m".
-		{59*time.Minute + 45*time.Second, "1h"},
-		{52 * time.Hour, "2d4h"},
-		{48 * time.Hour, "2d"},
-	}
-	for _, tc := range cases {
-		if got := shortDuration(tc.in); got != tc.want {
-			t.Errorf("%v: got %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

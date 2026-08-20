@@ -21,6 +21,7 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/schedfmt"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui"
 )
 
@@ -86,122 +87,10 @@ func printHarnessTable(w io.Writer, hs []protocol.HarnessInfo) error {
 // mental timezone math. Absolute time and the cron spec stay available via
 // describe/--json.
 func nextRunCell(nextRun string) string {
-	if nextRun == "" {
-		return "-"
+	if s := schedfmt.NextIn(nextRun); s != "" {
+		return s
 	}
-	next, err := time.Parse(time.RFC3339, nextRun)
-	if err != nil {
-		return "-"
-	}
-	d := time.Until(next)
-	if d <= 0 {
-		return "due"
-	}
-	return "in " + shortDuration(d)
-}
-
-// shortDuration compacts a duration the way an operator reads it: dropping
-// fractional seconds and every zero unit, leading or trailing ("45s", "12m",
-// "2h5m", "3d4h").
-//
-// Formatted by hand rather than through Duration.String(), which always
-// carries the smaller units down to seconds — "12m0s", "10h45m0s". That is
-// noise at a glance, and "in 10h45m0s" is 11 cells against the NEXT column's
-// 10, so the table truncated it back to "in 10h45m…".
-//
-// Rounding is applied before the unit split so a carry lands in the right
-// place: 59m45s reads "1h", not "60m".
-func shortDuration(d time.Duration) string {
-	if d < time.Minute {
-		return d.Round(time.Second).String()
-	}
-	if d < 24*time.Hour {
-		d = d.Round(time.Minute)
-	} else {
-		d = d.Round(time.Hour)
-	}
-	days := int(d / (24 * time.Hour))
-	hours := int(d/time.Hour) % 24
-	mins := int(d/time.Minute) % 60
-	switch {
-	case days > 0 && hours > 0:
-		return fmt.Sprintf("%dd%dh", days, hours)
-	case days > 0:
-		return fmt.Sprintf("%dd", days)
-	case hours > 0 && mins > 0:
-		return fmt.Sprintf("%dh%dm", hours, mins)
-	case hours > 0:
-		return fmt.Sprintf("%dh", hours)
-	default:
-		return fmt.Sprintf("%dm", mins)
-	}
-}
-
-// scheduleLabel converts a cron expression or @-descriptor into the short
-// human-readable label that operators embed in descriptions ("every 6h",
-// "daily 09:30", "Mondays 07:00"). Returns "" for empty or unparseable
-// input so callers can skip highlighting.
-func scheduleLabel(schedule string) string {
-	if schedule == "" {
-		return ""
-	}
-	switch {
-	case strings.HasPrefix(schedule, "@every "):
-		dur := strings.TrimPrefix(schedule, "@every ")
-		return "every " + dur
-	case schedule == "@daily":
-		return "daily"
-	case schedule == "@hourly":
-		return "hourly"
-	case schedule == "@weekly":
-		return "weekly"
-	case schedule == "@monthly":
-		return "monthly"
-	}
-	parts := strings.Fields(schedule)
-	if len(parts) != 5 {
-		return ""
-	}
-	minute, hour, dom, month, dow := parts[0], parts[1], parts[2], parts[3], parts[4]
-	timeStr := formatCronTime(hour, minute)
-	switch {
-	case dom != "*" && month == "*" && dow == "*":
-		return fmt.Sprintf("monthly %s", timeStr)
-	case dow != "*" && dom == "*" && month == "*":
-		dayName := cronDayName(dow)
-		if dayName != "" {
-			return fmt.Sprintf("%s %s", dayName, timeStr)
-		}
-		return fmt.Sprintf("day %s %s", dow, timeStr)
-	case hour != "*" && minute != "*" && dom == "*" && month == "*" && dow == "*":
-		if !strings.Contains(hour, "/") && !strings.Contains(hour, ",") && !strings.Contains(hour, "-") {
-			return fmt.Sprintf("daily %s", timeStr)
-		}
-	case hour == "*" && minute != "*" && dom == "*" && month == "*" && dow == "*":
-		return fmt.Sprintf("hourly :%s", minute)
-	}
-	return ""
-}
-
-// formatCronTime renders an hour:minute pair from cron fields, dropping
-// leading zeros for readability ("09:30" not "9:30", but "0:00" stays).
-func formatCronTime(hour, minute string) string {
-	return fmt.Sprintf("%02s:%02s", hour, minute)
-}
-
-// cronDayName maps a single-value day-of-week field (0-7 or three-letter
-// name) to its capitalized English name. Returns "" for ranges, lists, or
-// wildcards.
-func cronDayName(dow string) string {
-	names := map[string]string{
-		"0": "Sundays", "7": "Sundays",
-		"1": "Mondays", "2": "Tuesdays", "3": "Wednesdays",
-		"4": "Thursdays", "5": "Fridays", "6": "Saturdays",
-		"SUN": "Sundays", "MON": "Mondays", "TUE": "Tuesdays",
-		"WED": "Wednesdays", "THU": "Thursdays", "FRI": "Fridays",
-		"SAT": "Saturdays",
-	}
-	return names[strings.ToUpper(dow)]
+	return "-"
 }
 
 func cmdDescribe(c *client.Client, o verbOpts) error {

@@ -17,6 +17,14 @@ restart count, over a faint sub-line carrying that harness's kind (or
 `prompt`), backend, last exit code, and PID. Vim-style navigation works
 everywhere (`j`/`k`, `g`/`G`).
 
+A [scheduled one-shot](./configuration#scheduled-one-shots) reads as scheduled
+rather than as switched off — it is always `enabled = false`, so "disabled"
+would be the wrong word for an armed cron job. Its row is tagged `(scheduled)`
+and carries the countdown to the next firing (`next in 2h`); its sub-line
+carries the cadence (`daily 09:30`, or the cron expression verbatim when it is
+too irregular to paraphrase). A harness bouncing in restart backoff shows that
+countdown instead — the imminent event wins the column.
+
 Beside the list, the **preview pane** is a live read-only view of the selected
 harness's screen and nothing else — move the selection and it follows, without
 attaching. The list takes only the width its rows need, so the preview gets

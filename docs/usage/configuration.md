@@ -107,7 +107,9 @@ Rules:
 
 `harness list` marks a scheduled harness inline — a clock glyph in place of the
 state glyph, and the next firing appended to its description (`· in 4h3m`).
-`harness describe` adds the cron spec and the absolute next-run time.
+`harness describe` adds the cron spec and the absolute next-run time. The
+[cockpit](./tui#the-dashboard) tags the row `(scheduled)` with the same
+countdown, and carries the cadence on the row's sub-line.
 
 ## Agent adapters
 

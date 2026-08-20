@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -119,6 +120,59 @@ func TestHarnessMetaCarriesThePeekSummary(t *testing.T) {
 	what, rest = harnessMeta(protocol.HarnessInfo{RestartCount: 9})
 	if got := metaLine(what, rest, 0); strings.Contains(got, "9 restart") {
 		t.Errorf("metaLine = %q duplicates the restart count already on the main row", got)
+	}
+}
+
+// TestScheduledHarnessIsLegibleInTheList is the dashboard half of #160: a
+// scheduled harness has to answer "is it armed, and when does it fire" from
+// the list alone.
+//
+// Before this, the row said "stopped (scheduled)" and stopped there — a cron
+// job firing in two hours and one whose daemon never armed it rendered
+// identically, and the only way to tell them apart was `describe`.
+func TestScheduledHarnessIsLegibleInTheList(t *testing.T) {
+	h := protocol.HarnessInfo{
+		Name: "stumpcloud-sweep", State: "stopped", Adapter: "claude-code",
+		Schedule: "30 9 * * *",
+		NextRun:  time.Now().Add(2 * time.Hour).Format(time.RFC3339),
+	}
+	if got, want := nextActionText(h), "next in 2h"; got != want {
+		t.Errorf("nextActionText = %q, want %q", got, want)
+	}
+	what, rest := harnessMeta(h)
+	if got := metaLine(what, rest, 0); !strings.Contains(got, "daily 09:30") {
+		t.Errorf("metaLine = %q, missing the cadence", got)
+	}
+	// The cadence and the countdown split across the two lines rather than
+	// both landing in the sub-line.
+	what, rest = harnessMeta(h)
+	if got := metaLine(what, rest, 0); strings.Contains(got, "next in") {
+		t.Errorf("metaLine = %q repeats the countdown already on the row above", got)
+	}
+}
+
+// TestScheduledHarnessMetaFallsBackToRawCron: an expression schedfmt cannot
+// paraphrase must still render its cron verbatim. The sub-line is the only
+// place the TUI carries the cadence, so a blank there means the dashboard
+// claims a harness is scheduled and then refuses to say how often.
+func TestScheduledHarnessMetaFallsBackToRawCron(t *testing.T) {
+	h := protocol.HarnessInfo{Name: "sweep", State: "stopped", Schedule: "0 */6 * * *"}
+	what, rest := harnessMeta(h)
+	if got := metaLine(what, rest, 0); !strings.Contains(got, "0 */6 * * *") {
+		t.Errorf("metaLine = %q, missing the raw cron fallback", got)
+	}
+}
+
+// TestBackoffOutranksTheSchedule: a scheduled one-shot that is bouncing right
+// now shows the retry, not the next cron fire. Both are "what happens next",
+// and the imminent one is the one the operator needs.
+func TestBackoffOutranksTheSchedule(t *testing.T) {
+	h := protocol.HarnessInfo{
+		State: "degraded", NextRetryInMs: 8000,
+		Schedule: "@daily", NextRun: time.Now().Add(3 * time.Hour).Format(time.RFC3339),
+	}
+	if got, want := nextActionText(h), "retry in 8s"; got != want {
+		t.Errorf("nextActionText = %q, want %q", got, want)
 	}
 }
 

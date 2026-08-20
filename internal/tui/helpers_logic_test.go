@@ -17,6 +17,7 @@ package tui
 
 import (
 	"testing"
+	"time"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
@@ -38,6 +39,20 @@ func TestNextActionText(t *testing.T) {
 			"zero backoff is not a countdown",
 			protocol.HarnessInfo{NextRetryInMs: 0, LastExitCode: 1},
 			"",
+		},
+		{
+			// A schedule the daemon has not resolved a firing time for says
+			// nothing rather than guessing (#160).
+			"scheduled without a resolved next run stays blank",
+			protocol.HarnessInfo{Schedule: "@daily"},
+			"",
+		},
+		{
+			// Past its firing time and still stopped: the operator needs to
+			// see it is overdue, not a negative countdown.
+			"overdue schedule reads as due now",
+			protocol.HarnessInfo{Schedule: "@daily", NextRun: time.Now().Add(-time.Minute).Format(time.RFC3339)},
+			"due now",
 		},
 	}
 	for _, tt := range tests {

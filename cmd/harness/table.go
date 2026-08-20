@@ -26,6 +26,7 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"gitea.stump.rocks/stump.wtf/harness/internal/schedfmt"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 )
 
@@ -590,7 +591,7 @@ func (t *Table) stateCell(state string, schedule ...string) string {
 // unscheduled (or not-yet-computed) row exactly as before.
 func (t *Table) descriptionCell(desc, schedule, nextRun string) string {
 	cell := desc
-	if label := scheduleLabel(schedule); label != "" {
+	if label := schedfmt.Label(schedule); label != "" {
 		cell = highlightSchedule(cell, label, t)
 	}
 	if nr := nextRunCell(nextRun); nr != "-" {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/schedfmt"
 )
 
 // filterByProfile returns the harnesses visible under the active profile. When
@@ -57,14 +58,43 @@ func restartMarker(count int) string {
 }
 
 // nextActionText renders the right-hand "uptime / next-action" column. A
-// harness waiting to retry shows its backoff countdown; a failed one shows its
-// exit code; otherwise it's blank (uptime is filled by the caller which knows
-// start time). This is the shared bit the degraded-row expansion also uses.
+// harness waiting to retry shows its backoff countdown; a scheduled one shows
+// how long until its cron next fires; otherwise it's blank (uptime is filled
+// by the caller which knows start time). This is the shared bit the
+// degraded-row expansion also uses.
+//
+// Backoff wins over the schedule when both are live: a harness bouncing right
+// now is the more urgent fact, and the cadence is still on the meta line
+// beneath the row.
+//
+// The countdown is what makes "stopped (scheduled)" mean something. Without
+// it a cron job that fires in ten minutes and one whose daemon never armed it
+// render identically — the dashboard asserted a harness was scheduled but
+// could not say when, which is the question an operator actually has (#160).
 func nextActionText(h protocol.HarnessInfo) string {
 	if h.NextRetryInMs > 0 {
 		return "retry in " + humanizeMs(h.NextRetryInMs)
 	}
-	return ""
+	return nextRunText(h.NextRun)
+}
+
+// nextRunText phrases the daemon's resolved next-fire stamp for the row's
+// right-hand column: "next in 2h", or "due now" once the firing time has
+// passed and the run has not been observed yet.
+//
+// "next " prefixes the shared countdown because the column's other tenant is
+// "retry in 45s" — bare "in 2h" next to a stopped harness reads as a retry,
+// which is the opposite of a healthy cron job. Empty input (no schedule, or a
+// daemon that has not resolved a time) renders nothing at all.
+func nextRunText(nextRun string) string {
+	switch s := schedfmt.NextIn(nextRun); s {
+	case "":
+		return ""
+	case "due":
+		return "due now"
+	default:
+		return "next " + s
+	}
 }
 
 // harnessMeta returns the per-row metadata sub-line as its two separable
@@ -100,6 +130,14 @@ func harnessMeta(h protocol.HarnessInfo) (what string, rest []string) {
 	}
 	if h.AutoAccept {
 		rest = append(rest, "yolo")
+	}
+	// The cadence, not the countdown: nextActionText already put "next in 2h"
+	// on the row above, and repeating it here would spend columns to say the
+	// same thing twice. This is the half that answers "how often" — and it
+	// falls back to the raw cron, because a schedule too irregular to
+	// paraphrase is exactly the one worth reading verbatim (#160).
+	if h.Schedule != "" {
+		rest = append(rest, schedfmt.LabelOrRaw(h.Schedule))
 	}
 	rest = append(rest,
 		orDefault(h.Backend, "native"),

@@ -206,9 +206,13 @@ CLIs generally need.
 * Good, because every ambiguous combination is a located parse error rather than
   a silently-ignored key.
 * Bad, because consumers branch on `Schedule != ""` rather than on a type — the
-  exact cost 2A named. A scheduled harness currently renders identically to an
-  inert disabled one-shot in `ls`/describe/TUI, tracked as
-  [#160](https://gitea.stump.rocks/stump.wtf/harness/issues/160).
+  exact cost 2A named. Every rendering surface pays it separately: `ls`,
+  `describe` and the cockpit each carry their own `Schedule != ""` arm so a
+  scheduled harness does not read as an inert disabled one-shot
+  ([#160](https://gitea.stump.rocks/stump.wtf/harness/issues/160),
+  [#205](https://gitea.stump.rocks/stump.wtf/harness/issues/205); the shared
+  phrasing lives in `internal/schedfmt`, the branching does not). SPEC-0008 REQ
+  "Schedule Visibility" is what holds them to the same answer.
 * Bad, because a firing goes through `Manager.Start`, which persists
   `enabled = true` — so an unclean daemon exit mid-run can autostart the one-shot
   off-schedule on the next boot, defeating the `enabled` exclusion the parser

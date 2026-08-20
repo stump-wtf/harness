@@ -245,6 +245,57 @@ invalid combination would leave `harness.toml` unparseable on disk.
 - **THEN** it fails validation before writing rather than producing an
   unparseable file
 
+### Requirement: Schedule Visibility
+
+`schedule` and the resolved next-fire time SHALL be readable from a client
+without reading `harness.toml`. The daemon SHALL carry both on the harness
+projection returned by `list` and `describe`: the cron expression as configured,
+and the next firing as an RFC 3339 timestamp taken from the live scheduler
+rather than recomputed from the config, since the daemon is the only party that
+knows the resolved phase.
+
+A scheduled harness SHALL be visually distinguishable from a disabled one on
+every listing surface. A scheduled harness is always `enabled = false` (REQ
+"Schedule Exclusions"), so `enabled` alone cannot carry the distinction and
+rendering it as merely disabled would misreport an armed cron job as one
+somebody turned off.
+
+Both listing surfaces — the CLI table and the cockpit dashboard — SHALL show
+the cadence and the countdown to the next firing. Where a surface cannot
+paraphrase an expression into a cadence label it SHALL render the expression
+verbatim rather than nothing. A scheduled harness whose next firing the daemon
+has not resolved SHALL render no countdown rather than a placeholder time.
+
+#### Scenario: Scheduled harness on the wire
+
+- **WHEN** a client lists or describes a harness carrying `schedule`
+- **THEN** the response carries the cron expression and the next firing time as
+  resolved by the running scheduler
+
+#### Scenario: Scheduled harness in a listing
+
+- **WHEN** a scheduled harness appears in the CLI table or the cockpit dashboard
+- **THEN** it is marked as scheduled, and its cadence and time-to-next-firing
+  are both on screen
+
+#### Scenario: Scheduled harness is not reported as disabled
+
+- **WHEN** a scheduled harness (necessarily `enabled = false`) is rendered
+- **THEN** the surface marks it scheduled rather than disabled
+
+#### Scenario: Unresolved next firing
+
+- **WHEN** a harness carries `schedule` but the daemon has not resolved a next
+  firing time
+- **THEN** the surface shows the cadence with no countdown, rather than a
+  placeholder or a zero time
+
+#### Scenario: Harness in backoff outranks its schedule
+
+- **WHEN** a scheduled harness is also waiting out a restart backoff
+- **THEN** the surface's next-action field shows the backoff countdown, and the
+  cadence remains visible alongside it
+
 ### Requirement: Scheduler Fault Isolation
 
 A panic raised while handling a firing SHALL NOT terminate the daemon. The
@@ -296,7 +347,8 @@ section tracks them:
 * Per-harness `timezone` and specified DST behavior.
 * Suspend-safe wall-clock evaluation in place of armed timers.
 * `scheduled` and `completed` states, and a `consecutive_failures` counter.
-* Protocol operations `jobs`, `run`, and `runs`; `job_run_*` events; and
-  exposure of `schedule` or next-fire time over the protocol
+* Protocol operations `jobs`, `run`, and `runs`, and `job_run_*` events.
+  Exposure of `schedule` and next-fire time over the protocol is **no longer**
+  deferred — it shipped as REQ "Schedule Visibility" above (issues #160, #205).
   ([#160](https://gitea.stump.rocks/stump.wtf/harness/issues/160)).
 * Project-scoped schedules.
