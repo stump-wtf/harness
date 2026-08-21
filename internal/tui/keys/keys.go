@@ -68,6 +68,15 @@ type KeyMap struct {
 	Chatroom key.Binding // C — enter chatroom from dashboard.
 	ChatUp   key.Binding
 	ChatDown key.Binding
+	// ChatFollow toggles tail-follow; ChatFilter toggles one harness out of the
+	// stream and ChatAll restores every harness.
+	//
+	// These are bindings rather than key literals in the handler so FullHelp
+	// keeps its promise below — it documents the registry, so a key that never
+	// reaches the registry is a key the help screen silently omits.
+	ChatFollow key.Binding
+	ChatFilter key.Binding
+	ChatAll    key.Binding
 }
 
 // Default returns the SPEC-0001 default bindings.
@@ -130,6 +139,10 @@ func Default() KeyMap {
 		Chatroom: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "chatroom")),
 		ChatUp:   key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "scroll up")),
 		ChatDown: key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "scroll down")),
+
+		ChatFollow: key.NewBinding(key.WithKeys("space", "p"), key.WithHelp("space", "follow/pause")),
+		ChatFilter: key.NewBinding(key.WithKeys("1", "2", "3", "4", "5"), key.WithHelp("1-5", "toggle harness")),
+		ChatAll:    key.NewBinding(key.WithKeys("0", "a"), key.WithHelp("0", "all harnesses")),
 	}
 }
 
@@ -165,7 +178,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Profile, k.ShowAll, k.Logs, k.Copy, k.Search, k.Palette, k.Help, k.Quit},
 		{k.Detach, k.Scrollback, k.HopPrev, k.HopNext, k.AttStart, k.AttRestart, k.AttHelp},
 		{k.PageUp, k.PageDown, k.Live, k.Confirm, k.Back},
-		{k.Chatroom, k.ChatUp, k.ChatDown},
+		{k.Chatroom, k.ChatUp, k.ChatDown, k.ChatFollow, k.ChatFilter, k.ChatAll},
 	}
 }
 

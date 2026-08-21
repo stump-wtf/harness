@@ -267,7 +267,6 @@ type EventBuffer struct {
 	events  []RenderableEvent
 	maxSize int
 	filter  FilterSet
-	paused  bool
 
 	// lines is the rendered form of the events the current filter admits.
 	// Valid only while dirty is false; every mutation either extends it or
@@ -401,8 +400,6 @@ func (b *EventBuffer) Visible() []RenderableEvent {
 
 func (b *EventBuffer) Len() int          { return len(b.events) }
 func (b *EventBuffer) Filter() FilterSet { return b.filter }
-func (b *EventBuffer) Paused() bool      { return b.paused }
-func (b *EventBuffer) TogglePause()      { b.paused = !b.paused }
 
 // SetFilter changes which harnesses the buffer admits, invalidating the line
 // index — a different filter is a different set of lines.
@@ -432,6 +429,17 @@ type Model struct {
 	height int
 	top    int // scroll position (line index)
 
+	// follow is tail-follow: while it holds, new events keep the view pinned to
+	// the bottom. Scrolling away from the bottom clears it and returning
+	// restores it, the way every log tailer behaves.
+	//
+	// It replaced an explicit `paused` flag on the buffer. Pause was the only
+	// way to read anything: the view re-anchored on EVERY arriving event, so a
+	// scroll up was undone before the next frame — and the key that paused it
+	// appeared nowhere on screen. Following is also the honest home for the
+	// state: what the buffer holds does not change, only where the view looks.
+	follow bool
+
 	errMsg string
 }
 
@@ -441,6 +449,7 @@ func New(t *theme.Theme, logger *slog.Logger) *Model {
 		styles: NewStyles(t),
 		buffer: NewEventBuffer(10000),
 		logger: logger,
+		follow: true,
 	}
 }
 
@@ -455,7 +464,27 @@ func (m *Model) Add(ev tail.Event) {
 // Settle re-anchors the scroll after a batch of Adds. Separate from Add so a
 // batch of 500 events costs one anchor recomputation rather than 500.
 func (m *Model) Settle() {
-	if !m.buffer.Paused() {
+	if m.follow {
+		m.scrollToBottom()
+	} else {
+		// Not following, but the stream still grew underneath the view: clamp
+		// the offset so an eviction at the front cannot leave it past the end.
+		m.Scroll(0)
+	}
+}
+
+// Top is the scroll offset, in rendered lines from the start of the stream.
+func (m *Model) Top() int { return m.top }
+
+// Following reports whether new events keep the view pinned to the bottom.
+func (m *Model) Following() bool { return m.follow }
+
+// ToggleFollow turns tail-follow on or off by hand. Turning it on jumps to the
+// bottom, because "follow" and "look at the top of the scrollback" are not a
+// state anyone means to be in.
+func (m *Model) ToggleFollow() {
+	m.follow = !m.follow
+	if m.follow {
 		m.scrollToBottom()
 	}
 }
@@ -533,9 +562,17 @@ func (m *Model) View() string {
 	return strings.Join(body, "\n") + "\n" + statusLine
 }
 
+// statusKeyHints is the chatroom's only affordance. The view is full-screen and
+// borrows none of the dashboard's footer, so without this every key it binds is
+// undiscoverable — which is how the pause key it used to REQUIRE for scrolling
+// went unfound.
+const statusKeyHints = "↑↓/jk scroll · g/G top/bottom · space follow · 1-5 filter · 0 all · esc back"
+
 func (m *Model) renderStatusBar() string {
 	var parts []string
-	if m.buffer.Paused() {
+	if m.follow {
+		parts = append(parts, m.styles.FilterInd.Render("▶ LIVE"))
+	} else {
 		parts = append(parts, m.styles.PauseInd.Render("⏸ PAUSED"))
 	}
 	parts = append(parts, m.styles.FilterInd.Render("filter: "+m.buffer.Filter().String()))
@@ -543,7 +580,16 @@ func (m *Model) renderStatusBar() string {
 	if m.errMsg != "" {
 		parts = append(parts, m.styles.BadgeError.Render("⚠ "+truncateShort(m.errMsg, 40)))
 	}
-	return strings.Join(parts, "  ")
+	left := strings.Join(parts, "  ")
+
+	// Hints fill the rest of the bar when there is room, and are the first
+	// thing dropped when there is not — the state above them is what a narrow
+	// terminal must keep.
+	hints := m.styles.Dim.Render(statusKeyHints)
+	if gap := m.width - ansi.StringWidth(left) - ansi.StringWidth(hints) - 2; gap >= 0 {
+		return left + strings.Repeat(" ", gap+2) + hints
+	}
+	return left
 }
 
 func (m *Model) scrollToBottom() {
@@ -558,23 +604,41 @@ func (m *Model) scrollToBottom() {
 
 func (m *Model) renderedLineCount() int { return len(m.buffer.Lines(m.styles)) }
 
+// Scroll moves the view by delta lines, clamped, and re-derives follow from
+// where it lands: at the bottom the stream keeps up, anywhere else it holds
+// still. That is what makes scrolling up usable without a separate pause key —
+// and what makes Bot (G/end) mean "catch up and stay caught up".
 func (m *Model) Scroll(delta int) {
 	lines := m.renderedLineCount()
 	bodyHeight := m.height - 1
-	m.top += delta
-	if m.top < 0 {
-		m.top = 0
-	}
 	maxTop := lines - bodyHeight
 	if maxTop < 0 {
 		maxTop = 0
 	}
+	m.top += delta
+	if m.top < 0 {
+		m.top = 0
+	}
 	if m.top > maxTop {
 		m.top = maxTop
 	}
+	m.follow = m.top >= maxTop
 }
 
 func (m *Model) Buffer() *EventBuffer { return m.buffer }
+
+// PageSize is how far PgUp/PgDn move: one screen less a line of overlap, so the
+// row you were reading is still there after the jump.
+//
+// The chatroom's own body height, not the parent model's — the chatroom is
+// full-screen and reserves a row for its status bar, and paging by the parent's
+// half-height was both a different distance and the wrong one.
+func (m *Model) PageSize() int {
+	if n := m.height - 2; n > 0 {
+		return n
+	}
+	return 1
+}
 
 // SetFilter changes the visible-harness filter and re-anchors the scroll.
 //
@@ -583,11 +647,11 @@ func (m *Model) Buffer() *EventBuffer { return m.buffer }
 // which reads as "the filter matched nothing" even when it matched plenty.
 func (m *Model) SetFilter(f FilterSet) {
 	m.buffer.SetFilter(f)
-	if m.buffer.Paused() {
-		m.Scroll(0) // clamp the existing offset into the new range
+	if m.follow {
+		m.scrollToBottom()
 		return
 	}
-	m.scrollToBottom()
+	m.Scroll(0) // clamp the existing offset into the new range
 }
 
 // SetSize seeds the chatroom's geometry.
@@ -599,9 +663,11 @@ func (m *Model) SetFilter(f FilterSet) {
 // already knows.
 func (m *Model) SetSize(w, h int) {
 	m.width, m.height = w, h
-	if !m.buffer.Paused() {
+	if m.follow {
 		m.scrollToBottom()
+		return
 	}
+	m.Scroll(0) // a shorter window can leave the offset past the end
 }
 
 func clipLines(lines []string, top, height int) []string {

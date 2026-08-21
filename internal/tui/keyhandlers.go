@@ -265,12 +265,49 @@ func (m *Model) exitChatroom() {
 }
 
 // onChatroomKey handles keystrokes in the chatroom view.
+//
+// Bubble Tea coalesces consecutive printable runes arriving in a single read
+// into one key message whose Text holds them all, so a held j or k arrives as
+// "jjj" and key.Matches — which compares msg.String() against the binding —
+// matches nothing at all. onDashboardKey expands those (issue #145); the
+// chatroom needs the same treatment or its only scroll keys do nothing when
+// held, which on a stream this long is how you actually scroll.
 func (m *Model) onChatroomKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.chatroom == nil {
 		m.mode = modeDashboard
 		return m, nil
 	}
+	if runes := []rune(msg.Text); len(runes) > 1 {
+		var cmds []tea.Cmd
+		for _, r := range runes {
+			_, cmd := m.dispatchChatroomKey(tea.KeyPressMsg{Code: r, Text: string(r)})
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if m.mode != modeChatroom || m.overlay != overlayNone {
+				break // left the view mid-batch; the rest is not ours
+			}
+		}
+		if len(cmds) == 0 {
+			return m, nil
+		}
+		return m, tea.Batch(cmds...)
+	}
+	return m.dispatchChatroomKey(msg)
+}
+
+// dispatchChatroomKey is the inner switch for a single keystroke. Separated so
+// multi-rune expansion can call it per rune without recursion.
+func (m *Model) dispatchChatroomKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
+	// Ctrl-C is checked before Back/Quit and quits the program. It shares the
+	// Quit binding with `q`, and while the chatroom treated the whole binding
+	// as "leave the view" there was no way to exit harness from in here — Ctrl-C
+	// dropped you on the dashboard instead.
+	case msg.Code == 'c' && msg.Mod.Contains(tea.ModCtrl):
+		m.quitting = true
+		m.stopReadLoop()
+		return m, tea.Quit
 	case key.Matches(msg, m.keys.Quit), key.Matches(msg, m.keys.Back):
 		m.exitChatroom()
 		return m, nil
@@ -284,27 +321,29 @@ func (m *Model) onChatroomKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.chatroom.Scroll(1)
 		return m, nil
 	case key.Matches(msg, m.keys.PageUp):
-		m.chatroom.Scroll(-(m.h / 2))
+		m.chatroom.Scroll(-m.chatroom.PageSize())
 		return m, nil
 	case key.Matches(msg, m.keys.PageDown):
-		m.chatroom.Scroll(m.h / 2)
-		return m, nil
-	case msg.Code == ' ' || msg.Text == "p":
-		m.chatroom.Buffer().TogglePause()
-		return m, nil
-	case msg.Text == "0" || msg.Text == "a":
-		m.chatroom.SetFilter(chatroom.AllHarnesses())
-		return m, nil
-	case msg.Text >= "1" && msg.Text <= "5":
-		idx := int(msg.Text[0] - '1')
-		f := m.chatroom.Buffer().Filter()
-		m.chatroom.SetFilter(f.Toggle(idx))
+		m.chatroom.Scroll(m.chatroom.PageSize())
 		return m, nil
 	case key.Matches(msg, m.keys.Top):
 		m.chatroom.Scroll(-1 << 30)
 		return m, nil
 	case key.Matches(msg, m.keys.Bot):
 		m.chatroom.Scroll(1 << 30)
+		return m, nil
+	case key.Matches(msg, m.keys.ChatFollow):
+		m.chatroom.ToggleFollow()
+		return m, nil
+	case key.Matches(msg, m.keys.ChatAll):
+		m.chatroom.SetFilter(chatroom.AllHarnesses())
+		return m, nil
+	case key.Matches(msg, m.keys.ChatFilter):
+		// The binding says WHETHER this is a filter key; the rune says WHICH.
+		// Matching on the string form was the bug: a held 1 arrives as "111",
+		// which fell inside a "1" <= text <= "5" comparison and toggled once.
+		f := m.chatroom.Buffer().Filter()
+		m.chatroom.SetFilter(f.Toggle(int(msg.Code - '1')))
 		return m, nil
 	}
 	return m, nil
