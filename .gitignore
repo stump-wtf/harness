@@ -14,3 +14,4 @@ dist/
 
 # Worktrees
 .claude/
+.claude/worktrees/
