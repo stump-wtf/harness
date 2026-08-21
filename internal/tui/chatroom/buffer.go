@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/lipgloss/v2"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
@@ -182,8 +182,8 @@ func LastAction(ev tail.Event) string {
 // FilterSet is a bitmask of visible harnesses.
 type FilterSet uint32
 
-func AllHarnesses() FilterSet      { return 0xFF }
-func (f FilterSet) Has(i int) bool { return f&(1<<i) != 0 }
+func AllHarnesses() FilterSet              { return 0xFF }
+func (f FilterSet) Has(i int) bool         { return f&(1<<i) != 0 }
 func (f FilterSet) Toggle(i int) FilterSet { return f ^ (1 << i) }
 func (f FilterSet) Count() int {
 	c := 0
@@ -275,11 +275,11 @@ func (b *EventBuffer) Visible() []RenderableEvent {
 	return out
 }
 
-func (b *EventBuffer) Len() int          { return len(b.events) }
-func (b *EventBuffer) Filter() FilterSet { return b.filter }
+func (b *EventBuffer) Len() int              { return len(b.events) }
+func (b *EventBuffer) Filter() FilterSet     { return b.filter }
 func (b *EventBuffer) SetFilter(f FilterSet) { b.filter = f }
-func (b *EventBuffer) Paused() bool      { return b.paused }
-func (b *EventBuffer) TogglePause()       { b.paused = !b.paused }
+func (b *EventBuffer) Paused() bool          { return b.paused }
+func (b *EventBuffer) TogglePause()          { b.paused = !b.paused }
 
 // LastForHarness returns the most recent event for a given harness, or nil.
 func (b *EventBuffer) LastForHarness(h tail.Harness) *RenderableEvent {
