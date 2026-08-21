@@ -10,12 +10,46 @@ package attach
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
+
+// stallTimeout is how long a writer may make NO progress before it counts as
+// blocked. Generous on purpose: it bounds a stall, not the run, so a slow runner
+// buys the whole test more time rather than failing it.
+const stallTimeout = 10 * time.Second
+
+// waitForProgress blocks until done closes, or until the counter has stood
+// still for stallTimeout. It reports how far it got so a real failure names the
+// write that hung rather than only the fact that one did.
+func waitForProgress(done <-chan struct{}, progress *atomic.Int64, want int, stall time.Duration) error {
+	last := progress.Load()
+	stalledFor := time.Duration(0)
+	tick := stall / 20
+	if tick > 50*time.Millisecond {
+		tick = 50 * time.Millisecond
+	}
+	for {
+		select {
+		case <-done:
+			return nil
+		case <-time.After(tick):
+		}
+		switch now := progress.Load(); {
+		case now != last:
+			last, stalledFor = now, 0
+		default:
+			if stalledFor += tick; stalledFor >= stall {
+				return fmt.Errorf("Write made no progress for %s at %d/%d writes", stall, last, want)
+			}
+		}
+	}
+}
 
 // snapshotPrefix is what renderScreen emits at the start of every repaint.
 var snapshotPrefix = []byte("\x1b[0m\x1b[2J\x1b[H")
@@ -198,20 +232,31 @@ func TestBackpressureCoalesce(t *testing.T) {
 	m.Attach(2, protocol.AttachRW, 80, 24, fast.write)
 
 	const n = 2000
+	// Progress, not elapsed time, is what says Write did not block.
+	//
+	// The failure this guards against is Write parking on the stalled client's
+	// <-release forever — a deadlock, not a slowdown. A wall-clock budget for
+	// the whole run cannot tell those apart: 2000 writes through the mux under
+	// -race take well under a second on an idle machine and can take many times
+	// that on a loaded CI runner, so a fixed deadline fails on a busy runner
+	// while the code under test is behaving perfectly. That is what made this
+	// test flaky (run 7632 was a bare CI re-trigger for exactly this).
+	//
+	// Watching the counter separates the two precisely: a blocked Write stops
+	// advancing it, and a slow one does not.
+	var progress atomic.Int64
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < n; i++ {
 			m.Write([]byte(fmt.Sprintf("line-%04d\n", i)))
+			progress.Add(1)
 		}
 		close(done)
 	}()
 
-	// The PTY reader (Write) must never block on the stalled client.
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
+	if err := waitForProgress(done, &progress, n, stallTimeout); err != nil {
 		close(release) // avoid leaking the blocked pump
-		t.Fatal("Write blocked on a slow client (backpressure isolation failed)")
+		t.Fatalf("%v (backpressure isolation failed)", err)
 	}
 
 	// The fast client keeps up and sees the final line.
@@ -440,4 +485,40 @@ func TestSizeReadableDuringResizeCallback(t *testing.T) {
 		t.Fatal("Size() blocked while a resize callback was in flight: " +
 			"the supervisor reads it from the very loop that callback is waiting on")
 	}
+}
+
+// waitForProgress is the whole reason TestBackpressureCoalesce can tell a
+// blocked Write from a slow one, so it gets its own test in both directions.
+func TestWaitForProgress(t *testing.T) {
+	t.Run("slow but advancing passes", func(t *testing.T) {
+		var progress atomic.Int64
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			// Ten steps, each slower than the stall budget would allow if the
+			// budget applied to the RUN rather than to a stall.
+			for i := 0; i < 10; i++ {
+				time.Sleep(20 * time.Millisecond)
+				progress.Add(1)
+			}
+		}()
+		if err := waitForProgress(done, &progress, 10, 100*time.Millisecond); err != nil {
+			t.Fatalf("a slow-but-advancing writer was reported as blocked: %v", err)
+		}
+	})
+
+	t.Run("blocked fails", func(t *testing.T) {
+		var progress atomic.Int64
+		done := make(chan struct{})
+		defer close(done)
+		progress.Add(5) // got partway, then parked
+
+		err := waitForProgress(done, &progress, 10, 100*time.Millisecond)
+		if err == nil {
+			t.Fatal("a writer that stopped advancing was not reported as blocked")
+		}
+		if !strings.Contains(err.Error(), "5/10") {
+			t.Errorf("error does not name where it hung: %v", err)
+		}
+	})
 }
