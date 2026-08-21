@@ -199,10 +199,11 @@ type Model struct {
 	// chatroom view (ADR-0015, SPEC-0015)
 	chatroom *chatroom.Model
 
-	// lastActions tracks the most recent tail.Event action per harness name,
-	// for the dashboard's live activity field. Fed by a background tail.Watcher
-	// that runs while the daemon connection is live.
-	lastActions map[string]string
+	// lastActions tracks the most recent agent action per session working
+	// directory, for the dashboard's live activity field. Fed by a background
+	// tail.Watcher that runs while the daemon connection is live, and resolved
+	// onto harness rows at render time (activity.go).
+	lastActions map[string]sessionActivity
 	// dashWatcher is the background watcher for the dashboard's live action
 	// field. Separate from the chatroom's watcher (which only runs in
 	// modeChatroom) so the dashboard gets live updates without entering

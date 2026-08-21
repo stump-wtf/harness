@@ -12,18 +12,21 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
 )
 
 func dashEvent(harness tail.Harness, tool string) tail.Event {
 	return tail.Event{
-		Session:    tail.SessionMeta{Harness: harness},
+		Session:    tail.SessionMeta{Harness: harness, Cwd: "/srv/app"},
 		Classified: classify.Event{Tool: tool, Action: classify.ActionEdit, Timestamp: "2026-08-21T11:00:00Z"},
 	}
 }
@@ -41,7 +44,8 @@ func TestDashEventTracksAndRearms(t *testing.T) {
 
 		_, cmd := m.Update(dashEventMsg{Event: dashEvent(tail.HarnessCrush, "edit_file")})
 
-		if got := m.lastActions[string(tail.HarnessCrush)]; got == "" {
+		got := m.liveAction(protocol.HarnessInfo{Adapter: "crush", Workdir: "/srv/app"})
+		if strings.TrimSpace(got) == "" {
 			t.Errorf("mode %v: dash event did not reach the activity field", mode)
 		}
 		if cmd == nil {

@@ -186,6 +186,16 @@ type HarnessInfo struct {
 	PID           int    `json:"pid,omitempty"`
 	// Adapter is the harness-kind enum the harness selected ("crush" default).
 	Adapter string `json:"adapter,omitempty"`
+	// Workdir is the resolved process working directory the supervisor spawns
+	// into — the same value it assigns to cmd.Dir, with a leading ~ already
+	// expanded. Empty when the harness configured none (it then inherits the
+	// daemon's cwd, which identifies nothing).
+	//
+	// It is on the wire so a client can correlate an agent session transcript
+	// back to the harness that produced it: the transcript records the cwd the
+	// agent ran in and nothing else that names a harness (ADR-0015 dashboard
+	// activity).
+	Workdir string `json:"workdir,omitempty"`
 	// Prompt is the agent one-shot instruction for a prompt harness; the
 	// argv is synthesized at spawn from the same adapter (ADR-0011).
 	Prompt string `json:"prompt,omitempty"`

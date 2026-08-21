@@ -91,6 +91,7 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 	h, project, ok := c.srv.mgr.HarnessRecord(snap.Name)
 	if ok {
 		info.Adapter = h.Adapter
+		info.Workdir = supervisor.Workdir(h)
 		info.Prompt = h.Prompt
 		info.Model = h.Model
 		info.AutoAccept = h.AutoAccept

@@ -204,18 +204,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // dashboard events were double-counted into the chatroom buffer.
 type dashEventMsg struct{ Event tail.Event }
 
-// trackLastAction updates the dashboard's live activity field from a tail.Event.
-func (m *Model) trackLastAction(ev tail.Event) {
-	if m.lastActions == nil {
-		m.lastActions = make(map[string]string)
-	}
-	key := string(ev.Session.Harness)
-	action := chatroom.LastAction(ev)
-	if action != "" {
-		m.lastActions[key] = action + " " + chatroom.FormatTime(ev.Classified.Timestamp)
-	}
-}
-
 // dashEventCmd is the tea.Cmd that reads the next event from the dashboard
 // watcher. It captures the watcher it was armed against so a teardown that
 // swaps m.dashWatcher out cannot make an in-flight read panic.

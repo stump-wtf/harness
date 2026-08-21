@@ -228,8 +228,15 @@ type process struct {
 // undersized: the mux's recorded size already equals the client viewport, so
 // its resize policy sees no change and never pushes a TIOCSWINSZ, and the app
 // inside renders into an 80×24 box in the corner of a full-size window.
+// Workdir is the process working directory the supervisor spawns h into: the
+// configured value with a leading ~ expanded. Exported so the control plane can
+// put the same string on the wire that spawn assigns to cmd.Dir — a client
+// correlating an agent transcript's cwd back to a harness is comparing against
+// this, and a second expansion elsewhere is a second thing to drift.
+func Workdir(h core.Harness) string { return expandHome(h.Workdir) }
+
 func spawn(h core.Harness, cols, rows int) (*process, error) {
-	workdir := expandHome(h.Workdir)
+	workdir := Workdir(h)
 	env, err := buildEnv(h)
 	if err != nil {
 		return nil, err

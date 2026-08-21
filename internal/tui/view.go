@@ -201,10 +201,16 @@ func (m *Model) listPaneWidth() int {
 		}
 	}
 	v := m.visible()
+	gutter := m.activityGutter()
 	for _, h := range v {
 		measure(m.renderRow(h, true))
 		what, rest := harnessMeta(h)
-		measure(strings.Repeat(" ", metaIndent) + metaLine(what, rest, 0))
+		// Measure the line renderMetaRow will actually draw, activity gutter
+		// included. Measuring it without was the flicker: the pane was sized
+		// for a line that did not exist, so every rendered meta row came back
+		// over budget and metaLine elided the cmd path by however many columns
+		// the current action happened to occupy.
+		measure(strings.Repeat(" ", metaIndent+gutter) + metaLine(what, rest, 0))
 	}
 	if len(v) == 0 {
 		// The zero-state is the only content the pane has; sizing to the rows
@@ -425,19 +431,43 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 // separate expansion row it used to draw (SPEC-0001 REQ "Zero And Error
 // States").
 func (m *Model) renderMetaRow(h protocol.HarnessInfo, budget int) string {
-	what, rest := harnessMeta(h)
-	// Live last-action from the tail watcher (ADR-0015 dashboard activity).
-	if m.lastActions != nil {
-		harnessType := orDefault(h.Adapter, "crush")
-		if action, ok := m.lastActions[harnessType]; ok {
-			rest = append([]string{action}, rest...)
-		}
-	}
 	style := m.theme.Faint()
 	if isDegraded(h) {
 		style = m.theme.StateStyle(core.StateDegraded)
 	}
-	return strings.Repeat(" ", metaIndent) + style.Render(metaLine(what, rest, budget))
+	what, rest := harnessMeta(h)
+	// The live activity field (ADR-0015) leads the line in its own fixed-width
+	// column, and the facts fit into what is left. It is deliberately NOT one
+	// of `rest`: metaLine spends its budget by dropping fields from the right
+	// and eliding `what`, so folding a field that changes on every event into
+	// that negotiation re-elides the cmd path every time an agent switches
+	// tools. Reserving the column instead means the action changes and nothing
+	// around it moves.
+	gutter := m.activityGutter()
+	if gutter == 0 {
+		return strings.Repeat(" ", metaIndent) + style.Render(metaLine(what, rest, budget))
+	}
+	action := m.liveAction(h)
+	if action == "" {
+		action = strings.Repeat(" ", actionFieldWidth)
+	}
+	return strings.Repeat(" ", metaIndent) +
+		style.Render(action+"  "+metaLine(what, rest, budget-gutter))
+}
+
+// activityGutter is the width renderMetaRow reserves for the live activity
+// column, including its trailing separator — zero until the watcher has
+// reported something, so a dashboard that never sees agent activity (no
+// transcripts, watcher failed to start) does not pay for an empty column.
+//
+// It is all-or-nothing across the list rather than per row. Reserving it only
+// on the rows that currently have an action would move every other row's text
+// sideways as harnesses picked up and finished work.
+func (m *Model) activityGutter() int {
+	if len(m.lastActions) == 0 {
+		return 0
+	}
+	return actionFieldWidth + 2
 }
 
 // metaLine joins a harness's metadata into one line of at most budget columns
