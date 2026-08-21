@@ -19,6 +19,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 )
@@ -31,10 +32,10 @@ type HarnessIdentity struct {
 
 var harnessIdentities = map[tail.Harness]HarnessIdentity{
 	tail.HarnessClaudeCode: {Harness: tail.HarnessClaudeCode, Username: "@claude-code"},
-	"codex":                {Harness: "codex", Username: "@codex"},
+	tail.HarnessCodex:      {Harness: tail.HarnessCodex, Username: "@codex"},
 	tail.HarnessCrush:      {Harness: tail.HarnessCrush, Username: "@crush-signal"},
 	tail.HarnessOpenCode:   {Harness: tail.HarnessOpenCode, Username: "@opencode"},
-	"pi":                   {Harness: "pi", Username: "@pi"},
+	tail.HarnessPi:         {Harness: tail.HarnessPi, Username: "@pi"},
 }
 
 func IdentityFor(h tail.Harness) HarnessIdentity {
@@ -74,12 +75,31 @@ func MarkBadge(markType string) string {
 	}
 }
 
+// oneLine flattens s onto a single line, collapsing every run of whitespace
+// (newlines included) to one space.
+//
+// Chatroom layout is line-based: each event contributes a known number of rows,
+// and the view clips to that count. Summaries carry the raw command, so a
+// heredoc or any multi-line invocation smuggles newlines into what the renderer
+// counted as one row — the frame overflows and the stream interleaves.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// truncateShort flattens s and clips it to n runes, appending an ellipsis when
+// it had to cut. Runes, not bytes: transcript summaries routinely carry
+// non-ASCII (paths, quoted output, box drawing), and a byte slice lands
+// mid-rune and renders as a replacement character.
 func truncateShort(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= n {
+	s = oneLine(s)
+	if n <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
 }
 
 // FormatTime parses an ISO timestamp string and renders HH:MM:SS.
@@ -105,6 +125,22 @@ type RenderableEvent struct {
 	IsError  bool
 	HasMarks bool
 	Marks    []classify.Mark
+
+	// lines caches what RenderLines produced. An event is immutable once
+	// buffered and the styles are fixed for the session, so its rows only ever
+	// need rendering once. Without the cache both View and the scroll anchor
+	// re-render the entire buffer on every arriving event, which measured at
+	// ~92ms of CPU per event at the 10k-event cap — the update loop, and with
+	// it the whole TUI, falls permanently behind a live stream.
+	lines []string
+}
+
+// Lines returns the event's rendered rows, rendering them on first use.
+func (re *RenderableEvent) Lines(s *Styles) []string {
+	if re.lines == nil {
+		re.lines = re.RenderLines(s)
+	}
+	return re.lines
 }
 
 func MakeRenderable(ev tail.Event) RenderableEvent {
@@ -214,10 +250,10 @@ func (f FilterSet) String() string {
 func AllIdentities() []HarnessIdentity {
 	return []HarnessIdentity{
 		harnessIdentities[tail.HarnessClaudeCode],
-		harnessIdentities["codex"],
+		harnessIdentities[tail.HarnessCodex],
 		harnessIdentities[tail.HarnessCrush],
 		harnessIdentities[tail.HarnessOpenCode],
-		harnessIdentities["pi"],
+		harnessIdentities[tail.HarnessPi],
 	}
 }
 
@@ -296,6 +332,7 @@ type Model struct {
 	theme   *theme.Theme
 	styles  *Styles
 	watcher *tail.Watcher
+	cancel  context.CancelFunc
 	buffer  *EventBuffer
 	logger  *slog.Logger
 
@@ -317,15 +354,19 @@ func New(t *theme.Theme, logger *slog.Logger) *Model {
 }
 
 // Init starts the watcher and returns a tea.Cmd that reads events.
+//
+// tail.Watcher.Start is a blocking poll loop, so it has to run on its own
+// goroutine — calling it inline wedges whatever called Init, which here is
+// Bubble Tea's Update loop.
 func (m *Model) Init() tea.Cmd {
 	adapters := tail.DefaultAdapters()
 	cfg := tail.DefaultWatchConfig()
 	m.watcher = tail.NewWatcherWithConfig(cfg, adapters)
 	ctx, cancel := context.WithCancel(context.Background())
-	_ = cancel
-	m.watcher.Start(ctx)
+	m.cancel = cancel
+	go m.watcher.Start(ctx)
 	m.running = true
-	return waitForEvents(m.watcher, m.logger)
+	return waitForEvents(m.watcher)
 }
 
 // MsgEvent is a bubbletea message carrying a tail.Event from the watcher.
@@ -338,19 +379,13 @@ type MsgWatcherError struct{ Err error }
 // and forwards each event as a MsgEvent. Exported so the main TUI model can
 // re-arm the command after forwarding the event through Update.
 func WaitForEvents(m *Model) tea.Cmd {
-	if m == nil || m.watcher == nil {
+	if m == nil {
 		return nil
 	}
-	return func() tea.Msg {
-		ev, ok := <-m.watcher.Events()
-		if !ok {
-			return nil
-		}
-		return MsgEvent{Event: ev}
-	}
+	return waitForEvents(m.watcher)
 }
 
-func waitForEvents(w *tail.Watcher, logger *slog.Logger) tea.Cmd {
+func waitForEvents(w *tail.Watcher) tea.Cmd {
 	if w == nil {
 		return nil
 	}
@@ -364,6 +399,10 @@ func waitForEvents(w *tail.Watcher, logger *slog.Logger) tea.Cmd {
 }
 
 func (m *Model) Stop() {
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
 	if m.watcher != nil {
 		m.watcher.Stop()
 		m.watcher = nil
@@ -379,11 +418,12 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 
 	case MsgEvent:
 		re := MakeRenderable(msg.Event)
+		re.lines = re.RenderLines(m.styles)
 		m.buffer.Insert(re)
 		if !m.buffer.Paused() {
 			m.scrollToBottom()
 		}
-		return m, waitForEvents(m.watcher, m.logger)
+		return m, waitForEvents(m.watcher)
 
 	case MsgWatcherError:
 		if m.logger != nil {
@@ -403,12 +443,18 @@ func (m *Model) View() string {
 
 	events := m.buffer.Visible()
 	var lines []string
-	for _, re := range events {
-		lines = append(lines, re.RenderLines(m.styles)...)
+	for i := range events {
+		lines = append(lines, events[i].Lines(m.styles)...)
 	}
 
 	bodyHeight := m.height - 1 // 1 row for status bar
 	visible := clipLines(lines, m.top, bodyHeight)
+	// Clip each row to the pane: lipgloss wraps rather than truncates, and a
+	// wrapped row costs an extra display line the height budget never counted,
+	// pushing the status bar off the bottom of the screen.
+	for i, ln := range visible {
+		visible[i] = ansi.Truncate(ln, m.width, "…")
+	}
 	chatContent := strings.Join(visible, "\n")
 
 	chatPane := m.styles.ChatViewport.Width(m.width).Height(bodyHeight).Render(chatContent)
@@ -443,8 +489,8 @@ func (m *Model) scrollToBottom() {
 func (m *Model) renderedLineCount() int {
 	events := m.buffer.Visible()
 	c := 0
-	for _, re := range events {
-		c += len(re.RenderLines(m.styles))
+	for i := range events {
+		c += len(events[i].Lines(m.styles))
 	}
 	return c
 }
@@ -466,6 +512,34 @@ func (m *Model) Scroll(delta int) {
 }
 
 func (m *Model) Buffer() *EventBuffer { return m.buffer }
+
+// SetFilter changes the visible-harness filter and re-anchors the scroll.
+//
+// Filtering shrinks the rendered stream, so an offset taken against the
+// unfiltered line count lands past the end of it and the pane renders blank —
+// which reads as "the filter matched nothing" even when it matched plenty.
+func (m *Model) SetFilter(f FilterSet) {
+	m.buffer.SetFilter(f)
+	if m.buffer.Paused() {
+		m.Scroll(0) // clamp the existing offset into the new range
+		return
+	}
+	m.scrollToBottom()
+}
+
+// SetSize seeds the chatroom's geometry.
+//
+// View renders nothing until it has one, and the chatroom is created on
+// keypress — long after the tea.WindowSizeMsg that sized the parent model. Left
+// to wait for the next resize, the view is a blank screen that repaints on
+// every event, so entering the chatroom must hand it the geometry the dashboard
+// already knows.
+func (m *Model) SetSize(w, h int) {
+	m.width, m.height = w, h
+	if !m.buffer.Paused() {
+		m.scrollToBottom()
+	}
+}
 
 func clipLines(lines []string, top, height int) []string {
 	if top >= len(lines) {

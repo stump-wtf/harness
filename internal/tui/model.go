@@ -11,6 +11,7 @@
 package tui
 
 import (
+	"context"
 	"os"
 	"strings"
 	"sync"
@@ -207,6 +208,7 @@ type Model struct {
 	// modeChatroom) so the dashboard gets live updates without entering
 	// chatroom mode.
 	dashWatcher *tail.Watcher
+	dashCancel  context.CancelFunc
 
 	quitting  bool
 	closeOnce sync.Once
@@ -424,6 +426,11 @@ func (m *Model) stopReadLoop() {
 // closing done unblocks any pending channel emit.
 func (m *Model) Close() {
 	m.closeOnce.Do(func() {
+		m.stopDashWatcher()
+		if m.chatroom != nil {
+			m.chatroom.Stop()
+			m.chatroom = nil
+		}
 		if m.done != nil {
 			close(m.done)
 			m.done = nil

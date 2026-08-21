@@ -246,6 +246,7 @@ func (m *Model) dispatchDashboardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // the chatroom model, starts its own watcher, and returns the Init cmd.
 func (m *Model) enterChatroom() tea.Cmd {
 	m.chatroom = chatroom.New(m.theme, slog.Default())
+	m.chatroom.SetSize(m.w, m.h)
 	m.mode = modeChatroom
 	return m.chatroom.Init()
 }
@@ -289,12 +290,12 @@ func (m *Model) onChatroomKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.chatroom.Buffer().TogglePause()
 		return m, nil
 	case msg.Text == "0" || msg.Text == "a":
-		m.chatroom.Buffer().SetFilter(chatroom.AllHarnesses())
+		m.chatroom.SetFilter(chatroom.AllHarnesses())
 		return m, nil
 	case msg.Text >= "1" && msg.Text <= "5":
 		idx := int(msg.Text[0] - '1')
 		f := m.chatroom.Buffer().Filter()
-		m.chatroom.Buffer().SetFilter(f.Toggle(idx))
+		m.chatroom.SetFilter(f.Toggle(idx))
 		return m, nil
 	case key.Matches(msg, m.keys.Top):
 		m.chatroom.Scroll(-1 << 30)

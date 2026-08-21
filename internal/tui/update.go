@@ -155,8 +155,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chatroom.Update(msg)
 			return m, chatroom.WaitForEvents(m.chatroom)
 		}
-		// In dashboard mode, track last-action for the live field and
-		// re-arm the dash watcher for the next event.
+		return m, nil
+
+	case dashEventMsg:
 		m.trackLastAction(msg.Event)
 		return m, m.dashEventCmd()
 
@@ -194,6 +195,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// dashEventMsg carries one tail.Event from the dashboard's background watcher.
+//
+// It is deliberately a different type from chatroom.MsgEvent. Both watchers
+// tail the same transcripts, so while they shared a message type the two read
+// loops were indistinguishable: an event that arrived with the chatroom open
+// re-armed only the chatroom's read, permanently killing the dashboard's, and
+// dashboard events were double-counted into the chatroom buffer.
+type dashEventMsg struct{ Event tail.Event }
+
 // trackLastAction updates the dashboard's live activity field from a tail.Event.
 func (m *Model) trackLastAction(ev tail.Event) {
 	if m.lastActions == nil {
@@ -207,18 +217,19 @@ func (m *Model) trackLastAction(ev tail.Event) {
 }
 
 // dashEventCmd is the tea.Cmd that reads the next event from the dashboard
-// watcher. It returns a chatroom.MsgEvent so the main Update can handle it
-// uniformly.
+// watcher. It captures the watcher it was armed against so a teardown that
+// swaps m.dashWatcher out cannot make an in-flight read panic.
 func (m *Model) dashEventCmd() tea.Cmd {
 	if m.dashWatcher == nil {
 		return nil
 	}
+	w := m.dashWatcher
 	return func() tea.Msg {
-		ev, ok := <-m.dashWatcher.Events()
+		ev, ok := <-w.Events()
 		if !ok {
 			return nil
 		}
-		return chatroom.MsgEvent{Event: ev}
+		return dashEventMsg{Event: ev}
 	}
 }
 
@@ -230,13 +241,18 @@ func (m *Model) startDashWatcher() tea.Cmd {
 	}
 	m.dashWatcher = tail.NewWatcherWithConfig(tail.DefaultWatchConfig(), tail.DefaultAdapters())
 	ctx, cancel := context.WithCancel(context.Background())
-	_ = cancel
-	m.dashWatcher.Start(ctx)
+	m.dashCancel = cancel
+	// Start is a blocking poll loop; inline it and Update never returns.
+	go m.dashWatcher.Start(ctx)
 	return m.dashEventCmd()
 }
 
 // stopDashWatcher tears down the dashboard watcher.
 func (m *Model) stopDashWatcher() {
+	if m.dashCancel != nil {
+		m.dashCancel()
+		m.dashCancel = nil
+	}
 	if m.dashWatcher != nil {
 		m.dashWatcher.Stop()
 		m.dashWatcher = nil
