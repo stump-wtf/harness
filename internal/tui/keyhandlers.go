@@ -242,22 +242,29 @@ func (m *Model) dispatchDashboardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// enterChatroom transitions from the dashboard to the chatroom view. It creates
-// the chatroom model, starts its own watcher, and returns the Init cmd.
+// enterChatroom shows the chatroom view.
+//
+// It starts nothing. The chatroom is a view over a buffer the program's single
+// watcher has been filling since the daemon connected (watcher.go), so entering
+// shows the stream already in progress. Building a model and a watcher per
+// entry meant a fresh scan of every transcript on the machine each time, and an
+// empty screen for the tens of seconds that took.
+//
+// The size is seeded here because the chatroom is reached by keypress, long
+// after the tea.WindowSizeMsg that sized the parent, and View draws nothing
+// without geometry.
 func (m *Model) enterChatroom() tea.Cmd {
-	m.chatroom = chatroom.New(m.theme, slog.Default())
+	if m.chatroom == nil {
+		m.chatroom = chatroom.New(m.theme, slog.Default())
+	}
 	m.chatroom.SetSize(m.w, m.h)
 	m.mode = modeChatroom
-	return m.chatroom.Init()
+	return nil
 }
 
-// exitChatroom stops the chatroom's watcher and returns to the dashboard.
-// The dashboard's own dash watcher keeps running.
+// exitChatroom returns to the dashboard, leaving the buffer and the watcher
+// alone — both outlive the view.
 func (m *Model) exitChatroom() {
-	if m.chatroom != nil {
-		m.chatroom.Stop()
-		m.chatroom = nil
-	}
 	m.mode = modeDashboard
 }
 

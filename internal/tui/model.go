@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/spinner"
@@ -196,7 +197,10 @@ type Model struct {
 	fInputs    formInputs
 	editing    bool // form is editing (e) vs new (n)
 
-	// chatroom view (ADR-0015, SPEC-0015)
+	// chatroom view (ADR-0015, SPEC-0015). Built once and kept for the
+	// session: it is a view over a buffer the watcher fills whether or not it
+	// is on screen, so opening it shows what has been happening rather than an
+	// empty stream while a fresh scan runs.
 	chatroom *chatroom.Model
 
 	// lastActions tracks the most recent agent action per session working
@@ -204,12 +208,15 @@ type Model struct {
 	// tail.Watcher that runs while the daemon connection is live, and resolved
 	// onto harness rows at render time (activity.go).
 	lastActions map[activityKey]sessionActivity
-	// dashWatcher is the background watcher for the dashboard's live action
-	// field. Separate from the chatroom's watcher (which only runs in
-	// modeChatroom) so the dashboard gets live updates without entering
-	// chatroom mode.
-	dashWatcher *tail.Watcher
-	dashCancel  context.CancelFunc
+	// watcher is the one agent-session watcher the TUI runs, feeding both the
+	// dashboard's activity field and the chatroom stream (watcher.go).
+	watcher       *tail.Watcher
+	watcherCancel context.CancelFunc
+	// watcherFloor is the oldest an event may be and still be shown — the
+	// watcher's first scan replays every transcript on the machine and cannot
+	// be asked for less, so the cut happens here.
+	watcherFloor time.Time
+	dashCancel   context.CancelFunc
 
 	quitting  bool
 	closeOnce sync.Once
@@ -427,11 +434,8 @@ func (m *Model) stopReadLoop() {
 // closing done unblocks any pending channel emit.
 func (m *Model) Close() {
 	m.closeOnce.Do(func() {
-		m.stopDashWatcher()
-		if m.chatroom != nil {
-			m.chatroom.Stop()
-			m.chatroom = nil
-		}
+		m.stopWatcher()
+		m.chatroom = nil
 		if m.done != nil {
 			close(m.done)
 			m.done = nil

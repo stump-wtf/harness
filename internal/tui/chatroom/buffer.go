@@ -10,14 +10,12 @@
 package chatroom
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stump-wtf/agent-trace/classify"
@@ -257,12 +255,25 @@ func AllIdentities() []HarnessIdentity {
 	}
 }
 
-// EventBuffer is the chatroom's ring of events, sorted by timestamp.
+// EventBuffer is the chatroom's ring of events, sorted by timestamp, alongside
+// the flattened lines the visible subset of them renders to.
+//
+// The line slice is the point. Without it, View walked every buffered event to
+// build every line and then threw away all but the ~40 on screen, and
+// scrollToBottom walked them all again to find the anchor — twice per arriving
+// event, growing with the buffer. Keeping the flattened form incrementally
+// makes both O(1) in the buffer's depth, at the cost of the bookkeeping below.
 type EventBuffer struct {
 	events  []RenderableEvent
 	maxSize int
 	filter  FilterSet
 	paused  bool
+
+	// lines is the rendered form of the events the current filter admits.
+	// Valid only while dirty is false; every mutation either extends it or
+	// gives up and sets dirty, and Lines rebuilds on demand.
+	lines []string
+	dirty bool
 }
 
 func NewEventBuffer(maxSize int) *EventBuffer {
@@ -270,10 +281,19 @@ func NewEventBuffer(maxSize int) *EventBuffer {
 		events:  make([]RenderableEvent, 0, maxSize),
 		maxSize: maxSize,
 		filter:  AllHarnesses(),
+		dirty:   true,
 	}
 }
 
-func (b *EventBuffer) Insert(re RenderableEvent) {
+// Insert files re into the buffer in timestamp order and keeps the line index
+// in step.
+//
+// The fast path is the only one that matters: events arrive in order, land at
+// the end, and their lines append to the index. Anything else — an event that
+// sorts into the middle, an eviction of something the filter was showing —
+// invalidates the index and Lines rebuilds it once, lazily. A chatroom nobody
+// has open never rebuilds at all, so buffering while closed costs no rendering.
+func (b *EventBuffer) Insert(re RenderableEvent, s *Styles) {
 	ts := re.Event.Classified.Timestamp
 	if ts == "" {
 		ts = re.Event.ReceivedAt.Format(time.RFC3339)
@@ -282,66 +302,123 @@ func (b *EventBuffer) Insert(re RenderableEvent) {
 	for i > 0 && b.events[i-1].Event.Classified.Timestamp > ts {
 		i--
 	}
-	if i >= len(b.events) {
+	appended := i >= len(b.events)
+	if appended {
 		b.events = append(b.events, re)
 	} else {
 		b.events = append(b.events, RenderableEvent{})
 		copy(b.events[i+1:], b.events[i:])
 		b.events[i] = re
+		b.dirty = true
 	}
+	if !b.dirty && appended && b.admits(re) {
+		b.lines = append(b.lines, b.events[len(b.events)-1].Lines(s)...)
+	}
+
 	if len(b.events) > b.maxSize {
+		evicted := b.events[:len(b.events)-b.maxSize]
+		if !b.dirty {
+			// Trim the index by exactly what left the front. A reslice, not a
+			// rebuild: at the cap every insert evicts, and rebuilding there
+			// would undo the whole point of keeping the index.
+			drop := 0
+			for j := range evicted {
+				if b.admits(evicted[j]) {
+					drop += len(evicted[j].Lines(s))
+				}
+			}
+			if drop > len(b.lines) {
+				b.dirty = true
+			} else {
+				b.lines = b.lines[drop:]
+			}
+		}
 		b.events = b.events[len(b.events)-b.maxSize:]
 	}
 }
 
+// Lines returns the rendered lines of every event the filter admits, rebuilding
+// the index if a mutation invalidated it.
+func (b *EventBuffer) Lines(s *Styles) []string {
+	if !b.dirty {
+		return b.lines
+	}
+	b.lines = b.lines[:0]
+	for i := range b.events {
+		if b.admits(b.events[i]) {
+			b.lines = append(b.lines, b.events[i].Lines(s)...)
+		}
+	}
+	b.dirty = false
+	return b.lines
+}
+
+// admits reports whether the current filter shows re.
+func (b *EventBuffer) admits(re RenderableEvent) bool {
+	if b.filter == AllHarnesses() {
+		return true
+	}
+	for i, id := range AllIdentities() {
+		if id.Harness == re.Identity.Harness {
+			return b.filter.Has(i)
+		}
+	}
+	return false
+}
+
+// Visible returns the events the current filter admits, in buffer order.
+//
+// Rendering does not go through here — View reads the flattened line index,
+// which is what keeps a frame independent of the buffer's depth. This is the
+// inspection accessor: it answers questions about events (ordering, eviction,
+// what the filter kept) that a flat list of strings cannot.
 func (b *EventBuffer) Visible() []RenderableEvent {
 	if b.filter == AllHarnesses() {
 		return b.events
 	}
 	out := make([]RenderableEvent, 0, len(b.events))
-	ids := AllIdentities()
-	for _, ev := range b.events {
-		for i, id := range ids {
-			if id.Harness == ev.Identity.Harness && b.filter.Has(i) {
-				out = append(out, ev)
-				break
-			}
+	for i := range b.events {
+		if b.admits(b.events[i]) {
+			out = append(out, b.events[i])
 		}
 	}
 	return out
 }
 
-func (b *EventBuffer) Len() int              { return len(b.events) }
-func (b *EventBuffer) Filter() FilterSet     { return b.filter }
-func (b *EventBuffer) SetFilter(f FilterSet) { b.filter = f }
-func (b *EventBuffer) Paused() bool          { return b.paused }
-func (b *EventBuffer) TogglePause()          { b.paused = !b.paused }
+func (b *EventBuffer) Len() int          { return len(b.events) }
+func (b *EventBuffer) Filter() FilterSet { return b.filter }
+func (b *EventBuffer) Paused() bool      { return b.paused }
+func (b *EventBuffer) TogglePause()      { b.paused = !b.paused }
 
-// LastForHarness returns the most recent event for a given harness, or nil.
-func (b *EventBuffer) LastForHarness(h tail.Harness) *RenderableEvent {
-	for i := len(b.events) - 1; i >= 0; i-- {
-		if b.events[i].Identity.Harness == h {
-			return &b.events[i]
-		}
+// SetFilter changes which harnesses the buffer admits, invalidating the line
+// index — a different filter is a different set of lines.
+func (b *EventBuffer) SetFilter(f FilterSet) {
+	if f == b.filter {
+		return
 	}
-	return nil
+	b.filter = f
+	b.dirty = true
 }
 
 // Model is the chatroom view state — a single full-screen scrolling stream.
+//
+// It does not own a watcher. The TUI runs exactly one tail.Watcher for the
+// whole program (internal/tui/watcher.go) and feeds it here; the chatroom is a
+// view over a buffer, alive for the session rather than for the time the view
+// happens to be on screen. Owning one meant a second full scan of every
+// transcript on the machine every time the view was opened, concurrent with the
+// dashboard's own, and an empty buffer to show while it ran.
 type Model struct {
-	theme   *theme.Theme
-	styles  *Styles
-	watcher *tail.Watcher
-	cancel  context.CancelFunc
-	buffer  *EventBuffer
-	logger  *slog.Logger
+	theme  *theme.Theme
+	styles *Styles
+	buffer *EventBuffer
+	logger *slog.Logger
 
 	width  int
 	height int
 	top    int // scroll position (line index)
 
-	running bool
-	errMsg  string
+	errMsg string
 }
 
 func New(t *theme.Theme, logger *slog.Logger) *Model {
@@ -353,84 +430,36 @@ func New(t *theme.Theme, logger *slog.Logger) *Model {
 	}
 }
 
-// Init starts the watcher and returns a tea.Cmd that reads events.
-//
-// tail.Watcher.Start is a blocking poll loop, so it has to run on its own
-// goroutine — calling it inline wedges whatever called Init, which here is
-// Bubble Tea's Update loop.
-func (m *Model) Init() tea.Cmd {
-	adapters := tail.DefaultAdapters()
-	cfg := tail.DefaultWatchConfig()
-	m.watcher = tail.NewWatcherWithConfig(cfg, adapters)
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancel = cancel
-	go m.watcher.Start(ctx)
-	m.running = true
-	return waitForEvents(m.watcher)
+// Add files one event into the buffer, re-anchoring the scroll unless the
+// stream is paused. Cheap enough to call for every event whether or not the
+// view is on screen: rendering is deferred to Lines, which nobody calls while
+// the chatroom is closed.
+func (m *Model) Add(ev tail.Event) {
+	m.buffer.Insert(MakeRenderable(ev), m.styles)
 }
 
-// MsgEvent is a bubbletea message carrying a tail.Event from the watcher.
-type MsgEvent struct{ Event tail.Event }
-
-// MsgWatcherError is a bubbletea message carrying a watcher error.
-type MsgWatcherError struct{ Err error }
-
-// WaitForEvents returns a tea.Cmd that blocks on the watcher's event channel
-// and forwards each event as a MsgEvent. Exported so the main TUI model can
-// re-arm the command after forwarding the event through Update.
-func WaitForEvents(m *Model) tea.Cmd {
-	if m == nil {
-		return nil
-	}
-	return waitForEvents(m.watcher)
-}
-
-func waitForEvents(w *tail.Watcher) tea.Cmd {
-	if w == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		ev, ok := <-w.Events()
-		if !ok {
-			return nil
-		}
-		return MsgEvent{Event: ev}
+// Settle re-anchors the scroll after a batch of Adds. Separate from Add so a
+// batch of 500 events costs one anchor recomputation rather than 500.
+func (m *Model) Settle() {
+	if !m.buffer.Paused() {
+		m.scrollToBottom()
 	}
 }
 
-func (m *Model) Stop() {
-	if m.cancel != nil {
-		m.cancel()
-		m.cancel = nil
+// SetError records a watcher failure for the status bar.
+func (m *Model) SetError(err error) {
+	if err == nil {
+		return
 	}
-	if m.watcher != nil {
-		m.watcher.Stop()
-		m.watcher = nil
+	if m.logger != nil {
+		m.logger.Error("chatroom watcher error", "error", err)
 	}
-	m.running = false
+	m.errMsg = err.Error()
 }
 
 func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width, m.height = msg.Width, msg.Height
-		return m, nil
-
-	case MsgEvent:
-		re := MakeRenderable(msg.Event)
-		re.lines = re.RenderLines(m.styles)
-		m.buffer.Insert(re)
-		if !m.buffer.Paused() {
-			m.scrollToBottom()
-		}
-		return m, waitForEvents(m.watcher)
-
-	case MsgWatcherError:
-		if m.logger != nil {
-			m.logger.Error("chatroom watcher error", "error", msg.Err)
-		}
-		m.errMsg = msg.Err.Error()
-		return m, nil
+	if msg, ok := msg.(tea.WindowSizeMsg); ok {
+		m.SetSize(msg.Width, msg.Height)
 	}
 	return m, nil
 }
@@ -441,26 +470,31 @@ func (m *Model) View() string {
 		return ""
 	}
 
-	events := m.buffer.Visible()
-	var lines []string
-	for i := range events {
-		lines = append(lines, events[i].Lines(m.styles)...)
-	}
-
 	bodyHeight := m.height - 1 // 1 row for status bar
-	visible := clipLines(lines, m.top, bodyHeight)
-	// Clip each row to the pane: lipgloss wraps rather than truncates, and a
-	// wrapped row costs an extra display line the height budget never counted,
-	// pushing the status bar off the bottom of the screen.
-	for i, ln := range visible {
-		visible[i] = ansi.Truncate(ln, m.width, "…")
+	window := clipLines(m.buffer.Lines(m.styles), m.top, bodyHeight)
+
+	// Copy before touching a row. clipLines returns a window ONTO the buffer's
+	// cached line index, so truncating in place would overwrite the cache with
+	// the width it happened to be rendered at — and a widened terminal would
+	// keep redrawing the narrow version.
+	body := make([]string, bodyHeight)
+	for i := range body {
+		if i < len(window) {
+			// Clip to the pane: lipgloss wraps rather than truncates, and a
+			// wrapped row costs a display line the height budget never counted,
+			// pushing the status bar off the bottom of the screen.
+			body[i] = ansi.Truncate(window[i], m.width, "…")
+		}
 	}
-	chatContent := strings.Join(visible, "\n")
 
-	chatPane := m.styles.ChatViewport.Width(m.width).Height(bodyHeight).Render(chatContent)
+	// Padded by hand rather than through lipgloss. ChatViewport is an empty
+	// style, so Width(m.width).Height(bodyHeight).Render was padding every row
+	// out to the full width to no visual effect — no background, no border —
+	// at ~350us a frame, which is the frame rate of the whole TUI while the
+	// chatroom is open. Only the row COUNT has to be made up, so the status bar
+	// lands on the last line.
 	statusLine := m.styles.StatusBar.Width(m.width).Render(m.renderStatusBar())
-
-	return lipgloss.JoinVertical(lipgloss.Top, chatPane, statusLine)
+	return strings.Join(body, "\n") + "\n" + statusLine
 }
 
 func (m *Model) renderStatusBar() string {
@@ -486,14 +520,7 @@ func (m *Model) scrollToBottom() {
 	}
 }
 
-func (m *Model) renderedLineCount() int {
-	events := m.buffer.Visible()
-	c := 0
-	for i := range events {
-		c += len(events[i].Lines(m.styles))
-	}
-	return c
-}
+func (m *Model) renderedLineCount() int { return len(m.buffer.Lines(m.styles)) }
 
 func (m *Model) Scroll(delta int) {
 	lines := m.renderedLineCount()

@@ -6,7 +6,6 @@ package tui
 // overlay first, then the primary mode.
 
 import (
-	"context"
 	"fmt"
 
 	"charm.land/bubbles/v2/spinner"
@@ -14,8 +13,6 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
-	"github.com/stump-wtf/agent-trace/tail"
 )
 
 // Update implements tea.Model.
@@ -150,16 +147,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.onKey(msg)
 
-	case chatroom.MsgEvent:
-		if m.mode == modeChatroom && m.chatroom != nil {
-			m.chatroom.Update(msg)
-			return m, chatroom.WaitForEvents(m.chatroom)
-		}
-		return m, nil
-
-	case dashEventMsg:
-		m.trackLastAction(msg.Event)
-		return m, m.dashEventCmd()
+	case agentEventMsg:
+		return m.onAgentEvents(msg)
 
 	case tea.MouseMsg:
 		return m.onMouse(msg)
@@ -195,58 +184,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// dashEventMsg carries one tail.Event from the dashboard's background watcher.
-//
-// It is deliberately a different type from chatroom.MsgEvent. Both watchers
-// tail the same transcripts, so while they shared a message type the two read
-// loops were indistinguishable: an event that arrived with the chatroom open
-// re-armed only the chatroom's read, permanently killing the dashboard's, and
-// dashboard events were double-counted into the chatroom buffer.
-type dashEventMsg struct{ Event tail.Event }
-
-// dashEventCmd is the tea.Cmd that reads the next event from the dashboard
-// watcher. It captures the watcher it was armed against so a teardown that
-// swaps m.dashWatcher out cannot make an in-flight read panic.
-func (m *Model) dashEventCmd() tea.Cmd {
-	if m.dashWatcher == nil {
-		return nil
-	}
-	w := m.dashWatcher
-	return func() tea.Msg {
-		ev, ok := <-w.Events()
-		if !ok {
-			return nil
-		}
-		return dashEventMsg{Event: ev}
-	}
-}
-
-// startDashWatcher starts the background watcher for the dashboard's live
-// activity field. Called once the daemon connection is established.
-func (m *Model) startDashWatcher() tea.Cmd {
-	if m.dashWatcher != nil {
-		return nil
-	}
-	m.dashWatcher = tail.NewWatcherWithConfig(tail.DefaultWatchConfig(), tail.DefaultAdapters())
-	ctx, cancel := context.WithCancel(context.Background())
-	m.dashCancel = cancel
-	// Start is a blocking poll loop; inline it and Update never returns.
-	go m.dashWatcher.Start(ctx)
-	return m.dashEventCmd()
-}
-
-// stopDashWatcher tears down the dashboard watcher.
-func (m *Model) stopDashWatcher() {
-	if m.dashCancel != nil {
-		m.dashCancel()
-		m.dashCancel = nil
-	}
-	if m.dashWatcher != nil {
-		m.dashWatcher.Stop()
-		m.dashWatcher = nil
-	}
-}
-
 // onConnected wires up (or classifies the failure of) the daemon connection.
 func (m *Model) onConnected(msg connectedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
@@ -257,7 +194,7 @@ func (m *Model) onConnected(msg connectedMsg) (tea.Model, tea.Cmd) {
 	m.ctrl, m.attach = msg.ctrl, msg.attach
 	m.conn = startOK
 	m.reconn = false
-	cmds := []tea.Cmd{fetchState(m.ctrl), m.startReadLoop(), m.startDashWatcher()}
+	cmds := []tea.Cmd{fetchState(m.ctrl), m.startReadLoop(), m.startWatcher()}
 	// `harness attach <name>`: once we're connected and have a controller,
 	// auto-attach to the named harness. We need the fresh state first to
 	// resolve the HarnessInfo, so piggyback on refreshMsg's handling below by
