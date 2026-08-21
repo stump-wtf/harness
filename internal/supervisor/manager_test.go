@@ -873,3 +873,101 @@ func TestManagerStartClearsDormantAutostart(t *testing.T) {
 		t.Errorf("DormantAutostart() = %v, want empty after start", got)
 	}
 }
+
+// TestStartTransientDoesNotPersistEnabled verifies that a scheduled one-shot
+// firing (issue #159) uses StartTransient, which brings the process up
+// WITHOUT persisting enabled=true to state.json. A crash or power loss mid-run
+// must not leak enabled=true into the next boot's Autostart.
+func TestStartTransientDoesNotPersistEnabled(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+	logDir := filepath.Join(dir, "logs")
+
+	// A scheduled harness: enabled=false at config level (schedule/enabled
+	// exclusion means the daemon sets enabled=false at parse time).
+	cfg := managerCfg(shHarness("sweeper", "while true; do sleep 0.02; done", 0))
+	sw := cfg.Harnesses["sweeper"]
+	sw.Enabled = false
+	sw.Schedule = "0 */6 * * *"
+	cfg.Harnesses["sweeper"] = sw
+	// Remove autostart membership — a scheduled harness is not an autostart member.
+	cfg.Profiles["default"] = core.Profile{Name: "default", Harnesses: []string{}, Autostart: false}
+
+	p := fastPolicy()
+	m1 := NewManager(cfg, ManagerOptions{Policy: p, StatePath: statePath, LogDir: logDir})
+	if err := m1.Restore(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before the scheduled firing, state.json should have enabled=false.
+	m1.Save()
+	ps, err := loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ps.Harnesses["sweeper"].Enabled {
+		t.Fatal("precondition: state.json should have enabled=false before scheduled firing")
+	}
+
+	// Simulate a scheduled firing: StartTransient, not Start.
+	if !m1.StartTransient("sweeper") {
+		t.Fatal("StartTransient returned false for known harness")
+	}
+	waitFor(t, 3*time.Second, "transient start reaches running", func() bool {
+		snap, _ := m1.Snapshot("sweeper")
+		return snap.State == core.StateRunning
+	})
+
+	// Save while the process is running (simulates a crash — no clean Stop).
+	m1.Save()
+
+	// The state.json must NOT have enabled=true for the sweeper.
+	ps, err = loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ps.Harnesses["sweeper"].Enabled {
+		t.Fatal("enabled=true leaked into state.json after a transient start — the scheduled firing would autostart on next boot")
+	}
+
+	// Second daemon on the same state.json: must NOT autostart the sweeper.
+	m2 := NewManager(cfg, ManagerOptions{Policy: p, StatePath: statePath, LogDir: logDir})
+	t.Cleanup(m2.Close)
+	if err := m2.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	m2.Autostart()
+	// Give it a moment — the sweeper should NOT start.
+	time.Sleep(200 * time.Millisecond)
+	snap2, _ := m2.Snapshot("sweeper")
+	if snap2.State == core.StateRunning || snap2.State == core.StateStarting {
+		t.Fatal("scheduled firing leaked into next-boot autostart — sweeper started on boot after a transient start")
+	}
+}
+
+// TestStartTransientRunsProcess verifies that StartTransient actually brings
+// the process up (it's not a no-op) and that it exits cleanly.
+func TestStartTransientRunsProcess(t *testing.T) {
+	cfg := managerCfg(shHarness("oneshot", "exit 0", 0))
+	os := cfg.Harnesses["oneshot"]
+	os.Enabled = false
+	cfg.Harnesses["oneshot"] = os
+	cfg.Profiles["default"] = core.Profile{Name: "default", Harnesses: []string{}, Autostart: false}
+
+	m := newTestManager(t, cfg)
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if !m.StartTransient("oneshot") {
+		t.Fatal("StartTransient returned false")
+	}
+	waitFor(t, 3*time.Second, "transient start produces stopped state", func() bool {
+		snap, _ := m.Snapshot("oneshot")
+		return snap.State == core.StateStopped
+	})
+	// After exit, enabled should still be false (no intent persisted).
+	snap, _ := m.Snapshot("oneshot")
+	if snap.State != core.StateStopped {
+		t.Errorf("State = %s, want stopped", snap.State)
+	}
+}

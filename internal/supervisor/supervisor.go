@@ -30,7 +30,8 @@ type exitResult struct {
 type cmdKind int
 
 const (
-	cmdStart cmdKind = iota
+	cmdStart          cmdKind = iota
+	cmdStartTransient         // scheduled firing: bring up without persisting enabled intent
 	cmdStop
 	cmdRestart
 	cmdApplyConfig
@@ -120,6 +121,11 @@ type Supervisor struct {
 	log           *rotatingLog
 	configChanged bool // staged config awaiting restart (SPEC-0003)
 
+	// suppressPersist temporarily blocks markDirty during a transient start
+	// (issue #159): the state transitions publish snapshots, but those must
+	// NOT rewrite state.json while a scheduled one-shot is in flight.
+	suppressPersist bool
+
 	// ---- snapshot (guarded) ----
 	mu   sync.Mutex
 	snap Snapshot
@@ -178,6 +184,15 @@ func (s *Supervisor) Snapshot() Snapshot {
 // Start marks the harness enabled and brings it up (SPEC-0003 REQ "Autostart"
 // path and manual start). Blocks until the request is processed.
 func (s *Supervisor) Start() { s.send(command{kind: cmdStart}) }
+
+// StartTransient brings the process up WITHOUT setting enabled=true or
+// persisting intent to state.json. Used by the scheduler for one-shot
+// firings (issue #159): a scheduled run that dies — cleanly or in a crash —
+// must not leave enabled=true behind, or the next boot's Autostart runs it
+// off-schedule. The exit path (onProcessGone) sees enabled=false and
+// transitions to StateStopped without restart, exactly as if the harness
+// had been manually stopped.
+func (s *Supervisor) StartTransient() { s.send(command{kind: cmdStartTransient}) }
 
 // Stop performs a graceful stop and sets enabled=false (SPEC-0003 REQ
 // "Graceful Stop"). Blocks until the harness is stopped.
@@ -260,6 +275,23 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 			s.clearFailLatch()
 			s.beginStart()
 		}
+	case cmdStartTransient:
+		// Bring the process up without setting enabled=true or persisting
+		// intent. A scheduled one-shot fires, runs, and exits; the exit
+		// path sees enabled=false and lands in StateStopped cleanly.
+		// If the process is already running, this is a no-op — the
+		// scheduler already guards against double-fire.
+		//
+		// Suppress markDirty during the start so the state transition's
+		// publishSnapshot doesn't rewrite state.json with the current
+		// enabled value (issue #159). The state file keeps whatever it
+		// had before the scheduled firing.
+		s.suppressPersist = true
+		if !s.hasProcess() && s.state != core.StateStopping {
+			s.clearFailLatch()
+			s.beginStart()
+		}
+		s.suppressPersist = false
 	case cmdStop:
 		s.enabled = false
 		s.cancelRestartTimer()
@@ -782,7 +814,7 @@ func (s *Supervisor) publishSnapshot() {
 		PID:           pid,
 	}
 	s.mu.Unlock()
-	if s.onChange != nil {
+	if s.onChange != nil && !s.suppressPersist {
 		s.onChange()
 	}
 }

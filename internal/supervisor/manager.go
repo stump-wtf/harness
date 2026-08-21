@@ -302,6 +302,17 @@ func (m *Manager) Start(name string) bool {
 	return false
 }
 
+// StartTransient brings a harness up without persisting enabled intent to
+// state.json. Used by the scheduler for one-shot firings (issue #159).
+func (m *Manager) StartTransient(name string) bool {
+	if s := m.get(name); s != nil {
+		s.StartTransient()
+		m.clearDormant(name)
+		return true
+	}
+	return false
+}
+
 // clearDormant drops name from the dormant-autostart list.
 func (m *Manager) clearDormant(name string) {
 	m.mu.Lock()

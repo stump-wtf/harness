@@ -128,7 +128,7 @@ func runDaemon(o daemonOpts) {
 			}
 		}
 		log.Info("schedule fired", "harness", name)
-		if !mgr.Start(name) {
+		if !mgr.StartTransient(name) {
 			log.Warn("schedule fired for unknown harness", "harness", name)
 		}
 	})
