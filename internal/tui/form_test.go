@@ -849,13 +849,10 @@ func TestHarnessFormCoversEveryHarnessField(t *testing.T) {
 // scheduled prompt one-shot (prompt/model/max_turns/quiet/schedule), since the
 // parser makes those two sets mutually exclusive, and one deny-all mcp_allow.
 //
-// Limitation worth knowing before trusting this as a whole-class guard: the
-// form binds `args` as a single space-separated string and re-splits it with
-// strings.Fields, so an argument containing whitespace is SPLIT on the way
-// back through, not preserved. That is a pre-existing encoding defect in the
-// input binding rather than a dropped key, so the fixtures deliberately use
-// whitespace-free args; see TestEditSplitsArgsContainingWhitespace, which pins
-// the current lossy behavior so the day it is fixed is a visible change.
+// TestEditPreservesEveryConfigKey verifies that every core.Harness config key
+// survives the edit round-trip. The args input uses shell-style quoting so
+// whitespace-containing arguments are preserved; see
+// TestEditPreservesArgsContainingWhitespace.
 func TestEditPreservesEveryConfigKey(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1031,15 +1028,11 @@ func TestNewHarnessFormDefaultsToReadScope(t *testing.T) {
 	}
 }
 
-// TestEditSplitsArgsContainingWhitespace documents a KNOWN, pre-existing
-// encoding defect rather than asserting correct behavior: `args` round-trips
-// through a single space-separated input, so an argument containing whitespace
-// comes back split. It is not in issue #161's class (no key is dropped) and
-// fixing it means giving the args widget shell-style quoting, but it is the
-// reason TestEditPreservesEveryConfigKey's fixtures avoid whitespace in args
-// and it should not be discovered again from scratch. When the encoding is
-// fixed, this test fails and is the place to record it.
-func TestEditSplitsArgsContainingWhitespace(t *testing.T) {
+// TestEditPreservesArgsContainingWhitespace verifies that an argument
+// containing whitespace survives the edit round-trip: the args input uses
+// shell-style quoting (shellQuoteJoin on the way in, shlex.Split on the way
+// back), so "print('hello world')" stays as one argument.
+func TestEditPreservesArgsContainingWhitespace(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "harness.toml")
 	original := strings.Join([]string{
@@ -1058,10 +1051,8 @@ func TestEditSplitsArgsContainingWhitespace(t *testing.T) {
 		t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
 	}
 	got := cfg.Harnesses["repl"].Args
-	want := []string{"-c", "print('hello", "world')"}
+	want := []string{"-c", "print('hello world')"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("args = %v, want %v — if this now round-trips losslessly the "+
-			"args input grew quoting; delete this test and drop the caveat on "+
-			"TestEditPreservesEveryConfigKey", got, want)
+		t.Errorf("args = %v, want %v (whitespace-containing arg should survive round-trip)", got, want)
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/anmitsu/go-shlex"
 	"github.com/robfig/cron/v3"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
@@ -335,7 +336,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.quiet = h.Quiet
 	fi.maxTurns = strconv.Itoa(h.MaxTurns)
 	fi.schedule = h.Schedule
-	fi.args = strings.Join(h.Args, " ")
+	fi.args = shellQuoteJoin(h.Args)
 	fi.workdir = h.Workdir
 	fi.envFile = h.EnvFile
 	if h.RestartDelay > 0 {
@@ -372,7 +373,7 @@ func (fi formInputs) toForm() HarnessForm {
 
 		HarvestTrajectory: fi.harvestTrajectory,
 	}
-	if args := strings.Fields(fi.args); len(args) > 0 {
+	if args, err := shlex.Split(fi.args, true); err == nil && len(args) > 0 {
 		f.Args = args
 	}
 	// Unconditional, unlike args above: strings.Fields returns a non-nil empty
@@ -388,6 +389,22 @@ func (fi formInputs) toForm() HarnessForm {
 		f.MaxTurns = n
 	}
 	return f
+}
+
+// shellQuoteJoin joins args into a single string with shell-style quoting so
+// that an argument containing whitespace survives the round-trip through the
+// single-line text input. Args without whitespace are left bare; args with
+// whitespace are wrapped in double quotes with embedded double quotes escaped.
+func shellQuoteJoin(args []string) string {
+	parts := make([]string, len(args))
+	for i, a := range args {
+		if !strings.ContainsAny(a, " \t\n\"'") {
+			parts[i] = a
+			continue
+		}
+		parts[i] = "\"" + strings.ReplaceAll(a, "\"", "\\\"") + "\""
+	}
+	return strings.Join(parts, " ")
 }
 
 // readFileOrEmpty reads path, returning empty (not an error) when it's absent so
