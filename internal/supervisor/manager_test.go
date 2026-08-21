@@ -895,6 +895,7 @@ func TestStartTransientDoesNotPersistEnabled(t *testing.T) {
 
 	p := fastPolicy()
 	m1 := NewManager(cfg, ManagerOptions{Policy: p, StatePath: statePath, LogDir: logDir})
+	t.Cleanup(m1.Close)
 	if err := m1.Restore(); err != nil {
 		t.Fatal(err)
 	}
