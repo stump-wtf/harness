@@ -24,8 +24,10 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/keys"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/stump-wtf/agent-trace/tail"
 )
 
 // mode is a primary UI mode (SPEC-0001 REQ "Mode Machine").
@@ -34,6 +36,7 @@ type mode int
 const (
 	modeDashboard mode = iota
 	modeAttached
+	modeChatroom
 )
 
 // overlay is the active overlay above the primary mode, if any.
@@ -191,6 +194,19 @@ type Model struct {
 	form       huh.Model // *huh.Form when overlayForm
 	fInputs    formInputs
 	editing    bool // form is editing (e) vs new (n)
+
+	// chatroom view (ADR-0015, SPEC-0015)
+	chatroom *chatroom.Model
+
+	// lastActions tracks the most recent tail.Event action per harness name,
+	// for the dashboard's live activity field. Fed by a background tail.Watcher
+	// that runs while the daemon connection is live.
+	lastActions map[string]string
+	// dashWatcher is the background watcher for the dashboard's live action
+	// field. Separate from the chatroom's watcher (which only runs in
+	// modeChatroom) so the dashboard gets live updates without entering
+	// chatroom mode.
+	dashWatcher *tail.Watcher
 
 	quitting  bool
 	closeOnce sync.Once

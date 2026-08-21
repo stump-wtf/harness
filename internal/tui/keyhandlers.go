@@ -9,10 +9,13 @@ package tui
 // live agent").
 
 import (
+	"log/slog"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
 )
 
 // onMouse handles mouse events. In attached mode, mouse-wheel up enters
@@ -104,6 +107,9 @@ func (m *Model) routeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.mode == modeAttached {
 		return m.onAttachedKey(msg)
+	}
+	if m.mode == modeChatroom {
+		return m.onChatroomKey(msg)
 	}
 	return m.onDashboardKey(msg)
 }
@@ -229,6 +235,72 @@ func (m *Model) dispatchDashboardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if sel, ok := m.selectedHarness(); ok {
 			return m, copyToClipboard(sel.Name)
 		}
+		return m, nil
+	case key.Matches(msg, m.keys.Chatroom):
+		return m, m.enterChatroom()
+	}
+	return m, nil
+}
+
+// enterChatroom transitions from the dashboard to the chatroom view. It creates
+// the chatroom model, starts its own watcher, and returns the Init cmd.
+func (m *Model) enterChatroom() tea.Cmd {
+	m.chatroom = chatroom.New(m.theme, slog.Default())
+	m.mode = modeChatroom
+	return m.chatroom.Init()
+}
+
+// exitChatroom stops the chatroom's watcher and returns to the dashboard.
+// The dashboard's own dash watcher keeps running.
+func (m *Model) exitChatroom() {
+	if m.chatroom != nil {
+		m.chatroom.Stop()
+		m.chatroom = nil
+	}
+	m.mode = modeDashboard
+}
+
+// onChatroomKey handles keystrokes in the chatroom view.
+func (m *Model) onChatroomKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.chatroom == nil {
+		m.mode = modeDashboard
+		return m, nil
+	}
+	switch {
+	case key.Matches(msg, m.keys.Quit), key.Matches(msg, m.keys.Back):
+		m.exitChatroom()
+		return m, nil
+	case key.Matches(msg, m.keys.Help):
+		m.overlay = overlayHelp
+		return m, nil
+	case key.Matches(msg, m.keys.ChatUp):
+		m.chatroom.Scroll(-1)
+		return m, nil
+	case key.Matches(msg, m.keys.ChatDown):
+		m.chatroom.Scroll(1)
+		return m, nil
+	case key.Matches(msg, m.keys.PageUp):
+		m.chatroom.Scroll(-(m.h / 2))
+		return m, nil
+	case key.Matches(msg, m.keys.PageDown):
+		m.chatroom.Scroll(m.h / 2)
+		return m, nil
+	case msg.Code == ' ' || msg.Text == "p":
+		m.chatroom.Buffer().TogglePause()
+		return m, nil
+	case msg.Text == "0" || msg.Text == "a":
+		m.chatroom.Buffer().SetFilter(chatroom.AllHarnesses())
+		return m, nil
+	case msg.Text >= "1" && msg.Text <= "5":
+		idx := int(msg.Text[0] - '1')
+		f := m.chatroom.Buffer().Filter()
+		m.chatroom.Buffer().SetFilter(f.Toggle(idx))
+		return m, nil
+	case key.Matches(msg, m.keys.Top):
+		m.chatroom.Scroll(-1 << 30)
+		return m, nil
+	case key.Matches(msg, m.keys.Bot):
+		m.chatroom.Scroll(1 << 30)
 		return m, nil
 	}
 	return m, nil

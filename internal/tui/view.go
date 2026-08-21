@@ -59,6 +59,8 @@ func (m *Model) content() string {
 	var base string
 	if m.mode == modeAttached {
 		base = m.viewAttached()
+	} else if m.mode == modeChatroom {
+		base = m.viewChatroom()
 	} else {
 		base = m.viewDashboard()
 	}
@@ -102,6 +104,16 @@ func paneInner(w int) int {
 // content must clamp to the budget, because lipgloss pads up but never
 // truncates down (#179).
 const paneBorderRows = 2
+
+// viewChatroom renders the chatroom view (ADR-0015, SPEC-0015). The chatroom
+// model owns its own layout; this is a thin pass-through that clips to the
+// terminal geometry the same way the dashboard does.
+func (m *Model) viewChatroom() string {
+	if m.chatroom == nil {
+		return m.overlayBox("Chatroom", "Initializing chatroom…")
+	}
+	return m.chatroom.View()
+}
 
 func (m *Model) viewDashboard() string {
 	header := m.viewHeader()
@@ -414,6 +426,13 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 // States").
 func (m *Model) renderMetaRow(h protocol.HarnessInfo, budget int) string {
 	what, rest := harnessMeta(h)
+	// Live last-action from the tail watcher (ADR-0015 dashboard activity).
+	if m.lastActions != nil {
+		harnessType := orDefault(h.Adapter, "crush")
+		if action, ok := m.lastActions[harnessType]; ok {
+			rest = append([]string{action}, rest...)
+		}
+	}
 	style := m.theme.Faint()
 	if isDegraded(h) {
 		style = m.theme.StateStyle(core.StateDegraded)

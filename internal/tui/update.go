@@ -6,6 +6,7 @@ package tui
 // overlay first, then the primary mode.
 
 import (
+	"context"
 	"fmt"
 
 	"charm.land/bubbles/v2/spinner"
@@ -13,6 +14,8 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
+	"github.com/stump-wtf/agent-trace/tail"
 )
 
 // Update implements tea.Model.
@@ -59,6 +62,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// otherwise be a PTY resize and a SIGWINCH into a live agent.
 		if m.mode == modeDashboard {
 			return m, m.peekTargetChanged()
+		}
+		if m.mode == modeChatroom && m.chatroom != nil {
+			m.chatroom.Update(msg)
 		}
 		return m, nil
 
@@ -144,6 +150,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.onKey(msg)
 
+	case chatroom.MsgEvent:
+		if m.mode == modeChatroom && m.chatroom != nil {
+			m.chatroom.Update(msg)
+			return m, chatroom.WaitForEvents(m.chatroom)
+		}
+		// In dashboard mode, track last-action for the live field and
+		// re-arm the dash watcher for the next event.
+		m.trackLastAction(msg.Event)
+		return m, m.dashEventCmd()
+
 	case tea.MouseMsg:
 		return m.onMouse(msg)
 
@@ -178,6 +194,55 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// trackLastAction updates the dashboard's live activity field from a tail.Event.
+func (m *Model) trackLastAction(ev tail.Event) {
+	if m.lastActions == nil {
+		m.lastActions = make(map[string]string)
+	}
+	key := string(ev.Session.Harness)
+	action := chatroom.LastAction(ev)
+	if action != "" {
+		m.lastActions[key] = action + " " + chatroom.FormatTime(ev.Classified.Timestamp)
+	}
+}
+
+// dashEventCmd is the tea.Cmd that reads the next event from the dashboard
+// watcher. It returns a chatroom.MsgEvent so the main Update can handle it
+// uniformly.
+func (m *Model) dashEventCmd() tea.Cmd {
+	if m.dashWatcher == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ev, ok := <-m.dashWatcher.Events()
+		if !ok {
+			return nil
+		}
+		return chatroom.MsgEvent{Event: ev}
+	}
+}
+
+// startDashWatcher starts the background watcher for the dashboard's live
+// activity field. Called once the daemon connection is established.
+func (m *Model) startDashWatcher() tea.Cmd {
+	if m.dashWatcher != nil {
+		return nil
+	}
+	m.dashWatcher = tail.NewWatcherWithConfig(tail.DefaultWatchConfig(), tail.DefaultAdapters())
+	ctx, cancel := context.WithCancel(context.Background())
+	_ = cancel
+	m.dashWatcher.Start(ctx)
+	return m.dashEventCmd()
+}
+
+// stopDashWatcher tears down the dashboard watcher.
+func (m *Model) stopDashWatcher() {
+	if m.dashWatcher != nil {
+		m.dashWatcher.Stop()
+		m.dashWatcher = nil
+	}
+}
+
 // onConnected wires up (or classifies the failure of) the daemon connection.
 func (m *Model) onConnected(msg connectedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
@@ -188,7 +253,7 @@ func (m *Model) onConnected(msg connectedMsg) (tea.Model, tea.Cmd) {
 	m.ctrl, m.attach = msg.ctrl, msg.attach
 	m.conn = startOK
 	m.reconn = false
-	cmds := []tea.Cmd{fetchState(m.ctrl), m.startReadLoop()}
+	cmds := []tea.Cmd{fetchState(m.ctrl), m.startReadLoop(), m.startDashWatcher()}
 	// `harness attach <name>`: once we're connected and have a controller,
 	// auto-attach to the named harness. We need the fresh state first to
 	// resolve the HarnessInfo, so piggyback on refreshMsg's handling below by

@@ -63,6 +63,11 @@ type KeyMap struct {
 
 	// Overlays.
 	Confirm key.Binding // Enter/y confirm a guarded action.
+
+	// Chatroom view (ADR-0015, SPEC-0015).
+	Chatroom key.Binding // C — enter chatroom from dashboard.
+	ChatUp   key.Binding
+	ChatDown key.Binding
 }
 
 // Default returns the SPEC-0001 default bindings.
@@ -121,6 +126,10 @@ func Default() KeyMap {
 		Live:     key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("q", "live")),
 
 		Confirm: key.NewBinding(key.WithKeys("enter", "y"), key.WithHelp("↵/y", "confirm")),
+
+		Chatroom: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "chatroom")),
+		ChatUp:   key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "scroll up")),
+		ChatDown: key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "scroll down")),
 	}
 }
 
@@ -133,7 +142,7 @@ func (k *KeyMap) RebindDetach(keysSeq, help string) {
 
 // ShortHelp implements help.KeyMap — the compact footer key bar.
 func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Attach, k.Start, k.Stop, k.Restart, k.Edit, k.New, k.Profile, k.Search, k.Help}
+	return []key.Binding{k.Attach, k.Start, k.Stop, k.Restart, k.Edit, k.New, k.Profile, k.Search, k.Chatroom, k.Help}
 }
 
 // AttachedShortHelp returns the compact key bar shown in attached mode's
@@ -156,6 +165,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Profile, k.ShowAll, k.Logs, k.Copy, k.Search, k.Palette, k.Help, k.Quit},
 		{k.Detach, k.Scrollback, k.HopPrev, k.HopNext, k.AttStart, k.AttRestart, k.AttHelp},
 		{k.PageUp, k.PageDown, k.Live, k.Confirm, k.Back},
+		{k.Chatroom, k.ChatUp, k.ChatDown},
 	}
 }
 
