@@ -225,9 +225,25 @@ func TestChatroomStatusBarShowsKeyHints(t *testing.T) {
 // A narrow terminal drops the hints rather than the state, and never wraps the
 // bar onto a second line — the frame budgets exactly one.
 func TestChatroomStatusBarFitsNarrowTerminals(t *testing.T) {
-	for _, w := range []int{40, 80, 200} {
+	// Both filter states. FilterSet.String() collapses to "all" when every
+	// harness is kept, and spells out each username otherwise — 51 columns for
+	// four of them, which on its own overruns a narrow terminal even after the
+	// key hints have been dropped.
+	filters := map[string]chatroom.FilterSet{
+		"all":     chatroom.AllHarnesses(),
+		"partial": chatroom.AllHarnesses().Toggle(4),
+	}
+	for name, f := range filters {
+		t.Run(name, func(t *testing.T) { assertStatusBarFits(t, f) })
+	}
+}
+
+func assertStatusBarFits(t *testing.T, f chatroom.FilterSet) {
+	t.Helper()
+	for _, w := range []int{40, 60, 80, 200} {
 		m := chatModel(t, 10)
 		m.chatroom.SetSize(w, 20)
+		m.chatroom.SetFilter(f)
 		out := m.chatroom.View()
 		if got := len(strings.Split(out, "\n")); got != 20 {
 			t.Errorf("width %d: view is %d lines, want 20", w, got)

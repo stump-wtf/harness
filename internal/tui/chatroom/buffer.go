@@ -620,7 +620,13 @@ func (m *Model) renderStatusBar() string {
 	if gap := m.width - ansi.StringWidth(left) - ansi.StringWidth(hints) - 2; gap >= 0 {
 		return left + strings.Repeat(" ", gap+2) + hints
 	}
-	return left
+	// The state alone can outrun a narrow terminal: a partial filter spells out
+	// every harness it kept, so "filter: @claude-code @codex @crush-signal
+	// @opencode" is 51 columns before the LIVE indicator and the event count.
+	// Dropping the hints is not enough on its own — StatusBar.Width() WRAPS
+	// what overflows, which costs a display row the height budget never counted
+	// and overwrites the last row of the stream with the remainder.
+	return ansi.Truncate(left, m.width, "…")
 }
 
 func (m *Model) scrollToBottom() {
