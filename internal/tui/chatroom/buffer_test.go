@@ -1,6 +1,8 @@
 package chatroom
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -249,5 +251,62 @@ func TestViewDoesNotMutateTheLineCache(t *testing.T) {
 	}
 	if len(wide) <= len(narrow) {
 		t.Error("widening the terminal did not widen the output; the cache is holding clipped rows")
+	}
+}
+
+// A reader parked in the scrollback while the buffer sits at its cap: every
+// arriving event evicts an old one, and the scroll offset is an index into the
+// line slice — so without compensation the text crawls upward under a reader
+// who is deliberately holding still, which is what holding still was for.
+func TestParkedViewDoesNotSlideOnEviction(t *testing.T) {
+	m := New(theme.Default(), nil)
+	m.buffer = NewEventBuffer(50)
+	m.SetSize(160, 12)
+	for i := 0; i < 50; i++ {
+		m.Add(evictEvent(i))
+	}
+	m.Settle()
+
+	// Park in the MIDDLE: at the very top the evicted lines are genuinely gone
+	// and no offset can bring them back.
+	m.Scroll(-1 << 30)
+	m.Scroll(20)
+	before := m.View()
+
+	for i := 0; i < 5; i++ {
+		m.Add(evictEvent(50 + i))
+		m.Settle()
+	}
+
+	if after := m.View(); after != before {
+		t.Errorf("the view slid under a parked reader as events were evicted\nbefore:\n%s\n\nafter:\n%s", before, after)
+	}
+}
+
+// Following, the view must still track the bottom across evictions.
+func TestFollowingTracksBottomAcrossEviction(t *testing.T) {
+	m := New(theme.Default(), nil)
+	m.buffer = NewEventBuffer(50)
+	m.SetSize(160, 12)
+	for i := 0; i < 60; i++ {
+		m.Add(evictEvent(i))
+		m.Settle()
+	}
+	if !m.Following() {
+		t.Fatal("never left follow mode")
+	}
+	if !strings.Contains(m.View(), "tool-59") {
+		t.Errorf("following did not track the newest event across evictions:\n%s", m.View())
+	}
+}
+
+func evictEvent(i int) tail.Event {
+	return tail.Event{
+		Session: tail.SessionMeta{Harness: tail.HarnessClaudeCode},
+		Classified: classify.Event{
+			Tool: fmt.Sprintf("tool-%d", i), Action: classify.ActionExec,
+			Timestamp: time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC).
+				Add(time.Duration(i) * time.Second).Format(time.RFC3339),
+		},
 	}
 }

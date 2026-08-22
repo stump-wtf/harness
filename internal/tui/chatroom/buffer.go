@@ -273,6 +273,14 @@ type EventBuffer struct {
 	// gives up and sets dirty, and Lines rebuilds on demand.
 	lines []string
 	dirty bool
+
+	// dropped counts lines evicted off the FRONT of the index since a reader
+	// last accounted for them. A scroll offset is an index into lines, so
+	// trimming the front slides every offset by that much — a reader parked in
+	// the scrollback would watch the text crawl upward one line per arriving
+	// event once the buffer reached its cap. TakeDropped hands the count to
+	// whoever owns the offset.
+	dropped int
 }
 
 func NewEventBuffer(maxSize int) *EventBuffer {
@@ -330,10 +338,24 @@ func (b *EventBuffer) Insert(re RenderableEvent, s *Styles) {
 				b.dirty = true
 			} else {
 				b.lines = b.lines[drop:]
+				b.dropped += drop
 			}
 		}
 		b.events = b.events[len(b.events)-b.maxSize:]
 	}
+}
+
+// TakeDropped returns the number of lines evicted off the front since the last
+// call, and resets the count.
+//
+// Only meaningful while the index has stayed valid. A rebuild renumbers every
+// line, so an offset taken against the old numbering has nothing to be
+// corrected against — Lines resets the count in that case and the offset is
+// merely clamped.
+func (b *EventBuffer) TakeDropped() int {
+	n := b.dropped
+	b.dropped = 0
+	return n
 }
 
 // Lines returns the rendered lines of every event the filter admits, rebuilding
@@ -343,6 +365,7 @@ func (b *EventBuffer) Lines(s *Styles) []string {
 		return b.lines
 	}
 	b.lines = b.lines[:0]
+	b.dropped = 0
 	for i := range b.events {
 		if b.admits(b.events[i]) {
 			b.lines = append(b.lines, b.events[i].Lines(s)...)
@@ -465,12 +488,20 @@ func (m *Model) Add(ev tail.Event) {
 // batch of 500 events costs one anchor recomputation rather than 500.
 func (m *Model) Settle() {
 	if m.follow {
+		m.buffer.TakeDropped()
 		m.scrollToBottom()
-	} else {
-		// Not following, but the stream still grew underneath the view: clamp
-		// the offset so an eviction at the front cannot leave it past the end.
-		m.Scroll(0)
+		return
 	}
+	// Parked in the scrollback. At the cap every arriving event evicts an old
+	// one, and the offset is an index into the line slice — so without this the
+	// text crawls upward under a reader who is deliberately holding still,
+	// which is the very thing holding still was meant to stop.
+	//
+	// Subtracting what left the front keeps the same lines under the viewport.
+	// A reader already at the top is the exception: the lines above them are
+	// genuinely gone, and no offset can conjure them back.
+	m.top -= m.buffer.TakeDropped()
+	m.Scroll(0) // clamp into range without moving otherwise
 }
 
 // Top is the scroll offset, in rendered lines from the start of the stream.
