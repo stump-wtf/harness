@@ -184,3 +184,89 @@ func TestLifecycleAnimatedNeverClearsScreen(t *testing.T) {
 		}
 	}
 }
+
+// TestClearStaleFrameEmitsCleanup verifies that clearStaleFrame writes the
+// exact sequence that wipes leaked escape characters from Bubble Tea's close()
+// without clearing the user's screen. The sequence must contain:
+//   - SGR reset (ESC[0m) to clear any active styling
+//   - carriage return (\r) to move to column 0
+//   - erase to end of line (ESC[K) to remove leaked literal characters
+//
+// @joestump-agent 08/22/2026 - Regression test for the "weird characters with
+// semicolons" bug. Bubble Tea v2's close() writes KittyKeyboard(0,1) →
+// ESC[=0;1u which leaks as literal text on terminals without Kitty protocol
+// support. clearStaleFrame cleans it up.
+func TestClearStaleFrameEmitsCleanup(t *testing.T) {
+	// Capture stdout to verify the exact bytes written.
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	clearStaleFrame()
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	// The cleanup must reset SGR, return to column 0, and erase the line.
+	want := "\x1b[0m\r\x1b[K"
+	if got != want {
+		t.Errorf("clearStaleFrame = %q, want %q", got, want)
+	}
+}
+
+// TestFinalViewNoRawSemicolonEscapes verifies that finalView() output does not
+// contain raw CSI sequences with semicolons that would appear as literal
+// "weird characters" on a terminal that doesn't support them. The Kitty
+// keyboard reset (ESC[=0;1u) is the specific sequence that triggered this bug.
+//
+// finalView uses lipgloss for styling, which produces SGR sequences like
+// ESC[0;39m — those are fine because they're complete and the terminal
+// handles them. The bug is about incomplete or unrecognized sequences from
+// Bubble Tea's close(), not from our own styled output.
+func TestFinalViewNoRawSemicolonEscapes(t *testing.T) {
+	m := newLifecycleModel("start", nil, []string{"alpha", "beta"})
+	mi, _ := m.Update(opDoneMsg{idx: 0, info: protocol.HarnessInfo{State: "running"}})
+	mi, _ = mi.(*lifecycleModel).Update(opDoneMsg{idx: 1, info: protocol.HarnessInfo{State: "running"}})
+	m = mi.(*lifecycleModel)
+
+	out := m.finalView()
+
+	// The Kitty keyboard reset sequence that leaks as literal text.
+	kittyReset := "\x1b[=0;1u"
+	if strings.Contains(out, kittyReset) {
+		t.Errorf("finalView must not contain Kitty keyboard reset %q", kittyReset)
+	}
+
+	// No raw ESC[= sequences (Kitty protocol) should appear in our output.
+	if strings.Contains(out, "\x1b[=") {
+		t.Errorf("finalView must not contain raw Kitty protocol sequences")
+	}
+}
+
+// TestClearStaleFrameIsCalledBeforeFinalView verifies that the source code
+// calls clearStaleFrame before printing finalView, so leaked characters are
+// wiped before the permanent record is written.
+func TestClearStaleFrameIsCalledBeforeFinalView(t *testing.T) {
+	src, err := os.ReadFile("lifecycle_tui.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clearIdx := bytes.Index(src, []byte("clearStaleFrame()"))
+	finalIdx := bytes.Index(src, []byte("m.finalView()"))
+	if clearIdx < 0 {
+		t.Fatal("clearStaleFrame() must be called in runLifecycleAnimated")
+	}
+	if finalIdx < 0 {
+		t.Fatal("m.finalView() must be called in runLifecycleAnimated")
+	}
+	if clearIdx >= finalIdx {
+		t.Error("clearStaleFrame() must appear before m.finalView() in the source")
+	}
+}
