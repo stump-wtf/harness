@@ -471,6 +471,12 @@ func (m *Model) View() string {
 	}
 
 	bodyHeight := m.height - 1 // 1 row for status bar
+	if bodyHeight <= 0 {
+		// A one-row pane is all status bar. Falling through would join an
+		// empty body to it and return two rows for a one-row budget — the
+		// same off-by-one overflow the truncation below exists to prevent.
+		return m.styles.StatusBar.Width(m.width).Render(m.renderStatusBar())
+	}
 	window := clipLines(m.buffer.Lines(m.styles), m.top, bodyHeight)
 
 	// Copy before touching a row. clipLines returns a window ONTO the buffer's
