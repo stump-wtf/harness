@@ -28,6 +28,13 @@ package tui
 // slot per directory let a newer foreign-kind session evict the entry a working
 // harness was matching, blanking its field. Also taught underDir that a "/"
 // workdir already ends in a separator.
+//
+// @joestump-agent 08/22/2026 - Review fix. The reserved column had no width
+// floor, so on any window at or below ~90 columns renderMetaRow handed metaLine
+// a budget of `paneBudget - 24` that went negative — metaLine's UNBOUNDED
+// sentinel — and drew the whole natural-width meta line into a 30-column pane.
+// activityGutter (view.go) now returns 0 when the pane ceiling cannot fund the
+// column and the facts beside it.
 
 import (
 	"path/filepath"

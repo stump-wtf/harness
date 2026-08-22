@@ -179,6 +179,23 @@ func (m *Model) viewDashboard() string {
 // dashboard would rather clip it than shrink it further.
 const minListWidth = 24
 
+// paneCeiling is the widest listPaneWidth will let the list pane grow: a third
+// of the window, never below the floor and never wider than the window itself.
+//
+// Separated out because activityGutter has to answer "can this window afford
+// the activity column at all?" before listPaneWidth has run, and answering it
+// from a second copy of these clamps is a second thing to drift.
+func (m *Model) paneCeiling() int {
+	c := m.w / 3
+	if c < minListWidth {
+		c = minListWidth
+	}
+	if m.w > 0 && c > m.w {
+		c = m.w
+	}
+	return c
+}
+
 // listPaneWidth sizes the list pane to its CONTENT rather than to a fixed
 // fraction of the window (#199).
 //
@@ -221,11 +238,7 @@ func (m *Model) listPaneWidth() int {
 	}
 
 	w := natural + 2 // the rounded Box border, one column each side
-	ceiling := m.w / 3
-	if ceiling < minListWidth {
-		ceiling = minListWidth
-	}
-	if w > ceiling {
+	if ceiling := m.paneCeiling(); w > ceiling {
 		w = ceiling
 	}
 	if w < minListWidth {
@@ -465,6 +478,21 @@ func (m *Model) renderMetaRow(h protocol.HarnessInfo, budget int) string {
 // sideways as harnesses picked up and finished work.
 func (m *Model) activityGutter() int {
 	if len(m.lastActions) == 0 {
+		return 0
+	}
+	// And zero on a window too narrow to pay for the facts beside it. This is
+	// not a nicety: renderMetaRow hands metaLine `budget - gutter`, and a
+	// budget <= 0 is metaLine's UNBOUNDED sentinel — so a pane that cannot
+	// fund both does not crowd the line, it emits the whole natural-width line
+	// into a 24-column pane. The list pane is capped at a third of the window,
+	// so every terminal at or below ~113 columns landed there.
+	//
+	// The facts win the tie because they are per-harness truth that appears
+	// nowhere else on the dashboard, where the action is also the entire
+	// chatroom view. Dropping the column wholesale (rather than shrinking it)
+	// keeps the all-or-nothing property above: this changes on resize, which
+	// re-lays out the cockpit anyway, and never on an event.
+	if paneInner(m.paneCeiling())-metaIndent-(actionFieldWidth+2) < minWhatWidth {
 		return 0
 	}
 	return actionFieldWidth + 2

@@ -189,3 +189,56 @@ func TestLiveActionUnderRootWorkdir(t *testing.T) {
 		t.Errorf("every path is under the root workdir, got %q", got)
 	}
 }
+
+// The activity column is not reserved on a window that cannot pay for the
+// facts beside it.
+//
+// This is the sharp edge of the gutter: renderMetaRow hands metaLine
+// `budget - gutter`, and metaLine documents a budget <= 0 as UNBOUNDED. The
+// list pane is capped at a third of the window, so at 90 columns the meta
+// budget is 24 against a 24-column gutter — and the row came back at its full
+// natural width (141 columns in this case) inside a 30-column pane, which
+// lipgloss then wraps into display lines the frame never budgeted.
+func TestMetaRowFitsBudgetOnNarrowWindows(t *testing.T) {
+	h := protocol.HarnessInfo{
+		Name: "alpha", State: "running", Adapter: "claude-code",
+		Workdir: "/srv/alpha", Backend: "native", PID: 3720939,
+		LastExitCode: 143, Model: "claude-opus-5",
+		Prompt: "summarize the overnight incident backlog and file tickets",
+	}
+	for _, w := range []int{40, 60, 80, 90, 100, 113, 120, 175, 400} {
+		m := &Model{theme: theme.Default(), w: w, h: 40, harnesses: []protocol.HarnessInfo{h}}
+		m.trackLastAction(sessionEvent(tail.HarnessClaudeCode, "/srv/alpha", "Grep", "2026-08-21T11:00:00Z"))
+
+		budget := paneInner(m.listPaneWidth()) - metaIndent
+		if got := ansi.StringWidth(m.renderMetaRow(h, budget)); got > budget+metaIndent {
+			t.Errorf("window %d: meta row is %d columns, %d over the %d the pane budgeted",
+				w, got, got-(budget+metaIndent), budget+metaIndent)
+		}
+	}
+}
+
+// Dropping the column on a narrow window keeps it all-or-nothing: every row
+// agrees with listPaneWidth's measurement, so nothing is sized for a line that
+// is not drawn. Pinned in both directions so a future threshold change cannot
+// silently turn the column off everywhere.
+func TestActivityGutterIsAllOrNothingPerWindow(t *testing.T) {
+	h := protocol.HarnessInfo{
+		Name: "alpha", State: "running", Adapter: "claude-code",
+		Workdir: "/srv/alpha", Backend: "native", PID: 4242,
+	}
+	narrow := &Model{theme: theme.Default(), w: 90, h: 40, harnesses: []protocol.HarnessInfo{h}}
+	narrow.trackLastAction(sessionEvent(tail.HarnessClaudeCode, "/srv/alpha", "Grep", "2026-08-21T11:00:00Z"))
+	if got := narrow.activityGutter(); got != 0 {
+		t.Errorf("90-column window reserved a %d-column activity gutter it cannot fund", got)
+	}
+
+	wide := &Model{theme: theme.Default(), w: 175, h: 40, harnesses: []protocol.HarnessInfo{h}}
+	wide.trackLastAction(sessionEvent(tail.HarnessClaudeCode, "/srv/alpha", "Grep", "2026-08-21T11:00:00Z"))
+	if got := wide.activityGutter(); got != actionFieldWidth+2 {
+		t.Errorf("175-column window gutter = %d, want %d", got, actionFieldWidth+2)
+	}
+	if !strings.Contains(wide.renderMetaRow(h, paneInner(wide.listPaneWidth())-metaIndent), "Grep") {
+		t.Error("the activity column vanished from a window wide enough to hold it")
+	}
+}
