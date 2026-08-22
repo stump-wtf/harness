@@ -13,10 +13,12 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
@@ -66,10 +68,14 @@ func TestAgentEventsFanOutAndRearm(t *testing.T) {
 // The chatroom buffers whether or not it is on screen. Building it on entry
 // meant opening the view showed an empty stream while a fresh scan of every
 // transcript on the machine ran.
+//
+// The model is deliberately NOT pre-built here. It was, and that fixture was
+// doing the work the assertion was meant to check: the chatroom was created
+// only in enterChatroom, so on a real run every event before the first open
+// went nowhere and the first open showed an empty stream — exactly the
+// behaviour this test names.
 func TestChatroomBuffersWhileClosed(t *testing.T) {
 	m := baseModel(120, 40)
-	m.chatroom = chatroom.New(m.theme, nil)
-	m.chatroom.SetSize(120, 40)
 	m.mode = modeDashboard
 
 	m.Update(agentEventMsg{Events: []tail.Event{
@@ -239,4 +245,68 @@ func TestStopWatcherIsIdempotent(t *testing.T) {
 		t.Fatal("stopWatcher left state behind")
 	}
 	m.stopWatcher()
+}
+
+// A batch arriving before the view has ever been opened must build the buffer,
+// not be dropped on the floor. This is the first-open case: the dashboard can
+// run for an hour before anyone presses the key, and what it collected in that
+// hour is the entire value of opening it.
+func TestFirstBatchBeforeAnyEntryIsKept(t *testing.T) {
+	m := baseModel(120, 40)
+	m.mode = modeDashboard
+	if m.chatroom != nil {
+		t.Fatal("fixture pre-built the chatroom; this test is about the case where nothing has")
+	}
+
+	m.Update(agentEventMsg{Events: []tail.Event{
+		watchEvent(tail.HarnessCrush, "edit_file", nowStamp(0)),
+		watchEvent(tail.HarnessClaudeCode, "Bash", nowStamp(0)),
+	}})
+
+	m.enterChatroom()
+	if got := m.chatroom.Buffer().Len(); got != 2 {
+		t.Fatalf("opening the chatroom for the first time showed %d events, want 2", got)
+	}
+}
+
+// An empty batch must not build a buffer or cost an anchor recomputation, but
+// must still re-arm the read.
+func TestEmptyBatchIsInert(t *testing.T) {
+	m := baseModel(120, 40)
+	m.watcher = tail.NewWatcherWithConfig(tail.DefaultWatchConfig(), tail.DefaultAdapters())
+	t.Cleanup(m.stopWatcher)
+
+	_, cmd := m.Update(agentEventMsg{})
+	if m.chatroom != nil {
+		t.Error("an empty batch built a chatroom buffer")
+	}
+	if cmd == nil {
+		t.Error("an empty batch did not re-arm the read; the stream is dead from here on")
+	}
+}
+
+// The terminal answers tea.RequestBackgroundColor after the model is built, and
+// the buffer now fills from daemon connect — so events can already be buffered,
+// in the dark default palette, when the answer lands. The rendered lines are
+// cached, so the theme has to reach the buffer and not only the style set.
+func TestBackgroundColorRestylesBufferedChatroom(t *testing.T) {
+	m := baseModel(120, 40)
+	m.Update(agentEventMsg{Events: []tail.Event{watchEvent(tail.HarnessCrush, "edit_file", nowStamp(0))}})
+	if m.chatroom == nil {
+		t.Fatal("the batch did not build a chatroom buffer")
+	}
+	m.chatroom.SetSize(120, 40)
+	// The event row, not the whole frame: the status bar restyles from the
+	// style set alone, so comparing frames passes even when every buffered
+	// line is still cached in the old palette.
+	dark := strings.SplitN(m.chatroom.View(), "\n", 2)[0]
+
+	m.Update(tea.BackgroundColorMsg{Color: lipgloss.Color("#ffffff")})
+
+	if got := strings.SplitN(m.chatroom.View(), "\n", 2)[0]; got == dark {
+		t.Errorf("the buffered event kept its dark-default styling after the terminal reported a light background: %q", got)
+	}
+	if got := m.chatroom.Buffer().Len(); got != 1 {
+		t.Fatalf("re-styling cost %d buffered events, want 1 kept", 1-got)
+	}
 }

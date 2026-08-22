@@ -9,8 +9,6 @@ package tui
 // live agent").
 
 import (
-	"log/slog"
-
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
@@ -254,9 +252,7 @@ func (m *Model) dispatchDashboardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // after the tea.WindowSizeMsg that sized the parent, and View draws nothing
 // without geometry.
 func (m *Model) enterChatroom() tea.Cmd {
-	if m.chatroom == nil {
-		m.chatroom = chatroom.New(m.theme, slog.Default())
-	}
+	m.ensureChatroom()
 	m.chatroom.SetSize(m.w, m.h)
 	m.mode = modeChatroom
 	return nil

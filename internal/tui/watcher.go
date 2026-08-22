@@ -29,10 +29,13 @@ package tui
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stump-wtf/agent-trace/tail"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
 )
 
 const (
@@ -166,16 +169,28 @@ func withinWindow(ev tail.Event, floor time.Time) bool {
 
 // onAgentEvents feeds one batch to both consumers and re-arms the read.
 func (m *Model) onAgentEvents(msg agentEventMsg) (tea.Model, tea.Cmd) {
+	if len(msg.Events) == 0 {
+		return m, m.readEvents()
+	}
+	// Built here, not on entry to the view. The buffer is the session's and the
+	// view is a window onto it, so it has to exist from the first event the
+	// watcher delivers — otherwise the first open shows an empty stream no
+	// matter how long the dashboard has been collecting.
+	m.ensureChatroom()
 	for _, ev := range msg.Events {
 		m.trackLastAction(ev)
-		if m.chatroom != nil {
-			m.chatroom.Add(ev)
-		}
+		m.chatroom.Add(ev)
 	}
-	if m.chatroom != nil && len(msg.Events) > 0 {
-		// Once per batch, not once per event: the anchor is a property of the
-		// buffer's final state, not of each arrival.
-		m.chatroom.Settle()
-	}
+	// Once per batch, not once per event: the anchor is a property of the
+	// buffer's final state, not of each arrival.
+	m.chatroom.Settle()
 	return m, m.readEvents()
+}
+
+// ensureChatroom builds the chatroom model if it does not exist yet. Cheap and
+// idempotent: New allocates a buffer and a style set and starts nothing.
+func (m *Model) ensureChatroom() {
+	if m.chatroom == nil {
+		m.chatroom = chatroom.New(m.theme, slog.Default())
+	}
 }

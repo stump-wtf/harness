@@ -125,8 +125,8 @@ type RenderableEvent struct {
 	Marks    []classify.Mark
 
 	// lines caches what RenderLines produced. An event is immutable once
-	// buffered and the styles are fixed for the session, so its rows only ever
-	// need rendering once. Without the cache both View and the scroll anchor
+	// buffered, so its rows only ever need rendering once per style set —
+	// EventBuffer.Restyle drops the cache when the theme changes under it. Without the cache both View and the scroll anchor
 	// re-render the entire buffer on every arriving event, which measured at
 	// ~92ms of CPU per event at the 10k-event cap — the update loop, and with
 	// it the whole TUI, falls permanently behind a live stream.
@@ -353,6 +353,20 @@ func (b *EventBuffer) Lines(s *Styles) []string {
 	return b.lines
 }
 
+// Restyle drops every cached rendering so the next Lines rebuilds the buffer
+// under a new style set.
+//
+// Both caches have to go. Lines short-circuits on the index, and each event
+// memoises its own rows on top of that — the per-event cache exists because the
+// styles were assumed fixed for the session, which stops being true the moment
+// the terminal reports a background colour after events are already buffered.
+func (b *EventBuffer) Restyle() {
+	for i := range b.events {
+		b.events[i].lines = nil
+	}
+	b.dirty = true
+}
+
 // admits reports whether the current filter shows re.
 func (b *EventBuffer) admits(re RenderableEvent) bool {
 	if b.filter == AllHarnesses() {
@@ -444,6 +458,22 @@ func (m *Model) Settle() {
 	if !m.buffer.Paused() {
 		m.scrollToBottom()
 	}
+}
+
+// SetTheme re-styles the view.
+//
+// The TUI renders under a dark default until the terminal answers
+// tea.RequestBackgroundColor, and the buffer now fills from daemon connect
+// rather than from the first time the view is opened — so events can be
+// buffered before the answer arrives. The line index caches rendered lines, so
+// swapping the styles alone would leave everything already buffered in the old
+// palette; the index is invalidated with it and Lines rebuilds once, lazily.
+func (m *Model) SetTheme(t *theme.Theme) {
+	if t == nil || t == m.theme {
+		return
+	}
+	m.theme, m.styles = t, NewStyles(t)
+	m.buffer.Restyle()
 }
 
 // SetError records a watcher failure for the status bar.

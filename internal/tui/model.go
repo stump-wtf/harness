@@ -216,7 +216,6 @@ type Model struct {
 	// watcher's first scan replays every transcript on the machine and cannot
 	// be asked for less, so the cut happens here.
 	watcherFloor time.Time
-	dashCancel   context.CancelFunc
 
 	quitting  bool
 	closeOnce sync.Once
@@ -267,6 +266,12 @@ func New(opts Options) *Model {
 func (m *Model) applyTheme() {
 	m.spinner.Style = m.theme.Faint()
 	m.help.Styles = help.DefaultStyles(m.theme.IsDark())
+	// The chatroom now exists from the first event rather than from the first
+	// time it is opened, so it can be holding buffered lines when the terminal
+	// finally answers with its background colour.
+	if m.chatroom != nil {
+		m.chatroom.SetTheme(m.theme)
+	}
 }
 
 // onBackgroundColor rebuilds the theme once the terminal reports its background.
