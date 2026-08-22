@@ -263,3 +263,21 @@ func stripStatus(s string) string {
 	lines := strings.Split(s, "\n")
 	return strings.Join(lines[:len(lines)-1], "\n")
 }
+
+// Ctrl-C quits; ctrl+shift+c does not. The dashboard resolves the latter to
+// "ctrl+shift+c", which the Quit binding does not carry, so it is unbound
+// there — and quitting on a key the rest of the program ignores would end the
+// session with no confirmation and no way back.
+func TestChatroomCtrlShiftCDoesNotQuit(t *testing.T) {
+	m := chatModel(t, 10)
+	_, cmd := m.onChatroomKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl | tea.ModShift})
+	if cmd != nil {
+		t.Error("ctrl+shift+c returned a command; it is unbound everywhere else")
+	}
+	if m.quitting {
+		t.Error("ctrl+shift+c quit the program")
+	}
+	if m.mode != modeChatroom {
+		t.Errorf("ctrl+shift+c left the chatroom, mode = %v", m.mode)
+	}
+}

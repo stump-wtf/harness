@@ -304,7 +304,12 @@ func (m *Model) dispatchChatroomKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Quit binding with `q`, and while the chatroom treated the whole binding
 	// as "leave the view" there was no way to exit harness from in here — Ctrl-C
 	// dropped you on the dashboard instead.
-	case msg.Code == 'c' && msg.Mod.Contains(tea.ModCtrl):
+	//
+	// Exactly ModCtrl, not "contains" it: key.Matches on the dashboard resolves
+	// ctrl+shift+c to "ctrl+shift+c", which the binding does not carry, so
+	// there it is unbound. Quitting is not the kind of thing to do on a key the
+	// rest of the program ignores.
+	case msg.Code == 'c' && msg.Mod == tea.ModCtrl:
 		m.quitting = true
 		m.stopReadLoop()
 		return m, tea.Quit
