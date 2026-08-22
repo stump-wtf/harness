@@ -27,6 +27,19 @@ type Policy struct {
 	// BackoffCap is the ceiling for the capped-exponential backoff.
 	BackoffCap time.Duration
 
+	// HealthyRun is how long a single run must last before it counts as
+	// "came up successfully" and clears the consecutive-failure counter that
+	// drives Backoff Give-Up.
+	//
+	// Deliberately separate from CrashWindow. CrashWindow governs fast-flap
+	// detection and backoff, and is short by design (10s). Reusing it to clear
+	// the give-up counter made give-up unreachable for anything that fails
+	// RELIABLY but SLOWLY: every run outlived the window, so the counter reset
+	// every time, flapping was never set, and MaxRestarts never applied. Two
+	// scheduled sweeps restarted 6,212 times that way, reporting `flapping no`
+	// throughout, until they exhausted the model provider's weekly quota.
+	HealthyRun time.Duration
+
 	// MaxRestarts is the number of consecutive flapping restart attempts the
 	// daemon makes before giving up and parking the harness in `failed`
 	// (SPEC-0003 REQ "Backoff Give-Up"). Zero or negative means "never give
@@ -45,6 +58,7 @@ func DefaultPolicy() Policy {
 	return Policy{
 		CrashWindow:    10 * time.Second,
 		CrashThreshold: 3,
+		HealthyRun:     5 * time.Minute,
 		BackoffBase:    1 * time.Second,
 		BackoffCap:     30 * time.Second,
 		MaxRestarts:    5,
@@ -69,6 +83,12 @@ func (p Policy) normalize() Policy {
 	}
 	if p.BackoffCap < p.BackoffBase {
 		p.BackoffCap = p.BackoffBase
+	}
+	if p.HealthyRun <= 0 {
+		// Derived from CrashWindow so a test policy that shrinks every duration
+		// to milliseconds gets a proportionally short healthy threshold. With
+		// the 10s production CrashWindow this is the documented 5 minutes.
+		p.HealthyRun = 30 * p.CrashWindow
 	}
 	if p.StopGrace <= 0 {
 		p.StopGrace = 10 * time.Second

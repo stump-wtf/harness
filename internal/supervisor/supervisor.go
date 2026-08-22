@@ -108,14 +108,19 @@ type Supervisor struct {
 
 	restartCount int
 	crashTimes   []time.Time // exit timestamps within the crash window
-	flapAttempts int         // consecutive flapping restarts (drives backoff/give-up)
-	flapping     bool
-	startedAt    time.Time
-	lastExitCode int
-	lastExitAt   time.Time
-	created      time.Time
-	lastStarted  time.Time
-	nextRetryIn  time.Duration
+	flapAttempts int         // consecutive flapping restarts (drives backoff)
+	// consecFailures counts failed exits since the last run that came up
+	// successfully — a clean exit, or one that lasted HealthyRun. It drives
+	// give-up and is deliberately independent of CrashWindow, which only sees
+	// FAST crashes and so left slow-but-reliable failures restarting forever.
+	consecFailures int
+	flapping       bool
+	startedAt      time.Time
+	lastExitCode   int
+	lastExitAt     time.Time
+	created        time.Time
+	lastStarted    time.Time
+	nextRetryIn    time.Duration
 
 	restartTimer  *time.Timer
 	log           *rotatingLog
@@ -498,10 +503,31 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		return
 	}
 
+	// A scheduled harness is a cron one-shot: its schedule IS its retry
+	// mechanism (SPEC-0008 REQ "Firing And Overlap"). Respawning it here would
+	// double-drive the cadence, and a run that fails every time would retry as
+	// fast as it can fail rather than on the schedule. Land the exit and let
+	// the next firing be the retry — the scheduler starts from stopped and
+	// failed alike, so this re-arms nothing and disarms nothing.
+	if s.harness.Schedule != "" {
+		s.resetCrashState()
+		if spawnFailed || code != 0 {
+			if s.state == core.StateRunning {
+				// running→failed is not a legal edge; route through degraded.
+				s.transition(core.StateDegraded)
+			}
+			s.transition(core.StateFailed)
+		} else {
+			s.transition(core.StateStopped)
+		}
+		return
+	}
+
 	// Restart policy gates automatic respawn (core.RestartPolicy, mirroring
 	// Docker Compose's `restart` directive; SPEC-0003 REQ "Restart On Exit").
 	if !s.harness.Restart.ShouldRestart(code) {
 		s.enabled = false // honor the policy: this exit is final
+		s.consecFailures = 0
 		// This harness will never retry on its own: clear flap bookkeeping so
 		// the final snapshot (and state.json) don't advertise a bogus
 		// "retry in Ns" / flapping marker, and so a later manual start begins
@@ -519,9 +545,24 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 	}
 
 	// Determine whether the just-ended run survived the crash window; if so the
-	// counter resets before we count this exit.
+	// flap counter resets before we count this exit.
 	if !spawnFailed && !s.startedAt.IsZero() && now.Sub(s.startedAt) > s.policy.CrashWindow {
 		s.resetCrashState()
+	}
+
+	// Consecutive-failure accounting, on its own clock. A run only clears the
+	// counter by succeeding — exiting cleanly, or lasting HealthyRun — never
+	// merely by outliving the (short) crash window. That distinction is the
+	// whole fix: a harness failing reliably every ~40s used to reset the flap
+	// counter on every single run, so it never tripped `flapping` and the
+	// give-up below was unreachable.
+	failed := spawnFailed || code != 0
+	healthy := !spawnFailed && !s.startedAt.IsZero() && now.Sub(s.startedAt) > s.policy.HealthyRun
+	if !failed || healthy {
+		s.consecFailures = 0
+	}
+	if failed {
+		s.consecFailures++
 	}
 
 	// Record this exit and evaluate crash-loop status.
@@ -535,9 +576,11 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		s.flapAttempts++
 	}
 
-	// Give-up: exhausted flapping restart attempts → failed (SPEC-0003 REQ
-	// "Backoff Give-Up").
-	if s.flapping && s.policy.MaxRestarts > 0 && s.flapAttempts > s.policy.MaxRestarts {
+	// Give-up: too many consecutive failures → failed (SPEC-0003 REQ "Backoff
+	// Give-Up"). This used to be gated on `flapping`, which made it reachable
+	// only for crashes fast enough to land inside CrashWindow — see
+	// consecFailures above.
+	if s.policy.MaxRestarts > 0 && s.consecFailures > s.policy.MaxRestarts {
 		if s.state == core.StateRunning {
 			s.transition(core.StateDegraded)
 		}
@@ -681,7 +724,12 @@ func (s *Supervisor) resetCrashState() {
 }
 
 // clearFailLatch releases a failed harness so it can start again.
+//
+// Called from every deliberate start path — `start`, `restart`, and a schedule
+// firing — so it is also where the consecutive-failure budget resets: each
+// deliberate attempt gets a full budget, whatever the previous run did.
 func (s *Supervisor) clearFailLatch() {
+	s.consecFailures = 0
 	if s.state == core.StateFailed {
 		// failed→starting is the only legal edge out; beginStart makes that
 		// move. Nothing to do here but reset crash bookkeeping.
