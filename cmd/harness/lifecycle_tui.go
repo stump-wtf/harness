@@ -16,6 +16,8 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"charm.land/bubbles/v2/progress"
@@ -309,26 +311,37 @@ func (m *lifecycleModel) result() error {
 	return fmt.Errorf("interrupted after %d of %d harnesses", m.idx, len(m.names))
 }
 
-// clearStaleFrame writes the terminal cleanup sequence that removes leftover
-// characters Bubble Tea's inline renderer leaves on exit.
+// staleFrameCleanup wipes whatever Bubble Tea's inline renderer left on the
+// current line: SGR reset, carriage return, erase to end of line.
 //
-// Bubble Tea v2's cursedRenderer.close() writes several reset sequences
-// (KittyKeyboard(0,1) → ESC[=0;1u, ResetModifyOtherKeys → ESC[>4m,
-// ResetModeBracketedPaste → ESC[?2004l, ResetModeUnicodeCore → ESC[?2027l)
-// to restore terminal state. On terminals that don't support the Kitty
-// keyboard protocol, ESC[=0;1u is not recognized as a CSI sequence and
-// appears as literal text — "weird characters with semicolons" on the
-// prompt. We can't prevent Bubble Tea from writing these, but we can clean
-// them up: a carriage return + erase-to-end-of-line removes any leaked
-// literal characters from the current line, and SGR reset clears any
-// styling that was left active.
+// Bubble Tea v2's cursedRenderer.close() writes several reset sequences on
+// exit (KittyKeyboard(0,1) → ESC[=0;1u, ResetModifyOtherKeys → ESC[>4m,
+// ResetModeBracketedPaste → ESC[?2004l, ResetModeUnicodeCore → ESC[?2027l).
+// On a terminal that does not take ESC[=0;1u as a CSI it lands as literal
+// text — "weird characters with semicolons" on the prompt. We cannot stop
+// Bubble Tea writing them, so we erase the line they landed on. Erasing the
+// LINE and not the screen is the whole point: the earlier fix for the
+// duplicated summary reached for ESC[2J and took the user's prior output
+// with it.
+//
+// The animated path is TTY-gated by its caller (main.go), so these bytes
+// never reach a pipe or a redirect.
+const staleFrameCleanup = "\x1b[0m\r\x1b[K"
+
+// writeFinalRecord clears the stale frame and writes the permanent record.
+//
+// One Fprint, not two statements: the cleanup is only correct BEFORE the
+// record — reversed, it erases the summary it was meant to protect — and
+// making that structural is worth more than a test asserting two calls happen
+// in the right order. View renders nothing once quitting is set, so the frame
+// Bubble Tea leaves behind is empty and this is the only copy that reaches the
+// terminal.
 //
 // @joestump-agent 08/22/2026 - Added to fix the stray-semicolon issue that
-// persisted after the empty-View fix. The empty View prevented the
-// duplicate summary but did not address the Kitty keyboard reset leak.
-func clearStaleFrame() {
-	// SGR reset, carriage return, erase to end of line.
-	fmt.Print("\x1b[0m\r\x1b[K")
+// persisted after the empty-View fix. The empty View prevented the duplicate
+// summary but did not address the Kitty keyboard reset leak.
+func writeFinalRecord(w io.Writer, final string) {
+	fmt.Fprint(w, staleFrameCleanup+final)
 }
 
 // runLifecycleAnimated renders the animated --all run and reports its verdict.
@@ -340,10 +353,11 @@ func clearStaleFrame() {
 // renders an empty frame once quitting is set, so Bubble Tea has nothing to
 // leave behind.
 //
-// @joestump-agent 08/22/2026 - Added clearStaleFrame to wipe the Kitty
-// keyboard reset sequence (ESC[=0;1u) and other close() remnants that leak as
-// literal "weird characters with semicolons" on terminals without Kitty
-// protocol support.
+// @joestump-agent 08/22/2026 - The tail moved into writeFinalRecord, which
+// wipes the Kitty keyboard reset (ESC[=0;1u) and the other close() remnants
+// that leak as literal "weird characters with semicolons" on terminals without
+// Kitty protocol support, then writes the record — in one call, so the order
+// cannot be got wrong.
 func runLifecycleAnimated(verb string, c *client.Client, names []string) error {
 	m := newLifecycleModel(verb, c, names)
 	if _, err := tea.NewProgram(m).Run(); err != nil {
@@ -351,11 +365,6 @@ func runLifecycleAnimated(verb string, c *client.Client, names []string) error {
 		// errors collected so far plus the render failure itself.
 		m.errs = append(m.errs, fmt.Sprintf("render: %v", err))
 	}
-	// Clean up any leaked escape sequences from Bubble Tea's close(), then
-	// print the permanent record. View renders nothing once quitting is
-	// set, so the frame Bubble Tea leaves behind is empty and this is the
-	// only copy that reaches the terminal.
-	clearStaleFrame()
-	fmt.Print(m.finalView())
+	writeFinalRecord(os.Stdout, m.finalView())
 	return m.result()
 }
