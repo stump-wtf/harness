@@ -5,8 +5,13 @@ package main
 // --name slug override.
 
 import (
+	"os"
 	"reflect"
 	"testing"
+
+	"github.com/charmbracelet/x/xpty"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
 )
 
 func TestScratchpadDefKindDispatch(t *testing.T) {
@@ -97,5 +102,55 @@ func TestRunCmdDetachFlagDefault(t *testing.T) {
 	}
 	if got := cmd.Flags().Args(); !reflect.DeepEqual(got, []string{"claude"}) {
 		t.Errorf("positional args = %v, want [claude]", got)
+	}
+}
+
+// The attached view renders to stdout and reads keystrokes from stdin, so the
+// interactive check has to cover both. Guarding on stdout alone drops a caller
+// whose stdin is a pipe into an alt-screen with no key it can act on — and the
+// caller never asked to be attached in the first place.
+//
+// A real PTY is needed on the stdout side or the assertion proves nothing:
+// under `go test` neither end is a terminal, so a stdout-only check would
+// report "not interactive" for the right answer by accident.
+func TestRunIsInteractiveRequiresBothEnds(t *testing.T) {
+	ptmx, err := xpty.NewPty(80, 24)
+	if err != nil {
+		t.Skipf("no pty available: %v", err)
+	}
+	defer ptmx.Close()
+	tty, ok := ptmx.(interface{ Name() string })
+	if !ok {
+		t.Skip("pty implementation exposes no tty path")
+	}
+	term, err := os.OpenFile(tty.Name(), os.O_RDWR, 0)
+	if err != nil {
+		t.Skipf("cannot open the pty slave: %v", err)
+	}
+	defer term.Close()
+
+	origIn, origOut := os.Stdin, os.Stdout
+	t.Cleanup(func() { os.Stdin, os.Stdout = origIn, origOut })
+
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	os.Stdout = term
+	if !cliui.WriterIsTTY(os.Stdout) {
+		t.Fatal("precondition: the pty slave did not report as a terminal")
+	}
+
+	os.Stdin = term
+	if !runIsInteractive() {
+		t.Error("a terminal on both ends reported as non-interactive")
+	}
+
+	os.Stdin = pr
+	if runIsInteractive() {
+		t.Error("a piped stdin reported an interactive terminal, so run would attach a view with no keys")
 	}
 }

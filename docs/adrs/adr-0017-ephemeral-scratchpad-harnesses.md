@@ -79,8 +79,9 @@ characters, retried on collision with any registered name. The reply carries
 the name; the client prints it, then attaches to it — **resolved 2026-08-22**:
 `harness run` is `tmux new-session`, not `tmux new-session -d`, so the default
 completes the gesture rather than leaving a second `harness attach` step
-required. `--detach` opts out (the `-d` equivalent), as do `--json` and a
-piped/redirected stdout, since none of those have a terminal to attach to.
+required. `--detach` opts out (the `-d` equivalent), as do `--json` and
+piped/redirected stdio at either end, since none of those have a terminal to
+attach to.
 `--name` overrides the slug for people who care; uniqueness is still enforced
 by the suffix.
 

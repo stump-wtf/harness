@@ -4,15 +4,15 @@ package main
 // default. `harness run` is the tmux `new-session` gesture, not `new-session
 // -d`: by default it drops the caller straight into the scratchpad it just
 // minted. These tests pin that default (and its opt-outs: --detach, --json,
-// and a non-TTY stdout) against a real in-process daemon so a future change
+// and non-interactive stdio) against a real in-process daemon so a future change
 // to cmdRun can't silently flip the default back to "print and exit" without
 // a test noticing.
 //
 // Two package-level seams make this testable without a real PTY or Bubble
 // Tea program (mirrors exitFn in root.go):
 //   - runAttachFn stands in for cmdAttach.
-//   - runStdoutIsTTY stands in for cliui.WriterIsTTY(os.Stdout), which is
-//     always false under `go test` (its stdout is a pipe, never a terminal).
+//   - runIsInteractive stands in for the stdout+stdin TTY check, which is
+//     always false under `go test` (its stdio is pipes, never a terminal).
 
 import (
 	"encoding/json"
@@ -37,13 +37,13 @@ func stubAttach(t *testing.T, attachErr error) *[]verbOpts {
 	return &calls
 }
 
-// stubTTY forces runStdoutIsTTY to report isTTY, restoring the real
+// stubTTY forces runIsInteractive to report isTTY, restoring the real
 // implementation on test cleanup.
 func stubTTY(t *testing.T, isTTY bool) {
 	t.Helper()
-	orig := runStdoutIsTTY
-	runStdoutIsTTY = func() bool { return isTTY }
-	t.Cleanup(func() { runStdoutIsTTY = orig })
+	orig := runIsInteractive
+	runIsInteractive = func() bool { return isTTY }
+	t.Cleanup(func() { runIsInteractive = orig })
 }
 
 // sleeperDef is a scratchpad definition that idles rather than exiting
@@ -157,7 +157,7 @@ func TestCmdRunNonTTYSkipsAttach(t *testing.T) {
 		t.Fatalf("cmdRun: %v", err)
 	}
 	if len(*calls) != 0 {
-		t.Fatalf("runAttachFn called %d times, want 0 (non-TTY stdout must skip attach)", len(*calls))
+		t.Fatalf("runAttachFn called %d times, want 0 (non-interactive stdio must skip attach)", len(*calls))
 	}
 
 	hs, err := c.List()

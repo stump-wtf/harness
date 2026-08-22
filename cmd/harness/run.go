@@ -7,9 +7,9 @@ package main
 // `new-session -d`. The first positional selects the harness kind when it
 // names one; otherwise the whole invocation runs as a generic command (`sh
 // -c`). `--kind` overrides the heuristic for the rare collision. `--detach`
-// (or a non-interactive stdout: piped, or `--json`) skips the attach and
-// leaves the scratchpad running in the background, matching the pre-attach
-// behavior.
+// (or non-interactive stdio: either end piped or redirected, or `--json`)
+// skips the attach and leaves the scratchpad running in the background,
+// matching the pre-attach behavior.
 
 import (
 	"fmt"
@@ -29,11 +29,18 @@ import (
 // alt-screen program (mirrors exitFn in root.go).
 var runAttachFn = cmdAttach
 
-// runStdoutIsTTY is a seam over cliui.WriterIsTTY(os.Stdout) so tests can
-// simulate an interactive terminal without allocating a real PTY (mirrors
-// exitFn in root.go). go test's stdout is never a terminal, so without this
-// seam the auto-attach branch below would be untestable.
-var runStdoutIsTTY = func() bool { return cliui.WriterIsTTY(os.Stdout) }
+// runIsInteractive is a seam over the TTY check so tests can simulate an
+// interactive terminal without allocating a real PTY (mirrors exitFn in
+// root.go). go test's stdio is never a terminal, so without this seam the
+// auto-attach branch below would be untestable.
+//
+// Both ends, not just stdout. The attached view renders to stdout but reads
+// keystrokes from stdin, so a terminal on one end and a pipe on the other is
+// not somewhere to drop a caller who did not ask to be attached: it paints an
+// alt-screen with no key it can act on, and the only way out is the signal.
+var runIsInteractive = func() bool {
+	return cliui.WriterIsTTY(os.Stdout) && cliui.IsTTY(os.Stdin)
+}
 
 // kindAliases maps a first positional to the adapter enum (ADR-0011). "claude"
 // is the word people type; the enum value is "claude-code".
@@ -116,8 +123,9 @@ func scratchpadDef(kind, name string, args []string) (protocol.ProjectHarness, s
 // cmdRun issues the scratch_run, prints the minted name, and — by default —
 // attaches to it, the tmux `new-session` gesture rather than `new-session
 // -d`. Attaching is skipped for `--json` (a machine consumer, not a
-// terminal), `--detach`, and a non-TTY stdout (piped/redirected: there is no
-// terminal to attach to), in which case `run` behaves exactly as before —
+// terminal), `--detach`, and non-interactive stdio (either end piped or
+// redirected: there is no terminal to attach to), in which case `run` behaves
+// exactly as before —
 // print the name and return, leaving the scratchpad running.
 func cmdRun(c *client.Client, o verbOpts, def protocol.ProjectHarness, detach bool) error {
 	data, err := c.ScratchRun(def, o.name)
@@ -128,7 +136,7 @@ func cmdRun(c *client.Client, o verbOpts, def protocol.ProjectHarness, detach bo
 		return printJSON(data)
 	}
 	fmt.Fprintf(os.Stdout, "%s %s → %s\n", stateGlyph(data.Info.State), data.Name, data.Info.State)
-	if detach || !runStdoutIsTTY() {
+	if detach || !runIsInteractive() {
 		return nil
 	}
 	ao := o

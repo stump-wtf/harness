@@ -75,10 +75,13 @@ into it immediately, not to run a second command to get there. This SHALL be
 skipped, leaving the scratchpad running and the client returning immediately
 after printing the name (the pre-attach behavior), when: `--detach` is given
 (the `tmux new-session -d` equivalent); `--json` is given (a machine
-consumer has no terminal to attach to); or stdout is not a terminal (piped or
-redirected — there is nothing to attach). Detecting a non-terminal stdout
-SHALL use the same per-writer TTY check the animated `--all` lifecycle view
-uses (SPEC-0002), so the two verbs agree on what counts as interactive.
+consumer has no terminal to attach to); or either end of stdio is not a
+terminal (piped or redirected — there is nothing to attach). Both ends are
+checked because the attached view renders to stdout and reads keystrokes from
+stdin: a terminal on one end and a pipe on the other yields an alt-screen the
+caller cannot act on. Detecting a non-terminal stdout SHALL use the same
+per-writer TTY check the animated `--all` lifecycle view uses (SPEC-0002), so
+the two verbs agree on what counts as interactive.
 
 #### Scenario: Interactive run attaches automatically
 
@@ -102,10 +105,10 @@ uses (SPEC-0002), so the two verbs agree on what counts as interactive.
 - **THEN** the client prints the `scratch_run` reply as JSON and exits
   without attaching
 
-#### Scenario: Piped stdout never attaches
+#### Scenario: Piped stdio never attaches
 
 - **WHEN** `harness run claude opus-5` runs with stdout redirected to a file
-  or pipe
+  or pipe, **or** with stdin redirected while stdout is still a terminal
 - **THEN** the client prints the minted name and exits without attaching,
   identically to `--detach`
 
