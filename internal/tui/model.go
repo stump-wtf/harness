@@ -203,7 +203,7 @@ type Model struct {
 	// directory, for the dashboard's live activity field. Fed by a background
 	// tail.Watcher that runs while the daemon connection is live, and resolved
 	// onto harness rows at render time (activity.go).
-	lastActions map[string]sessionActivity
+	lastActions map[activityKey]sessionActivity
 	// dashWatcher is the background watcher for the dashboard's live action
 	// field. Separate from the chatroom's watcher (which only runs in
 	// modeChatroom) so the dashboard gets live updates without entering

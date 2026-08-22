@@ -156,3 +156,36 @@ func TestMetaRowFitsBudgetWithActivityColumn(t *testing.T) {
 		t.Fatalf("meta row is %d columns, budget is %d: %q", got, budget+metaIndent, row)
 	}
 }
+
+// The kind is filtered on at read time, so it has to be part of the key. With
+// one slot per directory, an interactive claude-code session in a crush
+// harness's workdir evicted the crush entry and the harness — still working —
+// rendered blank. That is the same "wrong row" failure this file exists to fix,
+// arriving from the other direction.
+func TestLiveActionSurvivesForeignSessionInSameDir(t *testing.T) {
+	m := &Model{}
+	m.trackLastAction(sessionEvent(tail.HarnessCrush, "/srv/app", "CrushBash", "2026-08-21T11:00:00Z"))
+	m.trackLastAction(sessionEvent(tail.HarnessClaudeCode, "/srv/app", "ClaudeGrep", "2026-08-21T11:30:00Z"))
+
+	crush := m.liveAction(protocol.HarnessInfo{Adapter: "crush", Workdir: "/srv/app"})
+	if !strings.Contains(crush, "CrushBash") {
+		t.Errorf("a foreign session in the same directory evicted the crush harness's action: %q", crush)
+	}
+
+	// And the claude-code harness still sees its own, so the key split did not
+	// simply trade one eviction for the opposite one.
+	claude := m.liveAction(protocol.HarnessInfo{Adapter: "claude-code", Workdir: "/srv/app"})
+	if !strings.Contains(claude, "ClaudeGrep") {
+		t.Errorf("claude-code harness lost its own action: %q", claude)
+	}
+}
+
+// filepath.Clean leaves the root as "/", which already ends in the separator.
+func TestLiveActionUnderRootWorkdir(t *testing.T) {
+	m := &Model{}
+	m.trackLastAction(sessionEvent(tail.HarnessClaudeCode, "/srv/app", "Bash", "2026-08-21T11:00:00Z"))
+
+	if got := m.liveAction(protocol.HarnessInfo{Adapter: "claude-code", Workdir: "/"}); !strings.Contains(got, "Bash") {
+		t.Errorf("every path is under the root workdir, got %q", got)
+	}
+}

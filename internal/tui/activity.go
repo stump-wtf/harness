@@ -22,6 +22,12 @@ package tui
 // was keyed by adapter kind, so every harness sharing an adapter showed one
 // shared action — sourced from any session on the machine, harness-started or
 // not — and its variable width re-elided the cmd path on every event.
+//
+// @joestump 08/22/2026 - Review fix. Re-keyed lastActions by (workdir, kind)
+// rather than workdir alone: the kind is filtered on at read time, so a single
+// slot per directory let a newer foreign-kind session evict the entry a working
+// harness was matching, blanking its field. Also taught underDir that a "/"
+// workdir already ends in a separator.
 
 import (
 	"path/filepath"
@@ -46,10 +52,23 @@ import (
 // "[BADGE] Tool HH:MM:SS"; anything longer is truncated, not accommodated.
 const actionFieldWidth = 22
 
-// sessionActivity is the newest action observed in one agent session's working
-// directory, with the harness kind that produced it.
+// activityKey identifies one stream of agent activity: a working directory AND
+// the harness kind observed in it.
+//
+// The kind belongs in the KEY, not beside the value. liveAction filters on it,
+// so keying on the directory alone lets the newest session in a directory evict
+// an older one of a different kind — and the harness whose kind was evicted
+// then renders blank while it is demonstrably working. Two agents sharing a
+// directory is not exotic: it is what happens the moment anyone opens an
+// interactive session in a harness's workdir, which the "Known limitation"
+// below is already about.
+type activityKey struct {
+	cwd  string
+	kind tail.Harness
+}
+
+// sessionActivity is the newest action observed for one activityKey.
 type sessionActivity struct {
-	kind   tail.Harness
 	action string
 	at     time.Time
 }
@@ -77,16 +96,17 @@ func (m *Model) trackLastAction(ev tail.Event) {
 	if ts, err := time.Parse(time.RFC3339, ev.Classified.Timestamp); err == nil {
 		at = ts
 	}
-	if prev, ok := m.lastActions[cwd]; ok && prev.at.After(at) {
+	key := activityKey{cwd: cwd, kind: ev.Session.Harness}
+	if prev, ok := m.lastActions[key]; ok && prev.at.After(at) {
 		// The watcher replays a session's history in file order, but two
-		// sessions in one directory interleave arbitrarily; keep the newest.
+		// sessions of the same kind in one directory interleave arbitrarily;
+		// keep the newest.
 		return
 	}
 	if m.lastActions == nil {
-		m.lastActions = make(map[string]sessionActivity)
+		m.lastActions = make(map[activityKey]sessionActivity)
 	}
-	m.lastActions[cwd] = sessionActivity{
-		kind:   ev.Session.Harness,
+	m.lastActions[key] = sessionActivity{
 		action: action + " " + chatroom.FormatTime(ev.Classified.Timestamp),
 		at:     at,
 	}
@@ -111,8 +131,8 @@ func (m *Model) liveAction(h protocol.HarnessInfo) string {
 	}
 	var best sessionActivity
 	var found bool
-	for cwd, act := range m.lastActions {
-		if !underDir(cwd, work) || !adapterHandles(h.Adapter, act.kind) {
+	for key, act := range m.lastActions {
+		if !underDir(key.cwd, work) || !adapterHandles(h.Adapter, key.kind) {
 			continue
 		}
 		if !found || act.at.After(best.at) {
@@ -159,7 +179,13 @@ func underDir(path, dir string) bool {
 	if path == dir {
 		return true
 	}
-	return strings.HasPrefix(path, dir+string(filepath.Separator))
+	prefix := dir
+	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
+		// filepath.Clean leaves the root as "/", which already ends in the
+		// separator; appending a second one matches nothing.
+		prefix += string(filepath.Separator)
+	}
+	return strings.HasPrefix(path, prefix)
 }
 
 // cleanDir normalizes a directory for comparison. The empty string stays empty
