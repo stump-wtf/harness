@@ -76,8 +76,13 @@ so `harness run claude opus-5` and `harness run htop` both work), the rest are
 its args. The daemon mints the name: `<slug>-<suffix>`, where the slug is the
 sanitized invocation (e.g. `claude-opus-5`) and the suffix is 4 random base36
 characters, retried on collision with any registered name. The reply carries
-the name; the client prints it. `--name` overrides the slug for people who
-care; uniqueness is still enforced by the suffix.
+the name; the client prints it, then attaches to it — **resolved 2026-08-22**:
+`harness run` is `tmux new-session`, not `tmux new-session -d`, so the default
+completes the gesture rather than leaving a second `harness attach` step
+required. `--detach` opts out (the `-d` equivalent), as do `--json` and a
+piped/redirected stdout, since none of those have a terminal to attach to.
+`--name` overrides the slug for people who care; uniqueness is still enforced
+by the suffix.
 
 ### Lifecycle
 
@@ -95,8 +100,10 @@ matching session semantics rather than service semantics.
 ### Consequences
 
 * Good, because `screen`/`tmux`/`shpool`'s exact use case — "a terminal thing
-  for a while, then gone" — becomes `harness run` + `harness attach` + rm,
-  inside the one supervisor that already owns PTYs and scrollback.
+  for a while, then gone" — becomes `harness run` (which drops you straight
+  in, per the 2026-08-22 auto-attach resolution above) + rm, inside the one
+  supervisor that already owns PTYs and scrollback. `--detach` is there for
+  the rarer "start it and walk away" case.
 * Good, because the durable/ephemeral split is now structural: persistence is
   keyed on provenance, and `scratch` provenance is excluded from Save by
   construction — no flag-day, no per-callsite discipline.

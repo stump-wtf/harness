@@ -12,27 +12,27 @@ requires: [SPEC-0002, SPEC-0003, SPEC-0004]
 `harness run` creates an ad-hoc, throwaway supervised session — the
 screen/tmux/shpool replacement — with no config file and no name ceremony: `harness
 run claude opus-5` mints `claude-opus-5-x4yx`, starts it under the daemon, and
-prints the name. Scratchpads are the deliberately ephemeral counterpart to
-projects (SPEC-0004): they are never persisted, vanish on daemon restart, and are
-torn down with `harness rm`. See **ADR-0017**.
+attaches to it, exactly like `tmux new-session`. Scratchpads are the
+deliberately ephemeral counterpart to projects (SPEC-0004): they are never
+persisted, vanish on daemon restart, and are torn down with `harness rm`. See
+**ADR-0017**.
 
 ## Requirements
 
 ### Requirement: Scratchpad Creation (`harness run`)
 
-`harness run [--workdir DIR] [--name SLUG] [--kind KIND] ARG [ARG...]` SHALL
-require a running daemon, map its positionals onto a harness definition (first
-positional selects the harness kind per ADR-0011's enum — `crush`,
-`claude-code`, `codex`, `generic` — through a small alias table (`claude` →
-`claude-code`; the word people type, not the enum value) and remaining
-positionals are its args; a first positional that is not a known kind or
-alias SHALL be treated as a `generic` command with all positionals as its
-argv, overridable by `--kind`), and send a
-`scratch_run` control request (SPEC-0002) carrying the definition. The daemon
-SHALL register the supervisor, start it, and reply with the minted name and
-fresh state; the client SHALL print the name. `--workdir` SHALL resolve
-relative to the caller's cwd (the client expands it to an absolute path before
-sending).
+`harness run [--workdir DIR] [--name SLUG] [--kind KIND] [--detach] ARG
+[ARG...]` SHALL require a running daemon, map its positionals onto a harness
+definition (first positional selects the harness kind per ADR-0011's enum —
+`crush`, `claude-code`, `codex`, `generic` — through a small alias table
+(`claude` → `claude-code`; the word people type, not the enum value) and
+remaining positionals are its args; a first positional that is not a known
+kind or alias SHALL be treated as a `generic` command with all positionals as
+its argv, overridable by `--kind`), and send a `scratch_run` control request
+(SPEC-0002) carrying the definition. The daemon SHALL register the
+supervisor, start it, and reply with the minted name and fresh state; the
+client SHALL print the name. `--workdir` SHALL resolve relative to the
+caller's cwd (the client expands it to an absolute path before sending).
 
 #### Scenario: Agent scratchpad
 
@@ -64,6 +64,50 @@ sending).
 - **WHEN** `harness run` runs with no daemon on the socket
 - **THEN** it fails with the standard daemon-unreachable error and nothing is
   registered
+
+### Requirement: Attach By Default
+
+After a successful `scratch_run`, the client SHALL attach to the minted
+scratchpad exactly as `harness attach NAME` would (Requirement "Supervisor
+Parity"), the same gesture as `tmux new-session` dropping the caller straight
+into the new session — the entire point of a throwaway pad is to start typing
+into it immediately, not to run a second command to get there. This SHALL be
+skipped, leaving the scratchpad running and the client returning immediately
+after printing the name (the pre-attach behavior), when: `--detach` is given
+(the `tmux new-session -d` equivalent); `--json` is given (a machine
+consumer has no terminal to attach to); or stdout is not a terminal (piped or
+redirected — there is nothing to attach). Detecting a non-terminal stdout
+SHALL use the same per-writer TTY check the animated `--all` lifecycle view
+uses (SPEC-0002), so the two verbs agree on what counts as interactive.
+
+#### Scenario: Interactive run attaches automatically
+
+- **WHEN** `harness run claude opus-5` runs at an interactive terminal with
+  neither `--detach` nor `--json`
+- **THEN** the client prints the minted name and then attaches to it, exactly
+  as a subsequent `harness attach claude-opus-5-<suffix>` would
+
+#### Scenario: `--detach` leaves it running in the background
+
+- **WHEN** `harness run --detach claude opus-5` runs at an interactive
+  terminal
+- **THEN** the client prints the minted name and exits without attaching; the
+  scratchpad keeps running and is reachable via `harness attach` or `harness
+  logs`
+
+#### Scenario: `--json` never attaches
+
+- **WHEN** `harness run --json claude opus-5` runs, interactive terminal or
+  not
+- **THEN** the client prints the `scratch_run` reply as JSON and exits
+  without attaching
+
+#### Scenario: Piped stdout never attaches
+
+- **WHEN** `harness run claude opus-5` runs with stdout redirected to a file
+  or pipe
+- **THEN** the client prints the minted name and exits without attaching,
+  identically to `--detach`
 
 ### Requirement: Name Minting
 

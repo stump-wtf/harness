@@ -3,9 +3,13 @@ package main
 // Governing: ADR-0017 (ephemeral scratchpad harnesses), SPEC-0011 REQ
 // "Scratchpad Creation" — the screen/tmux/shpool replacement: `harness run
 // claude opus-5` mints a randomly-named scratchpad, starts it, prints the
-// name, and touches no files. The first positional selects the harness kind
-// when it names one; otherwise the whole invocation runs as a generic command
-// (`sh -c`). `--kind` overrides the heuristic for the rare collision.
+// name, and attaches to it — the tmux `new-session` gesture, not
+// `new-session -d`. The first positional selects the harness kind when it
+// names one; otherwise the whole invocation runs as a generic command (`sh
+// -c`). `--kind` overrides the heuristic for the rare collision. `--detach`
+// (or a non-interactive stdout: piped, or `--json`) skips the attach and
+// leaves the scratchpad running in the background, matching the pre-attach
+// behavior.
 
 import (
 	"fmt"
@@ -16,8 +20,20 @@ import (
 	"github.com/spf13/cobra"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
+	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
+
+// runAttachFn is a seam over cmdAttach so tests can assert whether/how
+// `harness run` would have attached without actually launching the Bubble Tea
+// alt-screen program (mirrors exitFn in root.go).
+var runAttachFn = cmdAttach
+
+// runStdoutIsTTY is a seam over cliui.WriterIsTTY(os.Stdout) so tests can
+// simulate an interactive terminal without allocating a real PTY (mirrors
+// exitFn in root.go). go test's stdout is never a terminal, so without this
+// seam the auto-attach branch below would be untestable.
+var runStdoutIsTTY = func() bool { return cliui.WriterIsTTY(os.Stdout) }
 
 // kindAliases maps a first positional to the adapter enum (ADR-0011). "claude"
 // is the word people type; the enum value is "claude-code".
@@ -32,9 +48,10 @@ var kindAliases = map[string]string{
 // newRunCmd builds `harness run [flags] ARG...`.
 func newRunCmd(g *globalOpts) *cobra.Command {
 	var workdir, kind, name string
+	var detach bool
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "run a throwaway scratchpad harness (random name, dies with the daemon)",
+		Short: "run a throwaway scratchpad harness (random name, dies with the daemon) and attach to it",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			def, slug := scratchpadDef(kind, name, args)
@@ -50,7 +67,7 @@ func newRunCmd(g *globalOpts) *cobra.Command {
 			o := g.opts()
 			o.name = slug
 			return withClient(o, nil, func(c *client.Client, o verbOpts) error {
-				return cmdRun(c, o, def)
+				return cmdRun(c, o, def, detach)
 			})
 		},
 	}
@@ -58,11 +75,13 @@ func newRunCmd(g *globalOpts) *cobra.Command {
 	// positionals after the first belong to the invoked command, not to
 	// `run` — `harness run htop -t` must reach the daemon as `-c "htop -t"`,
 	// not die on cobra's unknown-shorthand-flag error. Run's own flags
-	// (--kind, --name, --workdir) still parse when they lead the invocation.
+	// (--kind, --name, --workdir, --detach) still parse when they lead the
+	// invocation.
 	cmd.Flags().SetInterspersed(false)
 	cmd.Flags().StringVar(&workdir, "workdir", "", "working directory (default: the caller's cwd)")
 	cmd.Flags().StringVar(&kind, "kind", "", "harness kind override (crush, claude-code, codex, generic)")
 	cmd.Flags().StringVar(&name, "name", "", "name slug override (a random suffix is still appended)")
+	cmd.Flags().BoolVar(&detach, "detach", false, "don't attach; print the name and leave it running")
 	return cmd
 }
 
@@ -94,8 +113,13 @@ func scratchpadDef(kind, name string, args []string) (protocol.ProjectHarness, s
 	return def, adapter + " " + strings.Join(words, " ")
 }
 
-// cmdRun issues the scratch_run and prints the minted name.
-func cmdRun(c *client.Client, o verbOpts, def protocol.ProjectHarness) error {
+// cmdRun issues the scratch_run, prints the minted name, and — by default —
+// attaches to it, the tmux `new-session` gesture rather than `new-session
+// -d`. Attaching is skipped for `--json` (a machine consumer, not a
+// terminal), `--detach`, and a non-TTY stdout (piped/redirected: there is no
+// terminal to attach to), in which case `run` behaves exactly as before —
+// print the name and return, leaving the scratchpad running.
+func cmdRun(c *client.Client, o verbOpts, def protocol.ProjectHarness, detach bool) error {
 	data, err := c.ScratchRun(def, o.name)
 	if err != nil {
 		return fmt.Errorf("harness run: %w", err)
@@ -104,5 +128,10 @@ func cmdRun(c *client.Client, o verbOpts, def protocol.ProjectHarness) error {
 		return printJSON(data)
 	}
 	fmt.Fprintf(os.Stdout, "%s %s → %s\n", stateGlyph(data.Info.State), data.Name, data.Info.State)
-	return nil
+	if detach || !runStdoutIsTTY() {
+		return nil
+	}
+	ao := o
+	ao.name = data.Name
+	return runAttachFn(ao)
 }

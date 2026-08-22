@@ -75,3 +75,27 @@ func TestScratchpadDefNameOverride(t *testing.T) {
 		t.Errorf("name override not honored: def.Name=%q slug=%q", def.Name, slug)
 	}
 }
+
+// TestRunCmdDetachFlagDefault pins --detach as a leading, opt-in-only flag:
+// absent, it must default to false (auto-attach stays the default gesture,
+// SPEC-0011 REQ "Scratchpad Creation"); given, it must parse to true.
+func TestRunCmdDetachFlagDefault(t *testing.T) {
+	cmd := newRunCmd(&globalOpts{})
+	if err := cmd.ParseFlags([]string{"claude"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if d, _ := cmd.Flags().GetBool("detach"); d {
+		t.Error("--detach default = true, want false")
+	}
+
+	cmd = newRunCmd(&globalOpts{})
+	if err := cmd.ParseFlags([]string{"--detach", "claude"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if d, _ := cmd.Flags().GetBool("detach"); !d {
+		t.Error("--detach did not parse to true")
+	}
+	if got := cmd.Flags().Args(); !reflect.DeepEqual(got, []string{"claude"}) {
+		t.Errorf("positional args = %v, want [claude]", got)
+	}
+}
