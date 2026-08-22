@@ -23,6 +23,7 @@ package schedfmt
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -131,10 +132,67 @@ func Label(schedule string) string {
 		if !strings.Contains(hour, "/") && !strings.Contains(hour, ",") && !strings.Contains(hour, "-") {
 			return fmt.Sprintf("daily %s", timeStr)
 		}
+		// A pure hour step at a fixed minute IS an interval: "0 */6 * * *"
+		// fires at :00 of every sixth hour, which is what an operator writes
+		// as "every 6h" — and what @every 6h already returns above. Without
+		// this the two spellings of one cadence disagreed, and the cron
+		// spelling is the one harness.d uses.
+		if n, ok := evenStep(hour, 24); ok && isPlainUint(minute) {
+			return fmt.Sprintf("every %dh", n)
+		}
 	case hour == "*" && minute != "*" && dom == "*" && month == "*" && dow == "*":
-		return fmt.Sprintf("hourly :%s", minute)
+		// Same reasoning one field down: "*/15 * * * *" is every 15m, not
+		// "hourly :*/15" — which is what this used to render, and is not a
+		// thing.
+		if n, ok := evenStep(minute, 60); ok {
+			return fmt.Sprintf("every %dm", n)
+		}
+		// Only a single plain minute reads as "hourly :MM". A step that does
+		// not divide 60, a list or a range does not, and rendering it anyway
+		// produced strings like "hourly :*/7" that describe no schedule at
+		// all. Say nothing and let LabelOrRaw show the cron.
+		if isPlainUint(minute) {
+			return fmt.Sprintf("hourly :%s", minute)
+		}
 	}
 	return ""
+}
+
+// evenStep parses a pure "*/n" step field and reports n only when the step
+// divides its field's range evenly, so the caller may state it as a plain
+// interval.
+//
+// The divisibility guard is the whole point. Cron steps do not wrap: "*/7" on
+// an hour field fires at 0, 7, 14, 21 and then jumps only 3 hours to the next
+// midnight, so "every 7h" would be a confident lie about a quarter of the
+// day. "*/6" divides 24 evenly and really is every six hours. Anything else
+// returns false and Label falls back to "" — this package would rather say
+// nothing than paraphrase wrongly.
+func evenStep(field string, span int) (int, bool) {
+	rest, ok := strings.CutPrefix(field, "*/")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n <= 0 || n >= span || span%n != 0 {
+		return 0, false
+	}
+	return n, true
+}
+
+// isPlainUint reports whether a cron field is a single non-negative number,
+// i.e. carries no list, range or step. "every 6h" is only true of "0 */6 …";
+// "0,30 */6 …" fires twice per interval and must not claim it.
+func isPlainUint(field string) bool {
+	if field == "" {
+		return false
+	}
+	for _, r := range field {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // LabelOrRaw is Label with the raw expression as its fallback, for surfaces
