@@ -10,6 +10,7 @@ package schedfmt
 // and extended with the NextIn/NextInAt boundaries.
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -31,7 +32,31 @@ func TestLabel(t *testing.T) {
 		{"weekly-cron-named", "0 7 * * MON", "Mondays 07:00"},
 		{"hourly-cron", "15 * * * *", "hourly :15"},
 		{"monthly-cron", "0 0 15 * *", "monthly 00:00"},
-		{"six-hourly", "0 */6 * * *", ""}, // wildcard hour, not a simple label
+		// A pure hour step at a fixed minute is an interval, and must phrase
+		// identically to the @every spelling of the same cadence above.
+		{"six-hourly", "0 */6 * * *", "every 6h"},
+		{"two-hourly-offset", "30 */2 * * *", "every 2h"},
+		{"twelve-hourly", "0 */12 * * *", "every 12h"},
+		{"minute-step", "*/15 * * * *", "every 15m"},
+		{"minute-step-30", "*/30 * * * *", "every 30m"},
+		// Steps that do not divide their field evenly are NOT intervals: */7
+		// fires at 0,7,14,21 and then wraps only 3h to midnight, so claiming
+		// "every 7h" would be wrong for a quarter of the day. Say nothing.
+		{"uneven-hour-step", "0 */7 * * *", ""},
+		{"uneven-minute-step", "*/7 * * * *", ""},
+		// A minute list is not "hourly :MM" — it fires more than once an hour,
+		// and used to render as "hourly :0,30". Deriving from real firing
+		// times names it properly: :00 and :30 every hour IS a constant 30m
+		// cadence. An earlier hand-written rule declined this one.
+		{"minute-list", "0,30 * * * *", "every 30m"},
+		// A list of minutes fires more than once per six-hour block, so the
+		// hour step alone does not describe it and the gaps are uneven.
+		{"multi-minute-in-interval", "0,30 */6 * * *", ""},
+		// Deriving from real firing times handles these without a rule per
+		// shape: a range-with-step, and a step whose phase is offset.
+		{"range-step", "0 8-18/2 * * *", ""}, // 8..18 then a 14h jump to 08:00
+		{"every-3h", "0 */3 * * *", "every 3h"},
+		{"every-20m", "*/20 * * * *", "every 20m"},
 		{"wrong-field-count", "0 7 * *", ""},
 	}
 	for _, tc := range cases {
@@ -48,7 +73,11 @@ func TestLabelOrRaw(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"", ""},
 		{"30 9 * * *", "daily 09:30"},
-		{"0 */6 * * *", "0 */6 * * *"},
+		// Now paraphrasable, so LabelOrRaw no longer falls back to the raw
+		// cron for this one — the fallback still covers genuinely irregular
+		// expressions like the uneven step below.
+		{"0 */6 * * *", "every 6h"},
+		{"0 */7 * * *", "0 */7 * * *"},
 	}
 	for _, tc := range cases {
 		if got := LabelOrRaw(tc.in); got != tc.want {
@@ -116,6 +145,32 @@ func TestShortDuration(t *testing.T) {
 	for _, tc := range cases {
 		if got := ShortDuration(tc.in); got != tc.want {
 			t.Errorf("%v: got %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestScheduledHarnessDescriptionsHighlight reproduces the reported bug
+// end-to-end. The DESCRIPTION cell highlights a cadence only when Label's
+// output appears verbatim in the operator's description string, so a label
+// this package declines to produce silently renders that harness's cadence in
+// plain text while its neighbours are highlighted — which is exactly how the
+// "every 6h" row looked next to "daily 09:30" and "Mondays 07:00".
+//
+// These are the three real scheduled harnesses from harness.d.
+func TestScheduledHarnessDescriptionsHighlight(t *testing.T) {
+	rows := []struct{ sched, desc string }{
+		{"0 */6 * * *", "StumpCloud health sweep · every 6h · glm-5.2 (Hyper)"},
+		{"30 9 * * *", "PR feedback sweep (own PRs, both forges) · daily 09:30 · glm-5.2 (Hyper)"},
+		{"0 7 * * 1", "Issue/PR grooming across forges · Mondays 07:00 · glm-5.2 (Hyper)"},
+	}
+	for _, r := range rows {
+		l := Label(r.sched)
+		if l == "" {
+			t.Errorf("Label(%q) = \"\", so its cadence renders unhighlighted", r.sched)
+			continue
+		}
+		if !strings.Contains(r.desc, l) {
+			t.Errorf("Label(%q) = %q, not present in %q", r.sched, l, r.desc)
 		}
 	}
 }

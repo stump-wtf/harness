@@ -156,9 +156,13 @@ func TestScheduledHarnessIsLegibleInTheList(t *testing.T) {
 // place the TUI carries the cadence, so a blank there means the dashboard
 // claims a harness is scheduled and then refuses to say how often.
 func TestScheduledHarnessMetaFallsBackToRawCron(t *testing.T) {
-	h := protocol.HarnessInfo{Name: "sweep", State: "stopped", Schedule: "0 */6 * * *"}
+	// "0 */6 * * *" used to live here, but it now paraphrases as "every 6h"
+	// (an even step IS an interval). Exercise the fallback with a step that
+	// genuinely cannot be stated as one: */7 fires at 0,7,14,21 and then wraps
+	// only 3h to midnight, so schedfmt declines to paraphrase it.
+	h := protocol.HarnessInfo{Name: "sweep", State: "stopped", Schedule: "0 */7 * * *"}
 	what, rest := harnessMeta(h)
-	if got := metaLine(what, rest, 0); !strings.Contains(got, "0 */6 * * *") {
+	if got := metaLine(what, rest, 0); !strings.Contains(got, "0 */7 * * *") {
 		t.Errorf("metaLine = %q, missing the raw cron fallback", got)
 	}
 }

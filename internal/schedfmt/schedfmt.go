@@ -19,12 +19,23 @@
 //
 // @joestump-agent 08/20/2026 - Extracted from cmd/harness so the TUI can
 // surface the schedule and next-run time too (issue #160).
+//
+// @joestump-agent 08/22/2026 - Label now names an interval by asking the
+// schedule when it fires, via robfig/cron — already this repo's parser and
+// scheduler — instead of reading the expression's notation. "0 */6 * * *"
+// returned "" and so rendered unhighlighted next to its neighbours. A first
+// pass fixed that by hand-parsing "*/n" with a divisibility rule; @joestump
+// asked why this was hand-rolled at all, which was the right question. Real
+// firing times settle every case the rule had to enumerate — and one it got
+// wrong: "0,30 * * * *" IS a constant 30m cadence, which the rule declined.
 package schedfmt
 
 import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/robfig/cron/v3"
 )
 
 // NextIn renders an RFC 3339 next-run stamp as a countdown an operator reads
@@ -95,6 +106,17 @@ func ShortDuration(d time.Duration) string {
 // human-readable cadence operators embed in descriptions ("every 6h",
 // "daily 09:30", "Mondays 07:00"). Returns "" for empty or unparseable
 // input so callers can skip highlighting.
+//
+// Deliberately terse, and deliberately not a general cron describer. The
+// DESCRIPTION cell highlights this string only where it appears VERBATIM in
+// text the operator wrote, so the vocabulary has to match what a person types
+// in a config — "every 6h", not "At 0 minutes past the hour, every 6 hours".
+// A describer library (lnquy/cron and friends) phrases for prose and for
+// width neither constraint tolerates; the interval arithmetic underneath,
+// which is the part worth not hand-rolling, comes from robfig/cron below.
+//
+// Clock-shaped cadences are named from the fields, because rendering "09:30"
+// requires reading them. Everything else falls through to interval().
 func Label(schedule string) string {
 	if schedule == "" {
 		return ""
@@ -132,9 +154,94 @@ func Label(schedule string) string {
 			return fmt.Sprintf("daily %s", timeStr)
 		}
 	case hour == "*" && minute != "*" && dom == "*" && month == "*" && dow == "*":
-		return fmt.Sprintf("hourly :%s", minute)
+		// Only a single literal minute reads as "hourly :MM". A step, list or
+		// range does not, and rendering it anyway produced strings like
+		// "hourly :*/7" that describe no schedule at all. Those fall through
+		// to the interval check below, which either names the cadence or
+		// declines.
+		if isLiteralField(minute) {
+			return fmt.Sprintf("hourly :%s", minute)
+		}
+	}
+
+	// Nothing above could name it from its fields. Ask the schedule when it
+	// actually fires: if every gap is the same, it IS an interval and reads as
+	// "every 6h".
+	if d, ok := interval(schedule); ok {
+		return "every " + ShortDuration(d)
 	}
 	return ""
+}
+
+// interval reports the firing period of a schedule, and whether it has one at
+// all.
+//
+// Derived by asking the parsed schedule for successive firing times rather than
+// by reading the expression, because a cron field does not mean what its
+// notation suggests: steps do not wrap. "0 */7 * * *" fires at 0,7,14,21 and
+// then jumps only 3h to the next midnight, so it is not "every 7h" for a
+// quarter of the day — and "0,30 */6 * * *" fires twice per six-hour block, so
+// the hour step alone does not describe it. Both fall out of comparing real
+// gaps, with no rule to write down or to get wrong; an earlier version of this
+// function enumerated divisibility by hand and had to special-case each.
+//
+// robfig/cron is already this repo's parser and scheduler (internal/scheduler,
+// internal/config validation), so this asks the same engine that will actually
+// fire the harness — the label cannot disagree with the behaviour.
+//
+// Runs only for expressions the literal branches above declined, which in
+// practice means step notation; daily/weekly/monthly never reach it.
+func interval(schedule string) (time.Duration, bool) {
+	sched, err := cron.ParseStandard(schedule)
+	if err != nil {
+		return 0, false
+	}
+	// A fixed UTC reference keeps this deterministic and clear of DST, where a
+	// legitimately-constant interval would show a 23h or 25h gap once a year.
+	//
+	// Start measuring from the FIRST FIRE, not from the reference: the gap
+	// between an arbitrary instant and the next fire is a phase offset, not a
+	// period, and comparing it against the real gaps rejected every schedule
+	// whose first fire did not land on the reference ("30 */2 * * *" measured
+	// 30m then 2h and declined a perfectly constant 2h cadence).
+	t := sched.Next(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC))
+	if t.IsZero() {
+		return 0, false
+	}
+	var first time.Duration
+	// Sample across two days so an hour step's midnight wrap and a minute
+	// step's top-of-hour wrap are both inside the window. The count bound is a
+	// backstop for a pathological expression, not a tuning knob.
+	const (
+		window   = 48 * time.Hour
+		maxFires = 4096
+	)
+	deadline := t.Add(window)
+	for i := 0; i < maxFires; i++ {
+		next := sched.Next(t)
+		if next.IsZero() {
+			return 0, false // fires at most once — no cadence to state
+		}
+		gap := next.Sub(t)
+		switch {
+		case i == 0:
+			first = gap
+		case gap != first:
+			return 0, false
+		}
+		t = next
+		if t.After(deadline) {
+			return first, first > 0
+		}
+	}
+	return 0, false
+}
+
+// isLiteralField reports whether a cron field is a single literal value, i.e.
+// carries no wildcard, list, range or step — the only shape that can be
+// interpolated straight into a label like "hourly :30".
+func isLiteralField(field string) bool {
+	return field != "" && !strings.ContainsAny(field, "*,-/")
 }
 
 // LabelOrRaw is Label with the raw expression as its fallback, for surfaces
