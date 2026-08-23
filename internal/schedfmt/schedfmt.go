@@ -192,6 +192,35 @@ func Label(schedule string) string {
 // Runs only for expressions the literal branches above declined, which in
 // practice means step notation; daily/weekly/monthly never reach it.
 func interval(schedule string) (time.Duration, bool) {
+	// The sampling window below proves constancy only for a pattern that
+	// repeats DAILY, and that holds exactly when the date fields are
+	// unrestricted: with day-of-month, month and day-of-week all "*", the
+	// schedule fires on some set of (hour, minute) within every day, so the
+	// sequence has a 24h period and two days of equal gaps settle it forever.
+	//
+	// Restrict any date field and the guarantee is gone, because the pattern
+	// now has a monthly or yearly period the window cannot see:
+	//
+	//	0 9 * */3 *   fires daily at 09:00 but only in Jan/Apr/Jul/Oct, so
+	//	              every gap inside the window is 24h and the three
+	//	              two-month silences are invisible -> "every 1d"
+	//	0 0 1 */2 *   has a period longer than the window entirely, so exactly
+	//	              ONE gap is measured and compared against nothing, and its
+	//	              real gaps run 59d/61d/62d -> "every 61d"
+	//
+	// Both are wrong, and wrong here is worse than silent: LabelOrRaw shows
+	// the raw expression when this declines, so declining costs a paraphrase
+	// while guessing replaces a correct cron with a false one in the TUI.
+	//
+	// This is the same "steps do not wrap" hazard the rest of this function
+	// exists for, one field over — the date fields wrap at boundaries the
+	// window never reaches, rather than at midnight, which it does.
+	//
+	// @joestump-agent 08/23/2026 - Review fix.
+	if parts := strings.Fields(schedule); len(parts) != 5 ||
+		parts[2] != "*" || parts[3] != "*" || parts[4] != "*" {
+		return 0, false
+	}
 	sched, err := cron.ParseStandard(schedule)
 	if err != nil {
 		return 0, false

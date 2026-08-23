@@ -58,6 +58,21 @@ func TestLabel(t *testing.T) {
 		{"every-3h", "0 */3 * * *", "every 3h"},
 		{"every-20m", "*/20 * * * *", "every 20m"},
 		{"wrong-field-count", "0 7 * *", ""},
+		// A restricted date field breaks the daily periodicity the 48h
+		// sampling window relies on, so these must decline rather than
+		// extrapolate from the gaps that happen to fall inside it.
+		//
+		// "0 9 * */3 *" fires daily at 09:00 but only in Jan/Apr/Jul/Oct:
+		// every gap in the window is 24h and the three two-month silences are
+		// invisible, so it read as "every 1d". "0 0 1 */2 *" has a period
+		// longer than the window, so exactly one gap was measured and never
+		// compared against anything, and its real gaps run 59d/61d/62d.
+		//
+		// @joestump-agent 08/23/2026 - Review fix; both fail without the date
+		// field guard in interval().
+		{"month-step-daily", "0 9 * */3 *", ""},
+		{"month-step-monthly", "0 0 1 */2 *", ""},
+		{"dow-step", "0 9 * * */2", "day */2 09:00"},
 	}
 	for _, tc := range cases {
 		if got := Label(tc.in); got != tc.want {
@@ -78,6 +93,9 @@ func TestLabelOrRaw(t *testing.T) {
 		// expressions like the uneven step below.
 		{"0 */6 * * *", "every 6h"},
 		{"0 */7 * * *", "0 */7 * * *"},
+		// The raw expression is strictly better than a false paraphrase: this
+		// one is daily at 09:00 for four months of the year, not "every 1d".
+		{"0 9 * */3 *", "0 9 * */3 *"},
 	}
 	for _, tc := range cases {
 		if got := LabelOrRaw(tc.in); got != tc.want {
