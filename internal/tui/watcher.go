@@ -50,6 +50,28 @@ const (
 	// the batching below survives the volume either way.
 	historyWindow = 15 * time.Minute
 
+	// discoveryWindow bounds how far back the watcher looks for session files
+	// at all, as opposed to historyWindow above, which bounds which of their
+	// events get shown. Discovery used to be unbounded: every session file
+	// that had ever existed was re-read on every 2s tick, which on a real
+	// corpus meant hundreds of frozen transcripts rediscovered forever and
+	// sustained CPU burn with nothing to show for it.
+	//
+	// Pinned here rather than inherited from tail.DefaultWatchConfig() so the
+	// value harness runs with is visible next to the floor it has to respect,
+	// and so an upstream change to that default cannot silently change what
+	// the dashboard discovers.
+	//
+	// The invariant that matters is discoveryWindow >= historyWindow: an event
+	// older than the floor is dropped before it is rendered, so a discovery
+	// window at least as wide as the floor cannot hide anything the UI would
+	// have displayed. At 48h against 15m there is three orders of magnitude of
+	// headroom; TestDiscoveryWindowCoversHistoryWindow keeps it that way.
+	//
+	// @joestump-agent 08/23/2026 - Added with the agent-trace bump that
+	// introduced WatchConfig.MaxAge.
+	discoveryWindow = tail.DefaultMaxAge
+
 	// eventBatchMax caps one delivered batch. The drain is bounded so a
 	// watcher producing faster than the UI consumes cannot hold the Update loop
 	// indefinitely inside a single message — it just yields and is re-armed.
@@ -69,7 +91,9 @@ func (m *Model) startWatcher() tea.Cmd {
 	if m.watcher != nil {
 		return nil
 	}
-	m.watcher = tail.NewWatcherWithConfig(tail.DefaultWatchConfig(), tail.DefaultAdapters())
+	cfg := tail.DefaultWatchConfig()
+	cfg.MaxAge = discoveryWindow
+	m.watcher = tail.NewWatcherWithConfig(cfg, tail.DefaultAdapters())
 	m.watcherFloor = time.Now().Add(-historyWindow)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.watcherCancel = cancel

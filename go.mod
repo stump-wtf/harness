@@ -13,7 +13,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
-	github.com/stump-wtf/agent-trace v0.0.0-20260814165024-eb88b165bf06
+	github.com/stump-wtf/agent-trace v0.1.1-0.20260823071152-92bba2c4fa07
 	golang.org/x/crypto v0.55.0
 	golang.org/x/term v0.45.0
 )
@@ -74,5 +74,5 @@ require (
 	modernc.org/libc v1.75.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.0 // indirect
-	modernc.org/sqlite v1.56.0 // indirect
+	modernc.org/sqlite v1.57.0 // indirect
 )

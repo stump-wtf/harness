@@ -310,3 +310,44 @@ func TestBackgroundColorRestylesBufferedChatroom(t *testing.T) {
 		t.Fatalf("re-styling cost %d buffered events, want 1 kept", 1-got)
 	}
 }
+
+// The agent-trace bump gave the watcher a bounded discovery window, which is a
+// behaviour change worth pinning on this side of the dependency rather than
+// trusting the library's default to stay put.
+//
+// The invariant is discoveryWindow >= historyWindow. Discovery decides which
+// session FILES are read at all; historyWindow decides which of their EVENTS
+// are rendered. Because readBatch drops anything older than the floor before
+// it reaches the UI, a discovery window at least as wide as that floor cannot
+// hide a single event the dashboard would otherwise have shown — which is what
+// makes bounding discovery a pure I/O saving rather than a visible change.
+//
+// Invert the comparison and the dashboard silently goes blind to sessions it
+// is still meant to display.
+//
+// @joestump-agent 08/23/2026 - Added with the agent-trace bump.
+func TestDiscoveryWindowCoversHistoryWindow(t *testing.T) {
+	if discoveryWindow < historyWindow {
+		t.Fatalf("discoveryWindow (%s) is tighter than historyWindow (%s): the dashboard "+
+			"would drop sessions whose events it still renders", discoveryWindow, historyWindow)
+	}
+}
+
+// MaxAge has three-valued semantics that are easy to get backwards: zero means
+// "use the library default", and only a NEGATIVE value means unbounded. A
+// harness that wanted no bound and wrote MaxAge: 0 would get 48h instead.
+//
+// This pins that harness asks for a real, positive bound, so neither a
+// refactor to the zero value nor an upstream change to DefaultMaxAge can turn
+// discovery unbounded again — the CPU burn that motivated the bump.
+func TestWatcherConfigRequestsABoundedWindow(t *testing.T) {
+	if discoveryWindow <= 0 {
+		t.Fatalf("discoveryWindow = %s; must be positive — 0 defers to the library "+
+			"default and a negative value means unbounded discovery", discoveryWindow)
+	}
+	cfg := tail.DefaultWatchConfig()
+	cfg.MaxAge = discoveryWindow
+	if cfg.MaxAge != discoveryWindow {
+		t.Fatalf("MaxAge = %s, want %s", cfg.MaxAge, discoveryWindow)
+	}
+}

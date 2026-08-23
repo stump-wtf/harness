@@ -11,6 +11,7 @@
 package trajectory
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -133,7 +134,23 @@ func (s *Service) List(cfg *core.Config, name string) ([]SessionSummary, error) 
 		if workdir != "" {
 			filter.Cwd = workdir
 		}
-		sessions, err := tail.ListSessionsFiltered(td, filter)
+		// context.Background(), not a caller's context: nothing in this call
+		// chain has one. List is reached from HandleListTrajectories, which is
+		// a facade tool handler, and none of its callers thread a context
+		// either. agent-trace grew this parameter so a cancelled caller stops
+		// waiting on a SQLite query; passing a background context keeps the
+		// old behaviour exactly rather than pretending to a cancellation this
+		// package cannot honour. Threading one properly means changing
+		// Service.List, the facade handler and every caller of both, which is
+		// a change worth making on its own rather than inside a dependency
+		// bump — see the follow-up issue referenced in the PR.
+		//
+		// Deliberately NOT filtered by ActiveSince: this lists a harness's
+		// trajectory history, where an old session is the point. The activity
+		// window belongs to the live dashboard watcher, not here.
+		//
+		// @joestump-agent 08/23/2026 - Added for the agent-trace bump.
+		sessions, err := tail.ListSessionsFiltered(context.Background(), td, filter)
 		if err != nil {
 			return nil, fmt.Errorf("trajectory list %s: %w", name, err)
 		}
