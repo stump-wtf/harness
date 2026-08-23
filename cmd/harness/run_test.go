@@ -119,15 +119,21 @@ func TestRunIsInteractiveRequiresBothEnds(t *testing.T) {
 		t.Skipf("no pty available: %v", err)
 	}
 	defer ptmx.Close()
-	tty, ok := ptmx.(interface{ Name() string })
+	// Slave(), not Name(). UnixPty.Name() returns p.master.Name(), so on Linux
+	// it is "/dev/ptmx" — reopening that path allocates a BRAND NEW master
+	// rather than opening this pty's slave. A Linux pty master reports as a
+	// terminal, so the mistake sailed through CI while asserting against the
+	// wrong fd entirely; on macOS/BSD a master is not a terminal and the
+	// precondition below hard-failed, taking `make check` red on every Mac.
+	// The slave is a terminal on both, and needs no reopening.
+	//
+	// @joestump 08/23/2026 - Switched off Name(); see #256's review for the
+	// probe output that pinned it.
+	sl, ok := ptmx.(interface{ Slave() *os.File })
 	if !ok {
-		t.Skip("pty implementation exposes no tty path")
+		t.Skip("pty implementation exposes no slave handle")
 	}
-	term, err := os.OpenFile(tty.Name(), os.O_RDWR, 0)
-	if err != nil {
-		t.Skipf("cannot open the pty slave: %v", err)
-	}
-	defer term.Close()
+	term := sl.Slave()
 
 	origIn, origOut := os.Stdin, os.Stdout
 	t.Cleanup(func() { os.Stdin, os.Stdout = origIn, origOut })
