@@ -411,6 +411,25 @@ func (fi formInputs) toForm() HarnessForm {
 // whitespace-only rule this replaces round-tripped "print('hello world')"
 // correctly but silently corrupted every arg carrying a backslash — regex
 // patterns and Windows paths, in practice.
+// needsShellQuote reports whether an arg must be quoted to survive
+// shlex.Split. The two halves of this encoding have to agree on what counts as
+// a separator, so this asks the same question the splitter does rather than
+// listing characters by hand: go-shlex's DefaultTokenizer defines whitespace as
+// unicode.IsSpace, not as " \t\n".
+//
+// The hand-written set missed \v and \r, which unicode.IsSpace accepts — an
+// arg carrying either was left bare and came back split in two, the same shape
+// of bug as the backslash above and found the same way. It also missed every
+// non-ASCII space: NBSP, the U+2000 block, and ideographic space U+3000, which
+// a value pasted from a document or a CJK keyboard can easily carry.
+//
+// @joestump-agent 08/23/2026 - Review fix; derive the separator set from the
+// splitter instead of restating it.
+func needsShellQuote(a string) bool {
+	return strings.ContainsAny(a, "\"'\\") ||
+		strings.IndexFunc(a, unicode.IsSpace) >= 0
+}
+
 func shellQuoteJoin(args []string) string {
 	// Escape the backslash first so the escapes we add for quotes are not
 	// themselves re-escaped; one Replacer pass does that without re-scanning.
@@ -421,7 +440,7 @@ func shellQuoteJoin(args []string) string {
 			parts[i] = `""`
 			continue
 		}
-		if !strings.ContainsAny(a, " \t\n\"'\\") {
+		if !needsShellQuote(a) {
 			parts[i] = a
 			continue
 		}

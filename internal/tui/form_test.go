@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"github.com/anmitsu/go-shlex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +10,7 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/anmitsu/go-shlex"
 )
 
 // TestHarnessFormRoundTrip verifies the SPEC-0001 REQ "Harness Form" write path:
@@ -1081,6 +1081,17 @@ func TestShellQuoteJoinRoundTripsEveryArg(t *testing.T) {
 		{"single quote", []string{"--s", `it's`}},
 		{"shell metachars", []string{"--dollar", `$HOME`, "--tick", "a`b"}},
 		{"trailing backslash", []string{"--t", `ends\`}},
+		// go-shlex separates on unicode.IsSpace, not on " \t\n". These were
+		// left bare by the hand-written trigger set and came back split in
+		// two — the same shape of bug as the backslash above.
+		//
+		// @joestump-agent 08/23/2026 - Review fix; fail without
+		// needsShellQuote deriving its set from unicode.IsSpace.
+		{"vertical tab", []string{"--v", "a\vb"}},
+		{"carriage return", []string{"--r", "a\rb"}},
+		{"form feed", []string{"--f", "a\fb"}},
+		{"non-breaking space", []string{"--nb", "a\u00a0b"}},
+		{"ideographic space", []string{"--cjk", "a\u3000b"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
