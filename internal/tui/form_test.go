@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/anmitsu/go-shlex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1054,5 +1055,65 @@ func TestEditPreservesArgsContainingWhitespace(t *testing.T) {
 	want := []string{"-c", "print('hello world')"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("args = %v, want %v (whitespace-containing arg should survive round-trip)", got, want)
+	}
+}
+
+// shellQuoteJoin and shlex.Split are two halves of one encoding, and a
+// character escaped by neither is silently destroyed. The backslash was
+// exactly that: the whitespace-only quoting rule left `\d+` bare, POSIX shlex
+// read the backslash as an escape, and the arg came back `d+`. Regex patterns
+// and Windows paths are where that actually bit.
+//
+// Table-driven on purpose — the failure mode is per-character, so the guard
+// has to be per-character too.
+func TestShellQuoteJoinRoundTripsEveryArg(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"plain", []string{"--flag", "value"}},
+		{"whitespace in arg", []string{"-c", "print('hello world')"}},
+		{"regex backslash", []string{"--regex", `\d+`}},
+		{"windows path", []string{"--path", `C:\Users\joe`}},
+		{"backslash escape sequence", []string{"--sep", `a\tb`}},
+		{"backslash with whitespace", []string{"--x", `back\slash and space`}},
+		{"embedded double quotes", []string{"--q", `he said "hi"`}},
+		{"single quote", []string{"--s", `it's`}},
+		{"shell metachars", []string{"--dollar", `$HOME`, "--tick", "a`b"}},
+		{"trailing backslash", []string{"--t", `ends\`}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			joined := shellQuoteJoin(tc.args)
+			got, err := shlex.Split(joined, true)
+			if err != nil {
+				t.Fatalf("args %q joined to %q, which does not re-split: %v", tc.args, joined, err)
+			}
+			if !reflect.DeepEqual(got, tc.args) {
+				t.Errorf("round-trip lost data\n  want   %q\n  joined %q\n  got    %q", tc.args, joined, got)
+			}
+		})
+	}
+}
+
+// The empty string is the one argument this encoding cannot carry, and it is
+// go-shlex's half that loses it: shellQuoteJoin emits an explicit "" for it,
+// but shlex.Split drops the empty token rather than returning it. Pinned here
+// rather than left to be rediscovered — the pre-#247 strings.Fields encoding
+// dropped it too, so this is a standing limitation and not a regression.
+//
+// If shlex is ever swapped for a splitter that preserves empty tokens, this
+// test fails and TestShellQuoteJoinRoundTripsEveryArg should grow the case.
+func TestShellQuoteJoinCannotCarryAnEmptyArg(t *testing.T) {
+	joined := shellQuoteJoin([]string{"--empty", ""})
+	if joined != `--empty ""` {
+		t.Errorf("join side should still emit an explicit empty token: got %q", joined)
+	}
+	got, err := shlex.Split(joined, true)
+	if err != nil {
+		t.Fatalf("split %q: %v", joined, err)
+	}
+	if want := []string{"--empty"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q — if the empty arg now survives, see the note above", got, want)
 	}
 }

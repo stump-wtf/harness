@@ -392,17 +392,40 @@ func (fi formInputs) toForm() HarnessForm {
 }
 
 // shellQuoteJoin joins args into a single string with shell-style quoting so
-// that an argument containing whitespace survives the round-trip through the
-// single-line text input. Args without whitespace are left bare; args with
-// whitespace are wrapped in double quotes with embedded double quotes escaped.
+// that an argument survives the round-trip through the single-line text input
+// and back out through shlex.Split. Args needing no quoting are left bare;
+// the rest are wrapped in double quotes with backslashes and embedded double
+// quotes escaped.
+//
+// The backslash is the load-bearing character here and the easy one to miss.
+// shlex.Split runs in POSIX mode, where a backslash escapes the character
+// after it — so an arg this function leaves bare comes back with its
+// backslashes eaten: `\d+` becomes `d+`, `C:\Users\joe` becomes
+// `C:Usersjoe`. Whatever we quote, we must escape, and whatever contains a
+// backslash must therefore be quoted.
+//
+// The empty string gets an explicit "" for the same reason: bare, it
+// contributes nothing to the joined line and the argument disappears.
+//
+// @joestump 08/23/2026 - Added backslash and empty-arg handling. The
+// whitespace-only rule this replaces round-tripped "print('hello world')"
+// correctly but silently corrupted every arg carrying a backslash — regex
+// patterns and Windows paths, in practice.
 func shellQuoteJoin(args []string) string {
+	// Escape the backslash first so the escapes we add for quotes are not
+	// themselves re-escaped; one Replacer pass does that without re-scanning.
+	esc := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 	parts := make([]string, len(args))
 	for i, a := range args {
-		if !strings.ContainsAny(a, " \t\n\"'") {
+		if a == "" {
+			parts[i] = `""`
+			continue
+		}
+		if !strings.ContainsAny(a, " \t\n\"'\\") {
 			parts[i] = a
 			continue
 		}
-		parts[i] = "\"" + strings.ReplaceAll(a, "\"", "\\\"") + "\""
+		parts[i] = `"` + esc.Replace(a) + `"`
 	}
 	return strings.Join(parts, " ")
 }
