@@ -149,3 +149,59 @@ func TestScheduledCleanExitStopsAndWaits(t *testing.T) {
 		t.Fatalf("scheduled one-shot respawned after a clean exit: restarts %d -> %d", before, after)
 	}
 }
+
+// A scheduled harness's RestartCount can never increase — the branch above
+// returns before the increment, on every exit. That makes any non-zero value
+// a permanent relic of a window when the harness did respawn (before it gained
+// a schedule, or before that branch existed), and nothing else clears it:
+// cmdRestart resets the flap counters and leaves this one alone.
+//
+// The 6,212-restart loop this file was written for left exactly that behind —
+// two sweeps still reporting 4417 and 1795 in `harness list` days after the
+// fix, which is the first number an operator reads when triaging them.
+func TestScheduledFiringClearsStaleRestartCount(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script string
+		want   core.State
+	}{
+		{"failed firing", "exit 1", core.StateFailed},
+		{"clean firing", "exit 0", core.StateStopped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestSupervisor(t, scheduledHarness("sweeper", tc.script, "0 */6 * * *"), fastPolicy())
+			// Seed the relic the way a daemon restart does (ADR-0007).
+			s.Restore(false, 4417, 1, time.Time{})
+			if got := s.Snapshot().RestartCount; got != 4417 {
+				t.Fatalf("precondition: RestartCount = %d, want the seeded 4417", got)
+			}
+
+			s.Start()
+			if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == tc.want }) {
+				t.Fatalf("expected %s, got %s", tc.want, s.Snapshot().State)
+			}
+			if got := s.Snapshot().RestartCount; got != 0 {
+				t.Errorf("RestartCount = %d after a firing, want 0 — a scheduled "+
+					"harness cannot accumulate restarts, so a stale count is "+
+					"reported to the operator forever", got)
+			}
+		})
+	}
+}
+
+// The counterpart: an ordinary always-on harness keeps its restart history.
+// It is real — those restarts happened, the counter can still move, and the
+// #99 fallback contract preserves it across a daemon restart.
+func TestUnscheduledHarnessKeepsRestartHistory(t *testing.T) {
+	s := newTestSupervisor(t, shHarnessWithRestart("worker", "exit 0", time.Millisecond, core.RestartNo), fastPolicy())
+	s.Restore(false, 7, 0, time.Time{})
+
+	s.Start()
+	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateStopped }) {
+		t.Fatalf("expected stopped, got %s", s.Snapshot().State)
+	}
+	if got := s.Snapshot().RestartCount; got != 7 {
+		t.Errorf("RestartCount = %d, want 7 preserved — an unscheduled harness's "+
+			"restart history is real and must survive", got)
+	}
+}

@@ -516,6 +516,21 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 	// failed alike, so this re-arms nothing and disarms nothing.
 	if s.harness.Schedule != "" {
 		s.resetCrashState()
+		// RestartCount counts automatic respawns, and this branch is the
+		// reason a scheduled harness never has any — it returns above the
+		// increment below, on every exit, always. So the value can only ever
+		// be a relic of a window when this harness DID respawn: before it
+		// gained a schedule, or before this branch existed. It cannot go up,
+		// nothing else resets it (cmdRestart clears the flap counters but not
+		// this one), and `harness list` renders it in the RESTARTS column as
+		// though it were live.
+		//
+		// On the box that prompted this, two sweeps had been showing 4417 and
+		// 1795 for days after the loop that produced them was fixed — the
+		// first thing anyone reads off `harness list`, describing an incident
+		// that was already over. A firing is the natural place to retire it:
+		// this run is the one-shot's whole lifecycle, and it did not respawn.
+		s.restartCount = 0
 		if spawnFailed || code != 0 {
 			if s.state == core.StateRunning {
 				// running→failed is not a legal edge; route through degraded.
