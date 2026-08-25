@@ -345,9 +345,14 @@ func TestWatcherConfigRequestsABoundedWindow(t *testing.T) {
 		t.Fatalf("discoveryWindow = %s; must be positive — 0 defers to the library "+
 			"default and a negative value means unbounded discovery", discoveryWindow)
 	}
-	cfg := tail.DefaultWatchConfig()
-	cfg.MaxAge = discoveryWindow
-	if cfg.MaxAge != discoveryWindow {
-		t.Fatalf("MaxAge = %s, want %s", cfg.MaxAge, discoveryWindow)
+	// Ask the production helper what harness starts with, rather than
+	// assembling a config here and asserting the assignment took: the latter
+	// passes even if startWatcher stops applying the bound entirely, which is
+	// exactly the regression this test exists to catch.
+	//
+	// @joestump 08/25/2026 - Was asserting on a locally-built config.
+	if got := watcherConfig().MaxAge; got != discoveryWindow {
+		t.Fatalf("watcherConfig().MaxAge = %s, want %s — the dashboard would "+
+			"discover on the library default instead of the pinned window", got, discoveryWindow)
 	}
 }

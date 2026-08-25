@@ -62,6 +62,13 @@ const (
 	// and so an upstream change to that default cannot silently change what
 	// the dashboard discovers.
 	//
+	// That means a literal, not tail.DefaultMaxAge. Spelling it as the
+	// library constant made the pin track the very default it was meant to
+	// insulate against — and since DefaultWatchConfig() already assigns
+	// DefaultMaxAge, it also made the assignment in watcherConfig a no-op.
+	// It happens to equal the 48h default today; the point is that it no
+	// longer has to.
+	//
 	// The invariant that matters is discoveryWindow >= historyWindow: an event
 	// older than the floor is dropped before it is rendered, so a discovery
 	// window at least as wide as the floor cannot hide anything the UI would
@@ -70,7 +77,10 @@ const (
 	//
 	// @joestump-agent 08/23/2026 - Added with the agent-trace bump that
 	// introduced WatchConfig.MaxAge.
-	discoveryWindow = tail.DefaultMaxAge
+	//
+	// @joestump 08/25/2026 - Was tail.DefaultMaxAge, which tracked the default
+	// instead of insulating from it. Pinned to a literal during review.
+	discoveryWindow = 48 * time.Hour
 
 	// eventBatchMax caps one delivered batch. The drain is bounded so a
 	// watcher producing faster than the UI consumes cannot hold the Update loop
@@ -85,15 +95,27 @@ const (
 // tool call.
 type agentEventMsg struct{ Events []tail.Event }
 
+// watcherConfig is the tail configuration the dashboard watcher runs with.
+//
+// Split out of startWatcher so the bound is reachable from a test: startWatcher
+// builds a live watcher and spawns its poll goroutine, so a test cannot ask it
+// what config it used. Asserting on a config a test assembles itself proves
+// nothing about what harness actually starts.
+//
+// @joestump 08/25/2026 - Extracted during review of the agent-trace bump.
+func watcherConfig() tail.WatchConfig {
+	cfg := tail.DefaultWatchConfig()
+	cfg.MaxAge = discoveryWindow
+	return cfg
+}
+
 // startWatcher starts the agent session watcher and arms the first read. Called
 // once the daemon connection is established.
 func (m *Model) startWatcher() tea.Cmd {
 	if m.watcher != nil {
 		return nil
 	}
-	cfg := tail.DefaultWatchConfig()
-	cfg.MaxAge = discoveryWindow
-	m.watcher = tail.NewWatcherWithConfig(cfg, tail.DefaultAdapters())
+	m.watcher = tail.NewWatcherWithConfig(watcherConfig(), tail.DefaultAdapters())
 	m.watcherFloor = time.Now().Add(-historyWindow)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.watcherCancel = cancel
