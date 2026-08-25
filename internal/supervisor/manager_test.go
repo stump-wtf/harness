@@ -972,3 +972,75 @@ func TestStartTransientRunsProcess(t *testing.T) {
 		t.Errorf("State = %s, want stopped", snap.State)
 	}
 }
+
+// TestAutostartSkipsScheduledHarnessWithStalePersistedIntent covers the
+// residual of issue #159. StartTransient stopped the scheduler from WRITING
+// enabled=true, but nothing clears an enabled=true that is already in
+// state.json — from a pre-fix daemon, or from an operator running
+// `harness start <sweep>` by hand, which still goes through Start.
+//
+// Restore seeds that stale intent verbatim and Autostart honors it, so the
+// one-shot fires on every daemon boot. Worse, Autostart calls Start, which
+// re-persists enabled=true — so the stale intent never heals on its own and
+// every subsequent restart fires it again.
+func TestAutostartSkipsScheduledHarnessWithStalePersistedIntent(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+
+	cfg := managerCfg(shHarness("sweeper", "while true; do sleep 0.02; done", 0))
+	sw := cfg.Harnesses["sweeper"]
+	sw.Enabled = false // the schedule/enabled exclusion forbids true in config
+	sw.Schedule = "0 */6 * * *"
+	cfg.Harnesses["sweeper"] = sw
+	cfg.Profiles["default"] = core.Profile{Name: "default", Harnesses: []string{}, Autostart: false}
+
+	// A state.json that already carries the stale intent.
+	data, err := json.Marshal(persistedState{
+		Version:       stateSchemaVersion,
+		ActiveProfile: "default",
+		Harnesses: map[string]persistedHarness{
+			"sweeper": {Enabled: true, RestartCount: 4417, LastExitCode: 1},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(cfg, ManagerOptions{
+		Policy:    fastPolicy(),
+		StatePath: statePath,
+		LogDir:    filepath.Join(dir, "logs"),
+	})
+	t.Cleanup(m.Close)
+
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	m.Autostart()
+	time.Sleep(200 * time.Millisecond)
+
+	if snap, _ := m.Snapshot("sweeper"); snap.State == core.StateRunning || snap.State == core.StateStarting {
+		t.Fatalf("scheduled harness autostarted from stale persisted intent (state = %s); "+
+			"a cron one-shot must only ever be started by the scheduler", snap.State)
+	}
+
+	// Restart history is observability, not intent: the override must not
+	// erase it (same contract as the #99 phantom-profile fallback).
+	if snap, _ := m.Snapshot("sweeper"); snap.RestartCount != 4417 {
+		t.Errorf("RestartCount = %d, want 4417 preserved across the autostart skip", snap.RestartCount)
+	}
+
+	// And the stale intent must be corrected on disk, so the next boot is
+	// clean even if it happens under a daemon without this guard.
+	m.Save()
+	ps, err := loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ps.Harnesses["sweeper"].Enabled {
+		t.Error("stale enabled=true survived Restore — it will autostart on the next boot")
+	}
+}

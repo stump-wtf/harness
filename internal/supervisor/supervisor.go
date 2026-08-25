@@ -79,6 +79,11 @@ type Snapshot struct {
 	Created       time.Time
 	LastStarted   time.Time
 	PID           int
+	// Scheduled marks a cron one-shot (a non-empty `schedule`). Carried on
+	// the snapshot rather than read off s.harness so callers outside the
+	// actor goroutine — Manager.Restore, Manager.Autostart — can ask without
+	// racing applyConfig, which reassigns s.harness (ADR-0013).
+	Scheduled bool
 }
 
 // Supervisor owns the lifecycle of exactly one harness. It runs a single actor
@@ -171,7 +176,7 @@ func New(h core.Harness, opts Options) *Supervisor {
 		created:      now,
 		lastExitCode: 0,
 	}
-	s.snap = Snapshot{Name: h.Name, State: core.StateStopped, Created: now}
+	s.snap = Snapshot{Name: h.Name, State: core.StateStopped, Created: now, Scheduled: h.Schedule != ""}
 	go s.loop()
 	return s
 }
@@ -859,6 +864,7 @@ func (s *Supervisor) publishSnapshot() {
 		ConfigChanged: s.configChanged,
 		Created:       s.created,
 		LastStarted:   s.lastStarted,
+		Scheduled:     s.harness.Schedule != "",
 		PID:           pid,
 	}
 	s.mu.Unlock()

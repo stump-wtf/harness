@@ -254,7 +254,23 @@ func (m *Manager) Restore() error {
 		if inState && !pr.Enabled && autostart[name] && !(unresolved && hasAutostartProfile) {
 			dormant = append(dormant, name)
 		}
+		// A scheduled harness is a cron one-shot that only the scheduler may
+		// start (ADR-0013) — which is why the config parser rejects
+		// `enabled = true` alongside `schedule`. Persisted intent can still
+		// say true: written by a daemon predating StartTransient, or by an
+		// operator's `harness start <sweep>`, which goes through Start.
+		// Restore would seed that, Autostart would fire the one-shot
+		// off-schedule, and Autostart's Start re-persists true — so the stale
+		// intent never heals and every daemon restart fires the run again.
+		// Clamp it here: for a scheduled harness the schedule IS the intent.
+		// Residual of issue #159.
+		scheduled := s.Snapshot().Scheduled
+
 		switch {
+		case scheduled:
+			// Counters are observability, not intent — preserve them, the
+			// same contract the #99 fallback below keeps.
+			s.Restore(false, pr.RestartCount, pr.LastExitCode, last)
 		case unresolved && hasAutostartProfile && autostart[name]:
 			// The persisted profile is gone, so the persisted per-harness
 			// intent it produced cannot be trusted either — a member recorded
@@ -281,9 +297,19 @@ func (m *Manager) Restore() error {
 
 // Autostart starts every harness whose restored intent is enabled (SPEC-0003
 // REQ "Autostart"). Safe to call once after Restore.
+//
+// Scheduled harnesses are skipped unconditionally: a cron one-shot is started
+// by the scheduler and by nothing else (ADR-0013). Restore already clamps
+// their persisted intent, so this is defense in depth — but it is the check
+// that actually holds the invariant, because Start re-persists enabled=true
+// and would make any leak permanent (issue #159).
 func (m *Manager) Autostart() {
 	for _, s := range m.snapshotSupervisors() {
-		if s.Snapshot().Enabled {
+		snap := s.Snapshot()
+		if snap.Scheduled {
+			continue
+		}
+		if snap.Enabled {
 			s.Start()
 		}
 	}
