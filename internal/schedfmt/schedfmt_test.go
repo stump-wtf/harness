@@ -192,3 +192,44 @@ func TestScheduledHarnessDescriptionsHighlight(t *testing.T) {
 		}
 	}
 }
+
+func TestStateLabel(t *testing.T) {
+	tests := []struct {
+		name     string
+		state    string
+		schedule string
+		want     string
+		wantIdle bool
+	}{
+		// The one substitution: a scheduled harness resting between firings.
+		{"scheduled stopped is idle", "stopped", "0 */6 * * *", "idle", true},
+		{"scheduled stopped weekly is idle", "stopped", "0 7 * * 1", "idle", true},
+
+		// An unscheduled harness that is stopped really is stopped — someone
+		// turned it off, and renaming that would hide the fact.
+		{"unscheduled stopped stays stopped", "stopped", "", "stopped", false},
+
+		// Every other state of a scheduled harness still means what it says.
+		{"scheduled running", "running", "0 */6 * * *", "running", false},
+		{"scheduled failed", "failed", "0 */6 * * *", "failed", false},
+		{"scheduled degraded", "degraded", "0 */6 * * *", "degraded", false},
+		{"scheduled starting", "starting", "0 */6 * * *", "starting", false},
+
+		// Unscheduled, unchanged.
+		{"unscheduled running", "running", "", "running", false},
+		{"unscheduled failed", "failed", "", "failed", false},
+
+		// Nothing to rename, nothing to crash on.
+		{"empty state", "", "0 */6 * * *", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := StateLabel(tc.state, tc.schedule); got != tc.want {
+				t.Errorf("StateLabel(%q, %q) = %q, want %q", tc.state, tc.schedule, got, tc.want)
+			}
+			if got := IsIdle(tc.state, tc.schedule); got != tc.wantIdle {
+				t.Errorf("IsIdle(%q, %q) = %v, want %v", tc.state, tc.schedule, got, tc.wantIdle)
+			}
+		})
+	}
+}

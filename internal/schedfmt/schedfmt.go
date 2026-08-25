@@ -36,6 +36,8 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )
 
 // NextIn renders an RFC 3339 next-run stamp as a countdown an operator reads
@@ -304,4 +306,47 @@ func cronDayName(dow string) string {
 		"SAT": "Saturdays",
 	}
 	return names[strings.ToUpper(dow)]
+}
+
+// Idle State Presentation For Scheduled Harnesses
+//
+// A cron one-shot spends almost all of its life not running, and the state
+// machine calls that `stopped`. For an always-on harness that word is right —
+// it means "not running and not wanted". For a scheduled one it is actively
+// misleading: the harness is armed and will fire on its own, but the listing
+// reads as though someone turned it off, in the same warm red-family color
+// SPEC-0001 gives stopped so it "draws the eye".
+//
+// So the presentation layer renames that one combination — stopped AND
+// scheduled — to `idle`, and callers pair it with amber rather than pink. No
+// new core.State is involved: the state machine is unchanged and the wire
+// still says "stopped". This is phrasing, exactly like Label and NextIn above,
+// and it lives here for the same reason they do — `harness list`/`describe`
+// and the cockpit dashboard must not phrase the same harness two ways.
+//
+// @joestump-agent 08/25/2026 - Added for issue #268. @joestump asked for
+//   orange-not-red and "idle" after a scheduled sweep read as failed-adjacent
+//   in `harness list`.
+
+// IdleLabel is what a stopped scheduled harness is called instead of
+// "stopped".
+const IdleLabel = "idle"
+
+// IsIdle reports whether this state/schedule pair is a scheduled harness
+// resting between firings — the one combination StateLabel renames. Callers
+// use it to pick amber over the stopped color; every other state of a
+// scheduled harness (running, failed, degraded) keeps its own color, because
+// each still means exactly what it says.
+func IsIdle(state, schedule string) bool {
+	return schedule != "" && core.State(state) == core.StateStopped
+}
+
+// StateLabel renders a harness's state for humans, substituting "idle" for a
+// scheduled harness's "stopped". Every other state, and every unscheduled
+// harness, is returned unchanged.
+func StateLabel(state, schedule string) string {
+	if IsIdle(state, schedule) {
+		return IdleLabel
+	}
+	return state
 }

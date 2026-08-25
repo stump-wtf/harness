@@ -961,3 +961,34 @@ func TestRenderRowLabelsDisabledAndScheduled(t *testing.T) {
 		t.Errorf("scheduled row = %q, want the scheduled label", sched)
 	}
 }
+
+// TestRenderRowIdleForScheduledStopped: the dashboard must phrase a resting
+// cron job the same way `harness list` does (#268). Both read schedfmt, so a
+// divergence here is a wiring bug, not a styling preference.
+func TestRenderRowIdleForScheduledStopped(t *testing.T) {
+	m := New(Options{})
+	m.w, m.h = 100, 40
+
+	sched := m.renderRow(protocol.HarnessInfo{Name: "sweep", State: "stopped", Schedule: "0 */6 * * *"}, false)
+	if !strings.Contains(sched, "idle") {
+		t.Errorf("scheduled stopped row = %q, want it to read idle", sched)
+	}
+	if strings.Contains(sched, "stopped") {
+		t.Errorf("scheduled stopped row = %q, must not still say stopped", sched)
+	}
+
+	// An unscheduled harness that is stopped really is stopped.
+	plain := m.renderRow(protocol.HarnessInfo{Name: "backup-watch", State: "stopped"}, false)
+	if !strings.Contains(plain, "stopped") {
+		t.Errorf("unscheduled stopped row = %q, want it to still say stopped", plain)
+	}
+	if strings.Contains(plain, "idle") {
+		t.Errorf("unscheduled stopped row = %q, must not be relabelled idle", plain)
+	}
+
+	// A scheduled run that failed keeps its own word — it did fail.
+	failed := m.renderRow(protocol.HarnessInfo{Name: "sweep", State: "failed", Schedule: "0 */6 * * *"}, false)
+	if !strings.Contains(failed, "failed") {
+		t.Errorf("scheduled failed row = %q, want it to still say failed", failed)
+	}
+}

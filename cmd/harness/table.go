@@ -567,19 +567,31 @@ const scheduleGlyph = "⏱"
 // stateCell renders "● running" in the state's palette color (paired glyph +
 // label per SPEC-0001). The glyph always accompanies the color so a mono
 // terminal that drops the color still fully conveys the state. A non-empty
-// schedule swaps the state glyph for a clock (same color) so a scheduled
-// harness is legible as such at a glance.
+// schedule swaps the state glyph for a clock so a scheduled harness is
+// legible as such at a glance.
+//
+// A scheduled harness that is stopped reads as "idle" in amber rather than
+// "stopped" in pink: it is resting between firings, not switched off, and the
+// stopped color is deliberately warm enough to draw the eye (schedfmt).
 func (t *Table) stateCell(state string, schedule ...string) string {
 	s := core.State(state)
+	sched := ""
+	if len(schedule) > 0 {
+		sched = schedule[0]
+	}
 	glyph := stateGlyphFor(s)
-	if len(schedule) > 0 && schedule[0] != "" {
+	if sched != "" {
 		glyph = scheduleGlyph
 	}
-	label := string(s)
+	label := schedfmt.StateLabel(state, sched)
 	if !t.colored {
 		return fmt.Sprintf("%s %s", glyph, label)
 	}
-	return lipgloss.NewStyle().Foreground(stateColor(s, t.pal)).Bold(true).
+	color := stateColor(s, t.pal)
+	if schedfmt.IsIdle(state, sched) {
+		color = t.pal.Amber
+	}
+	return lipgloss.NewStyle().Foreground(color).Bold(true).
 		Render(fmt.Sprintf("%s %s", glyph, label))
 }
 

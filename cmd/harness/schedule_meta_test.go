@@ -15,6 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
 
@@ -47,8 +50,10 @@ func TestPrintHarnessTableMarksScheduledInline(t *testing.T) {
 	}
 	out := buf.String()
 	// The scheduled row carries the clock glyph and the highlighted next-run
-	// time in DESCRIPTION; no SCHEDULE/NEXT columns exist anymore.
-	for _, want := range []string{"⏱ stopped", "in 2h"} {
+	// time in DESCRIPTION; no SCHEDULE/NEXT columns exist anymore. It reads
+	// "idle" rather than "stopped" — a cron job between firings is armed, not
+	// switched off (#268).
+	for _, want := range []string{"⏱ idle", "in 2h"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in table:\n%s", want, out)
 		}
@@ -124,5 +129,69 @@ func TestDescriptionCellStylesSurviveWrapping(t *testing.T) {
 					n, i, opens-resets, strings.ReplaceAll(line, "\x1b", "<ESC>"))
 			}
 		}
+	}
+}
+
+// TestStateCellIdleForScheduledStopped pins the two things #268 asked for: a
+// scheduled harness that is stopped reads "idle", not "stopped", and it is
+// amber rather than the pink SPEC-0001 gives stopped — which sat next to
+// failed's coral and read as trouble on a job that was simply waiting for its
+// next firing.
+func TestStateCellIdleForScheduledStopped(t *testing.T) {
+	tbl := NewTable(&bytes.Buffer{}, "NAME", "STATE")
+	tbl.colored = true
+
+	amber := lipgloss.NewStyle().Foreground(tbl.pal.Amber).Bold(true)
+	pink := lipgloss.NewStyle().Foreground(tbl.pal.Pink).Bold(true)
+	coral := lipgloss.NewStyle().Foreground(tbl.pal.Coral).Bold(true)
+
+	tests := []struct {
+		name     string
+		state    string
+		schedule string
+		want     string
+	}{
+		{
+			"scheduled + stopped is amber idle",
+			"stopped", "0 */6 * * *",
+			amber.Render(scheduleGlyph + " idle"),
+		},
+		{
+			// An operator really did turn this one off. Saying "idle" would
+			// hide that, so an unscheduled harness is untouched.
+			"unscheduled + stopped keeps pink stopped",
+			"stopped", "",
+			pink.Render(core.StateStopped.Glyph() + " stopped"),
+		},
+		{
+			// A scheduled run that failed genuinely failed — it keeps coral.
+			"scheduled + failed keeps coral failed",
+			"failed", "0 */6 * * *",
+			coral.Render(scheduleGlyph + " failed"),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tbl.stateCell(tc.state, tc.schedule); got != tc.want {
+				t.Errorf("stateCell(%q, %q)\n got %q\nwant %q",
+					tc.state, tc.schedule,
+					strings.ReplaceAll(got, "\x1b", "<ESC>"),
+					strings.ReplaceAll(tc.want, "\x1b", "<ESC>"))
+			}
+		})
+	}
+}
+
+// TestStateCellUncoloredIdleLabel covers the mono path: color is decorative,
+// so the word itself must carry the change (SPEC-0001 REQ "State
+// Presentation" — legible from glyphs and text alone).
+func TestStateCellUncoloredIdleLabel(t *testing.T) {
+	tbl := NewTable(&bytes.Buffer{}, "NAME", "STATE")
+	tbl.colored = false
+	if got, want := tbl.stateCell("stopped", "0 */6 * * *"), scheduleGlyph+" idle"; got != want {
+		t.Errorf("stateCell = %q, want %q", got, want)
+	}
+	if got, want := tbl.stateCell("stopped"), core.StateStopped.Glyph()+" stopped"; got != want {
+		t.Errorf("stateCell = %q, want %q", got, want)
 	}
 }

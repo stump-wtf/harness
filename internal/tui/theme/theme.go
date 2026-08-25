@@ -204,6 +204,16 @@ func (t *Theme) stateColor(s core.State) Adaptive {
 	}
 }
 
+// IdleStyle is the amber a scheduled harness wears between firings. It is not
+// in stateColor because idle is not a core.State — the state machine still
+// says "stopped" and only the presentation layer renames it (schedfmt). Amber
+// rather than stopped's pink: the harness is armed and waiting, and the warm
+// red-family stopped color reads as "switched off" or, next to failed's coral,
+// as trouble.
+func (t *Theme) IdleStyle() lipgloss.Style {
+	return t.style().Foreground(t.resolve(t.Palette.Amber))
+}
+
 // StateStyle returns the colored style for a state's glyph/label.
 func (t *Theme) StateStyle(s core.State) lipgloss.Style {
 	return t.style().Foreground(t.resolve(t.stateColor(s)))

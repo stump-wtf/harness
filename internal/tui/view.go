@@ -17,6 +17,7 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/schedfmt"
 )
 
 // View implements tea.Model. Bubble Tea v2 made terminal features declarative:
@@ -410,7 +411,13 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 		glyph = m.theme.RenderGlyph(st)
 	}
 	name := h.Name
-	state := string(h.State)
+	// Between firings a scheduled harness is "idle", not "stopped" — armed and
+	// waiting, not switched off. Shared with `harness list` via schedfmt so
+	// the two surfaces never phrase the same harness two ways.
+	state := schedfmt.StateLabel(h.State, h.Schedule)
+	if schedfmt.IsIdle(h.State, h.Schedule) {
+		glyph = m.theme.IdleStyle().Render(m.theme.Glyph(st))
+	}
 	switch {
 	case h.Schedule != "":
 		// A scheduled one-shot is ALWAYS Enabled=false — config rejects
