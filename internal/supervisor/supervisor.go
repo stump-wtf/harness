@@ -132,6 +132,7 @@ type Supervisor struct {
 	restartTimer  *time.Timer
 	log           *rotatingLog
 	hist          *ptyHistory  // sanitizer between the PTY stream and log (#279)
+	readerDone    chan struct{} // closed by readOutput when the final flush has landed
 	evlog         *clog.Logger // structured lifecycle events into log (#279)
 	configChanged bool         // staged config awaiting restart (SPEC-0003)
 
@@ -444,8 +445,10 @@ func (s *Supervisor) beginStart() {
 	// ADR-0007). The raw stream still reaches the attach mux (extraOut).
 	s.ensureLog()
 	var sink io.Writer
+	readerDone := make(chan struct{})
 	if s.log != nil {
 		s.hist = newPtyHistory(s.log, cols, rows)
+		s.readerDone = readerDone
 		sink = s.hist
 	}
 	if s.extraOut != nil {
@@ -455,7 +458,7 @@ func (s *Supervisor) beginStart() {
 			sink = io.MultiWriter(sink, s.extraOut)
 		}
 	}
-	go s.readOutput(proc, sink, s.hist)
+	go s.readOutput(proc, sink, s.hist, readerDone)
 	go s.wait(proc, gen)
 
 	s.transition(core.StateRunning)
@@ -481,7 +484,8 @@ func (s *Supervisor) spawnSize() (int, int) {
 // readOutput copies the raw PTY stream to the sanitized log/tee until the PTY
 // closes, then flushes the final screenful into the log — a short run's output
 // never scrolls, so EOF is the only moment it can be landed (#279).
-func (s *Supervisor) readOutput(proc *process, sink io.Writer, hist *ptyHistory) {
+func (s *Supervisor) readOutput(proc *process, sink io.Writer, hist *ptyHistory, done chan struct{}) {
+	defer close(done)
 	_, _ = io.Copy(sink, proc.pty)
 	if hist != nil {
 		hist.Flush()
@@ -902,6 +906,18 @@ func (s *Supervisor) logEvent(msg string, kv ...any) {
 }
 
 func (s *Supervisor) closeLog() {
+	// The PTY reader goroutine may still be draining the last bytes and
+	// flushing the final screen (#279) when an exit is processed — closing
+	// the log under it swallows those writes (the flaky "log missing DONE"
+	// failure in TestLogRecordsLifecycleEvents). Wait, bounded, for it to
+	// finish; a wedged reader must not block shutdown indefinitely.
+	if s.readerDone != nil {
+		select {
+		case <-s.readerDone:
+		case <-time.After(2 * time.Second):
+		}
+		s.readerDone = nil
+	}
 	if s.hist != nil {
 		s.hist.Flush() // land the final screenful before the file goes away
 		s.hist = nil
