@@ -9,7 +9,10 @@ package tui
 // live agent").
 
 import (
+	"strings"
+
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -481,7 +484,29 @@ func (m *Model) onAttachedKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // emulator that knows the guest's DECSET ?2004 state — a client attaches to a
 // screen snapshot, which carries no modes, so it cannot know. See
 // Mux.unwrapPasteIfUnsupported.
+//
+// #276: pastes are not only a PTY concern. Any focused single-line textinput
+// (command palette, dashboard search, attached scrollback search) also gets
+// the paste inserted at its cursor — multi-line content is flattened, because
+// a one-line filter box has no way to show (or search for) embedded newlines.
 func (m *Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	// Focused text inputs first: overlays sit above the primary modes, and
+	// the attached scrollback search sits above the PTY path.
+	if ti, after := m.focusedPasteInput(); ti != nil {
+		var cmd tea.Cmd
+		*ti, cmd = ti.Update(tea.PasteMsg{Content: flattenPaste(msg.Content)})
+		after(m)
+		return m, cmd
+	}
+	// An overlay with no paste target still owns the keyboard: routeKey
+	// dispatches by overlay before primary mode, so the help/confirm/profile/
+	// form overlays swallow ordinary keystrokes rather than letting them reach
+	// the guest. A paste has to obey the same precedence — otherwise `Ctrl-b ?`
+	// over a live agent puts the help grid on screen while the pasted text is
+	// injected into the PTY behind it, unseen.
+	if m.overlay != overlayNone {
+		return m, nil
+	}
 	if m.mode != modeAttached || m.att == nil {
 		return m, nil
 	}
@@ -495,6 +520,44 @@ func (m *Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	sid := m.att.sessionID
 	data := []byte("\x1b[200~" + msg.Content + "\x1b[201~")
 	return m, func() tea.Msg { _ = m.attach.AttachInput(sid, data); return nil }
+}
+
+// focusedPasteInput returns the textinput that currently owns the keyboard,
+// if any, plus the side-effect to run after inserting into it (each input has
+// its own live preview: the palette refilters, the dashboard search narrows
+// the list, the scrollback search rescans the buffer). Returns a nil input
+// when no paste target is focused.
+func (m *Model) focusedPasteInput() (*textinput.Model, func(*Model)) {
+	switch {
+	case m.overlay == overlayPalette:
+		return &m.pal.input, func(m *Model) {
+			m.pal.filtered = FilterCommands(m.pal.all, m.pal.input.Value())
+			m.pal.sel = clamp(m.pal.sel, 0, maxIndex(len(m.pal.filtered)))
+		}
+	case m.overlay == overlaySearch:
+		return &m.search, func(m *Model) {
+			m.searchQuery = m.search.Value()
+			m.sel = 0
+			m.listOffset = 0
+		}
+	case m.mode == modeAttached && m.att != nil && m.att.searchOn:
+		return &m.att.search, func(m *Model) {
+			if m.att.scroll != nil {
+				if v := m.att.search.Value(); v != m.att.scroll.term {
+					m.att.scroll.search(v)
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+// flattenPaste prepares multi-line paste content for a single-line
+// textinput: every line break (CRLF, LF, or bare CR) becomes one space and
+// the result is trimmed, so "foo\nbar\n" pastes as "foo bar" rather than a
+// value carrying invisible newlines or a trailing space.
+func flattenPaste(s string) string {
+	return strings.TrimSpace(strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s))
 }
 
 // dispatchPrefixKey handles the keystroke that follows the Ctrl-b prefix. It
