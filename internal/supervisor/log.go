@@ -39,7 +39,7 @@ const (
 	defaultMaxBackups = 5
 )
 
-// rotatingLog is an io.WriteCloser that appends raw PTY bytes to
+// rotatingLog is an io.WriteCloser that appends sanitized history lines to
 // <dir>/<name>.log, rotating by size or age. Rotated files are renamed with a
 // timestamp suffix and pruned to MaxBackups. It is safe for concurrent writes
 // (the PTY reader is the only writer in practice, but rotation and Close may

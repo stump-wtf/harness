@@ -45,11 +45,19 @@ persisted state file (y).**
 - The `x/vt` emulator maintains the **live screen + a bounded scrollback ring**
   (default N lines, configurable, e.g. 10k). This backs attach + in-TUI scroll +
   search. It's the fast path and it's in memory.
-- **In parallel**, the daemon tees raw PTY output to a **rotating log file** per
+- **In parallel**, the daemon writes a **rotating, sanitized log file** per
   harness under `$XDG_STATE_HOME/harnessd/logs/<name>.log` (size/age rotation).
   This backs `harness logs <name>` (including after a crash) and gives us a
   durable record independent of the ring. Analogous to today's launchd
   `StandardOutPath`, but uniform across platforms.
+  *(Amended, issue #279: this was originally a raw PTY byte tee, which made
+  `harness logs` unreadable for full-screen agent TUIs — a stream of ANSI
+  repaint frames, one per refresh tick. The log now receives line-oriented
+  plain text: the screen rows that actually scrolled off (a repaint-in-place
+  spinner produces nothing), a final-screen flush when the stream ends, and
+  structured lifecycle events — state changes, exits, flapping — written via
+  charmbracelet/log. The raw byte stream still feeds the in-memory ring and
+  live attaches unchanged; only the durable file is sanitized.)*
 - On **attach**, a client gets: a screen snapshot (repaint) + a tail of scrollback,
   then the live stream. On **detach**, nothing is lost — the daemon kept reading
   the PTY the whole time.

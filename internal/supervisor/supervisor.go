@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	clog "github.com/charmbracelet/log"
+
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 )
 
@@ -129,7 +131,9 @@ type Supervisor struct {
 
 	restartTimer  *time.Timer
 	log           *rotatingLog
-	configChanged bool // staged config awaiting restart (SPEC-0003)
+	hist          *ptyHistory  // sanitizer between the PTY stream and log (#279)
+	evlog         *clog.Logger // structured lifecycle events into log (#279)
+	configChanged bool         // staged config awaiting restart (SPEC-0003)
 
 	// suppressPersist temporarily blocks markDirty during a transient start
 	// (issue #159): the state transitions publish snapshots, but those must
@@ -400,6 +404,7 @@ func (s *Supervisor) transition(next core.State) {
 		return
 	}
 	s.state = next
+	s.logEvent("state changed", "from", from.String(), "to", next.String())
 	if s.bus != nil {
 		s.bus.Publish(Event{Kind: EventStateChanged, Name: s.harness.Name, Time: time.Now(), From: from, To: next})
 	}
@@ -434,13 +439,23 @@ func (s *Supervisor) beginStart() {
 	s.startedAt = time.Now()
 	s.lastStarted = s.startedAt
 
-	// Ensure a log sink exists and tee raw PTY output to it (ADR-0007).
+	// Ensure a log sink exists; the durable log receives SANITIZED history —
+	// scrolled-off screen lines only, never raw repaint bytes (#279; amended
+	// ADR-0007). The raw stream still reaches the attach mux (extraOut).
 	s.ensureLog()
-	var sink io.Writer = s.log
-	if s.extraOut != nil {
-		sink = io.MultiWriter(s.log, s.extraOut)
+	var sink io.Writer
+	if s.log != nil {
+		s.hist = newPtyHistory(s.log, cols, rows)
+		sink = s.hist
 	}
-	go s.readOutput(proc, sink)
+	if s.extraOut != nil {
+		if sink == nil {
+			sink = s.extraOut
+		} else {
+			sink = io.MultiWriter(sink, s.extraOut)
+		}
+	}
+	go s.readOutput(proc, sink, s.hist)
 	go s.wait(proc, gen)
 
 	s.transition(core.StateRunning)
@@ -463,9 +478,14 @@ func (s *Supervisor) spawnSize() (int, int) {
 	return cols, rows
 }
 
-// readOutput copies the raw PTY stream to the log/tee until the PTY closes.
-func (s *Supervisor) readOutput(proc *process, sink io.Writer) {
+// readOutput copies the raw PTY stream to the sanitized log/tee until the PTY
+// closes, then flushes the final screenful into the log — a short run's output
+// never scrolls, so EOF is the only moment it can be landed (#279).
+func (s *Supervisor) readOutput(proc *process, sink io.Writer, hist *ptyHistory) {
 	_, _ = io.Copy(sink, proc.pty)
+	if hist != nil {
+		hist.Flush()
+	}
 }
 
 // wait reaps the process and reports its exit to the loop.
@@ -497,6 +517,7 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 	now := time.Now()
 	s.lastExitCode = code
 	s.lastExitAt = now
+	s.logEvent("exited", "code", code)
 	if s.bus != nil {
 		s.bus.Publish(Event{Kind: EventExited, Name: s.harness.Name, Time: now, Code: code})
 	}
@@ -643,6 +664,7 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 			}
 		}
 		s.nextRetryIn = delay
+		s.logEvent("flapping", "restarts", s.restartCount, "next_retry_in", delay.String())
 		if s.bus != nil {
 			s.bus.Publish(Event{Kind: EventFlapping, Name: s.harness.Name, Time: now, Restarts: s.restartCount, NextRetryIn: delay})
 		}
@@ -866,14 +888,29 @@ func (s *Supervisor) ensureLog() {
 	}
 	if rl, err := newRotatingLog(s.harness.Name, s.logCfg); err == nil {
 		s.log = rl
+		s.evlog = newEventLogger(rl)
+	}
+}
+
+// logEvent writes one structured lifecycle line into the durable log via
+// charmbracelet/log (#279). Called only from the actor loop goroutine; a no-op
+// when no log is open.
+func (s *Supervisor) logEvent(msg string, kv ...any) {
+	if s.evlog != nil {
+		s.evlog.Info(msg, kv...)
 	}
 }
 
 func (s *Supervisor) closeLog() {
+	if s.hist != nil {
+		s.hist.Flush() // land the final screenful before the file goes away
+		s.hist = nil
+	}
 	if s.log != nil {
 		_ = s.log.Close()
 		s.log = nil
 	}
+	s.evlog = nil
 }
 
 // publishSnapshot refreshes the guarded snapshot from loop-owned state and

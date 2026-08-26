@@ -488,12 +488,15 @@ func TestReloadFromFileKeepsLastGoodOnParseError(t *testing.T) {
 	}
 }
 
-// ---- ADR-0007: raw PTY output teed to the per-harness log ----------------
+// ---- ADR-0007 (amended, #279): sanitized output history in the log --------
 
+// TestLogTeeCapturesOutput verifies the durable log receives the harness's
+// output lines while it is STILL RUNNING: after enough output scrolls off the
+// 24-row screen, the sanitized history contains it (#279).
 func TestLogTeeCapturesOutput(t *testing.T) {
 	dir := t.TempDir()
 	logDir := filepath.Join(dir, "logs")
-	cfg := managerCfg(shHarness("noisy", "echo HELLO_HARNESS; sleep 5", 0))
+	cfg := managerCfg(shHarness("noisy", "echo HELLO_HARNESS; seq 1 40; sleep 5", 0))
 	m := NewManager(cfg, ManagerOptions{
 		Policy:    Policy{CrashWindow: time.Second, CrashThreshold: 3, MaxRestarts: 5, StopGrace: 200 * time.Millisecond},
 		StatePath: filepath.Join(dir, "state.json"),

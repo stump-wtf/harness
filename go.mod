@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1
+	github.com/charmbracelet/log v0.4.2
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/charmbracelet/x/vt v0.0.0-20260823001701-96af6d2cb5f6
@@ -19,8 +20,11 @@ require (
 )
 
 require (
+	github.com/charmbracelet/lipgloss v1.1.0 // indirect
+	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pires/go-proxyproto v0.12.0 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
