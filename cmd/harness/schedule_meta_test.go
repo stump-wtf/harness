@@ -162,7 +162,7 @@ func TestStateCellIdleForScheduledStopped(t *testing.T) {
 		{
 			"scheduled + stopped is amber idle",
 			"stopped", "0 */6 * * *",
-			amber.Render(scheduleGlyph + " idle"),
+			amber.Render(schedfmt.ScheduleGlyph + " idle"),
 		},
 		{
 			// An operator really did turn this one off. Saying "idle" would
@@ -175,7 +175,7 @@ func TestStateCellIdleForScheduledStopped(t *testing.T) {
 			// A scheduled run that failed genuinely failed — it keeps coral.
 			"scheduled + failed keeps coral failed",
 			"failed", "0 */6 * * *",
-			coral.Render(scheduleGlyph + " failed"),
+			coral.Render(schedfmt.ScheduleGlyph + " failed"),
 		},
 	}
 	for _, tc := range tests {
@@ -196,7 +196,7 @@ func TestStateCellIdleForScheduledStopped(t *testing.T) {
 func TestStateCellUncoloredIdleLabel(t *testing.T) {
 	tbl := NewTable(&bytes.Buffer{}, "NAME", "STATE")
 	tbl.colored = false
-	if got, want := tbl.stateCell("stopped", "0 */6 * * *"), scheduleGlyph+" idle"; got != want {
+	if got, want := tbl.stateCell("stopped", "0 */6 * * *"), schedfmt.ScheduleGlyph+" idle"; got != want {
 		t.Errorf("stateCell = %q, want %q", got, want)
 	}
 	if got, want := tbl.stateCell("stopped"), core.StateStopped.Glyph()+" stopped"; got != want {

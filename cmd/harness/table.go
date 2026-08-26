@@ -559,11 +559,6 @@ func (t *Table) bold(s string) string {
 // --- cell helpers (methods on Table so they consult t.colored, which is ---
 // --- keyed off the table's actual writer — see useColorFor, PR #23 M2). ---
 
-// scheduleGlyph is the clock a scheduled harness shows in place of its
-// state glyph. The palette color is unchanged — color still carries the
-// state; the glyph shape carries "this harness is cron-fired".
-const scheduleGlyph = "⏱"
-
 // stateCell renders "● running" in the state's palette color (paired glyph +
 // label per SPEC-0001). The glyph always accompanies the color so a mono
 // terminal that drops the color still fully conveys the state. A non-empty
@@ -579,10 +574,7 @@ func (t *Table) stateCell(state string, schedule ...string) string {
 	if len(schedule) > 0 {
 		sched = schedule[0]
 	}
-	glyph := stateGlyphFor(s)
-	if sched != "" {
-		glyph = scheduleGlyph
-	}
+	glyph := schedfmt.Glyph(state, sched)
 	label := schedfmt.StateLabel(state, sched)
 	if !t.colored {
 		return fmt.Sprintf("%s %s", glyph, label)
@@ -629,20 +621,11 @@ func highlightSchedule(desc, label string, t *Table) string {
 // stateGlyphOnly renders just the colored glyph for leading-column use.
 func (t *Table) stateGlyphOnly(state string) string {
 	s := core.State(state)
-	glyph := stateGlyphFor(s)
+	glyph := schedfmt.Glyph(state, "")
 	if !t.colored {
 		return glyph
 	}
 	return lipgloss.NewStyle().Foreground(stateColor(s, t.pal)).Render(glyph)
-}
-
-// stateGlyphFor returns the SPEC-0003 glyph, falling back to "·" for an
-// unknown state so a row is never blank.
-func stateGlyphFor(s core.State) string {
-	if !s.Valid() {
-		return "·"
-	}
-	return s.Glyph()
 }
 
 // enabledCell renders "yes" in mint when enabled, "no" in dim when not.

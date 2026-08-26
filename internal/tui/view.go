@@ -406,9 +406,16 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 	var glyph string
 	switch st {
 	case core.StateStarting, core.StateRestarting, core.StateStopping:
+		// The live spinner is a TUI-only affordance for the transient states
+		// (SPEC-0001 REQ "State Presentation": cyan + spinner) and outranks
+		// the static glyph — a booting harness should read as alive. Every
+		// other state takes the shared glyph below.
 		glyph = m.spinner.View()
 	default:
-		glyph = m.theme.RenderGlyph(st)
+		// schedfmt.Glyph, not theme.Glyph: a scheduled harness wears the clock
+		// on EVERY surface. Deriving the glyph from the state alone here drew
+		// the same cron job with ⏱ in `harness list` and ○ in the cockpit.
+		glyph = m.theme.StateStyle(st).Render(schedfmt.Glyph(h.State, h.Schedule))
 	}
 	name := h.Name
 	// Between firings a scheduled harness is "idle", not "stopped" — armed and
@@ -416,7 +423,7 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 	// the two surfaces never phrase the same harness two ways.
 	state := schedfmt.StateLabel(h.State, h.Schedule)
 	if schedfmt.IsIdle(h.State, h.Schedule) {
-		glyph = m.theme.IdleStyle().Render(m.theme.Glyph(st))
+		glyph = m.theme.IdleStyle().Render(schedfmt.Glyph(h.State, h.Schedule))
 	}
 	switch {
 	case h.Schedule != "":
@@ -754,7 +761,10 @@ func (m *Model) viewStatusBar() string {
 	}
 	stateText := ""
 	if h := m.harnessByName(m.att.name); h != nil {
-		stateText = " " + m.theme.RenderState(core.State(h.State))
+		// Schedule-aware, like every other listing surface: attached to an
+		// idle cron job this said "○ stopped" in pink while `harness list`
+		// and the dashboard row beside it both said "⏱ idle" in amber.
+		stateText = " " + m.theme.RenderHarnessState(h.State, h.Schedule)
 	}
 	// The hop flash reverses the identity segment briefly.
 	identStyle := m.theme.Ribbon()

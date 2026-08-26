@@ -11,6 +11,7 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/schedfmt"
 )
 
 // --- fakes ---------------------------------------------------------------
@@ -990,5 +991,84 @@ func TestRenderRowIdleForScheduledStopped(t *testing.T) {
 	failed := m.renderRow(protocol.HarnessInfo{Name: "sweep", State: "failed", Schedule: "0 */6 * * *"}, false)
 	if !strings.Contains(failed, "failed") {
 		t.Errorf("scheduled failed row = %q, want it to still say failed", failed)
+	}
+}
+
+// Scheduled Harness Icon And Status Line
+//
+// Two surfaces still derived their presentation from the bare state after
+// #268 taught `harness list` and the dashboard label about idle: the
+// dashboard's row GLYPH (state-derived, so ○ where the table drew ⏱) and the
+// attached status line (fully schedule-unaware, so "○ stopped" in pink for a
+// harness the row beside it called "⏱ idle"). Both now read schedfmt.
+//
+// @joestump-agent 08/26/2026 - Added with the fix.
+
+// TestRenderRowUsesScheduleGlyph: a cron job wears the clock in the cockpit
+// exactly as it does in `harness list`.
+func TestRenderRowUsesScheduleGlyph(t *testing.T) {
+	m := New(Options{})
+	m.w, m.h = 100, 40
+
+	idle := m.renderRow(protocol.HarnessInfo{Name: "sweep", State: "stopped", Schedule: "0 */6 * * *"}, false)
+	if !strings.Contains(idle, schedfmt.ScheduleGlyph) {
+		t.Errorf("idle scheduled row = %q, want the %q glyph", idle, schedfmt.ScheduleGlyph)
+	}
+	if strings.Contains(idle, core.StateStopped.Glyph()) {
+		t.Errorf("idle scheduled row = %q, must not still draw the stopped glyph", idle)
+	}
+
+	// The clock marks "cron-fired", not "resting" — a running one keeps it.
+	running := m.renderRow(protocol.HarnessInfo{Name: "sweep", State: "running", Schedule: "0 */6 * * *"}, false)
+	if !strings.Contains(running, schedfmt.ScheduleGlyph) {
+		t.Errorf("running scheduled row = %q, want the clock glyph", running)
+	}
+
+	// An unscheduled harness is untouched: it still wears its state glyph.
+	plain := m.renderRow(protocol.HarnessInfo{Name: "backup-watch", State: "stopped"}, false)
+	if strings.Contains(plain, schedfmt.ScheduleGlyph) {
+		t.Errorf("unscheduled row = %q, must not wear the clock", plain)
+	}
+	if !strings.Contains(plain, core.StateStopped.Glyph()) {
+		t.Errorf("unscheduled stopped row = %q, want the stopped glyph", plain)
+	}
+}
+
+// TestStatusBarIdleForScheduledStopped: attached to a resting cron job, the
+// status line must say what every other surface says.
+func TestStatusBarIdleForScheduledStopped(t *testing.T) {
+	m := New(Options{})
+	m.w, m.h = 100, 40
+	m.harnesses = []protocol.HarnessInfo{
+		{Name: "sweep", State: "stopped", Schedule: "0 */6 * * *"},
+	}
+	m.att = &attachState{name: "sweep"}
+
+	bar := m.viewStatusBar()
+	if !strings.Contains(bar, schedfmt.IdleLabel) {
+		t.Errorf("status bar = %q, want it to read idle", bar)
+	}
+	if strings.Contains(bar, string(core.StateStopped)) {
+		t.Errorf("status bar = %q, must not still say stopped", bar)
+	}
+	if !strings.Contains(bar, schedfmt.ScheduleGlyph) {
+		t.Errorf("status bar = %q, want the clock glyph", bar)
+	}
+}
+
+// TestStatusBarUnscheduledStateUnchanged: the fix must not relabel an
+// ordinary harness, which really is stopped when it says so.
+func TestStatusBarUnscheduledStateUnchanged(t *testing.T) {
+	m := New(Options{})
+	m.w, m.h = 100, 40
+	m.harnesses = []protocol.HarnessInfo{{Name: "backup-watch", State: "stopped"}}
+	m.att = &attachState{name: "backup-watch"}
+
+	bar := m.viewStatusBar()
+	if !strings.Contains(bar, string(core.StateStopped)) {
+		t.Errorf("status bar = %q, want it to still say stopped", bar)
+	}
+	if strings.Contains(bar, schedfmt.ScheduleGlyph) {
+		t.Errorf("status bar = %q, must not wear the clock", bar)
 	}
 }

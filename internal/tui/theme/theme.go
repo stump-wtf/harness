@@ -20,6 +20,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"gitea.stump.rocks/stump.wtf/harness/internal/schedfmt"
 )
 
 // readOnlyGlyph is the eye badge shown on a read-only attach (SPEC-0001 REQ
@@ -235,6 +236,23 @@ func (t *Theme) Glyph(s core.State) string {
 // Presentation": "state remains fully legible from glyphs and text").
 func (t *Theme) RenderState(s core.State) string {
 	return t.StateStyle(s).Render(t.Glyph(s) + " " + string(s))
+}
+
+// RenderHarnessState renders "<glyph> <label>" for a harness, honouring the
+// scheduled-harness presentation: the clock glyph for anything cron-fired,
+// "idle" instead of "stopped" between firings, and amber instead of the
+// stopped pink to carry it.
+//
+// RenderState above takes a bare core.State and cannot know any of that — it
+// is right for surfaces that genuinely have only a state (the start/stop
+// progress TUI). Anywhere a whole harness is in hand, this is the one to
+// call, so the cockpit and `harness list` cannot describe it two ways.
+func (t *Theme) RenderHarnessState(state, schedule string) string {
+	style := t.StateStyle(core.State(state))
+	if schedfmt.IsIdle(state, schedule) {
+		style = t.IdleStyle()
+	}
+	return style.Render(schedfmt.Glyph(state, schedule) + " " + schedfmt.StateLabel(state, schedule))
 }
 
 // RenderGlyph renders just the colored glyph (row-leading marker). Even alone

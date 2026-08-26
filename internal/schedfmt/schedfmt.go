@@ -350,3 +350,28 @@ func StateLabel(state, schedule string) string {
 	}
 	return state
 }
+
+// ScheduleGlyph is the clock a scheduled harness shows in place of its state
+// glyph. The color still carries the state (or amber, when idle); the glyph
+// shape carries "this harness is cron-fired".
+const ScheduleGlyph = "⏱"
+
+// Glyph returns the status glyph for a harness: the clock for anything with a
+// schedule, otherwise the SPEC-0003 state glyph. An unknown state falls back
+// to a neutral bullet so a row is never blank.
+//
+// Here rather than per-surface for the same reason StateLabel is: `harness
+// list` swapped in the clock, the cockpit did not, so the two surfaces drew
+// the same harness with different icons — the exact drift this package was
+// extracted to prevent. A caller that renders its own live spinner for the
+// transient states (the TUI does) picks that before consulting this.
+func Glyph(state, schedule string) string {
+	if schedule != "" {
+		return ScheduleGlyph
+	}
+	s := core.State(state)
+	if !s.Valid() {
+		return "·"
+	}
+	return s.Glyph()
+}
