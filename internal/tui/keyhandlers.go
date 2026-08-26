@@ -474,6 +474,13 @@ func (m *Model) onAttachedKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // rather than a burst of keystrokes. Read-only attaches keep dropping input
 // (ADR-0008), and pastes on the dashboard or other modes are ignored — the
 // attached path is the only one with a PTY to receive them.
+//
+// The brackets go on unconditionally here, and that is deliberate: they are
+// also how the daemon recognises this frame as a paste rather than keystrokes.
+// Whether the GUEST actually receives them is decided there, by the one
+// emulator that knows the guest's DECSET ?2004 state — a client attaches to a
+// screen snapshot, which carries no modes, so it cannot know. See
+// Mux.unwrapPasteIfUnsupported.
 func (m *Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	if m.mode != modeAttached || m.att == nil {
 		return m, nil

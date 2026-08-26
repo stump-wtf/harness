@@ -8,10 +8,12 @@ package attach
 // (ring + backpressure); ADR-0008 (read-only attach).
 
 import (
+	"bytes"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
@@ -30,6 +32,12 @@ const (
 // modest: a client that falls this far behind is better served by one repaint
 // than a long backlog.
 const queueCap = 256
+
+// The bracketed-paste brackets a client wraps a paste in (DECSET ?2004).
+var (
+	bracketedPasteStart = []byte("\x1b[200~")
+	bracketedPasteEnd   = []byte("\x1b[201~")
+)
 
 // Mux is the per-harness data-plane hub: the x/vt emulator + scrollback ring
 // fed by raw PTY output, plus the set of live attach sessions. It implements
@@ -53,6 +61,11 @@ type Mux struct {
 	term     vt.Terminal
 	ring     *ring
 	sessions map[*Session]struct{}
+	// bracketedPaste shadows the guest's DECSET ?2004 state, which x/vt tracks
+	// but exposes no reader for (the same reason vtView shadows DECTCEM).
+	// Guarded by mu: written from the EnableMode/DisableMode callbacks, which
+	// fire under term.Write in Mux.Write, and read in Input.
+	bracketedPaste bool
 
 	// sizeMu guards the authoritative viewport, and only that. It is
 	// deliberately not mu: the supervisor's actor loop reads the size (through
@@ -89,6 +102,25 @@ func newMux(name string, ringLines int, onResize func(cols, rows int), onInput f
 		cols:        defaultCols,
 		rows:        defaultRows,
 		sessions:    make(map[*Session]struct{}),
+	}
+	// Shadow the guest's bracketed-paste mode. Only the emulator on THIS side
+	// ever sees the guest's ?2004h: a client attaches to a screen snapshot
+	// (renderScreen emits cells, cursor and SGR — no modes), so a client-side
+	// emulator has no way to learn that an agent TUI which started before the
+	// attach has the mode on. See Input.
+	if e, ok := m.term.(*vt.Emulator); ok {
+		e.SetCallbacks(vt.Callbacks{
+			EnableMode: func(mode ansi.Mode) {
+				if mode == ansi.ModeBracketedPaste {
+					m.bracketedPaste = true
+				}
+			},
+			DisableMode: func(mode ansi.Mode) {
+				if mode == ansi.ModeBracketedPaste {
+					m.bracketedPaste = false
+				}
+			},
+		})
 	}
 	go m.pumpReplies()
 	return m
@@ -313,9 +345,36 @@ func (m *Mux) Input(s *Session, p []byte) {
 	if s.mode == protocol.AttachRO {
 		return // dropped: the PTY never sees read-only input
 	}
+	p = m.unwrapPasteIfUnsupported(p)
 	if m.onInput != nil {
 		m.onInput(p)
 	}
+}
+
+// unwrapPasteIfUnsupported strips the ESC[200~/ESC[201~ brackets from a
+// client's paste when the guest has not enabled DECSET ?2004.
+//
+// A client cannot make this call itself. It attaches to a screen snapshot —
+// renderScreen emits cells, cursor and SGR, never modes — so a client-side
+// emulator cannot know that an agent TUI which started before the attach has
+// bracketed paste on. The emulator here does know: it is fed every byte the
+// guest ever wrote, and x/vt's own Emulator.Paste gates on exactly this mode.
+//
+// Sending the brackets to a guest that never asked for them is not a cosmetic
+// problem — they arrive as literal input. A plain shell reads
+// "^[[200~ls -la^[[201~" as the command line, so the paste is corrupted rather
+// than merely unstyled, which is worse than the drop this PR is fixing.
+func (m *Mux) unwrapPasteIfUnsupported(p []byte) []byte {
+	if !bytes.HasPrefix(p, bracketedPasteStart) || !bytes.HasSuffix(p, bracketedPasteEnd) {
+		return p
+	}
+	m.mu.Lock()
+	on := m.bracketedPaste
+	m.mu.Unlock()
+	if on {
+		return p
+	}
+	return p[len(bracketedPasteStart) : len(p)-len(bracketedPasteEnd)]
 }
 
 // SessionCount reports the number of live sessions (for tests).
