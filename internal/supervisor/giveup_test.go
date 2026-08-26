@@ -176,7 +176,11 @@ func TestScheduledFiringClearsStaleRestartCount(t *testing.T) {
 				t.Fatalf("precondition: RestartCount = %d, want the seeded 4417", got)
 			}
 
-			s.Start()
+			// StartTransient, not Start: this is what cmd/harness/daemon.go
+			// hands the scheduler, and it is the entry point that leaves
+			// enabled == false. Testing through Start would set enabled = true
+			// and exercise a fall-through the scheduler never takes.
+			s.StartTransient()
 			if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == tc.want }) {
 				t.Fatalf("expected %s, got %s", tc.want, s.Snapshot().State)
 			}
@@ -203,5 +207,41 @@ func TestUnscheduledHarnessKeepsRestartHistory(t *testing.T) {
 	if got := s.Snapshot().RestartCount; got != 7 {
 		t.Errorf("RestartCount = %d, want 7 preserved — an unscheduled harness's "+
 			"restart history is real and must survive", got)
+	}
+}
+
+// The ordering invariant in onProcessGone, pinned directly: a scheduled
+// harness's exit must be classified by its schedule, not by the transient
+// intent StartTransient leaves behind. With the !s.enabled return ahead of
+// the Schedule branch, a firing that exits non-zero settled as StateStopped
+// and was indistinguishable from a clean one — the sweep that failed and the
+// sweep that succeeded rendered identically in `harness list`.
+func TestScheduledFailedFiringLandsInFailed(t *testing.T) {
+	s := newTestSupervisor(t, scheduledHarness("sweeper", "exit 1", "0 */6 * * *"), fastPolicy())
+	s.StartTransient()
+
+	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateFailed }) {
+		t.Fatalf("a scheduled firing that exited 1 settled as %s, want failed — "+
+			"a failed sweep must not read as a clean one", s.Snapshot().State)
+	}
+}
+
+// The counterpart the reorder had to preserve: `harness stop` on a RUNNING
+// scheduled harness still lands in stopped, despite the SIGTERM exit being
+// non-zero. It holds because a graceful stop never reaches onProcessGone at
+// all — gracefulStop consumes the exit off exitCh itself and transitions
+// directly — so the Schedule branch cannot misroute an operator's stop into
+// failed. This test exists to fail loudly if that ever stops being true.
+func TestStoppingRunningScheduledHarnessLandsInStopped(t *testing.T) {
+	s := newTestSupervisor(t, scheduledHarness("sweeper", "sleep 30", "0 */6 * * *"), fastPolicy())
+	s.StartTransient()
+	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateRunning }) {
+		t.Fatalf("sweep never came up: %s", s.Snapshot().State)
+	}
+
+	s.Stop()
+	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateStopped }) {
+		t.Fatalf("harness stop on a running sweep landed in %s, want stopped — "+
+			"an operator's stop is not a failure", s.Snapshot().State)
 	}
 }

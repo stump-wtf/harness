@@ -501,19 +501,29 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		s.bus.Publish(Event{Kind: EventExited, Name: s.harness.Name, Time: now, Code: code})
 	}
 
-	// Exit while disabled → stopped, no respawn (SPEC-0003 REQ "Restart On
-	// Exit" / "Intent vs. reality").
-	if !s.enabled {
-		s.transition(core.StateStopped)
-		return
-	}
-
 	// A scheduled harness is a cron one-shot: its schedule IS its retry
 	// mechanism (SPEC-0008 REQ "Firing And Overlap"). Respawning it here would
 	// double-drive the cadence, and a run that fails every time would retry as
 	// fast as it can fail rather than on the schedule. Land the exit and let
 	// the next firing be the retry — the scheduler starts from stopped and
 	// failed alike, so this re-arms nothing and disarms nothing.
+	//
+	// This MUST stay above the !s.enabled return below. A real firing always
+	// has enabled == false: the scheduler fires through StartTransient, which
+	// deliberately never sets intent (#159), and #266 now clamps a persisted
+	// true away on Restore. So with the disabled check first, this branch was
+	// unreachable on the only path that actually fires a sweep — every
+	// scheduled exit, clean or failed, settled as StateStopped, and the
+	// failed/stopped distinction an operator reads off `harness list` did not
+	// exist. For a cron one-shot enabled is not the question; the schedule is
+	// the intent, exactly as #266 argues for Restore and Autostart.
+	//
+	// Reordering is safe because onProcessGone has only two callers, both of
+	// them "the process died on its own": a spawn failure in beginStart, and
+	// handleExit for a natural exit. A graceful stop never arrives here at
+	// all — gracefulStop consumes the exit off exitCh itself and transitions
+	// to stopped directly — so `harness stop <sweep>` on a running sweep still
+	// lands in stopped, not failed, despite the SIGTERM exit code.
 	if s.harness.Schedule != "" {
 		s.resetCrashState()
 		// RestartCount counts automatic respawns, and this branch is the
@@ -540,6 +550,13 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		} else {
 			s.transition(core.StateStopped)
 		}
+		return
+	}
+
+	// Exit while disabled → stopped, no respawn (SPEC-0003 REQ "Restart On
+	// Exit" / "Intent vs. reality").
+	if !s.enabled {
+		s.transition(core.StateStopped)
 		return
 	}
 
