@@ -811,14 +811,17 @@ func (m *Model) detach() tea.Cmd {
 	return tea.Batch(cmd, m.peekTargetChanged())
 }
 
-// peekLines returns the current peek text split into lines, used as the frozen
-// scrollback buffer when entering the substate. After a hop (or in attach-only
-// mode) the peek can still belong to a different harness — stitching its
-// history under this harness's frame would present another session's log as
-// ours — so a mismatched peek yields no history rather than the wrong one.
+// peekLines returns the current peek text split into chat-ready lines, used
+// as the frozen history when entering scrollback. The raw tail is sanitized
+// (#280): escape bytes stripped and per-tick status chatter collapsed, so the
+// frozen chat shows what the agent did, not one line per second it spent
+// doing it. After a hop (or in attach-only mode) the peek can still belong to
+// a different harness — stitching its history under this harness's frame
+// would present another session's log as ours — so a mismatched peek yields
+// no history rather than the wrong one.
 func (m *Model) peekLines() []string {
 	if m.att != nil && m.peek.name != m.att.name {
 		return nil
 	}
-	return splitLines(m.peek.text)
+	return sanitizeTailLines(m.peek.text)
 }

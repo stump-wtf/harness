@@ -73,6 +73,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case logsMsg:
 		if sel, ok := m.selectedHarness(); ok && sel.Name == msg.name {
+			// Identical fetch is a no-op (#280): the peek polls every second,
+			// and re-storing an unchanged tail would churn the frozen-chat
+			// source (and any derived rendering) once per tick for nothing.
+			if m.peek.name == msg.name && m.peek.text == msg.text {
+				return m, nil
+			}
 			m.peek = msg
 		}
 		return m, nil

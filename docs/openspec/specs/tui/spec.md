@@ -112,7 +112,17 @@ show a visible read-only badge and ignore input.
 From attached mode, `Ctrl-b [` or `PgUp` SHALL enter a scrollback substate
 that freezes the view and enables `↑/↓/PgUp/PgDn/g/G` navigation and `/`
 search over the daemon-owned scrollback (ADR-0007). `q`/`Esc` SHALL exit
-scrollback back to live.
+scrollback back to live. History lines are sanitized before display (#280):
+contentless lines are dropped and consecutive status-chatter lines (identical
+except for a ticking counter or spinner glyph) collapse to one, so the frozen
+chat shows what the agent did rather than a line per second a tool ran.
+
+#### Scenario: Chatter collapses in frozen history
+
+- **WHEN** the log tail carries repeated per-tick status lines for a running
+  tool (`✻ Working (3s)`…`(4s)`…)
+- **THEN** the frozen scrollback shows one status line for that run, and the
+  tool invocation line itself remains visible
 
 #### Scenario: Searching history
 
