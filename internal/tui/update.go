@@ -147,6 +147,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.onKey(msg)
 
+	case tea.PasteMsg:
+		// Bracketed paste: Bubble Tea v2 delivers pastes here, not as key
+		// presses — route to the attached PTY or it is silently dropped (#272).
+		return m.onPaste(msg)
+
 	case agentEventMsg:
 		return m.onAgentEvents(msg)
 

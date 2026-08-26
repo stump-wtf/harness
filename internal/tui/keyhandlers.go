@@ -464,6 +464,32 @@ func (m *Model) onAttachedKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// onPaste handles a bracketed paste (tea.PasteMsg) while attached.
+//
+// Bubble Tea v2 enables bracketed paste mode by default, so a terminal paste
+// never arrives as KeyPressMsg — without this case the paste is parsed and
+// silently dropped. In the attached interactive substate (read-write), forward
+// the content to the guest PTY wrapped in ESC[200~/ESC[201~ so
+// bracketed-paste-aware guests (readline, agent TUIs) treat it as a paste
+// rather than a burst of keystrokes. Read-only attaches keep dropping input
+// (ADR-0008), and pastes on the dashboard or other modes are ignored — the
+// attached path is the only one with a PTY to receive them.
+func (m *Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	if m.mode != modeAttached || m.att == nil {
+		return m, nil
+	}
+	if m.att.readOnly() || m.att.substate != substateInteractive || m.attach == nil {
+		return m, nil
+	}
+	// A paste is bulk input, never a prefix command: disarm an armed prefix
+	// so the next real keystroke isn't swallowed as one (tmux behaves the
+	// same way).
+	m.att.prefixArmed = false
+	sid := m.att.sessionID
+	data := []byte("\x1b[200~" + msg.Content + "\x1b[201~")
+	return m, func() tea.Msg { _ = m.attach.AttachInput(sid, data); return nil }
+}
+
 // dispatchPrefixKey handles the keystroke that follows the Ctrl-b prefix. It
 // resolves the command key to an action, or cancels (no-op) if the key isn't
 // a known chord — in which case the user mistyped and we don't forward the
