@@ -131,10 +131,10 @@ type Supervisor struct {
 
 	restartTimer  *time.Timer
 	log           *rotatingLog
-	hist          *ptyHistory  // sanitizer between the PTY stream and log (#279)
+	hist          *ptyHistory   // sanitizer between the PTY stream and log (#279)
 	readerDone    chan struct{} // closed by readOutput when the final flush has landed
-	evlog         *clog.Logger // structured lifecycle events into log (#279)
-	configChanged bool         // staged config awaiting restart (SPEC-0003)
+	evlog         *clog.Logger  // structured lifecycle events into log (#279)
+	configChanged bool          // staged config awaiting restart (SPEC-0003)
 
 	// suppressPersist temporarily blocks markDirty during a transient start
 	// (issue #159): the state transitions publish snapshots, but those must
