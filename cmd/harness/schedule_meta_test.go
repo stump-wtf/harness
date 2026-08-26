@@ -11,14 +11,22 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"charm.land/lipgloss/v2"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/attach"
+	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
+	"gitea.stump.rocks/stump.wtf/harness/internal/config"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"gitea.stump.rocks/stump.wtf/harness/internal/daemon"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/schedfmt"
+	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
 )
 
 func TestNextRunCell(t *testing.T) {
@@ -194,4 +202,78 @@ func TestStateCellUncoloredIdleLabel(t *testing.T) {
 	if got, want := tbl.stateCell("stopped"), core.StateStopped.Glyph()+" stopped"; got != want {
 		t.Errorf("stateCell = %q, want %q", got, want)
 	}
+}
+
+// describe is the third surface that renders a state, and it has the schedule
+// on hand (it prints it a few rows down). Left off, a resting sweep read
+// "stopped" under `harness describe` and "idle" in `harness list` — the
+// divergence schedfmt was created to prevent, and the one its package doc
+// calls out by name.
+//
+// Driven through the real verb against a live daemon, because the bug was in
+// the call site, not in stateCell: passing the wrong arguments is exactly what
+// a test of stateCell alone cannot see.
+//
+// @joestump 08/26/2026 - Found in review of #269.
+func TestDescribeRendersScheduledHarnessAsIdle(t *testing.T) {
+	socket := bootScheduledDaemon(t)
+
+	out, err := captureStdout(t, func() error {
+		return withClient(verbOpts{socket: socket, name: "sweeper"}, nil, cmdDescribe)
+	})
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+	if !strings.Contains(out, schedfmt.IdleLabel) {
+		t.Errorf("describe does not render a resting scheduled harness as %q "+
+			"— `harness list` calls it that, so the two surfaces disagree "+
+			"about one harness:\n%s", schedfmt.IdleLabel, out)
+	}
+	if strings.Contains(out, "state") && strings.Contains(out, " stopped") {
+		t.Errorf("describe still says \"stopped\" for a scheduled harness:\n%s", out)
+	}
+}
+
+// bootScheduledDaemon is bootTestDaemon with a cron one-shot in the config,
+// which is the shape TestDescribeRendersScheduledHarnessAsIdle needs and
+// writeMinimalConfig does not provide.
+func bootScheduledDaemon(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "harness.toml")
+	if err := os.WriteFile(configPath, []byte(
+		"[harness.sweeper]\nharness = \"claude-code\"\nprompt = \"sweep the queue\"\nschedule = \"0 */6 * * *\"\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket := filepath.Join(shortSockDir(t), "d.sock")
+
+	reg := attach.NewRegistry(1000)
+	mgr := supervisor.NewManager(cfg, supervisor.ManagerOptions{
+		StatePath:   filepath.Join(tmp, "state.json"),
+		LogDir:      filepath.Join(tmp, "logs"),
+		ExtraOutFor: reg.WriterFor,
+	})
+	reg.SetController(mgr)
+
+	srv := daemon.NewServer(daemon.Options{
+		Manager:    mgr,
+		Registry:   reg,
+		SocketPath: socket,
+		ConfigPath: configPath,
+		Version:    buildinfo.Version,
+	})
+	if err := srv.Listen(); err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve()
+	t.Cleanup(func() {
+		srv.Close()
+		mgr.Close()
+	})
+	return socket
 }

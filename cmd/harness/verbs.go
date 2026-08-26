@@ -103,7 +103,10 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	}
 	t := NewTable(os.Stdout, "FIELD", "VALUE")
 	t.Row(t.accentBold("name"), fmt.Sprintf("%s %s", t.stateGlyphOnly(h.State), h.Name))
-	t.Row("state", t.stateCell(h.State))
+	// Pass the schedule: without it describe renders "stopped" in pink for the
+	// same harness `harness list` shows as amber "idle" (#268). schedfmt exists
+	// so the surfaces cannot phrase one harness two ways.
+	t.Row("state", t.stateCell(h.State, h.Schedule))
 	t.Row("enabled", t.enabledCell(h.Enabled))
 	// A prompt harness has no configured cmd — show what the user wrote (the
 	// prompt), not the synthesized agent argv (ADR-0011 spawn-time synthesis).
