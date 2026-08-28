@@ -30,6 +30,7 @@ type rawHarness struct {
 	Harness           string   `toml:"harness"`
 	Args              []string `toml:"args"`
 	Prompt            string   `toml:"prompt"`
+	PromptFile        string   `toml:"prompt_file"`
 	Model             string   `toml:"model"`
 	AutoAccept        bool     `toml:"auto_accept"`
 	MaxTurns          *int     `toml:"max_turns"`
@@ -392,6 +393,53 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 			"harness %q: \"prompt\" and \"args\" are mutually exclusive (args configure a long-running harness; the agent argv is synthesized at spawn)", name)
 	}
 
+	// `prompt_file` names a file whose contents are the instruction — the
+	// alternative to an inline `prompt` for a specification too long to sit on
+	// one TOML line. Only the PATH is stored; the supervisor reads it at spawn
+	// (ADR-0018). The path is resolved and checked eagerly for the reason
+	// SPEC-0008 parses the cron expression eagerly: a scheduled one-shot whose
+	// instruction file is missing would otherwise fire into a no-op with
+	// nobody attached to notice. That is deliberately stricter than
+	// `env_file`, which tolerates a missing file because a harness with no
+	// extra environment still runs correctly — a harness with no prompt has
+	// nothing to run at all.
+	// Governing: ADR-0018; SPEC-0006 REQ "Prompt Source".
+	promptFile := strings.TrimSpace(rh.PromptFile)
+	switch {
+	case rh.PromptFile != "" && promptFile == "":
+		return newError(filename, line, "harness %q: \"prompt_file\" must not be blank", name)
+	case promptFile != "" && prompt != "":
+		return newError(filename, line,
+			"harness %q: \"prompt\" and \"prompt_file\" are mutually exclusive (inline the instruction or name a file holding it, not both)", name)
+	case promptFile != "" && len(rh.Args) > 0:
+		return newError(filename, line,
+			"harness %q: \"prompt_file\" and \"args\" are mutually exclusive (args configure a long-running harness; the agent argv is synthesized at spawn)", name)
+	}
+
+	// Either prompt source makes this an agent one-shot, so every
+	// prompt-dependent key below tests isAgent rather than `prompt` alone —
+	// otherwise a prompt_file harness would be rejected for setting `model` or
+	// `schedule` and would inherit the always-restart cmd default.
+	isAgent := prompt != "" || promptFile != ""
+
+	// Resolve prompt_file against the file that declared it, deliberately
+	// NOT through the shared `resolve` (which is nil for the global config, so
+	// workdir/env_file there stay raw until spawn expands ~). A relative
+	// prompt_file cannot afford that treatment: config.Load runs from the CLI
+	// and from the daemon, which systemd starts with an arbitrary cwd, so a
+	// cwd-relative path would validate in one process and fail in the other.
+	// Resolving against the declaring file — the same rule `harness_d` already
+	// uses — makes the path mean one thing everywhere. A project file passes
+	// its own resolver, which anchors on the project root instead.
+	promptFilePath := promptFile
+	if promptFile != "" {
+		if resolve != nil {
+			promptFilePath = resolve(promptFile)
+		} else {
+			promptFilePath = resolveConfigPath(promptFile, filename)
+		}
+	}
+
 	// `model` is config truth only: stored on the harness and folded into the
 	// synthesized agent argv at spawn time (core.AgentCommand, ADR-0011),
 	// never desugared into args here — a parse-time flag corrupts the TOML
@@ -406,9 +454,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	case strings.ContainsFunc(model, unicode.IsSpace):
 		return newError(filename, line,
 			"harness %q: \"model\" must be a single token (model ids carry no whitespace)", name)
-	case model != "" && prompt == "":
+	case model != "" && !isAgent:
 		return newError(filename, line,
-			"harness %q: \"model\" requires \"prompt\" (a cmd harness passes --model through its own args)", name)
+			"harness %q: \"model\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes --model through its own args)", name)
 	}
 
 	// `auto_accept` is config truth only, same contract as `model`: stored on
@@ -422,9 +470,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	// "attended" — there is no third state worth distinguishing (unlike
 	// `enabled`, whose omitted default is context-dependent).
 	// Governing: issue #58 (add `auto_accept` field for unattended mode).
-	if rh.AutoAccept && prompt == "" {
+	if rh.AutoAccept && !isAgent {
 		return newError(filename, line,
-			"harness %q: \"auto_accept\" requires \"prompt\" (a cmd harness passes its tool's flag through its own args)", name)
+			"harness %q: \"auto_accept\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes its tool's flag through its own args)", name)
 	}
 
 	// `max_turns` is config truth only, same contract as `model` and
@@ -443,9 +491,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 			return newError(filename, line,
 				"harness %q: \"max_turns\" must not be negative (got %d)", name, *rh.MaxTurns)
 		}
-		if prompt == "" {
+		if !isAgent {
 			return newError(filename, line,
-				"harness %q: \"max_turns\" requires \"prompt\" (a cmd harness passes --max-turns through its own args)", name)
+				"harness %q: \"max_turns\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes --max-turns through its own args)", name)
 		}
 		maxTurns = *rh.MaxTurns
 	}
@@ -462,14 +510,14 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	// Governing: issue #60 (add `quiet` field for headless output
 	// suppression).
 	quiet := false
-	if prompt != "" {
+	if isAgent {
 		// A prompt one-shot is headless by default.
 		quiet = true
 	}
 	if rh.Quiet != nil {
-		if prompt == "" {
+		if !isAgent {
 			return newError(filename, line,
-				"harness %q: \"quiet\" requires \"prompt\" (a cmd harness passes its tool's tone flag through its own args)", name)
+				"harness %q: \"quiet\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes its tool's tone flag through its own args)", name)
 		}
 		quiet = *rh.Quiet
 	}
@@ -500,7 +548,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		// harnesses default to "no" instead: a one-shot agent run exiting 0
 		// must not respawn (an explicit `restart = ...` still wins).
 		restartPolicy = core.RestartAlways
-		if prompt != "" {
+		if isAgent {
 			restartPolicy = core.RestartNo
 		}
 	}
@@ -521,9 +569,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	case rh.Schedule != "" && schedule == "":
 		return newError(filename, line,
 			"harness %q: \"schedule\" must not be blank", name)
-	case schedule != "" && prompt == "":
+	case schedule != "" && !isAgent:
 		return newError(filename, line,
-			"harness %q: \"schedule\" requires \"prompt\" (a scheduled harness is a one-shot agent run)", name)
+			"harness %q: \"schedule\" requires \"prompt\" or \"prompt_file\" (a scheduled harness is a one-shot agent run)", name)
 	case schedule != "" && enabled:
 		return newError(filename, line,
 			"harness %q: \"schedule\" and \"enabled = true\" are mutually exclusive (use one or the other)", name)
@@ -553,6 +601,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		MaxTurns:     maxTurns,
 		Model:        model,
 		Prompt:       prompt,
+		PromptFile:   promptFilePath,
 		Quiet:        quiet,
 		Workdir:      resolve(rh.Workdir),
 		EnvFile:      resolve(rh.EnvFile),
@@ -564,10 +613,20 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		TmuxSocket:   rh.TmuxSocket,
 		Schedule:     schedule,
 	}
-	if prompt != "" {
+	if isAgent {
 		// Args stay EMPTY for a prompt harness (spawn-time synthesis,
 		// ADR-0011) — also defensively squashing whitespace-only args.
 		h.Args = nil
+	}
+	if h.PromptFile != "" {
+		// Check the RESOLVED path so the error names what we would actually
+		// open. Eager, for SPEC-0008's reason: a scheduled one-shot pointed at
+		// a missing instruction file must fail the load, not fire into a
+		// no-op. Spawn re-checks — the file can vanish in between.
+		if err := checkPromptFile(h.PromptFile); err != nil {
+			return newError(filename, line,
+				"harness %q: \"prompt_file\" %s", name, err)
+		}
 	}
 
 	// SPEC-0005 REQ "Capability Scoping": mcp_allow defaults to ["read"].
@@ -615,6 +674,16 @@ func buildServer(filename string, line int, rs rawServer) (core.ServerConfig, er
 			"[server]: enabled = true requires authorized_keys or authorized_keys_file (ADR-0008: no unauthenticated remote access)")
 	}
 	return sc, nil
+}
+
+// checkPromptFile validates a resolved prompt_file path at load time by doing
+// exactly what spawn will do — core.ReadPromptFile — and discarding the text.
+// Sharing the reader is the point: a file the load accepts is by construction a
+// file the spawn can run, so the two checks cannot drift.
+// Governing: ADR-0018; SPEC-0006 REQ "Prompt Source".
+func checkPromptFile(path string) error {
+	_, err := core.ReadPromptFile(path)
+	return err
 }
 
 // resolveConfigPath turns a path read out of the config file into one the

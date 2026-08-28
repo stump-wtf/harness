@@ -46,29 +46,31 @@ type persistedProject struct {
 // shared Harnesses map under the fully-qualified name, so project and
 // global harnesses restore through the same path.
 type persistedProjectHarness struct {
-	Name           string   `json:"name"`
-	Harness        string   `json:"harness,omitempty"`
-	Args           []string `json:"args,omitempty"`
-	Prompt         string   `json:"prompt,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	AutoAccept     bool     `json:"auto_accept,omitempty"`
-	MaxTurns       int      `json:"max_turns,omitempty"`
-	Quiet          *bool    `json:"quiet,omitempty"`
-	Workdir        string   `json:"workdir,omitempty"`
-	EnvFile        string   `json:"env_file,omitempty"`
-	RestartDelayMs int64    `json:"restart_delay_ms,omitempty"`
-	Restart        string   `json:"restart,omitempty"`
-	Backend        string   `json:"backend,omitempty"`
-	Description    string   `json:"description,omitempty"`
-	Enabled        bool     `json:"enabled,omitempty"`
-	TmuxSocket     string   `json:"tmux_socket,omitempty"`
+	Name    string   `json:"name"`
+	Harness string   `json:"harness,omitempty"`
+	Args    []string `json:"args,omitempty"`
+	Prompt  string   `json:"prompt,omitempty"`
+	// PromptFile is the PATH, never the file's contents (ADR-0018).
+	PromptFile     string `json:"prompt_file,omitempty"`
+	Model          string `json:"model,omitempty"`
+	AutoAccept     bool   `json:"auto_accept,omitempty"`
+	MaxTurns       int    `json:"max_turns,omitempty"`
+	Quiet          *bool  `json:"quiet,omitempty"`
+	Workdir        string `json:"workdir,omitempty"`
+	EnvFile        string `json:"env_file,omitempty"`
+	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
+	Restart        string `json:"restart,omitempty"`
+	Backend        string `json:"backend,omitempty"`
+	Description    string `json:"description,omitempty"`
+	Enabled        bool   `json:"enabled,omitempty"`
+	TmuxSocket     string `json:"tmux_socket,omitempty"`
 }
 
 // toPersistedProject captures a project record's definitions in persisted
 // form. h is the namespaced core.Harness exactly as registered.
 func toPersistedProjectHarness(h core.Harness) persistedProjectHarness {
 	var quiet *bool
-	if h.Prompt != "" {
+	if h.IsAgent() {
 		// Only meaningful for a prompt harness; nil keeps a bare cmd harness's
 		// state file free of the headless one-shot default.
 		q := h.Quiet
@@ -79,6 +81,7 @@ func toPersistedProjectHarness(h core.Harness) persistedProjectHarness {
 		Harness:        h.Adapter,
 		Args:           h.Args,
 		Prompt:         h.Prompt,
+		PromptFile:     h.PromptFile,
 		Model:          h.Model,
 		AutoAccept:     h.AutoAccept,
 		MaxTurns:       h.MaxTurns,
@@ -105,7 +108,7 @@ func (p persistedProjectHarness) toCore() core.Harness {
 	restart := core.RestartPolicy(p.Restart)
 	if p.Restart == "" {
 		restart = core.RestartAlways
-		if p.Prompt != "" {
+		if p.Prompt != "" || p.PromptFile != "" {
 			restart = core.RestartNo
 		}
 	}
@@ -118,6 +121,7 @@ func (p persistedProjectHarness) toCore() core.Harness {
 		Adapter:      p.Harness,
 		Args:         p.Args,
 		Prompt:       p.Prompt,
+		PromptFile:   p.PromptFile,
 		Model:        p.Model,
 		AutoAccept:   p.AutoAccept,
 		MaxTurns:     p.MaxTurns,

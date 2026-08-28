@@ -146,7 +146,11 @@ type ProjectHarness struct {
 	// an explicit false (stream output to an attach). Set only alongside prompt
 	// (parse validation enforces it); the daemon folds --quiet into (or out of)
 	// the synthesized argv at spawn (ADR-0011, issue #60).
-	Quiet          *bool  `json:"quiet,omitempty"`
+	Quiet *bool `json:"quiet,omitempty"`
+	// PromptFile mirrors the schema's `prompt_file`: the PATH to the file
+	// holding the instruction, never its contents (ADR-0018). Clients show
+	// and round-trip the path; the daemon reads the file at spawn.
+	PromptFile     string `json:"prompt_file,omitempty"`
 	Workdir        string `json:"workdir,omitempty"`
 	EnvFile        string `json:"env_file,omitempty"`
 	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
@@ -199,6 +203,11 @@ type HarnessInfo struct {
 	// Prompt is the agent one-shot instruction for a prompt harness; the
 	// argv is synthesized at spawn from the same adapter (ADR-0011).
 	Prompt string `json:"prompt,omitempty"`
+	// PromptFile is the PATH to a file holding the instruction, the
+	// alternative to an inline Prompt and mutually exclusive with it. The
+	// daemon reads the file at spawn, so the contents never travel on the
+	// wire — a client shows and round-trips the path (ADR-0018).
+	PromptFile string `json:"prompt_file,omitempty"`
 	// Model is the agent model selection for a prompt harness, folded into the
 	// synthesized argv at spawn (issue #57). Empty for cmd harnesses.
 	Model string `json:"model,omitempty"`

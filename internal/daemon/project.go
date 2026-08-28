@@ -166,7 +166,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		// default: always-restart, except a prompt one-shot, which must not
 		// respawn after a successful run.
 		restart = core.RestartAlways
-		if ph.Prompt != "" {
+		if ph.Prompt != "" || ph.PromptFile != "" {
 			restart = core.RestartNo
 		}
 	}
@@ -182,6 +182,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		Adapter:      ph.Harness,
 		Args:         ph.Args,
 		Prompt:       ph.Prompt,
+		PromptFile:   ph.PromptFile,
 		Model:        ph.Model,
 		AutoAccept:   ph.AutoAccept,
 		MaxTurns:     ph.MaxTurns,

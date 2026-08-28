@@ -6,6 +6,11 @@ package core
 // (config, supervisor, protocol, tui) imports.
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -89,6 +94,27 @@ type Harness struct {
 	// the prompt text never passes through {workdir} arg expansion.
 	// Governing: ADR-0011; issue #56 (harness abstraction for agent CLIs).
 	Prompt string
+	// PromptFile is the path to a file whose contents are the agent one-shot
+	// instruction — the alternative to an inline Prompt for a specification too
+	// long to live on one TOML line (a basic string carries no raw newline).
+	// Mutually exclusive with Prompt; either satisfies the "is a prompt
+	// harness" predicate every prompt-dependent key is validated against.
+	//
+	// This field holds a PATH, never the file's contents. The supervisor reads
+	// it at spawn, immediately before exec, and passes what it read to the
+	// adapter's PromptCommand. Storing contents here instead would inline the
+	// whole document into the TOML on the next config-writer round-trip (the
+	// TUI form re-emits Prompt verbatim), push it through every display
+	// surface and the wire, and make each prompt edit require a reload — the
+	// same class of failure ADR-0011 avoids by refusing to desugar Model into
+	// Args. Reading per spawn also means a scheduled run uses the file as it
+	// stands at firing time.
+	//
+	// Config load validates that the path resolves to a readable, non-empty
+	// file; spawn re-checks, because the file can be deleted in between and a
+	// run with an empty instruction is a silent no-op.
+	// Governing: ADR-0018; SPEC-0006 REQ "Prompt Source".
+	PromptFile string
 	// Model selects which model the agent CLI runs a prompt harness with.
 	// Config truth only, and it requires Prompt (validation enforces it —
 	// there is no vendor-agnostic place to inject a flag into an arbitrary
@@ -197,6 +223,46 @@ type Harness struct {
 	// fleet. Governing: SPEC-0005 REQ "Capability Scoping".
 	MCPAllow []string
 }
+
+// ReadPromptFile reads the instruction text a PromptFile names. It is the one
+// place that decides what makes a prompt file usable, so the config parser's
+// eager check and the supervisor's spawn-time read cannot drift into
+// disagreeing — a file the load accepted must be a file the spawn can run.
+//
+// path must already be resolved (~ expanded, relative made absolute); callers
+// own that because the two sides resolve against different bases. An empty or
+// whitespace-only file is an error, not an empty prompt: launching an agent
+// with no instruction is the silent no-op ADR-0018 exists to remove.
+// Governing: ADR-0018; SPEC-0006 REQ "Prompt Source".
+func ReadPromptFile(path string) (string, error) {
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", fmt.Errorf("%q does not exist", path)
+	case err != nil:
+		return "", fmt.Errorf("%q is not readable: %w", path, err)
+	case info.IsDir():
+		return "", fmt.Errorf("%q is a directory, not a file", path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("%q is not readable: %w", path, err)
+	}
+	prompt := strings.TrimSpace(string(b))
+	if prompt == "" {
+		return "", fmt.Errorf("%q is empty", path)
+	}
+	return prompt, nil
+}
+
+// IsAgent reports whether h is an agent one-shot — a harness whose argv is
+// synthesized at spawn from a prompt (ADR-0011) rather than run from configured
+// args. Either prompt source counts: Prompt carries the instruction inline,
+// PromptFile names a file the supervisor reads at spawn (ADR-0018). Use this
+// wherever "is this a prompt harness?" is asked, so a prompt_file harness is
+// never mistaken for a cmd harness by a bare Prompt != "" check.
+// Governing: SPEC-0006 REQ "Prompt Source".
+func (h Harness) IsAgent() bool { return h.Prompt != "" || h.PromptFile != "" }
 
 // AgentOpts carries the config-truth knobs a prompt harness folds into its
 // synthesized agent argv at spawn time. Every field stays verbatim — none are

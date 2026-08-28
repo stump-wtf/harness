@@ -471,6 +471,7 @@ func harnessDefEqual(a, b core.Harness) bool {
 		a.Adapter == b.Adapter &&
 		slices.Equal(a.Args, b.Args) &&
 		a.Prompt == b.Prompt &&
+		a.PromptFile == b.PromptFile &&
 		a.Model == b.Model &&
 		a.AutoAccept == b.AutoAccept &&
 		a.MaxTurns == b.MaxTurns &&

@@ -173,6 +173,35 @@ func expandArgs(args []string, workdir string) []string {
 	return out
 }
 
+// resolvePrompt returns h with its prompt text in place: unchanged for an
+// inline prompt or a cmd harness, and — for a prompt_file harness — a copy
+// whose Prompt holds the file's contents and whose PromptFile is cleared.
+//
+// The read happens per spawn, so editing the referenced file changes the next
+// run with no config reload; that is the whole point of naming a file instead
+// of inlining the text (ADR-0018). The copy is local to this spawn and never
+// written back to the registry, so config truth stays the PATH: the wire, the
+// state file, and every config writer keep round-tripping prompt_file rather
+// than inlining the document.
+//
+// Config load already validated this path with the same reader, but a file can
+// be deleted between load and spawn, so the failure is handled here too — as a
+// hard error, because an agent launched with an empty instruction is a silent
+// no-op, the exact failure mode this feature removes.
+// Governing: ADR-0018; SPEC-0006 REQ "Prompt Source".
+func resolvePrompt(h core.Harness) (core.Harness, error) {
+	if h.PromptFile == "" {
+		return h, nil
+	}
+	prompt, err := core.ReadPromptFile(expandHome(h.PromptFile))
+	if err != nil {
+		return h, fmt.Errorf("supervisor: harness %q: prompt_file %w", h.Name, err)
+	}
+	h.Prompt = prompt
+	h.PromptFile = ""
+	return h, nil
+}
+
 // execArgv resolves the executable and argv spawn runs: the configured cmd
 // with {workdir}-expanded args, or — for a prompt harness (empty Cmd, ADR-0011
 // spawn-time synthesis) — the argv the adapter registry resolves from the
@@ -236,6 +265,13 @@ func Workdir(h core.Harness) string { return expandHome(h.Workdir) }
 // its resize policy sees no change and never pushes a TIOCSWINSZ, and the app
 // inside renders into an 80×24 box in the corner of a full-size window.
 func spawn(h core.Harness, cols, rows int) (*process, error) {
+	// Resolve prompt_file to its text BEFORE allocating anything: a missing
+	// instruction file must fail the start outright rather than leak a PTY and
+	// launch an agent with nothing to do (ADR-0018).
+	h, err := resolvePrompt(h)
+	if err != nil {
+		return nil, err
+	}
 	workdir := Workdir(h)
 	env, err := buildEnv(h)
 	if err != nil {

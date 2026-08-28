@@ -104,6 +104,10 @@ type confirmState struct {
 // HarnessForm for TOML serialization.
 type formInputs struct {
 	name, harness, prompt, model, maxTurns, schedule, args, workdir, envFile, delay, restart, backend string
+	// promptFile is the path form of the prompt (ADR-0018), carried so an edit
+	// round-trips it — the save path rewrites the whole table, so a dropped
+	// prompt_file is a scheduled harness silently losing its instructions.
+	promptFile string
 	// tmuxSocket/mcpAllow are string-bound like the rest; mcpAllow is
 	// space-separated (parsed by toForm, same shape as args).
 	tmuxSocket, description, mcpAllow             string

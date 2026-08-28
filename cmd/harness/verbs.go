@@ -110,9 +110,15 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	t.Row("enabled", t.enabledCell(h.Enabled))
 	// A prompt harness has no configured cmd — show what the user wrote (the
 	// prompt), not the synthesized agent argv (ADR-0011 spawn-time synthesis).
-	if h.Prompt != "" {
+	switch {
+	case h.Prompt != "":
 		t.Row("prompt", t.faintPlain(h.Prompt))
-	} else {
+	case h.PromptFile != "":
+		// The path is the useful cell: the instruction lives in that file and
+		// is read at spawn, so printing it here would be both huge and stale
+		// (ADR-0018).
+		t.Row("prompt_file", t.faintPlain(h.PromptFile))
+	default:
 		t.Row("harness", t.faintPlain(h.Adapter))
 	}
 	if h.Model != "" {

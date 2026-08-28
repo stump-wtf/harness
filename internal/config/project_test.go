@@ -345,6 +345,64 @@ prompt = "summarize the day"
 	}
 }
 
+// TestParseProject_PromptFile: `prompt_file` means the same thing in a project
+// file as in the global config, and a relative path anchors on the PROJECT
+// ROOT — the same rule workdir and env_file follow there, so a repo can ship
+// its own prompts alongside its harnesses.
+// Governing: ADR-0018; SPEC-0006 REQ "Prompt Source".
+func TestParseProject_PromptFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "prompts", "sweep.md")
+	if err := os.WriteFile(want, []byte("summarize the day"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	data := []byte(`
+[harness.agent]
+harness = "crush"
+prompt_file = "./prompts/sweep.md"
+`)
+	proj, err := ParseProject(data, filepath.Join(dir, "harness.toml"))
+	if err != nil {
+		t.Fatalf("ParseProject: %v", err)
+	}
+	h, ok := proj.Config.Harnesses["agent"]
+	if !ok {
+		t.Fatal("missing harness 'agent'")
+	}
+	if h.PromptFile != want {
+		t.Errorf("PromptFile = %q, want it resolved against the project root (%q)", h.PromptFile, want)
+	}
+	if h.Prompt != "" {
+		t.Errorf("Prompt = %q, want empty (contents are read at spawn)", h.Prompt)
+	}
+	if h.Restart != core.RestartNo {
+		t.Errorf("Restart = %q, want %q (one-shot default)", h.Restart, core.RestartNo)
+	}
+}
+
+// TestParseProject_PromptFileMissing: the eager check applies in project files
+// too — a repo shipping a harness whose prompt file it forgot to commit fails
+// the load rather than bringing up an agent with no instructions.
+func TestParseProject_PromptFileMissing(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte(`
+[harness.agent]
+harness = "crush"
+prompt_file = "./prompts/sweep.md"
+`)
+	_, err := ParseProject(data, filepath.Join(dir, "harness.toml"))
+	if err == nil {
+		t.Fatal("ParseProject succeeded, want an error for the missing prompt file")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error %q does not say the file is missing", err)
+	}
+}
+
 // TestParseProject_PromptErrors: the prompt exclusivity rules hold in project
 // files too, with the same located-error contract as the global parser.
 func TestParseProject_PromptErrors(t *testing.T) {

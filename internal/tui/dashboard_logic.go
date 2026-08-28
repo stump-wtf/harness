@@ -122,8 +122,13 @@ func harnessMeta(h protocol.HarnessInfo) (what string, rest []string) {
 	// A prompt harness carries no configured cmd — surface the prompt, what
 	// the user actually wrote (ADR-0011 spawn-time synthesis).
 	what = orDefault(h.Adapter, "crush")
-	if h.Prompt != "" {
+	switch {
+	case h.Prompt != "":
 		what = flattenSpace(h.Prompt)
+	case h.PromptFile != "":
+		// The path, not the file's contents — the daemon never sends them
+		// (ADR-0018), and a whole specification would not fit this column.
+		what = flattenSpace(h.PromptFile)
 	}
 	if h.Model != "" {
 		rest = append(rest, "model "+h.Model)

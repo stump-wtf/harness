@@ -813,10 +813,10 @@ func TestTOMLKeepsTmuxSocketOnNativeBackend(t *testing.T) {
 // issue #161's "audit the rest in the same pass". Name is the table name, and
 // is carried implicitly by the header the rewrite emits.
 var harnessFormFields = []string{
-	"Name", "Adapter", "Args", "Prompt", "Model", "AutoAccept", "Quiet",
-	"MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart", "Backend",
-	"Description", "Enabled", "TmuxSocket", "Schedule", "HarvestTrajectory",
-	"MCPAllow",
+	"Name", "Adapter", "Args", "Prompt", "PromptFile", "Model", "AutoAccept",
+	"Quiet", "MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart",
+	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule",
+	"HarvestTrajectory", "MCPAllow",
 }
 
 // TestHarnessFormCoversEveryHarnessField is the census half of the issue #161
@@ -858,6 +858,14 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 	tests := []struct {
 		name  string
 		table []string
+		// promptFileBody, when set, is written into the test's temp dir and
+		// its ABSOLUTE path substituted for the {{PROMPT_FILE}} token in the
+		// table. Absolute is load-bearing: `before`/`after` parse with the
+		// bare filename "harness.toml" (resolving relative paths against the
+		// process cwd) while the form pre-fill loads the real temp-dir path,
+		// so a relative prompt_file would resolve two different ways and the
+		// round-trip comparison would fail on the resolution, not the field.
+		promptFileBody string
 	}{
 		{
 			name: "long-running harness",
@@ -912,17 +920,49 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				`mcp_allow = ["read", "write"]`,
 			},
 		},
+		{
+			// The prompt_file variant of the one-shot above (ADR-0018): the
+			// form must round-trip the PATH. If it ever inlined the file's
+			// contents instead, the rewritten table would carry `prompt`
+			// rather than `prompt_file` and this comparison fails.
+			name: "scheduled prompt_file one-shot",
+			table: []string{
+				"[harness.blog-sweep]",
+				`harness = "claude-code"`,
+				`prompt_file = "{{PROMPT_FILE}}"`,
+				`model = "claude-opus-5"`,
+				"auto_accept = true",
+				"max_turns = 40",
+				"quiet = false",
+				`schedule = "0 9 * * 1"`,
+				`description = "scheduled blog sweep"`,
+				"harvest_trajectory = true",
+				`mcp_allow = ["read", "write"]`,
+			},
+			promptFileBody: "Draft the studio blog post and open a PR.\n",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			original := strings.Join(append(tc.table, ""), "\n")
+			dir := t.TempDir()
+			table := tc.table
+			if tc.promptFileBody != "" {
+				pf := filepath.Join(dir, "sweep.prompt.md")
+				if err := os.WriteFile(pf, []byte(tc.promptFileBody), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				table = make([]string, len(tc.table))
+				for i, line := range tc.table {
+					table[i] = strings.ReplaceAll(line, "{{PROMPT_FILE}}", pf)
+				}
+			}
+			original := strings.Join(append(table, ""), "\n")
 			before, err := config.Parse([]byte(original), "harness.toml")
 			if err != nil {
 				t.Fatalf("fixture does not parse: %v\n---\n%s", err, original)
 			}
 			name := before.HarnessOrder[0]
 
-			dir := t.TempDir()
 			path := filepath.Join(dir, "harness.toml")
 			if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 				t.Fatal(err)

@@ -62,6 +62,14 @@ type HarnessForm struct {
 	// streaming output to an attach. False without Prompt is rejected
 	// (Validate mirrors the parser).
 	Quiet bool
+	// PromptFile is the path to a file holding the instruction — the
+	// alternative to an inline Prompt (ADR-0018), and mutually exclusive with
+	// it. A round-trip field like Schedule and TmuxSocket below: the save path
+	// rewrites the whole table, so a form that dropped it would delete a
+	// scheduled harness's prompt source on the next unrelated edit. The form
+	// carries the PATH only — the file's contents are read at spawn and must
+	// never be written back into harness.toml.
+	PromptFile string
 	// Schedule is the daemon-owned cron expression for a scheduled one-shot
 	// (issue #66): requires Prompt, and is mutually exclusive with Enabled and
 	// with a respawning restart policy (Validate mirrors the parser on all
@@ -108,7 +116,12 @@ func (f HarnessForm) Validate() error {
 	if strings.TrimSpace(f.Name) == "" {
 		return fmt.Errorf("name is required")
 	}
-	promptSet := strings.TrimSpace(f.Prompt) != ""
+	// Either prompt source makes this an agent one-shot; the parser's rules
+	// below all key off that, not off an inline prompt alone.
+	promptSet := strings.TrimSpace(f.Prompt) != "" || strings.TrimSpace(f.PromptFile) != ""
+	if strings.TrimSpace(f.Prompt) != "" && strings.TrimSpace(f.PromptFile) != "" {
+		return fmt.Errorf("prompt and prompt_file are mutually exclusive")
+	}
 	switch f.Harness {
 	case "crush", "claude-code", "codex", "generic":
 	case "":
@@ -176,12 +189,19 @@ func (f HarnessForm) TOML() string {
 	// unlike every optional field below, which is emitted only when set.
 	fmt.Fprintf(&b, "harness = %s\n", strconv.Quote(f.Harness))
 	prompt := strings.TrimSpace(f.Prompt)
-	if prompt != "" {
+	promptFile := strings.TrimSpace(f.PromptFile)
+	if prompt != "" || promptFile != "" {
 		// Prompt harness: `prompt` replaces args entirely (Validate
 		// enforces the exclusivity; the daemon synthesizes the argv at spawn,
 		// ADR-0011). `model`, `auto_accept`, and `max_turns` ride beside it as
 		// config truth — never as synthesized args (issues #57, #58, #59).
-		fmt.Fprintf(&b, "prompt = %s\n", strconv.Quote(prompt))
+		if prompt != "" {
+			fmt.Fprintf(&b, "prompt = %s\n", strconv.Quote(prompt))
+		} else {
+			// The PATH, never the file's contents — inlining the document
+			// here is the round-trip corruption ADR-0018 exists to avoid.
+			fmt.Fprintf(&b, "prompt_file = %s\n", strconv.Quote(promptFile))
+		}
 		if model := strings.TrimSpace(f.Model); model != "" {
 			fmt.Fprintf(&b, "model = %s\n", strconv.Quote(model))
 		}
@@ -224,7 +244,7 @@ func (f HarnessForm) TOML() string {
 	// "no" for prompt one-shots, "always" otherwise — so an untouched edit
 	// round-trips without growing keys.
 	defaultRestart := string(core.RestartAlways)
-	if prompt != "" {
+	if prompt != "" || promptFile != "" {
 		defaultRestart = string(core.RestartNo)
 	}
 	if f.Restart != "" && f.Restart != defaultRestart {
@@ -309,6 +329,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 		name:        sel.Name,
 		harness:     sel.Adapter,
 		prompt:      sel.Prompt,
+		promptFile:  sel.PromptFile,
 		model:       sel.Model,
 		autoAccept:  sel.AutoAccept,
 		quiet:       sel.Quiet,
@@ -331,6 +352,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	}
 	fi.harness = h.Adapter
 	fi.prompt = h.Prompt
+	fi.promptFile = h.PromptFile
 	fi.model = h.Model
 	fi.autoAccept = h.AutoAccept
 	fi.quiet = h.Quiet
@@ -359,6 +381,7 @@ func (fi formInputs) toForm() HarnessForm {
 		Name:        strings.TrimSpace(fi.name),
 		Harness:     strings.TrimSpace(fi.harness),
 		Prompt:      strings.TrimSpace(fi.prompt),
+		PromptFile:  strings.TrimSpace(fi.promptFile),
 		Model:       strings.TrimSpace(fi.model),
 		AutoAccept:  fi.autoAccept,
 		Quiet:       fi.quiet,
