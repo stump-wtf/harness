@@ -147,7 +147,13 @@ func (a *ClaudeCode) PromptCommand(prompt string, opts core.AgentOpts) (string, 
 	if opts.MaxTurns > 0 {
 		args = append(args, "--max-turns", strconv.Itoa(opts.MaxTurns))
 	}
-	args = append(args, "--output-format", "stream-json")
+	// --verbose is REQUIRED alongside --output-format stream-json under -p:
+	// claude rejects the pair outright with "When using --print,
+	// --output-format=stream-json requires --verbose" and exits 1 before it
+	// reads the prompt. Without it every scheduled claude-code harness dies at
+	// launch, which for a cron one-shot reads as a silent no-op — the schedule
+	// fires, the process is gone, and nothing ran.
+	args = append(args, "--verbose", "--output-format", "stream-json")
 	return "claude", append(args, prompt)
 }
 

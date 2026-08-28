@@ -211,7 +211,7 @@ func TestClaudeCodePromptCommand(t *testing.T) {
 	if cmd != "claude" {
 		t.Fatalf("cmd = %q, want claude", cmd)
 	}
-	want := []string{"-p", "--output-format", "stream-json", "review PR"}
+	want := []string{"-p", "--verbose", "--output-format", "stream-json", "review PR"}
 	// Quiet maps to -p (non-interactive), not --quiet; AutoAccept is false
 	// so --dangerously-skip-permissions is absent.
 	if !slicesEqual(args, want) {
@@ -242,6 +242,55 @@ func TestClaudeCodePromptCommandWithModel(t *testing.T) {
 	// Prompt must be last
 	if args[len(args)-1] != "fix bug" {
 		t.Fatalf("last arg = %q, want prompt as final element", args[len(args)-1])
+	}
+}
+
+// TestClaudeCodePromptCommandStreamJSONIsVerbose pins the one pairing claude
+// enforces: under --print, --output-format=stream-json is rejected outright
+// unless --verbose is also present ("When using --print,
+// --output-format=stream-json requires --verbose", exit 1). A scheduled
+// claude-code harness that loses --verbose does not degrade — it never starts,
+// and a cron one-shot that never starts looks exactly like one with nothing to
+// do. Assert the pair together, under every opts combination, so neither can
+// be dropped independently.
+func TestClaudeCodePromptCommandStreamJSONIsVerbose(t *testing.T) {
+	a := &ClaudeCode{}
+	cases := []struct {
+		name string
+		opts core.AgentOpts
+	}{
+		{"bare", core.AgentOpts{}},
+		{"quiet", core.AgentOpts{Quiet: true}},
+		{"auto-accept", core.AgentOpts{AutoAccept: true}},
+		{"model", core.AgentOpts{Model: "claude-opus-5"}},
+		{"max-turns", core.AgentOpts{MaxTurns: 40}},
+		{"all", core.AgentOpts{Quiet: true, AutoAccept: true, Model: "haiku", MaxTurns: 12}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, args := a.PromptCommand("do the thing", tc.opts)
+			verbose, format := -1, -1
+			for i, arg := range args {
+				switch arg {
+				case "--verbose":
+					verbose = i
+				case "--output-format":
+					format = i
+				}
+			}
+			if verbose < 0 {
+				t.Fatalf("args %q missing --verbose (claude rejects stream-json without it)", args)
+			}
+			if format < 0 || format+1 >= len(args) || args[format+1] != "stream-json" {
+				t.Fatalf("args %q missing --output-format stream-json", args)
+			}
+			if verbose > format {
+				t.Errorf("args %q put --verbose after --output-format; keep it ahead so the pair reads as one unit", args)
+			}
+			if args[len(args)-1] != "do the thing" {
+				t.Errorf("last arg = %q, want the prompt", args[len(args)-1])
+			}
+		})
 	}
 }
 
