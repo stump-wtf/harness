@@ -1,4 +1,4 @@
-# Design: Agent Adapters (skill paths, projection, trajectory discovery)
+# Design: Agent Adapters (prompt source, skill paths, projection, trajectory discovery)
 
 > **Partially implemented.** Only trajectory discovery has shipped; skill paths and projection are design-stage. See harness issue #3.
 
@@ -112,6 +112,29 @@ cross-harness mutation is not.
 common case rather than the exception. A fixed order makes the outcome
 predictable; exposing the shadowed set makes it debuggable. Silent shadowing
 would turn every duplicate into a support question.
+
+### A prompt file is a path in config and contents at spawn
+
+**Choice**: `prompt_file` stores the resolved **path** on the harness; the
+supervisor reads the file immediately before exec and hands the contents to the
+adapter's `PromptCommand`. Contents never land on `core.Harness`, the wire, or
+the persisted state file.
+
+**Rationale**: Folding contents in at parse time breaks the config round-trip —
+the TUI edit form re-emits `prompt` from the in-memory harness, so a saved
+unrelated edit would rewrite the whole document into `harness.toml` as one
+quoted literal, the same failure ADR-0011 avoids by refusing to desugar `model`
+into `args`. It would also push the document through every display surface and
+require a reload for each prompt edit, which is most of what the indirection
+buys. Reading per spawn means a cron one-shot runs the specification as it
+stands at firing time.
+
+**Rationale for validating twice**: Parse-time validation follows SPEC-0008's
+cron precedent — a bad value must fail the load, not silently never work. The
+spawn-time re-check is not redundant: the file can be deleted between the two,
+and launching an agent with an empty instruction is the exact silent no-op the
+feature removes. This is stricter than `env_file`, which tolerates a missing
+file because a harness with no extra environment still runs correctly.
 
 ### Harvesting is opt-in
 

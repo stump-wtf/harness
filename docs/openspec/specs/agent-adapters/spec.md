@@ -1,11 +1,11 @@
 ---
 status: draft
 date: 2026-07-27
-implements: [ADR-0011]
+implements: [ADR-0011, ADR-0018]
 requires: [SPEC-0002, SPEC-0004, SPEC-0005]
 ---
 
-# SPEC-0006: Agent Adapters (skill paths, projection, trajectory discovery)
+# SPEC-0006: Agent Adapters (prompt source, skill paths, projection, trajectory discovery)
 
 > **Partially implemented.** Only trajectory discovery has shipped; skill paths and projection are design-stage. See harness issue #3.
 
@@ -23,6 +23,10 @@ any entry. Skills are merged from an ordered set of configured roots and
 Trajectories are located by the adapter and exposed **read-only** through the
 SPEC-0005 facade. Project roots and provenance are reused from SPEC-0004 rather
 than reinvented.
+
+The same adapter supplies the agent argv for a one-shot run, whose instruction
+comes from either a literal `prompt` or a `prompt_file` path read at spawn. See
+**ADR-0018**.
 
 ## Requirements
 
@@ -57,6 +61,87 @@ validation with an error identifying the harness and the unknown adapter.
 - **WHEN** a harness sets `agent = "nonexistent"`
 - **THEN** config validation fails naming the harness and the unknown adapter,
   and the daemon keeps its last-good configuration
+
+### Requirement: Prompt Source
+
+A harness SHALL declare an agent one-shot with either a `prompt` string or a
+`prompt_file` path, and the two SHALL be mutually exclusive. Declaring both
+SHALL fail config validation with a located error naming the harness. Either
+key SHALL satisfy the prompt predicate the `model`, `auto_accept`, `max_turns`,
+`quiet` and `schedule` keys are validated against, and either SHALL be mutually
+exclusive with `args`.
+
+`prompt` SHALL be stored verbatim: never placeholder-expanded, never
+`{workdir}`-substituted, and passed to the adapter's prompt synthesis as-is.
+
+`prompt_file` SHALL be resolved at parse time by the existing config path rules
+— a leading `~` expands to the home directory, and a relative path resolves
+against the directory holding the config file, or against the project root in a
+project `harness.toml`. The **resolved path** SHALL be stored on the harness;
+the file's contents MUST NOT be stored on the harness, placed on the wire, or
+written to the persisted state file, so that config writers round-trip the path
+and never inline the document.
+
+Config load SHALL verify that a `prompt_file` names an existing, readable,
+non-empty file, failing with a located error otherwise. This is deliberately
+stricter than `env_file`, where a missing file is tolerated: a harness with no
+prompt has nothing to run.
+
+The daemon SHALL read `prompt_file` at spawn time, immediately before exec, and
+use its contents as the prompt for that run. A read failure at spawn SHALL fail
+the start with an error naming the harness and the path; the daemon MUST NOT
+launch the agent with an empty prompt. Because the read happens per spawn,
+editing the referenced file SHALL change the next run without a config reload.
+
+#### Scenario: Prompt file supplies the agent instruction
+
+- **WHEN** a harness declares `prompt_file` naming a readable file and starts
+- **THEN** the synthesized agent argv carries that file's contents as the
+  prompt, and the harness's stored configuration still carries the path
+
+#### Scenario: Prompt and prompt file are mutually exclusive
+
+- **WHEN** a harness declares both `prompt` and `prompt_file`
+- **THEN** config validation fails with a located error naming the harness, and
+  the daemon keeps its last-good configuration
+
+#### Scenario: Missing prompt file fails the load
+
+- **WHEN** a harness declares a `prompt_file` that does not resolve to an
+  existing, readable, non-empty file
+- **THEN** config validation fails with a located error naming the harness and
+  the resolved path
+
+#### Scenario: Prompt file satisfies the prompt-dependent keys
+
+- **WHEN** a harness declares `prompt_file` together with `schedule`, `model`,
+  `auto_accept`, `max_turns`, or `quiet`, and no `prompt`
+- **THEN** the config parses successfully and the harness defaults to
+  `restart = "no"` like any other one-shot
+
+#### Scenario: Relative prompt file resolves against its config
+
+- **WHEN** a project `harness.toml` declares `prompt_file = "./prompts/sweep.md"`
+- **THEN** the path resolves against the project root
+
+#### Scenario: Writers round-trip the path, not the contents
+
+- **WHEN** a harness declaring `prompt_file` is edited through a config writer
+  and an unrelated field is changed
+- **THEN** the written file still declares `prompt_file` as a path, and the
+  file's contents appear nowhere in the written configuration
+
+#### Scenario: Prompt file deleted between load and spawn
+
+- **WHEN** a `prompt_file` that validated at load is unreadable at spawn
+- **THEN** the start fails with an error naming the harness and the path, and no
+  agent is launched with an empty prompt
+
+#### Scenario: Edited prompt file takes effect without a reload
+
+- **WHEN** the contents of a referenced `prompt_file` change and the harness
+  starts again
+- **THEN** the new contents are used, with no config reload in between
 
 ### Requirement: Skill Path Configuration
 

@@ -66,7 +66,7 @@ which a key on `[harness.*]` remains unambiguous (ADR-0013).
 
 | Rejected combination | Rationale |
 | --- | --- |
-| `schedule` without `prompt` | A scheduled unit is a one-shot agent run, not an always-on `cmd` |
+| `schedule` without `prompt` or `prompt_file` | A scheduled unit is a one-shot agent run, not an always-on `cmd` |
 | `schedule` with `enabled = true` | Autostart intent and schedule are distinct concerns |
 | `schedule` on a harness that is a `[profile.*]` member | Profile autostart would fire the one-shot off-schedule |
 | `schedule` with `restart = "always"` or `"unless-stopped"` | A respawning policy restarts the one-shot after a clean exit |
@@ -78,9 +78,15 @@ SHALL NOT redefine it to mean *armed*.
 #### Scenario: Schedule without prompt
 
 - **WHEN** a `[harness.*]` table sets `schedule` alongside `cmd` rather than
-  `prompt`
+  `prompt` or `prompt_file`
 - **THEN** config parsing fails with an error naming the harness and the missing
-  `prompt`
+  prompt source
+
+#### Scenario: Schedule with a prompt file
+
+- **WHEN** a `[harness.*]` table sets `schedule` alongside `prompt_file`
+- **THEN** the config parses, because either prompt source makes the harness a
+  one-shot agent run (SPEC-0006 REQ "Prompt Source")
 
 #### Scenario: Schedule with autostart intent
 

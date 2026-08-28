@@ -38,8 +38,8 @@ enabled = false
 | `backend` | hosting strategy: `native` (default) or `tmux` |
 | `tmux_socket` | tmux socket name; only used when `backend = "tmux"` |
 
-An **agent one-shot** replaces `args` with a `prompt` — see the next
-section.
+An **agent one-shot** replaces `args` with a `prompt` (or a `prompt_file`) —
+see the next section.
 
 A bare `[name]` table is accepted for backward compatibility, but the
 `[harness.<name>]` form is preferred (ADR-0006).
@@ -65,7 +65,8 @@ workdir = "~/src/my-project"
 
 | Field | Meaning |
 |-------|---------|
-| `prompt` | the agent instruction. Mutually exclusive with `args`; stored verbatim (never placeholder-expanded) and synthesized into the agent argv at spawn from the same `harness` adapter |
+| `prompt` | the agent instruction. Mutually exclusive with `args` and with `prompt_file`; stored verbatim (never placeholder-expanded) and synthesized into the agent argv at spawn from the same `harness` adapter |
+| `prompt_file` | path to a file whose contents are the instruction — the alternative to an inline `prompt` for anything too long for one TOML line. See below |
 | `model` | which model the agent runs, e.g. `claude-opus-5`. Requires `prompt`; folded into the synthesized argv |
 | `auto_accept` | run unattended, bypassing the agent's permission prompts (the vendor's yolo flag). Requires `prompt`; fold into the synthesized argv |
 | `max_turns` | cap on how many iterations the agent may run before stopping. Requires `prompt`; 0 or omitted means unlimited |
@@ -79,6 +80,37 @@ argv, so a long-running harness passes its tool's flags through `args` itself.
 
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
 it on trusted, headless runs.
+
+### Prompts that live in a file
+
+A TOML basic string carries no raw newline, so a prompt of any real length ends
+up as one unreadable line. `prompt_file` names a file instead:
+
+```toml
+[harness.blog-sweep]
+harness = "claude-code"
+prompt_file = "~/.config/prompts/blog-sweep.md"
+model = "claude-opus-5"
+schedule = "0 9 * * 1"
+```
+
+- **Mutually exclusive with `prompt`**, and either one satisfies the "requires
+  `prompt`" rule for `model`, `auto_accept`, `max_turns`, `quiet` and
+  `schedule`.
+- **The path is resolved at load; the file is read at spawn.** `harness.toml`
+  stores the path, so editing the prompt takes effect on the next run with no
+  reload — and config writers (the TUI edit form) round-trip the path rather
+  than inlining the document.
+- **A leading `~` expands, and a relative path resolves against the file that
+  declared it** — the config file's own directory, the `harness_d` file's
+  directory, or the project root in a project `harness.toml`. This is stricter
+  than `workdir`/`env_file` on purpose: the daemon runs with an arbitrary
+  working directory, so a cwd-relative prompt would mean different things to
+  the CLI and the daemon.
+- **A missing, unreadable, or empty file fails the config load** with a located
+  error, and is re-checked at spawn. Unlike `env_file`, it is not optional: a
+  harness with no instruction has nothing to run, and a scheduled one firing
+  into an empty prompt would look like a successful no-op.
 
 ## Scheduled one-shots
 
@@ -96,7 +128,7 @@ description = "scheduled sweep (every 6 hours)"
 
 Rules:
 
-- Requires `prompt` — only agent one-shots can be scheduled.
+- Requires `prompt` or `prompt_file` — only agent one-shots can be scheduled.
 - At each firing the harness starts if it is not already running; **overlapping
   firings are skipped, not stacked**.
 - The run exiting is terminal for that firing; the restart policy applies only

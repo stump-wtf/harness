@@ -37,7 +37,8 @@ help.
 The Dashboard SHALL show a list of harnesses filtered to the active profile
 (with a toggle to show all), each row carrying status glyph, name, state,
 restart count (`↻`), and uptime/next-action, over a metadata sub-line carrying
-that harness's config summary (`cmd` or `prompt`, model, backend, last exit,
+that harness's config summary (`cmd`, `prompt`, or the `prompt_file` path,
+model, backend, last exit,
 pid). It SHALL show a detail/peek pane for the selected harness — a live
 read-only tail of its output (streamed via SPEC-0002 snapshot+tail) and
 nothing else. The list pane SHALL be sized to its content rather than to a
@@ -171,7 +172,7 @@ harnesses outside the profile keep running (ADR-0006).
 ### Requirement: Harness Form
 
 `n` (new) and `e` (edit) SHALL open a Huh form over the harness schema
-(`harness`/`args`/`prompt`/`model`/`auto_accept`/`max_turns`/`quiet`/
+(`harness`/`args`/`prompt`/`prompt_file`/`model`/`auto_accept`/`max_turns`/`quiet`/
 `schedule`/`workdir`/`env_file`/`restart_delay`/`restart`/`backend`/
 `tmux_socket`/`description`/`enabled`/`harvest_trajectory`/`mcp_allow`/
 profile membership) that writes back to `harness.toml` (ADR-0006 — file is
