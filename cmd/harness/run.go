@@ -54,7 +54,7 @@ var kindAliases = map[string]string{
 
 // newRunCmd builds `harness run [flags] ARG...`.
 func newRunCmd(g *globalOpts) *cobra.Command {
-	var workdir, kind, name string
+	var workdir, kind, name, model string
 	var detach bool
 	cmd := &cobra.Command{
 		Use:   "run",
@@ -71,6 +71,17 @@ func newRunCmd(g *globalOpts) *cobra.Command {
 				}
 				def.Workdir = abs
 			}
+			if model != "" {
+				// `run` only mints cmd harnesses, and a cmd harness passes
+				// --model through its own args — there is no vendor-agnostic
+				// injection point (same contract config.go and core.Harness
+				// enforce for the config/wire Model field, which is inert for
+				// cmd). So the leading `harness run --model X claude ...`
+				// gesture folds into the adapter argv, matching what the
+				// pass-through form `harness run claude --model X` already
+				// produced.
+				def.Args = append([]string{"--model", model}, def.Args...)
+			}
 			o := g.opts()
 			o.name = slug
 			return withClient(o, nil, func(c *client.Client, o verbOpts) error {
@@ -82,12 +93,13 @@ func newRunCmd(g *globalOpts) *cobra.Command {
 	// positionals after the first belong to the invoked command, not to
 	// `run` — `harness run htop -t` must reach the daemon as `-c "htop -t"`,
 	// not die on cobra's unknown-shorthand-flag error. Run's own flags
-	// (--kind, --name, --workdir, --detach) still parse when they lead the
+	// (--kind, --name, --workdir, --model, --detach) still parse when they lead the
 	// invocation.
 	cmd.Flags().SetInterspersed(false)
 	cmd.Flags().StringVar(&workdir, "workdir", "", "working directory (default: the caller's cwd)")
 	cmd.Flags().StringVar(&kind, "kind", "", "harness kind override (crush, claude-code, codex, generic)")
 	cmd.Flags().StringVar(&name, "name", "", "name slug override (a random suffix is still appended)")
+	cmd.Flags().StringVar(&model, "model", "", "model selection passed to the harness command as `--model MODEL` (e.g. claude-opus-5)")
 	cmd.Flags().BoolVar(&detach, "detach", false, "don't attach; print the name and leave it running")
 	return cmd
 }

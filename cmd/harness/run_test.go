@@ -81,6 +81,33 @@ func TestScratchpadDefNameOverride(t *testing.T) {
 	}
 }
 
+// TestRunCmdModelFlag pins --model as a leading run flag: it must parse (the
+// "unknown flag: --model" regression) and its value is read back through the
+// flag set, where RunE folds it into the adapter argv as `--model MODEL`
+// (run only mints cmd harnesses; the wire Model field is inert for cmd).
+func TestRunCmdModelFlag(t *testing.T) {
+	cmd := newRunCmd(&globalOpts{})
+	if err := cmd.ParseFlags([]string{"--model", "claude-opus-5", "claude", "explain", "this"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	if got := cmd.Flags().Args(); !reflect.DeepEqual(got, []string{"claude", "explain", "this"}) {
+		t.Errorf("positional args = %v, want [claude explain this]", got)
+	}
+	def, _ := scratchpadDef("", "", cmd.Flags().Args())
+	m, _ := cmd.Flags().GetString("model")
+	if m == "" {
+		t.Fatal("--model did not parse")
+	}
+	def.Args = append([]string{"--model", m}, def.Args...)
+	want := []string{"--model", "claude-opus-5", "explain", "this"}
+	if !reflect.DeepEqual(def.Args, want) {
+		t.Errorf("def.Args = %v, want %v", def.Args, want)
+	}
+	if def.Model != "" {
+		t.Errorf("def.Model = %q, want empty (cmd harnesses keep it inert)", def.Model)
+	}
+}
+
 // TestRunCmdDetachFlagDefault pins --detach as a leading, opt-in-only flag:
 // absent, it must default to false (auto-attach stays the default gesture,
 // SPEC-0011 REQ "Scratchpad Creation"); given, it must parse to true.
