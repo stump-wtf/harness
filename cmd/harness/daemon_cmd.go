@@ -27,6 +27,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -47,10 +48,6 @@ type daemonOpts struct {
 	logLevel   string
 	logFile    string
 	detach     bool
-
-	// rawArgs is the original argv tail, needed only by --detach, which
-	// re-execs the binary and must reproduce the caller's flags.
-	rawArgs []string
 }
 
 func newDaemonCmd(g *globalOpts) *cobra.Command {
@@ -135,13 +132,38 @@ func newDaemonCmd(g *globalOpts) *cobra.Command {
 // same runDaemon serve a flag-driven dev invocation and an environment-driven
 // container without branching inside it.
 func runDaemonCmd(cmd *cobra.Command, g *globalOpts, d *daemonOpts) error {
-	d.rawArgs = os.Args[1:]
 	if err := resolveDaemonSettings(cmd, g, d); err != nil {
 		return err
 	}
 	if d.detach {
-		return detachDaemon(d.rawArgs)
+		return detachDaemon(d.childArgs())
 	}
 	runDaemon(*d)
 	return nil
+}
+
+// childArgs builds the argv for the detached child: an explicit `daemon run`
+// plus the resolved daemon settings as flags. The child argv is reconstructed
+// from the settings rather than copied from os.Args so the subcommand tokens
+// (`daemon start`, `daemon run`, bare `daemon`) the caller used can never leak
+// into it and double up against the re-prepended `daemon run` (issue #292).
+func (d *daemonOpts) childArgs() []string {
+	args := []string{"daemon", "run",
+		"--config", d.configPath,
+		"--socket", d.socketPath,
+		"--scrollback", strconv.Itoa(d.ringLines),
+	}
+	if d.sshEnable {
+		args = append(args, "--ssh")
+	}
+	if d.sshListen != "" {
+		args = append(args, "--ssh-listen", d.sshListen)
+	}
+	if d.logLevel != "" {
+		args = append(args, "--log-level", d.logLevel)
+	}
+	if d.logFile != "" {
+		args = append(args, "--log-file", d.logFile)
+	}
+	return args
 }

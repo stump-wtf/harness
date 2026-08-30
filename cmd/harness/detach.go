@@ -33,14 +33,11 @@ func detachDaemon(args []string) error {
 		return fmt.Errorf("detach: resolve executable: %w", err)
 	}
 
-	// Build the child argv: drop --detach, force --log-file if absent, keep
-	// everything else the caller passed. We must re-prepend `daemon run`
-	// because runDaemon received args *after* `daemon` was peeled off by
-	// main.go's dispatch, and the new dispatch expects an explicit subcommand
-	// (or bare `daemon` which defaults to `run`). Using `daemon run` is
-	// unambiguous even when other flags follow.
+	// args arrives already shaped as `daemon run <flags>` (daemonOpts.childArgs
+	// builds it from the resolved settings — issue #292), so the child needs
+	// no verb surgery here: just drop a stray --detach if one is present and
+	// force --log-file when absent.
 	childArgs := stripDetach(args)
-	childArgs = append([]string{"daemon", "run"}, childArgs...)
 	logFile := findFlag(args, "--log-file")
 	if logFile == "" {
 		logFile = defaultLogPath()
