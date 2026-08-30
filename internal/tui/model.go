@@ -167,7 +167,11 @@ type Model struct {
 	peekCols     int
 	peekRows     int
 	peekView     *vtView
-	peekGen      uint64
+	// peekPainted latches once the live session's screen holds something. A
+	// session that is open but has never painted is not yet worth rendering
+	// over the polled tail (#290) — see peekLive.
+	peekPainted bool
+	peekGen     uint64
 	// peekSyncedGen is the generation the last reconcile ran at. While it
 	// trails peekGen a debounce is still outstanding, which is how the tick
 	// knows to keep its hands off a target that is still moving.

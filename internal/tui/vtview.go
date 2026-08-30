@@ -143,6 +143,28 @@ func (v *vtView) write(p []byte) {
 	}
 }
 
+// blank reports whether the screen holds no printable content — every cell is
+// empty or a space. It is how the preview tells "this guest has not painted
+// anything yet" from "this guest's screen is what you see": a headless agent
+// writes nothing to its PTY for its entire life, so its live screen is blank
+// forever and rendering it would erase the log tail that is the only thing the
+// pane has to show (#290).
+func (v *vtView) blank() bool {
+	w, h := v.term.Width(), v.term.Height()
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			cell := v.term.CellAt(x, y)
+			if cell == nil {
+				continue
+			}
+			if s := cell.String(); s != "" && strings.TrimSpace(s) != "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // render serializes the current screen into styled lines joined by newlines,
 // suitable for embedding in a Bubble Tea view. Each cell emits an SGR sequence
 // only when the style changes (compact), and every line resets attributes at

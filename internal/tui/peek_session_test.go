@@ -250,6 +250,9 @@ func TestPeekLiveKeepsTheLogPoll(t *testing.T) {
 	}
 
 	drain(m.syncPeekSession())
+	// Going live now takes a paint as well as a session (#290) — an open
+	// session whose guest has drawn nothing still renders the polled tail.
+	m.Update(attachDataMsg{sessionID: m.peekSess, data: []byte("GUEST SCREEN")})
 	if !m.peekLive() {
 		t.Fatal("preview did not go live")
 	}

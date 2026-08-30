@@ -116,6 +116,9 @@ func (m *Model) syncPeekSession() tea.Cmd {
 	} else {
 		m.peekView.reset(cols, rows)
 	}
+	// A fresh session starts on a blank grid, so the latch starts over: until
+	// the new guest paints, the pane keeps showing the polled tail (#290).
+	m.peekPainted = false
 	// Close and open in ONE command rather than two batched ones: tea.Batch
 	// runs its commands concurrently, so the open could reach the daemon first
 	// and the mux would briefly hold both sessions — resizing the guest twice
@@ -136,6 +139,7 @@ func (m *Model) closePeekSession() tea.Cmd {
 	sid := m.peekSess
 	m.peekSess, m.peekSessName = 0, ""
 	m.peekCols, m.peekRows = 0, 0
+	m.peekPainted = false
 	if sid == 0 || m.attach == nil {
 		return nil
 	}
@@ -146,8 +150,19 @@ func (m *Model) closePeekSession() tea.Cmd {
 // peekLive reports whether the preview is being driven by a live session for
 // the harness currently selected — i.e. whether viewPeek should render the
 // streamed screen rather than the polled tail.
+//
+// An open session is not enough: it must also have PAINTED (#290). The
+// session's emulator starts blank and only fills once the guest writes to its
+// PTY, and a headless agent never does — `crush --channels server:signal` and
+// `claude -p` talk over a socket, not a terminal, so their screens stay empty
+// for their entire lives. Switching to the live screen the moment the session
+// opened therefore replaced a tail that had content with a grid that never
+// would: the pane painted the tail on selection, went blank 250ms later when
+// the debounced session landed, and stayed blank. Whatever the guest has
+// actually drawn wins from the first frame it draws; until then the tail is
+// the only thing the pane knows.
 func (m *Model) peekLive() bool {
-	if m.peekSess == 0 || m.peekView == nil {
+	if m.peekSess == 0 || m.peekView == nil || !m.peekPainted {
 		return false
 	}
 	sel, ok := m.selectedHarness()

@@ -108,6 +108,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// a frame still in flight from a closed session matches neither.
 		if m.peekView != nil && m.peekSess != 0 && msg.sessionID == m.peekSess {
 			m.peekView.write(msg.data)
+			// Latch the moment the guest's screen holds something (#290). The
+			// scan costs a grid walk per frame only while the answer is still
+			// no — once it flips, and for a guest that never paints at all,
+			// there is nothing to walk.
+			if !m.peekPainted && !m.peekView.blank() {
+				m.peekPainted = true
+			}
 		}
 		return m, waitForFrame(m.events)
 
