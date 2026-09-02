@@ -150,3 +150,33 @@ func TestLogRecordsLifecycleEvents(t *testing.T) {
 		t.Errorf("log contains ESC bytes:\n%q", got)
 	}
 }
+
+// TestPtyHistoryQueriesDoNotBlock pins the sanitizer's terminal-query
+// deadlock (#299): the sanitizer runs its own vt emulator, whose synthesized
+// query replies (DA1, DECRQM, cursor position — everything a Bubble Tea or
+// ink agent TUI probes at startup) go into an unbuffered pipe. With nothing
+// draining that pipe, Write blocked forever on the guest's opening handshake
+// and froze the whole PTY read loop, so the guest looked headless. The drain
+// goroutine (drainReplies) must keep Write unblocked, whatever the guest
+// queries.
+func TestPtyHistoryQueriesDoNotBlock(t *testing.T) {
+	var log bytes.Buffer
+	h := newPtyHistory(&log, 80, 24)
+
+	// The startup burst crush sends before its first frame: DA1, secondary
+	// DA, a DECRQM probe, the kitty-keyboard query, an OSC 11 background
+	// color query and a cursor position report.
+	queries := "\x1b[c\x1b[>c\x1b[?2026$p\x1b[?u\x1b]11;?\x07\x1b[6n"
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = h.Write([]byte(queries))
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("ptyHistory.Write blocked on the guest's terminal queries")
+	}
+}

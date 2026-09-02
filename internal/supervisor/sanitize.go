@@ -58,7 +58,38 @@ func newPtyHistory(out io.Writer, cols, rows int) *ptyHistory {
 	if rows < 1 {
 		rows = defaultPTYRows
 	}
-	return &ptyHistory{term: vt.NewEmulator(cols, rows), out: out, prev: blankScreen(cols, rows)}
+	h := &ptyHistory{term: vt.NewEmulator(cols, rows), out: out, prev: blankScreen(cols, rows)}
+	go h.drainReplies()
+	return h
+}
+
+// drainReplies discards the bytes the sanitizer's emulator synthesizes in
+// answer to the guest's terminal queries — Primary Device Attributes, DECRQM
+// mode reports, cursor position reports, and the like. x/vt writes those
+// replies into an unbuffered internal pipe that only Emulator.Read drains,
+// and an undrained write blocks forever on the first query the guest sends.
+// Since Write runs on the PTY reader goroutine, that block froze the entire
+// guest→mux feed on the guest's opening handshake: every agent TUI that
+// probes the terminal at startup (crush and claude both send DA1 before
+// their first frame) looked headless — alive in `harness list`, painting
+// nothing, attach and preview permanently empty (stump.wtf/harness#299).
+//
+// The replies themselves are DISCARDED, not forwarded: answering the guest
+// is the attach mux's job (its own pumpReplies forwards through onInput),
+// and a second answer to the same query would land in the guest's input as
+// spurious keystrokes.
+//
+// The pump runs for the ptyHistory's lifetime and is never stopped — the
+// same never-Close trade the mux's pumpReplies makes, for the same reason:
+// Emulator.Close races a parked Read (see vtview.pumpReplies). One parked
+// goroutine per harness spawn, not a frozen production agent.
+func (h *ptyHistory) drainReplies() {
+	buf := make([]byte, 1024)
+	for {
+		if _, err := h.term.Read(buf); err != nil {
+			return
+		}
+	}
 }
 
 // Write feeds p through the emulator and appends any scrolled-off rows to the
