@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/log v0.4.2
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/term v0.2.2
-	github.com/charmbracelet/x/vt v0.0.0-20260828171018-3c30eef5e73e
+	github.com/charmbracelet/x/vt v0.0.0-20260902165432-6f6ad8b37b0a
 	github.com/charmbracelet/x/xpty v0.1.4
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/spf13/cobra v1.10.2
