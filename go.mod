@@ -41,7 +41,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.9
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.6
-	charm.land/log/v2 v2.0.0
+	charm.land/log/v2 v2.0.1
 	charm.land/ssh v0.4.3
 	charm.land/wish/v2 v2.0.3
 	github.com/anmitsu/go-shlex v0.0.0-20200514113438-38f4b401e2be
