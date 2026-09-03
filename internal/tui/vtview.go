@@ -9,6 +9,7 @@ package tui
 // (colors + cursor) reproduces faithfully.
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -261,7 +262,8 @@ type peekCache struct {
 }
 
 // render returns the cached screen for the given tail and dimensions, or
-// rebuilds it by replaying the tail through a fresh vt emulator.
+// rebuilds it by replaying the tail through a fresh vt emulator. The tail is
+// ONLCR-translated on the way in — see onlcr.
 func (pc *peekCache) render(tail string, cols, rows int) string {
 	h := fnvHash(tail)
 	if pc.screen != "" && pc.tailHash == h && pc.cols == cols && pc.rows == rows {
@@ -275,12 +277,49 @@ func (pc *peekCache) render(tail string, cols, rows int) string {
 	} else {
 		pc.view.reset(cols, rows)
 	}
-	pc.view.write([]byte(tail))
+	pc.view.write(onlcr([]byte(tail)))
 	pc.tailHash = h
 	pc.cols = cols
 	pc.rows = rows
 	pc.screen = pc.view.renderNoCursor()
 	return pc.screen
+}
+
+// onlcr translates every bare LF into CRLF, leaving an LF that already follows
+// a CR alone. It is the tty's own output translation, applied by hand.
+//
+// The peek tail is not a PTY stream. ADR-0007 was amended (the durable log
+// stores sanitized output history, not raw PTY bytes): the supervisor's
+// ptyHistory writes one plain-text screen row per line as `row + "\n"`, and
+// the lifecycle logger writes its own lines the same way. Both are LF-only,
+// because a log FILE is line-oriented — the CRs a terminal would have seen
+// were added by the tty's ONLCR on the way to the master and never reached
+// disk.
+//
+// Feed that file to an emulator verbatim and LF means "down one row", nothing
+// more: every line starts where the previous one ended, so the tail walks
+// diagonally off the right edge and wraps into gibberish. A headless harness,
+// whose tail is nothing but the daemon's own "state changed" lines, renders as
+// an unreadable staircase — the whole pane, for its entire life (#290 made the
+// tail the pane's content for exactly those harnesses).
+//
+// So put the CRs back. Guest output from before the ADR-0007 amendment is
+// still in the older logs and already carries CRLF; leaving those pairs
+// untouched keeps that history rendering as it always did.
+func onlcr(p []byte) []byte {
+	if !bytes.ContainsRune(p, '\n') {
+		return p
+	}
+	out := make([]byte, 0, len(p)+bytes.Count(p, []byte{'\n'}))
+	var prev byte
+	for _, b := range p {
+		if b == '\n' && prev != '\r' {
+			out = append(out, '\r')
+		}
+		out = append(out, b)
+		prev = b
+	}
+	return out
 }
 
 // fnvHash is a cheap non-cryptographic hash for cache invalidation.
