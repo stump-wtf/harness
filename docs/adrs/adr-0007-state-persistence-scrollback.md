@@ -1,6 +1,6 @@
 # ADR-0007 — State & scrollback ownership
 
-- **Status:** Proposed
+- **Status:** Accepted (amended 2026-09-06 — see "Amendment" below)
 - **Date:** 2026-07-18
 
 ## Context and problem statement
@@ -111,6 +111,49 @@ A small state file (`$XDG_STATE_HOME/harnessd/state.json`, or SQLite if it grows
   session replay/recording as a feature.
 - **In-memory-only runtime state (x)** — daemon restart would forget what should be
   running; defeats ADR-0005's restore.
+
+## Amendment — agent-trace is the readable output source (2026-09-06)
+
+The original decision treated the raw PTY tee as the readable record: whatever
+bytes the child wrote to its terminal *were* the log, and `harness logs` showed
+them ansifold-filtered. That holds only for line-oriented children. A
+full-screen TUI child (crush's interactive mode, any bubbletea app idling under
+`--channels signal`) repaints whole frames; the tee captures frame snapshots,
+and the log view becomes the splash banner repeated once per repaint. The
+original design also implied a "full event store" was over-engineering — but
+the event store already exists, per tool: every supported agent keeps its own
+session record (`crush.db`, Claude Code's project JSONL, Codex/OpenCode/Pi
+session files), and
+[agent-trace](https://gitea.stump.rocks/stump.wtf/agent-trace) adapters parse
+all of them into one normalized event stream.
+
+**Amended decision: for every session type, human-readable output — the
+chatroom view (ADR-0015), trajectory inspection, and any future log/summary
+surface — is derived from agent-trace's adapters over the tool's own session
+store.** The PTY ring + raw rotating log are demoted to what only a terminal
+emulator can provide: attach, live streaming, and a byte-accurate forensic
+fallback for harnesses with no native transcript (the `generic` adapter),
+where the ansifold-filtered tee remains the readable record. The daemon does
+not grow its own event store, parser, or per-tool knowledge — that is
+agent-trace's job, and the harness's adapter registry (ADR-0011) is the single
+dispatch point for it.
+
+Consequences:
+
+- Good, because one parsing pipeline covers every tool, maintained where the
+  formats are known (agent-trace), instead of N ad-hoc log heuristics.
+- Good, because interactive TUI harnesses become fully observable — their
+  turns live in the session store even though their PTY output is frame soup.
+- Bad, because readable output now depends on the session-store layout of each
+  tool; an adapter gap (a tool agent-trace does not know) means falling back
+  to the raw tee for that harness.
+- Bad, because relocated data dirs (e.g. crush under a repointed
+  `CRUSH_GLOBAL_DATA`) register sessions in a non-default `projects.json`;
+  consumers must watch every registry, and dedupe sessions discovered twice.
+
+Confirmation: the chatroom view (SPEC-0015) renders exclusively from
+`tail.Watcher` events across all adapters; no consumer re-parses PTY bytes
+for meaning.
 
 ## Related
 

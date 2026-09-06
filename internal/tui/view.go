@@ -57,9 +57,16 @@ func (m *Model) content() string {
 	}
 
 	var base string
-	if m.mode == modeAttached {
+	switch m.mode {
+	case modeAttached:
 		base = m.viewAttached()
-	} else {
+	case modeChatroom:
+		if m.chat != nil {
+			base = m.chat.View()
+		} else {
+			base = m.viewDashboard()
+		}
+	default:
 		base = m.viewDashboard()
 	}
 

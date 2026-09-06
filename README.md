@@ -19,6 +19,13 @@ A single `harness` binary has two faces:
 
 Think `tmux` + `systemctl` + an agent-ops dashboard in one Go binary.
 
+From the dashboard, `C` opens the **chatroom** — a read-only, live view of
+agent activity across every supported tool (Claude Code, Codex, Crush,
+OpenCode, Pi), each rendering as a chat user. Events come from
+[agent-trace](https://gitea.stump.rocks/stump.wtf/agent-trace) adapters over
+each tool's own session store, and `harness logs <name>` renders the same
+stream per harness instead of raw terminal bytes (ADR-0007, amended 2026-09).
+
 ## Docs
 
 **Full usage documentation — install, quickstart, CLI reference, config,

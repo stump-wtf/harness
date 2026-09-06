@@ -60,6 +60,9 @@ type KeyMap struct {
 	PageDown key.Binding
 	Live     key.Binding // q/Esc back to live.
 
+	// Chatroom view (ADR-0015 / SPEC-0015).
+	Chatroom key.Binding // C — enter the unified agent-activity chatroom.
+
 	// Overlays.
 	Confirm key.Binding // Enter/y confirm a guarded action.
 }
@@ -86,7 +89,8 @@ func Default() KeyMap {
 		// Mouse-drag selection is unavailable while the TUI holds the mouse
 		// (MouseModeCellMotion), so an explicit copy key is how you grab a name
 		// out of the cockpit.
-		Copy: key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy name")),
+		Copy:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy name")),
+		Chatroom: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "chatroom")),
 
 		Search:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 		Palette: key.NewBinding(key.WithKeys("ctrl+k", ":"), key.WithHelp("^k/:", "palette")),
@@ -151,7 +155,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Top, k.Bot},
 		{k.Attach, k.Start, k.Stop, k.Restart, k.Edit, k.New, k.Delete},
-		{k.Profile, k.ShowAll, k.Logs, k.Copy, k.Search, k.Palette, k.Help, k.Quit},
+		{k.Profile, k.ShowAll, k.Logs, k.Copy, k.Chatroom, k.Search, k.Palette, k.Help, k.Quit},
 		{k.Detach, k.Scrollback, k.HopPrev, k.HopNext, k.AttStart, k.AttRestart, k.AttHelp},
 		{k.PageUp, k.PageDown, k.Live, k.Confirm, k.Back},
 	}

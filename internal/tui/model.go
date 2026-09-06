@@ -24,6 +24,7 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/keys"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 )
@@ -34,6 +35,7 @@ type mode int
 const (
 	modeDashboard mode = iota
 	modeAttached
+	modeChatroom
 )
 
 // overlay is the active overlay above the primary mode, if any.
@@ -188,6 +190,11 @@ type Model struct {
 	form       huh.Model // *huh.Form when overlayForm
 	fInputs    formInputs
 	editing    bool // form is editing (e) vs new (n)
+
+	// chat is the unified agent-activity view (ADR-0015, SPEC-0015),
+	// entered with C from the dashboard. Non-nil only while modeChatroom
+	// is active; its watcher lifecycle is tied to that mode.
+	chat *chatroom.Model
 
 	quitting  bool
 	closeOnce sync.Once

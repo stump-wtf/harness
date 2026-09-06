@@ -6,21 +6,25 @@ package main
 // programmatic surface, so --json output is a first-class contract).
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/adapter"
 	"gitea.stump.rocks/stump.wtf/harness/internal/ansifold"
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/client"
 	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/trajectory"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui"
 )
 
@@ -223,10 +227,22 @@ func printAttachSessions(w io.Writer, sessions []protocol.AttachSessionInfo) err
 }
 
 func cmdLogs(c *client.Client, o verbOpts) error {
-	// --follow polls the tail and prints only newly appended bytes. JSON output
-	// is a single snapshot (a stream of JSON blobs would not be scriptable).
-	if o.follow && !o.json {
-		return followLogs(c, o)
+	// Agent-trace first (ADR-0007, amended 2026-09-06): a harness with a
+	// native adapter renders its tool's own session record — the readable
+	// event stream — instead of the raw PTY tail, which is frame soup for
+	// interactive TUI harnesses. JSON output keeps the raw log payload.
+	if !o.json {
+		done, err := cmdLogsAgentTrace(c, o)
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+		// Generic fallback: raw PTY tail; --follow polls it.
+		if o.follow {
+			return followLogs(c, o)
+		}
 	}
 	ld, err := c.Logs(o.name, o.lines)
 	if err != nil {
@@ -245,6 +261,43 @@ func cmdLogs(c *client.Client, o verbOpts) error {
 		fmt.Println()
 	}
 	return nil
+}
+
+// cmdLogsAgentTrace prints agent-trace event lines for the harness when it
+// resolves to a native adapter. done reports that output was produced (or the
+// follow loop ran to completion); when false the caller falls back to the raw
+// PTY tail. Plain lines only — pipe-friendly, no escapes (#146).
+func cmdLogsAgentTrace(c *client.Client, o verbOpts) (bool, error) {
+	info, err := c.Describe(o.name)
+	if err != nil {
+		// Unknown harness name: let the raw path surface the daemon's error.
+		return false, nil
+	}
+	reg := adapter.NewRegistry()
+	adp, err := reg.Get(info.Adapter)
+	if err != nil || adp.TailAdapter() == nil {
+		return false, nil // generic: no native trajectory, use the PTY tail
+	}
+	emit := func(line string) { fmt.Println(line) }
+	if !o.follow {
+		lines, err := trajectory.HarnessSnapshotLines(context.Background(), reg, info.Adapter, info.Workdir, o.lines)
+		if err != nil {
+			// A session-store hiccup should not hide the raw tail.
+			fmt.Fprintf(os.Stderr, "harness: agent-trace snapshot failed: %v\nfalling back to raw log\n", err)
+			return false, nil
+		}
+		for _, line := range lines {
+			emit(line)
+		}
+		return true, nil
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := trajectory.FollowHarnessEvents(ctx, reg, info.Adapter, info.Workdir, emit); err != nil && ctx.Err() == nil {
+		fmt.Fprintf(os.Stderr, "harness: agent-trace follow failed: %v\nfalling back to raw log\n", err)
+		return false, nil
+	}
+	return true, nil
 }
 
 // followLogs re-fetches the tail on an interval and prints the new suffix.

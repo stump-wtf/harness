@@ -175,6 +175,10 @@ type HarnessInfo struct {
 	PID           int    `json:"pid,omitempty"`
 	// Adapter is the harness-kind enum the harness selected ("crush" default).
 	Adapter string `json:"adapter,omitempty"`
+	// Workdir is the harness's process working directory. Consumers use it to
+	// scope agent-trace session discovery to this harness's projects
+	// (ADR-0007 amended 2026-09-06).
+	Workdir string `json:"workdir,omitempty"`
 	// Prompt is the agent one-shot instruction for a prompt harness; the
 	// argv is synthesized at spawn from the same adapter (ADR-0011).
 	Prompt string `json:"prompt,omitempty"`

@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
 )
 
 // onMouse handles mouse events. In attached mode, mouse-wheel up enters
@@ -105,7 +106,26 @@ func (m *Model) routeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeAttached {
 		return m.onAttachedKey(msg)
 	}
+	if m.mode == modeChatroom {
+		return m.onChatroomKey(msg)
+	}
 	return m.onDashboardKey(msg)
+}
+
+// onChatroomKey forwards a keystroke to the chatroom view (ADR-0015). The
+// chatroom owns its own keymap (SPEC-0015 REQ "Keyboard Navigation"); exiting
+// it returns to the dashboard and drops the view, stopping its watcher.
+func (m *Model) onChatroomKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.chat == nil {
+		m.mode = modeDashboard
+		return m, nil
+	}
+	cmd, exited := m.chat.Update(msg)
+	if exited {
+		m.mode = modeDashboard
+		m.chat = nil
+	}
+	return m, cmd
 }
 
 // onDashboardKey handles keys on the dashboard (and its zero-states).
@@ -190,6 +210,14 @@ func (m *Model) dispatchDashboardKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.clampSel()
 		m.scrollListToSel()
 		return m, m.peekTargetChanged()
+	case key.Matches(msg, m.keys.Chatroom):
+		// Enter the unified agent-activity chatroom (ADR-0015, SPEC-0015).
+		// The chatroom runs its own watcher over agent-trace adapters; it is
+		// read-only and daemon-independent.
+		m.chat = chatroom.New(m.theme)
+		m.chat.Resize(m.w, m.h)
+		m.mode = modeChatroom
+		return m, m.chat.Init()
 	case key.Matches(msg, m.keys.Up):
 		m.moveSel(-1)
 		return m, m.peekTargetChanged()

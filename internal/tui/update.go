@@ -13,6 +13,7 @@ import (
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
 )
 
 // Update implements tea.Model.
@@ -21,6 +22,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.help.SetWidth(msg.Width)
+		if m.mode == modeChatroom && m.chat != nil {
+			// The chatroom reflows its own panels; its Update handles the
+			// resize message itself.
+			cmd, _ := m.chat.Update(msg)
+			return m, cmd
+		}
 		if m.overlay == overlayForm {
 			// Keep the Huh form bounded to the (resized) overlay viewport so it
 			// scrolls rather than overflowing a short terminal (issue #25).
@@ -71,6 +78,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case logsMsg:
 		if sel, ok := m.selectedHarness(); ok && sel.Name == msg.name {
 			m.peek = msg
+		}
+		return m, nil
+
+	case chatroom.EventsMsg, chatroom.StoppedMsg:
+		// Chatroom watcher output: forward only while the view is active — a
+		// straggler after exit (q raced a pump) is dropped with its watcher.
+		if m.mode == modeChatroom && m.chat != nil {
+			cmd, _ := m.chat.Update(msg)
+			return m, cmd
 		}
 		return m, nil
 

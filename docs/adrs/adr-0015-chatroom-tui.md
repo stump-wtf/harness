@@ -1,11 +1,24 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-19
 decision-makers: [@joestump]
 governs: [SPEC-0015]
+related: [ADR-0007]
 ---
 
 # ADR-0015: Unified Chatroom TUI for Multi-Harness Agent Output
+
+> **Implementation note (2026-09-06):** implemented as `internal/tui/chatroom`
+> (entered with `C` from the dashboard) on agent-trace v0.2.0. One deviation
+> from the original decision context: the watcher's adapter set is
+> `DefaultAdapters()` **plus one extra CrushAdapter per alternate crush
+> registry** (`~/.local/share/crush-*/projects.json`), because a harness with
+> a repointed `CRUSH_GLOBAL_DATA` (crush-signal) registers sessions only in
+> its own registry — and on machines where the default projects.json is
+> corrupt the alternates are the only live source. Events are deduped by
+> session key + seq so a session discoverable from two registries renders
+> once. `harness logs <name>` was moved onto the same pipeline (ADR-0007
+> amendment).
 
 ## Context and Problem Statement
 
