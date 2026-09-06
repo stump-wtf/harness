@@ -11,6 +11,7 @@
 package trajectory
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -133,7 +134,7 @@ func (s *Service) List(cfg *core.Config, name string) ([]SessionSummary, error) 
 		if workdir != "" {
 			filter.Cwd = workdir
 		}
-		sessions, err := tail.ListSessionsFiltered(td, filter)
+		sessions, err := tail.ListSessionsFiltered(context.Background(), td, filter)
 		if err != nil {
 			return nil, fmt.Errorf("trajectory list %s: %w", name, err)
 		}

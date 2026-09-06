@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/x/vt v0.0.0-20260816001655-68d539dca504
 	github.com/charmbracelet/x/xpty v0.1.4
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/stump-wtf/agent-trace v0.0.0-20260814165024-eb88b165bf06
+	github.com/stump-wtf/agent-trace v0.2.0
 	golang.org/x/crypto v0.55.0
 	golang.org/x/term v0.45.0
 )
@@ -59,5 +59,5 @@ require (
 	modernc.org/libc v1.75.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.0 // indirect
-	modernc.org/sqlite v1.56.0 // indirect
+	modernc.org/sqlite v1.57.0 // indirect
 )
