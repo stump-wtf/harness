@@ -12,7 +12,7 @@ related: [ADR-0001, ADR-0003, ADR-0011]
 
 ## Context and Problem Statement
 
-How can we provide a unified, real-time "chatroom" style read-only TUI within Harness that aggregates output from all agent harnesses (Claude Code, Codex, Crush, OpenCode, Pi) into a single stream where each harness appears as a distinct "user" (e.g., `@crush-signal`) with their tool calls, results, and user messages displayed as chat messages and activity feed entries?
+How can we provide a unified, real-time "chatroom" style read-only TUI within Harness that aggregates output from all agent harnesses (Claude Code, Codex, Crush, OpenCode, Pi) into a single stream where each harness appears as a distinct "user" (e.g., `@crush-worker`) with their tool calls, results, and user messages displayed as chat messages and activity feed entries?
 
 This TUI would be a new view/mode within the existing Harness TUI (which already uses bubbletea/charmbracelet), leveraging `agent-trace`'s `tail.Watcher` to consume live events from all 5 harness adapters.
 
@@ -62,7 +62,7 @@ Chosen option: **Option 1 — New chatroom view within Harness TUI**, because it
 * Harness TUI launches with a new "chatroom" mode reachable from the Dashboard, its entry key declared through the Bubbles `key.Binding` registry SPEC-0001 REQ "Keybinding Registry" already mandates
 * Chatroom view connects to `tail.Watcher` with `DefaultAdapters()` on enter
 * Events from all 5 harnesses appear in unified chronological stream
-* Each harness shows as distinct username (e.g., `@crush-signal`, `@claude-code`)
+* Each harness shows as distinct username (e.g., `@crush-worker`, `@claude-code`)
 * Tool calls render as chat messages with action/type badges
 * Tool results render as follow-up messages with status indicators
 * User messages (marks) render as chat messages
@@ -154,7 +154,7 @@ graph TD
 * Leverages existing `tail.Watcher`, `tail.Adapter`, `tail.Event`, `classify.Event`, `classify.Mark` types from agent-trace
 * New chatroom code will live under `internal/tui/` within Harness; the exact package layout is deferred to implementation, since `internal/tui` is a flat package today with no `views/` tree
 * Uses Harness's existing bubbletea setup, theming (lipgloss), and viewport components
-* Harness usernames: `@claude-code`, `@codex`, `@crush-signal`, `@opencode`, `@pi`
-  * *(Amended, issue #302: `@crush-signal` named one particular harness but labelled every crush session on the machine. Tool identities are now `@claude-code`, `@codex`, `@crush`, `@opencode`, `@pi`, and a session SPEC-0006 REQ "Run Correlation" attributes to exactly one harness shows as `@<harness name>` — see SPEC-0009 REQ "Harness Identity Display".)*
+* Harness usernames: `@claude-code`, `@codex`, `@crush-worker`, `@opencode`, `@pi`
+  * *(Amended, issue #302: `@crush-worker` named one particular harness but labelled every crush session on the machine. Tool identities are now `@claude-code`, `@codex`, `@crush`, `@opencode`, `@pi`, and a session SPEC-0006 REQ "Run Correlation" attributes to exactly one harness shows as `@<harness name>` — see SPEC-0009 REQ "Harness Identity Display".)*
 * Colors drawn from the existing `internal/tui/theme` palette (Accent, Mint, Amber, Cyan, Pink) so the chatroom degrades through the same `colorprofile` path as the rest of the TUI
 * Integrates with Harness daemon for supervision/lifecycle management

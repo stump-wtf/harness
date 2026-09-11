@@ -44,7 +44,7 @@ per-unit OS sprawl ADR-0005 deliberately collapsed?
 * **A laptop is not a server.** The machine is asleep at 03:00. Missed windows,
   suspend/resume, and clock jumps are the normal case here, not the exception.
 * **Smallest thing that removes the external timer.** The concrete goal is that a
-  `[harness.stumpcloud-sweep]` block replaces a launchd plist. Machinery beyond
+  `[harness.fleet-sweep]` block replaces a launchd plist. Machinery beyond
   that is speculative until the basic loop is in use.
 
 ## Considered Options
@@ -163,7 +163,7 @@ consumers that want to render a scheduled harness distinctly do branch on
 cmd = "claude"
 args = ["--remote-control", "--dangerously-skip-permissions"]
 
-[harness.stumpcloud-sweep]        # scheduled one-shot
+[harness.fleet-sweep]        # scheduled one-shot
 prompt = "check all StumpCloud services and report anything unhealthy"
 auto_accept = true
 schedule = "CRON_TZ=UTC 0 */6 * * *"   # 5-field cron, or @daily / @every 6h
@@ -328,7 +328,7 @@ rebuild-on-reload scheduler would let an `@every 6h` sweep never fire at all.
 
 A scheduled run is an ordinary supervised PTY spawn: same `internal/supervisor`
 spawn path, same `env_file` loading (ADR-0008), same `x/vt` emulator and
-scrollback ring (ADR-0003). `harness attach stumpcloud-sweep` lets you watch the
+scrollback ring (ADR-0003). `harness attach fleet-sweep` lets you watch the
 03:00 agent work while it works, and the run inherits the PTY semantics agent
 CLIs generally need.
 
@@ -350,15 +350,15 @@ CLIs generally need.
   exact cost 2A named. Every rendering surface pays it separately: `ls`,
   `describe` and the cockpit each carry their own `Schedule != ""` arm so a
   scheduled harness does not read as an inert disabled one-shot
-  ([#160](https://gitea.stump.rocks/stump.wtf/harness/issues/160),
-  [#205](https://gitea.stump.rocks/stump.wtf/harness/issues/205); the shared
+  (#160,
+  #205; the shared
   phrasing lives in `internal/schedfmt`, the branching does not). SPEC-0008 REQ
   "Schedule Visibility" is what holds them to the same answer.
 * Bad, because a firing goes through `Manager.Start`, which persists
   `enabled = true` — so an unclean daemon exit mid-run can autostart the one-shot
   off-schedule on the next boot, defeating the `enabled` exclusion the parser
   enforces. Tracked as
-  [#159](https://gitea.stump.rocks/stump.wtf/harness/issues/159); the fix is a
+  #159; the fix is a
   supervisor-level "start without persisting intent" primitive.
 * Good, because a laptop that sleeps through a window reaches a deliberate,
   tested decision on wake — run once, or record the miss — rather than whatever

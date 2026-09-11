@@ -147,7 +147,7 @@ slide/status-ribbon flash; springs via `harmonica` rather than linear easing).
 ### Requirement: Command Palette
 
 `Ctrl-k` / `:` SHALL open a command palette that fuzzy-matches over verbs
-*and* harness names (`attach crush-signal`, `restart reduit-agent`,
+*and* harness names (`attach crush-worker`, `restart reduit-agent`,
 `profile signal-ops`, `new`). The palette SHALL mirror the scriptable CLI
 verbs 1:1 so the palette and CLI never drift.
 
