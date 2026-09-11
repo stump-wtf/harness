@@ -626,6 +626,23 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		return
 	}
 
+	// A reload that drops `schedule` applies at once — it is not run-affecting
+	// — so a run started while the harness was scheduled can end here. Close
+	// it, or its log stays open and its record reads running until the next
+	// boot calls it interrupted. A held firing has no schedule left to honor.
+	if s.run != nil {
+		var exit *int
+		outcome := OutcomeSuccess
+		if !spawnFailed {
+			exit = &code
+		}
+		if spawnFailed || code != 0 {
+			outcome = OutcomeFailed
+		}
+		s.dropQueued(OutcomeSkipped)
+		s.finishRun(outcome, exit)
+	}
+
 	// Exit while disabled → stopped, no respawn (SPEC-0003 REQ "Restart On
 	// Exit" / "Intent vs. reality").
 	if !s.enabled {
