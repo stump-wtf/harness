@@ -53,9 +53,10 @@ The decision has two orthogonal axes, and this ADR settles both.
 
 **Axis 1 — who owns the clock:**
 
-* **1A. Daemon-owned scheduler, plus a `harness run` manual trigger verb.**
+* **1A. Daemon-owned scheduler, plus a manual trigger verb** (drafted as
+  `harness run`; shipped by #120 as `harness trigger`).
 * **1B. OS timers** (systemd `.timer`, launchd `StartCalendarInterval`) invoke
-  `harness run <job>`; the daemon stays ignorant of time.
+  `harness trigger <job> --wait`; the daemon stays ignorant of time.
 * **1C. Daemon-owned scheduler only** — no new manual-trigger verb; the existing
   `harness start <name>` is the manual path.
 
@@ -455,25 +456,28 @@ The daemon carries an internal cron engine driven from config; the existing
 * Bad, because DST, timezone data, and suspend/resume correctness become our
   problem rather than systemd's.
 
-### 1A — Daemon-owned scheduler + a `harness run` verb
+### 1A — Daemon-owned scheduler + a manual trigger verb
 
-As 1C, plus a dedicated `harness run <name>` verb, with `--wait` streaming
-output and propagating the run's exit code.
+As 1C, plus a dedicated manual trigger verb — drafted as `harness run <name>`,
+shipped by #120 as `harness trigger <name>` — with `--wait` streaming output and
+propagating the run's exit code.
 
 * Good, because `--wait` propagating an exit code is the cheap seam that lets an
   external scheduler drive Harness if someone wants 1B's properties.
-* Good, because `run` names the intent more precisely than `start` does for a
+* Good, because `trigger` names the intent more precisely than `start` does for a
   one-shot.
-* Bad, because `harness run` collides conceptually with the existing
-  `harness daemon run`, and the disambiguation is positional rather than obvious.
+* Bad, as drafted, because `harness run` collided conceptually with
+  `harness daemon run`, and later outright with ADR-0017's scratchpad verb.
+  Shipping the verb as `trigger` removes both collisions.
 * Neutral, because without run history there is nothing for `--wait` to report
   beyond the exit code, which `start` plus `attach` already approximates.
-  Reconsider alongside run history.
+  Reconsider alongside run history. (#119 added run history; #120 then added
+  the verb.)
 
-### 1B — OS timers invoke `harness run`
+### 1B — OS timers invoke the trigger verb
 
 systemd `.timer` units on Linux and launchd `StartCalendarInterval` on macOS
-fire `harness run <name>`; the daemon never learns what time it is.
+fire `harness trigger <name> --wait`; the daemon never learns what time it is.
 
 * Good, because timing correctness — including `Persistent=true` catch-up — is
   handled by software with far more hardening than ours.
