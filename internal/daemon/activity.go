@@ -301,8 +301,14 @@ type orderedEntry struct {
 // nanosecond after the one before it in the same second, which keeps that order
 // through the merge. Shifting "ending" lines to the end of their second instead
 // looked right for a lone exit and was wrong for a restart: on tars it printed
-// `starting → running` before the `stopping → stopped` it followed. Within a
-// shared second the lifecycle lines therefore print ahead of agent events.
+// `starting → running` before the `stopping → stopped` it followed.
+//
+// The offsets start at one nanosecond, not zero, so an agent event stamped at
+// the top of the same second — crush stores whole seconds — prints before the
+// lifecycle lines in it. That is the order at an exit: the provider error a run
+// died on lands in the second of the `exited` it caused, and printed after it.
+// At a start there is no tie to break, because a session is not open in the
+// second its process spawned.
 func lifecycleEntries(lines []supervisor.LifecycleEntry, w runtrace.Window, now time.Time) []orderedEntry {
 	var out []orderedEntry
 	var second time.Time
@@ -321,7 +327,7 @@ func lifecycleEntries(lines []supervisor.LifecycleEntry, w runtrace.Window, now 
 			Time: l.Time.Format(time.RFC3339Nano),
 			Kind: protocol.LogEntryLifecycle,
 		}
-		at := l.Time.Add(nth)
+		at := l.Time.Add(nth + 1)
 		switch l.Msg {
 		case "state changed":
 			e.Action = "state"

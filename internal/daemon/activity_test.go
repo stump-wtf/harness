@@ -89,9 +89,11 @@ func viewCall(id, path string, at time.Time) []rt.CrushMessage {
 func TestLogsEventsPostMortem(t *testing.T) {
 	td, work := sweepsDaemon(t)
 	rt.WriteCrushDB(t, filepath.Join(work, ".crush", "crush.db"),
-		rt.CrushSession{ID: "e088ec4e-pdx", Created: local(7, 40, 2), Updated: local(7, 56, 20),
+		// The finish error shares the exit's second, as it did on tars: the
+		// error is what ended the run.
+		rt.CrushSession{ID: "e088ec4e-pdx", Created: local(7, 40, 2), Updated: local(7, 56, 21),
 			Messages: append(viewCall("c1", filepath.Join(work, "pdx.yaml"), local(7, 40, 30)),
-				rt.CrushMessage{Role: "assistant", At: local(7, 56, 20), Parts: rt.FinishError("Bad Request", "litellm.ContextWindowExceededError")})},
+				rt.CrushMessage{Role: "assistant", At: local(7, 56, 21), Parts: rt.FinishError("Bad Request", "litellm.ContextWindowExceededError")})},
 		rt.CrushSession{ID: "09a363b5-pr", Created: local(9, 30, 3), Updated: local(9, 50, 24),
 			Messages: viewCall("c2", filepath.Join(work, "prs.md"), local(9, 31, 0))},
 	)
