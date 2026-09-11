@@ -131,6 +131,28 @@ type RunJournal interface {
 	AppendRun(name string, rec RunRecord) (RunRecord, error)
 }
 
+// RunDecisionKind names what StartRun did with a request.
+type RunDecisionKind string
+
+const (
+	// DecisionStarted: a run started a process (on_overlap = "replace" may have
+	// stopped the run in flight first).
+	DecisionStarted RunDecisionKind = "started"
+	// DecisionQueued: on_overlap = "queue" is holding the request; it gets a
+	// record, and a run id, when it starts.
+	DecisionQueued RunDecisionKind = "queued"
+	// DecisionSkipped: the request was recorded skipped.
+	DecisionSkipped RunDecisionKind = "skipped"
+)
+
+// RunDecision is what StartRun did with a request.
+type RunDecision struct {
+	Kind RunDecisionKind
+	// Run is the started run's record as opened, or the skipped record; zero
+	// for a queued request.
+	Run RunRecord
+}
+
 // activeRun is the loop-owned state of the run in flight.
 type activeRun struct {
 	rec   RunRecord
@@ -151,13 +173,14 @@ func decisionRecord(req RunRequest, outcome RunOutcome, now time.Time) RunRecord
 }
 
 // startProcess brings the harness up from idle: as a recorded run if it is
-// scheduled, as a plain start otherwise.
-func (s *Supervisor) startProcess(req RunRequest) {
+// scheduled, as a plain start otherwise. It returns the run's record as opened
+// (zero for an unscheduled harness).
+func (s *Supervisor) startProcess(req RunRequest) RunRecord {
 	if s.harness.Schedule != "" {
-		s.beginRun(req)
-		return
+		return s.beginRun(req)
 	}
 	s.beginStart()
+	return RunRecord{}
 }
 
 // startRun handles a firing. From idle it starts a run; with a run in flight
@@ -166,14 +189,14 @@ func (s *Supervisor) startProcess(req RunRequest) {
 // Deciding here, on the actor loop, is what makes overlap exact: the check and
 // the start cannot be separated by another start, as a read-the-snapshot then
 // call-Start caller can be.
-func (s *Supervisor) startRun(req RunRequest) {
+func (s *Supervisor) startRun(req RunRequest) RunDecision {
 	if !s.hasProcess() {
 		s.clearFailLatch()
-		s.startProcess(req)
-		return
+		return RunDecision{Kind: DecisionStarted, Run: s.startProcess(req)}
 	}
 	if s.harness.Schedule == "" {
-		return // no overlap policy without a schedule: already up is up
+		// No overlap policy without a schedule: already up is up.
+		return RunDecision{Kind: DecisionSkipped}
 	}
 	switch s.harness.OnOverlap {
 	case core.OverlapQueue:
@@ -181,22 +204,22 @@ func (s *Supervisor) startRun(req RunRequest) {
 			q := req
 			s.queued = &q
 			s.logEvent("run queued", "trigger", string(req.Trigger))
-			return
+			return RunDecision{Kind: DecisionQueued}
 		}
-		s.recordDecision(req, OutcomeSkipped)
+		return RunDecision{Kind: DecisionSkipped, Run: s.recordDecision(req, OutcomeSkipped)}
 	case core.OverlapReplace:
 		s.gracefulStop()
 		s.finishRun(OutcomeReplaced, &s.lastExitCode)
 		s.clearFailLatch()
-		s.beginRun(req)
+		return RunDecision{Kind: DecisionStarted, Run: s.beginRun(req)}
 	default:
-		s.recordDecision(req, OutcomeSkipped)
+		return RunDecision{Kind: DecisionSkipped, Run: s.recordDecision(req, OutcomeSkipped)}
 	}
 }
 
 // beginRun opens a record for req, opens its log, starts the process, and arms
 // the timeout.
-func (s *Supervisor) beginRun(req RunRequest) {
+func (s *Supervisor) beginRun(req RunRequest) RunRecord {
 	s.ensureLog()
 	rec := decisionRecord(req, OutcomeRunning, time.Now())
 	rec.EndedAt = nil
@@ -225,6 +248,17 @@ func (s *Supervisor) beginRun(req RunRequest) {
 	if s.run == run && s.hasProcess() {
 		run.gen = s.gen
 		s.armRunTimeout(run)
+		s.publishRun(EventRunStarted, run.rec)
+	}
+	return rec
+}
+
+// publishRun announces a run record on the lifecycle bus (SPEC-0008 REQ
+// "Lifecycle Events"). The bus drops events for a slow subscriber, so these are
+// notifications; the run history is the record.
+func (s *Supervisor) publishRun(kind EventKind, rec RunRecord) {
+	if s.bus != nil {
+		s.bus.Publish(Event{Kind: kind, Name: s.harness.Name, Time: time.Now(), Run: rec})
 	}
 }
 
@@ -370,6 +404,7 @@ func (s *Supervisor) finishRun(outcome RunOutcome, code *int) {
 			s.logEvent("run history not saved", "run_id", run.rec.RunID, "err", err.Error())
 		}
 	}
+	s.publishRun(EventRunFinished, run.rec)
 	switch outcome {
 	case OutcomeCancelled, OutcomeInterrupted:
 		return // the caller has already dealt with the queue
@@ -393,8 +428,9 @@ func (s *Supervisor) dropQueued(outcome RunOutcome) {
 	s.recordDecision(q, outcome)
 }
 
-// recordDecision records a firing that starts no process.
-func (s *Supervisor) recordDecision(req RunRequest, outcome RunOutcome) {
+// recordDecision records a firing that starts no process, and returns the
+// record.
+func (s *Supervisor) recordDecision(req RunRequest, outcome RunOutcome) RunRecord {
 	rec := decisionRecord(req, outcome, time.Now())
 	if s.journal != nil {
 		appended, err := s.journal.AppendRun(s.harness.Name, rec)
@@ -404,6 +440,8 @@ func (s *Supervisor) recordDecision(req RunRequest, outcome RunOutcome) {
 		}
 	}
 	s.logEvent("run "+string(outcome), "run_id", rec.RunID, "trigger", string(req.Trigger))
+	s.publishRun(EventRunFinished, rec)
+	return rec
 }
 
 // awaitReader waits, bounded, for the PTY reader of the latest spawn to land

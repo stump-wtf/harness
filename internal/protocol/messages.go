@@ -35,7 +35,22 @@ const (
 	// and Notices on LogsData) and LastStarted/LastExitAt on HarnessInfo
 	// (issues #302, #89) — additive only. A daemon older than 7 ignores Events
 	// and answers with the raw Text, which a newer client prints as before.
-	ProtoMinor = 7
+	// ProtoMinor 8 added scheduled-run visibility (issue #120): the jobs,
+	// trigger and runs ops; Run and Limit on ControlReq (Run selects one run
+	// of a scheduled harness for logs); JobInfo, RunInfo, RunsData and
+	// TriggerData; the not_scheduled and unknown_run error codes; and the
+	// job_run_started, job_run_finished and job_schedule_changed events with
+	// RunID, Trigger, Outcome, ExitCode, DurationMs and NextRunAt on EventMsg
+	// — additive only. A daemon older than 8 answers the new ops with
+	// unknown_op, and ignores Run, so it returns the harness-wide log.
+	//
+	// It also records fields that reached the wire earlier without a bump of
+	// their own, so this list is complete rather than silently short. On
+	// HarnessInfo: Adapter, Workdir, PromptFile, MaxTurns, Quiet, Project,
+	// Schedule and NextRun. On DaemonInfo: ProfileResolved, DormantAutostart,
+	// SshAddr and SshKeys. All additive and omitempty, so no reader broke; they
+	// simply shipped under whatever minor was current.
+	ProtoMinor = 8
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -100,6 +115,15 @@ const (
 	// harness under a daemon-minted random name with scratch provenance; it
 	// is never persisted and dies with the daemon.
 	OpScratchRun Op = "scratch_run"
+
+	// Scheduled-run ops. Governing: ADR-0013, SPEC-0008 REQ "Protocol
+	// Operations", REQ "Manual Trigger". jobs lists every scheduled harness
+	// with its next window and latest run; trigger starts a manual run through
+	// the same path a schedule firing takes (so on_overlap applies); runs
+	// returns one harness's run history, newest first.
+	OpJobs    Op = "jobs"
+	OpTrigger Op = "trigger"
+	OpRuns    Op = "runs"
 )
 
 // ControlReq is a control-plane request. ID correlates the response; Name
@@ -128,6 +152,14 @@ type ControlReq struct {
 	// IncludeAmbiguous adds sessions more than one harness could have
 	// written, flagged as ambiguous. Off by default: correlation fails closed.
 	IncludeAmbiguous bool `json:"include_ambiguous,omitempty"`
+
+	// Run selects one run of a scheduled harness by run id (issue #120). On
+	// logs it scopes the reply to that run: the raw view reads the run's own
+	// log, and the events view uses the run record's exact window, overriding
+	// Since/Until. Zero means the harness-wide behavior.
+	Run int `json:"run,omitempty"`
+	// Limit caps the records runs returns, newest first. Zero means 20.
+	Limit int `json:"limit,omitempty"`
 }
 
 // ProjectHarness is one project-local harness definition carried by a
@@ -419,6 +451,90 @@ type ScratchRunData struct {
 	Info HarnessInfo `json:"harness"`
 }
 
+// RunInfo is one run record of a scheduled harness (SPEC-0008 REQ "Run
+// History"). Times are RFC 3339. It carries outcomes, times and exit codes
+// only — never environment, prompt or output (ADR-0008).
+type RunInfo struct {
+	RunID int `json:"run_id"`
+	// Trigger is "schedule", "manual" or "catch_up".
+	Trigger string `json:"trigger"`
+	// Outcome is "running", "success", "failed", "timed_out", "skipped",
+	// "replaced", "missed", "cancelled" or "interrupted".
+	Outcome   string `json:"outcome"`
+	StartedAt string `json:"started_at"`
+	// EndedAt is empty while running, and for a run a crashed daemon left
+	// behind, whose real end is unknown.
+	EndedAt string `json:"ended_at,omitempty"`
+	// DurationMs is set once the run has ended.
+	DurationMs int64 `json:"duration_ms,omitempty"`
+	// ExitCode is set only when a process was reaped (-1 if signalled).
+	ExitCode *int `json:"exit_code,omitempty"`
+	// Window is the schedule window the record honors; FirstWindow and
+	// Windows describe what a missed record or a catch-up run covers.
+	Window      string `json:"window,omitempty"`
+	FirstWindow string `json:"first_window,omitempty"`
+	Windows     int    `json:"windows,omitempty"`
+	// HasLog reports whether the run has a log to read with logs --run.
+	HasLog bool `json:"has_log,omitempty"`
+}
+
+// JobInfo is one scheduled harness for the jobs op (SPEC-0008 REQ "Protocol
+// Operations"). NextRun is computed daemon-side from the live scheduler, so a
+// client renders "in 6h" without doing cron math.
+type JobInfo struct {
+	Name        string `json:"name"`
+	Schedule    string `json:"schedule"`
+	Description string `json:"description,omitempty"`
+	// State is the harness state, as on HarnessInfo.
+	State string `json:"state"`
+	// NextRun is RFC 3339; empty when the schedule never fires again.
+	NextRun string `json:"next_run,omitempty"`
+	CatchUp bool   `json:"catch_up,omitempty"`
+	// TimeoutMs bounds each run; 0 means no limit.
+	TimeoutMs int64  `json:"timeout_ms"`
+	OnOverlap string `json:"on_overlap"`
+	KeepRuns  int    `json:"keep_runs"`
+	// Running is the run in flight, if any.
+	Running *RunInfo `json:"running,omitempty"`
+	// LastRun is the newest finished record, if any — including a decision
+	// that started no process (skipped, missed).
+	LastRun *RunInfo `json:"last_run,omitempty"`
+	// ConsecutiveFailures counts the newest runs that failed or timed out,
+	// back to the latest success. Records that pass no verdict on the harness
+	// (skipped, missed, replaced, cancelled, interrupted) neither count nor
+	// reset it.
+	ConsecutiveFailures int `json:"consecutive_failures"`
+}
+
+// RunsData is the runs op response payload.
+type RunsData struct {
+	Name string `json:"name"`
+	// Runs is newest first, capped at the request's Limit.
+	Runs []RunInfo `json:"runs"`
+}
+
+// Trigger decisions.
+const (
+	// TriggerStarted: the run started a process (on_overlap = "replace" may
+	// have stopped a run in flight first).
+	TriggerStarted = "started"
+	// TriggerQueued: a run is in flight and on_overlap = "queue" is holding
+	// this one; it starts when that run ends, under a run id not yet assigned.
+	TriggerQueued = "queued"
+	// TriggerSkipped: a run is in flight (or the harness is stopping) and the
+	// trigger was recorded skipped.
+	TriggerSkipped = "skipped"
+)
+
+// TriggerData is the trigger op response payload.
+type TriggerData struct {
+	Name string `json:"name"`
+	// Decision is one of the Trigger* constants.
+	Decision string `json:"decision"`
+	// Run is the started run, or the skipped record; nil when queued.
+	Run *RunInfo `json:"run,omitempty"`
+}
+
 // DaemonInfo is the daemon_info response payload.
 type DaemonInfo struct {
 	Version         string `json:"version"`
@@ -489,6 +605,16 @@ const (
 	// (a global-config harness, authored in harness.toml) or an unknown name;
 	// no state changed (SPEC-0004 REQ "Remove").
 	ErrNotRemovable ErrCode = "not_removable"
+
+	// Scheduled-run errors (SPEC-0008 REQ "Protocol Operations").
+
+	// ErrNotScheduled: trigger named a harness that exists but has no
+	// schedule. Distinct from unknown_harness so a script can tell a typo from
+	// pointing a job verb at a resident harness.
+	ErrNotScheduled ErrCode = "not_scheduled"
+	// ErrUnknownRun: a run selector named a run id the harness's history does
+	// not hold — never run, or pruned past keep_runs.
+	ErrUnknownRun ErrCode = "unknown_run"
 )
 
 // ErrorMsg is a structured error frame body. ID echoes the request it answers
@@ -514,6 +640,16 @@ const (
 	EvFlapping      EventKind = "harness_flapping"
 	EvConfigReload  EventKind = "config_reloaded"
 	EvProfileChange EventKind = "profile_changed"
+
+	// Scheduled-run events (SPEC-0008 REQ "Lifecycle Events"). A run that
+	// starts a process emits job_run_started; every record that becomes final
+	// emits job_run_finished, including a decision that started no process
+	// (skipped, missed). job_schedule_changed carries a harness's new next
+	// window whenever it moves: armed, re-armed by a reload, advanced past a
+	// firing, or disarmed (empty NextRunAt).
+	EvJobRunStarted      EventKind = "job_run_started"
+	EvJobRunFinished     EventKind = "job_run_finished"
+	EvJobScheduleChanged EventKind = "job_schedule_changed"
 )
 
 // EventMsg is a pushed EVENT frame body. Only the fields relevant to Kind are
@@ -527,6 +663,17 @@ type EventMsg struct {
 	Restarts      int       `json:"restarts,omitempty"`
 	NextRetryInMs int64     `json:"next_retry_in_ms,omitempty"`
 	Profile       string    `json:"profile,omitempty"`
+
+	// Job run fields (job_run_started, job_run_finished). ExitCode is a
+	// pointer so a clean exit 0 is distinguishable from "no process exited".
+	RunID      int    `json:"run_id,omitempty"`
+	Trigger    string `json:"trigger,omitempty"`
+	Outcome    string `json:"outcome,omitempty"`
+	ExitCode   *int   `json:"exit_code,omitempty"`
+	DurationMs int64  `json:"duration_ms,omitempty"`
+	// NextRunAt (RFC 3339) is job_schedule_changed's new next window; empty
+	// when the harness no longer has one.
+	NextRunAt string `json:"next_run_at,omitempty"`
 }
 
 // ---- Attach data plane (SPEC-0002 REQ "Attach Session") ------------------

@@ -30,6 +30,17 @@ const (
 	// EventFlapping is emitted when crash-loop backoff escalates
 	// (`harness_flapping { name, restarts, next_retry_in }`).
 	EventFlapping EventKind = "harness_flapping"
+
+	// EventRunStarted is emitted when a scheduled harness's run starts a
+	// process (SPEC-0008 REQ "Lifecycle Events").
+	EventRunStarted EventKind = "job_run_started"
+	// EventRunFinished is emitted when a run record becomes final — including
+	// a decision that started no process (skipped, missed).
+	EventRunFinished EventKind = "job_run_finished"
+	// EventScheduleChanged is emitted when a scheduled harness's next window
+	// changes. The Manager publishes it for the scheduler, which knows nothing
+	// of the bus.
+	EventScheduleChanged EventKind = "job_schedule_changed"
 )
 
 // Event is one lifecycle notification. Only the fields relevant to Kind are
@@ -46,6 +57,13 @@ type Event struct {
 	// From/To are set for EventStateChanged.
 	From core.State
 	To   core.State
+
+	// Run is set for EventRunStarted and EventRunFinished: the record as it
+	// stood when the event was produced.
+	Run RunRecord
+	// NextRun is set for EventScheduleChanged; zero when the harness no longer
+	// has a next window.
+	NextRun time.Time
 
 	// Code is the process exit code, set for EventExited (-1 if signalled).
 	Code int

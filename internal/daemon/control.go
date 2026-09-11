@@ -54,6 +54,12 @@ func (c *conn) handleControl(payload []byte) {
 		c.opRemove(req)
 	case protocol.OpScratchRun:
 		c.opScratchRun(req)
+	case protocol.OpJobs:
+		c.respond(req, c.opJobs())
+	case protocol.OpTrigger:
+		c.opTrigger(req)
+	case protocol.OpRuns:
+		c.opRuns(req)
 	default:
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownOp, "unknown op %q", req.Op)
 	}
@@ -230,6 +236,11 @@ func (c *conn) opLogs(req protocol.ControlReq) {
 	lines := req.Lines
 	if lines <= 0 {
 		lines = 200
+	}
+	if req.Run > 0 {
+		// One run of a scheduled harness (jobs.go; #120).
+		c.opLogsRun(req, snap, lines)
+		return
 	}
 	if req.Events {
 		data, err := c.activity(req, snap, lines)
