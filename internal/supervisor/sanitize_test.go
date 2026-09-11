@@ -136,7 +136,8 @@ func TestLogRecordsLifecycleEvents(t *testing.T) {
 	waitState(t, s, core.StateStopped) // RestartNever: a clean exit lands stopped
 	s.Shutdown()
 
-	data, err := os.ReadFile(filepath.Join(dir, "ephemeral.log"))
+	data, err := readUntilContains(filepath.Join(dir, "ephemeral.log"),
+		[]string{"state changed", "exited", "DONE"}, 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +149,33 @@ func TestLogRecordsLifecycleEvents(t *testing.T) {
 	}
 	if bytes.ContainsRune(data, 0x1b) {
 		t.Errorf("log contains ESC bytes:\n%q", got)
+	}
+}
+
+// readUntilContains polls path until every wanted substring has appeared (the
+// PTY bytes land in the log asynchronously, so a single read after Shutdown
+// can miss the guest's output) or the deadline passes, returning the last
+// read.
+func readUntilContains(path string, wanted []string, within time.Duration) ([]byte, error) {
+	deadline := time.Now().Add(within)
+	var data []byte
+	for {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		data = b
+		missing := false
+		for _, want := range wanted {
+			if !strings.Contains(string(data), want) {
+				missing = true
+				break
+			}
+		}
+		if !missing || time.Now().After(deadline) {
+			return data, nil
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
