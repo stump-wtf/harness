@@ -318,6 +318,24 @@ func toEventMsg(ev supervisor.Event) protocol.EventMsg {
 		m.Kind = protocol.EvFlapping
 		m.Restarts = ev.Restarts
 		m.NextRetryInMs = ev.NextRetryIn.Milliseconds()
+	case supervisor.EventRunStarted, supervisor.EventRunFinished:
+		// SPEC-0008 REQ "Lifecycle Events" (#120).
+		m.Kind = protocol.EvJobRunStarted
+		if ev.Kind == supervisor.EventRunFinished {
+			m.Kind = protocol.EvJobRunFinished
+		}
+		m.RunID = ev.Run.RunID
+		m.Trigger = string(ev.Run.Trigger)
+		m.Outcome = string(ev.Run.Outcome)
+		m.ExitCode = ev.Run.ExitCode
+		if ev.Run.EndedAt != nil {
+			m.DurationMs = ev.Run.EndedAt.Sub(ev.Run.StartedAt).Milliseconds()
+		}
+	case supervisor.EventScheduleChanged:
+		m.Kind = protocol.EvJobScheduleChanged
+		if !ev.NextRun.IsZero() {
+			m.NextRunAt = ev.NextRun.Format(time.RFC3339)
+		}
 	}
 	return m
 }

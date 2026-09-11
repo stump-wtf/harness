@@ -102,18 +102,51 @@ func (m *Manager) CloseRun(name string, rec RunRecord) error {
 // skipped here rather than sent to the loop: the loop would only see it once
 // the stop completed, and would then start a harness an operator just stopped
 // (SPEC-0008 REQ "Firing And Overlap").
-func (m *Manager) StartRun(name string, req RunRequest) bool {
+func (m *Manager) StartRun(name string, req RunRequest) (RunDecision, bool) {
 	s := m.get(name)
 	if s == nil {
-		return false
+		return RunDecision{}, false
 	}
 	if s.Snapshot().State == core.StateStopping {
-		_, _ = m.AppendRun(name, decisionRecord(req, OutcomeSkipped, time.Now()))
-		return true
+		rec, _ := m.AppendRun(name, decisionRecord(req, OutcomeSkipped, time.Now()))
+		m.publishRun(EventRunFinished, name, rec)
+		return RunDecision{Kind: DecisionSkipped, Run: rec}, true
 	}
-	s.StartRun(req)
+	d := s.StartRun(req)
 	m.clearDormant(name)
-	return true
+	return d, true
+}
+
+// publishRun announces a run record the Manager made itself on the lifecycle
+// bus (SPEC-0008 REQ "Lifecycle Events").
+func (m *Manager) publishRun(kind EventKind, name string, rec RunRecord) {
+	m.bus.Publish(Event{Kind: kind, Name: name, Time: time.Now(), Run: rec})
+}
+
+// PublishScheduleChanged announces a scheduled harness's new next window on the
+// lifecycle bus (SPEC-0008 REQ "Lifecycle Events"); a zero next means it has
+// none. The scheduler reports these and the Manager owns the bus, so the daemon
+// wires this in as the scheduler's NextChanged.
+func (m *Manager) PublishScheduleChanged(name string, next time.Time) {
+	m.bus.Publish(Event{Kind: EventScheduleChanged, Name: name, Time: time.Now(), NextRun: next})
+}
+
+// ConsecutiveFailures counts runs, newest first, that failed or timed out, back
+// to the latest success. Records that pass no verdict on the harness — running,
+// skipped, missed, replaced, cancelled, interrupted — neither count nor break
+// the streak: an operator stop or a skipped firing says nothing about whether
+// the job works.
+func ConsecutiveFailures(runs []RunRecord) int {
+	n := 0
+	for i := len(runs) - 1; i >= 0; i-- {
+		switch runs[i].Outcome {
+		case OutcomeSuccess:
+			return n
+		case OutcomeFailed, OutcomeTimedOut:
+			n++
+		}
+	}
+	return n
 }
 
 // RecordMissed records schedule windows that elapsed while nobody was
@@ -132,7 +165,8 @@ func (m *Manager) RecordMissed(name string, first, last time.Time, windows int, 
 		FirstWindow: &first,
 		Windows:     windows,
 	}
-	_, err := m.AppendRun(name, rec)
+	rec, err := m.AppendRun(name, rec)
+	m.publishRun(EventRunFinished, name, rec)
 	return err
 }
 

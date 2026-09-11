@@ -125,6 +125,9 @@ func newRootCmd() *cobra.Command {
 		newLifecycleCmd(g, "stop", "stop a harness"),
 		newLifecycleCmd(g, "restart", "restart a harness"),
 		newLogsCmd(g),
+		newSimpleCmd(g, "jobs", "list scheduled harnesses and how their runs went", nameNone),
+		newTriggerCmd(g),
+		newRunsCmd(g),
 		newAttachCmd(g),
 		newDoctorCmd(g),
 		newDaemonCmd(g),
@@ -223,6 +226,7 @@ func newLogsCmd(g *globalOpts) *cobra.Command {
 		follow    bool
 		raw       bool
 		ambiguous bool
+		runID     int
 	)
 	cmd := &cobra.Command{
 		Use:           "logs",
@@ -235,9 +239,15 @@ func newLogsCmd(g *globalOpts) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if runID < 0 {
+				return fmt.Errorf("--run must be a run id (see harness runs %s)", name)
+			}
+			if runID > 0 && follow {
+				return fmt.Errorf("--follow cannot be combined with --run (use harness trigger %s --wait to follow a run)", name)
+			}
 			o := g.opts()
 			o.name, o.lines, o.follow = name, lines, follow
-			o.raw, o.ambiguous = raw, ambiguous
+			o.raw, o.ambiguous, o.run = raw, ambiguous, runID
 			return run("logs", o)
 		},
 	}
@@ -245,6 +255,7 @@ func newLogsCmd(g *globalOpts) *cobra.Command {
 	cmd.Flags().BoolVar(&follow, "follow", false, "stream new output")
 	cmd.Flags().BoolVar(&raw, "raw", false, "print the durable log tail instead of agent activity")
 	cmd.Flags().BoolVar(&ambiguous, "include-ambiguous", false, "also show sessions another harness could have written")
+	cmd.Flags().IntVar(&runID, "run", 0, "one run of a scheduled harness, by id (see harness runs)")
 	return cmd
 }
 

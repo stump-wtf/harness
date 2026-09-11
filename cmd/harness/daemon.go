@@ -132,7 +132,7 @@ func runDaemon(o daemonOpts) {
 				log.Info("schedule fired", "harness", name)
 			}
 			req := supervisor.RunRequest{Trigger: trigger, Window: f.Window, Windows: f.Missed}
-			if !mgr.StartRun(name, req) {
+			if _, ok := mgr.StartRun(name, req); !ok {
 				log.Warn("schedule fired for unknown harness", "harness", name)
 			}
 		},
@@ -143,6 +143,9 @@ func runDaemon(o daemonOpts) {
 		// A missed window becomes a `missed` run record, and stays loud in the
 		// daemon log too.
 		Recorder: runHistoryRecorder{mgr},
+		// Every move of a next window reaches clients as job_schedule_changed
+		// (SPEC-0008 REQ "Lifecycle Events"; #120).
+		NextChanged: mgr.PublishScheduleChanged,
 	})
 	sched.Apply(cfg)
 	sched.Start()

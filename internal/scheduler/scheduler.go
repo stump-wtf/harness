@@ -28,6 +28,7 @@
 package scheduler
 
 import (
+	"slices"
 	"sync"
 	"time"
 
@@ -179,6 +180,11 @@ type Options struct {
 	Store Store
 	// Recorder defaults to LogRecorder.
 	Recorder Recorder
+	// NextChanged, if set, is told each time an entry's next window moves:
+	// armed, re-armed by a reload, advanced past a decision, or disarmed (a
+	// zero time). It runs after the scheduler's lock is released, so it may
+	// call back in. The daemon relays it as job_schedule_changed.
+	NextChanged func(name string, next time.Time)
 }
 
 // entry is one armed schedule.
@@ -201,6 +207,8 @@ type Scheduler struct {
 	loc      *time.Location
 	store    Store
 	recorder Recorder
+	// nextChanged is Options.NextChanged.
+	nextChanged func(name string, next time.Time)
 
 	mu       sync.Mutex
 	entries  map[string]*entry
@@ -224,6 +232,8 @@ func New(opts Options) *Scheduler {
 		store:    opts.Store,
 		recorder: opts.Recorder,
 		entries:  make(map[string]*entry),
+
+		nextChanged: opts.NextChanged,
 	}
 	if s.start == nil {
 		s.start = func(Firing) {}
@@ -264,11 +274,15 @@ func (s *Scheduler) now() time.Time {
 // come due on the first tick — the same path a wake takes. With no usable mark
 // it arms from now and persists that, so the NEXT outage is detectable.
 func (s *Scheduler) Apply(cfg *core.Config) {
+	var changes []nextChange
+	// Deferred before the unlock below, so it runs after it.
+	defer func() { s.notifyNext(changes) }()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
 
 	var forget []string
+	disarmed := make(map[string]bool)
 	for name, e := range s.entries {
 		h, ok := cfg.Harnesses[name]
 		if ok && h.Schedule == e.spec {
@@ -280,6 +294,7 @@ func (s *Scheduler) Apply(cfg *core.Config) {
 		}
 		delete(s.entries, name)
 		forget = append(forget, name)
+		disarmed[name] = true
 		if !ok || h.Schedule == "" {
 			log.Info("unscheduled harness", "harness", name)
 		}
@@ -319,9 +334,19 @@ func (s *Scheduler) Apply(cfg *core.Config) {
 		e.next = s.nextAfter(e, from)
 		s.entries[name] = e
 		order = append(order, name)
+		delete(disarmed, name) // a changed spec re-arms rather than disarms
+		changes = append(changes, nextChange{name: name, next: e.next})
 		log.Info("scheduled harness", "harness", name, "schedule", h.Schedule, "catch_up", h.CatchUp, "next", formatNext(e.next))
 	}
 	s.order = order
+	gone := make([]string, 0, len(disarmed))
+	for name := range disarmed {
+		gone = append(gone, name)
+	}
+	slices.Sort(gone)
+	for _, name := range gone {
+		changes = append(changes, nextChange{name: name})
+	}
 	s.persist(put, forget)
 }
 
@@ -398,9 +423,10 @@ func (s *Scheduler) evaluate() {
 	s.lastTick = now
 
 	var (
-		put    map[string]Mark
-		fires  []Firing
-		misses []MissedWindow
+		put     map[string]Mark
+		fires   []Firing
+		misses  []MissedWindow
+		changes []nextChange
 	)
 	for _, name := range s.order {
 		e := s.entries[name]
@@ -408,6 +434,7 @@ func (s *Scheduler) evaluate() {
 			continue
 		}
 		fire, miss := s.decide(name, e, now)
+		changes = append(changes, nextChange{name: name, next: e.next})
 		if put == nil {
 			put = make(map[string]Mark)
 		}
@@ -425,6 +452,8 @@ func (s *Scheduler) evaluate() {
 	// would then resurrect.
 	s.persist(put, nil)
 	s.mu.Unlock()
+
+	s.notifyNext(changes)
 
 	for _, m := range misses {
 		s.safely("record missed window", m.Name, func() { s.recorder.RecordMissed(m) })
@@ -529,6 +558,23 @@ func (s *Scheduler) persist(put map[string]Mark, forget []string) {
 	}
 	if err := s.store.UpdateMarks(put, forget); err != nil {
 		log.Error("scheduler: could not persist schedule marks; a crash now may repeat or lose a window", "err", err)
+	}
+}
+
+// nextChange is one entry's new next window, for NextChanged. A zero next means
+// the entry was disarmed.
+type nextChange struct {
+	name string
+	next time.Time
+}
+
+// notifyNext reports changes to NextChanged. Called without the lock held.
+func (s *Scheduler) notifyNext(changes []nextChange) {
+	if s.nextChanged == nil {
+		return
+	}
+	for _, c := range changes {
+		s.safely("next-window callback", c.name, func() { s.nextChanged(c.name, c.next) })
 	}
 }
 

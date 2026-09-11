@@ -50,7 +50,8 @@ a clear `ERROR` ("client too old/new; daemon proto vN") rather than garbling.
 
 The control plane SHALL mirror the CLI verbs and the TUI 1:1 (ADR-0002):
 `list`, `describe`, `start`, `stop`, `restart`, `logs`, `profiles`,
-`use_profile`, `reload`, and `daemon_info`. Operations SHALL be idempotent
+`use_profile`, `reload`, `daemon_info`, and the scheduled-run ops `jobs`,
+`trigger` and `runs` (SPEC-0008 REQ "Protocol Operations"). Operations SHALL be idempotent
 where that makes sense (double-`start` is a no-op). Errors SHALL come back as
 structured `ERROR` frames with a code and a human message. A response that
 carries raw terminal output SHALL also carry the viewport that output was drawn
@@ -96,11 +97,22 @@ of reflowing it.
 - **THEN** the reply is the durable log tail exactly as before, which the TUI
   peek pane and `harness logs --raw` depend on
 
+#### Scenario: Run-scoped logs
+
+- **WHEN** a client requests `logs` with `run` set to a run id of a scheduled
+  harness
+- **THEN** the raw reply is that run's own log, and the `events` reply
+  describes exactly that run record's window
+- **AND** a run id the harness's history does not hold is an `unknown_run`
+  ERROR
+
 ### Requirement: Event Subscription
 
 After a `HELLO` that includes `wants: ["events"]`, the daemon SHALL push
 `EVENT` frames on state changes (`harness_state_changed`, `harness_exited`,
-`harness_flapping`, `config_reloaded`, `profile_changed`) so the TUI re-renders
+`harness_flapping`, `config_reloaded`, `profile_changed`, and the scheduled-run
+events `job_run_started`, `job_run_finished` and `job_schedule_changed` of
+SPEC-0008 REQ "Lifecycle Events") so the TUI re-renders
 reactively without polling. One-shot CLI invocations MAY skip the
 subscription entirely.
 

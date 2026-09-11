@@ -22,6 +22,9 @@ type LogOptions struct {
 	// IncludeAmbiguous adds sessions another harness could have written,
 	// flagged as ambiguous.
 	IncludeAmbiguous bool
+	// Run selects one run of a scheduled harness by id; its record's window
+	// replaces Since/Until (#120).
+	Run int
 }
 
 // LogEvents returns one run's lifecycle and attributed agent activity. A
@@ -34,6 +37,7 @@ func (c *Client) LogEvents(name string, o LogOptions) (protocol.LogsData, error)
 		Lines:            o.Lines,
 		Events:           true,
 		IncludeAmbiguous: o.IncludeAmbiguous,
+		Run:              o.Run,
 	}
 	if !o.Since.IsZero() {
 		req.Since = o.Since.Format(time.RFC3339Nano)

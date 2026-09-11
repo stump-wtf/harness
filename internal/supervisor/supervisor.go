@@ -68,6 +68,7 @@ type command struct {
 	rows    int            // cmdResize
 	sig     syscall.Signal // cmdSignal payload (delivered to the process group)
 	run     *RunRequest    // cmdStartRun payload
+	decided *RunDecision   // cmdStartRun result, written before done closes
 	done    chan struct{}
 }
 
@@ -230,7 +231,14 @@ func (s *Supervisor) StartTransient() { s.send(command{kind: cmdStartTransient})
 // record and the harness's overlap policy when a run is already in flight
 // (SPEC-0008 REQ "Overlap Policy"). Blocks until the loop processes it — for
 // on_overlap = "replace", until the old run has stopped and the new one started.
-func (s *Supervisor) StartRun(req RunRequest) { s.send(command{kind: cmdStartRun, run: &req}) }
+//
+// It returns what it did. A supervisor that has already shut down decides
+// nothing, and the zero RunDecision says so.
+func (s *Supervisor) StartRun(req RunRequest) RunDecision {
+	var d RunDecision
+	s.send(command{kind: cmdStartRun, run: &req, decided: &d})
+	return d
+}
 
 // Stop performs a graceful stop and sets enabled=false (SPEC-0003 REQ
 // "Graceful Stop"). Blocks until the harness is stopped.
@@ -336,7 +344,10 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		// cmdStartTransient's intent handling (#159), plus run history and
 		// the overlap policy (runs.go).
 		s.suppressPersist = true
-		s.startRun(*c.run)
+		d := s.startRun(*c.run)
+		if c.decided != nil {
+			*c.decided = d
+		}
 		s.suppressPersist = false
 	case cmdStop:
 		s.enabled = false
