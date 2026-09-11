@@ -23,6 +23,10 @@ package supervisor
 // Timeout", REQ "Overlap Policy".
 //
 // @joestump-agent 09/11/2026 - Added for issue #119.
+//
+// @joestump-agent 09/11/2026 - Review of PR #310: killProcess now SIGKILLs what
+// is left of the process group after the leader exits, so a timeout, replace or
+// stop cannot orphan an MCP child that ignores SIGTERM and SIGHUP.
 
 import (
 	"io"
@@ -286,8 +290,15 @@ func (s *Supervisor) handleRunTimeout(gen uint64) {
 // SIGTERM, then SIGKILL after StopGrace — and reaps it, leaving the state
 // transition to the caller. ok is false when the exit consumed belonged to an
 // earlier generation.
+//
+// The leader exiting is not the group exiting. An agent's MCP servers (uvx,
+// npx, ssh) share its process group, and one that is slow on SIGTERM — or deaf
+// to it and to the SIGHUP the session leader's exit raises — would otherwise
+// outlive the run a timeout, replace or stop was meant to end. Whatever is left
+// of the group gets the rest of the grace, then SIGKILL.
 func (s *Supervisor) killProcess() (code int, ok bool) {
 	proc, gen := s.proc, s.gen
+	deadline := time.Now().Add(s.policy.StopGrace)
 	proc.signalGroup(syscall.SIGTERM)
 	var ex exitResult
 	select {
@@ -297,7 +308,26 @@ func (s *Supervisor) killProcess() (code int, ok bool) {
 		ex = <-s.exitCh
 	}
 	s.reapProcess()
+	proc.killStragglers(deadline)
 	return ex.code, ex.gen == gen
+}
+
+// killStragglers SIGKILLs whatever remains of the child's process group once
+// deadline passes, after the leader has been reaped. Members that exit on their
+// own before then are left to finish. A group id is not handed to a new group
+// while any member of the old one lives, so -pid reaches only this harness's
+// leftovers.
+func (p *process) killStragglers(deadline time.Time) {
+	if p == nil || p.pid <= 1 {
+		return
+	}
+	for syscall.Kill(-p.pid, 0) != syscall.ESRCH {
+		if !time.Now().Before(deadline) {
+			_ = syscall.Kill(-p.pid, syscall.SIGKILL)
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // finishRun closes the run in flight with outcome, then starts a queued firing
