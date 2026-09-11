@@ -34,6 +34,7 @@ type cmdKind int
 const (
 	cmdStart          cmdKind = iota
 	cmdStartTransient         // scheduled firing: bring up without persisting enabled intent
+	cmdStartRun               // scheduled firing with run history and the overlap policy (runs.go)
 	cmdStop
 	cmdRestart
 	cmdApplyConfig
@@ -66,6 +67,7 @@ type command struct {
 	cols    int            // cmdResize
 	rows    int            // cmdResize
 	sig     syscall.Signal // cmdSignal payload (delivered to the process group)
+	run     *RunRequest    // cmdStartRun payload
 	done    chan struct{}
 }
 
@@ -145,6 +147,12 @@ type Supervisor struct {
 	// NOT rewrite state.json while a scheduled one-shot is in flight.
 	suppressPersist bool
 
+	// ---- run history, scheduled harnesses only (runs.go) ----
+	journal   RunJournal
+	run       *activeRun  // the run in flight; nil when none
+	queued    *RunRequest // the one firing on_overlap = "queue" holds
+	timeoutCh chan uint64 // run timeout fired (carries run gen)
+
 	// ---- snapshot (guarded) ----
 	mu   sync.Mutex
 	snap Snapshot
@@ -162,6 +170,9 @@ type Options struct {
 	// for this harness. Without it every (re)start begins at 80×24 and a client
 	// that is already attached at another size never gets corrected (ADR-0003).
 	InitialSize func() (cols, rows int)
+	// Runs, if set, records the run history of a scheduled harness (SPEC-0008
+	// REQ "Run History"). The Manager passes itself.
+	Runs RunJournal
 }
 
 // New creates a Supervisor for h and starts its actor loop. The harness begins
@@ -179,6 +190,8 @@ func New(h core.Harness, opts Options) *Supervisor {
 		exitCh:       make(chan exitResult, 1),
 		timerCh:      make(chan struct{}, 1),
 		surviveCh:    make(chan uint64, 1),
+		timeoutCh:    make(chan uint64),
+		journal:      opts.Runs,
 		done:         make(chan struct{}),
 		harness:      h,
 		state:        core.StateStopped,
@@ -212,6 +225,12 @@ func (s *Supervisor) Start() { s.send(command{kind: cmdStart}) }
 // transitions to StateStopped without restart, exactly as if the harness
 // had been manually stopped.
 func (s *Supervisor) StartTransient() { s.send(command{kind: cmdStartTransient}) }
+
+// StartRun is a scheduled firing: StartTransient's intent handling, plus a run
+// record and the harness's overlap policy when a run is already in flight
+// (SPEC-0008 REQ "Overlap Policy"). Blocks until the loop processes it — for
+// on_overlap = "replace", until the old run has stopped and the new one started.
+func (s *Supervisor) StartRun(req RunRequest) { s.send(command{kind: cmdStartRun, run: &req}) }
 
 // Stop performs a graceful stop and sets enabled=false (SPEC-0003 REQ
 // "Graceful Stop"). Blocks until the harness is stopped.
@@ -279,6 +298,8 @@ func (s *Supervisor) loop() {
 			s.handleRestartTimer()
 		case gen := <-s.surviveCh:
 			s.handleSurvival(gen)
+		case gen := <-s.timeoutCh:
+			s.handleRunTimeout(gen)
 		}
 	}
 }
@@ -292,7 +313,7 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.publishChangeUnchanged() // persist intent even if already up
 		if !s.hasProcess() && s.state != core.StateStopping {
 			s.clearFailLatch()
-			s.beginStart()
+			s.startProcess(RunRequest{Trigger: TriggerManual})
 		}
 	case cmdStartTransient:
 		// Bring the process up without setting enabled=true or persisting
@@ -308,14 +329,22 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.suppressPersist = true
 		if !s.hasProcess() && s.state != core.StateStopping {
 			s.clearFailLatch()
-			s.beginStart()
+			s.startProcess(RunRequest{Trigger: TriggerSchedule})
 		}
+		s.suppressPersist = false
+	case cmdStartRun:
+		// cmdStartTransient's intent handling (#159), plus run history and
+		// the overlap policy (runs.go).
+		s.suppressPersist = true
+		s.startRun(*c.run)
 		s.suppressPersist = false
 	case cmdStop:
 		s.enabled = false
 		s.cancelRestartTimer()
+		s.dropQueued(OutcomeCancelled)
 		if s.hasProcess() {
 			s.gracefulStop()
+			s.finishRun(OutcomeCancelled, &s.lastExitCode)
 		} else if s.state != core.StateFailed {
 			s.transition(core.StateStopped)
 		} else {
@@ -329,8 +358,9 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.resetCrashState()
 		if s.hasProcess() {
 			s.gracefulStopKeepEnabled()
+			s.finishRun(OutcomeReplaced, &s.lastExitCode)
 		}
-		s.beginStart()
+		s.startProcess(RunRequest{Trigger: TriggerManual})
 	case cmdApplyConfig:
 		s.applyConfig(*c.cfg)
 	case cmdRestore:
@@ -387,8 +417,12 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		// restart timer is cancelled just above, and the loop returns right
 		// after, so no respawn can be armed either.
 		s.cancelRestartTimer()
+		// A run the daemon goes down under is interrupted, not failed: it did
+		// not end on its own terms (SPEC-0008 REQ "Run History").
+		s.dropQueued(OutcomeInterrupted)
 		if s.hasProcess() {
 			s.gracefulStop()
+			s.finishRun(OutcomeInterrupted, &s.lastExitCode)
 		}
 		s.closeLog()
 		return true
@@ -459,9 +493,10 @@ func (s *Supervisor) beginStart() {
 	s.ensureLog()
 	var sink io.Writer
 	readerDone := make(chan struct{})
-	if s.log != nil {
-		s.hist = newPtyHistory(s.log, cols, rows)
-		s.readerDone = readerDone
+	s.readerDone = readerDone
+	// A scheduled run's history also goes to its own log (runs.go).
+	if out := s.historyOut(); out != nil {
+		s.hist = newPtyHistory(out, cols, rows)
 		sink = s.hist
 	}
 	if s.extraOut != nil {
@@ -579,16 +614,39 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		// that was already over. A firing is the natural place to retire it:
 		// this run is the one-shot's whole lifecycle, and it did not respawn.
 		s.restartCount = 0
+		var exit *int
+		if !spawnFailed {
+			exit = &code
+		}
 		if spawnFailed || code != 0 {
 			if s.state == core.StateRunning {
 				// running→failed is not a legal edge; route through degraded.
 				s.transition(core.StateDegraded)
 			}
 			s.transition(core.StateFailed)
+			s.finishRun(OutcomeFailed, exit)
 		} else {
 			s.transition(core.StateStopped)
+			s.finishRun(OutcomeSuccess, exit)
 		}
 		return
+	}
+
+	// A reload that drops `schedule` applies at once — it is not run-affecting
+	// — so a run started while the harness was scheduled can end here. Close
+	// it, or its log stays open and its record reads running until the next
+	// boot calls it interrupted. A held firing has no schedule left to honor.
+	if s.run != nil {
+		var exit *int
+		outcome := OutcomeSuccess
+		if !spawnFailed {
+			exit = &code
+		}
+		if spawnFailed || code != 0 {
+			outcome = OutcomeFailed
+		}
+		s.dropQueued(OutcomeSkipped)
+		s.finishRun(outcome, exit)
 	}
 
 	// Exit while disabled → stopped, no respawn (SPEC-0003 REQ "Restart On
@@ -735,26 +793,10 @@ func (s *Supervisor) gracefulStop() {
 		return
 	}
 	s.transition(core.StateStopping)
-	proc := s.proc
-	gen := s.gen
-
-	proc.signalGroup(syscall.SIGTERM)
-	select {
-	case ex := <-s.exitCh:
-		if ex.gen == gen {
-			s.lastExitCode = ex.code
-			s.lastExitAt = time.Now()
-		}
-	case <-time.After(s.policy.StopGrace):
-		// Still alive after the grace period → SIGKILL, then reap.
-		proc.signalGroup(syscall.SIGKILL)
-		ex := <-s.exitCh
-		if ex.gen == gen {
-			s.lastExitCode = ex.code
-			s.lastExitAt = time.Now()
-		}
+	if code, ok := s.killProcess(); ok {
+		s.lastExitCode = code
+		s.lastExitAt = time.Now()
 	}
-	s.reapProcess()
 	s.transition(core.StateStopped)
 }
 
@@ -915,6 +957,9 @@ func (s *Supervisor) ensureLog() {
 func (s *Supervisor) logEvent(msg string, kv ...any) {
 	if s.evlog != nil {
 		s.evlog.Info(msg, kv...)
+	}
+	if s.run != nil && s.run.evlog != nil {
+		s.run.evlog.Info(msg, kv...)
 	}
 }
 

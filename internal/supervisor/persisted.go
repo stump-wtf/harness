@@ -10,6 +10,7 @@ package supervisor
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,7 +41,16 @@ type persistedState struct {
 	// older daemon ignores the key, and a newer one reading an older file just
 	// arms every schedule from now.
 	Schedules map[string]persistedSchedule `json:"schedules,omitempty"`
+	// Runs holds each scheduled harness's bounded run history (SPEC-0008 REQ
+	// "Run History"), keyed by harness name. Kept raw and decoded per harness
+	// (Manager.restoreRunsLocked), so a malformed history costs that one
+	// harness its records instead of failing the whole document. Additive: an
+	// older daemon ignores the key.
+	Runs json.RawMessage `json:"runs,omitempty"`
 }
+
+// errMalformedState marks a state file that exists but does not parse.
+var errMalformedState = errors.New("malformed state file")
 
 // persistedSchedule is the on-disk form of a ScheduleMark.
 type persistedSchedule struct {
@@ -195,7 +205,7 @@ func loadState(path string) (persistedState, error) {
 	}
 	var ps persistedState
 	if err := json.Unmarshal(data, &ps); err != nil {
-		return persistedState{}, fmt.Errorf("supervisor: parse state.json: %w", err)
+		return persistedState{}, fmt.Errorf("supervisor: parse state.json: %w: %w", errMalformedState, err)
 	}
 	if ps.Harnesses == nil {
 		ps.Harnesses = map[string]persistedHarness{}

@@ -279,9 +279,14 @@ func addProjectHarness(cfg *core.Config, filename, name string, line int, rh raw
 		return newError(filename, line,
 			"harness %q: \"schedule\" is not supported in project files (define scheduled harnesses in the daemon's harness.toml)", name)
 	}
-	if rh.CatchUp != nil {
-		return newError(filename, line,
-			"harness %q: \"catch_up\" is not supported in project files (define scheduled harnesses in the daemon's harness.toml)", name)
+	for _, k := range []struct {
+		key string
+		set bool
+	}{{"catch_up", rh.CatchUp != nil}, {"timeout", rh.Timeout != nil}, {"on_overlap", rh.OnOverlap != nil}, {"keep_runs", rh.KeepRuns != nil}} {
+		if k.set {
+			return newError(filename, line,
+				"harness %q: %q is not supported in project files (define scheduled harnesses in the daemon's harness.toml)", name, k.key)
+		}
 	}
 	// mcp_allow is a global-only concern (SPEC-0005 REQ "Capability Scoping"):
 	// a cloned repository granting its own harnesses write authority over the

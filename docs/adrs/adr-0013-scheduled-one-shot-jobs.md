@@ -86,6 +86,10 @@ Chosen options: **1C (daemon-owned scheduler, no new trigger verb)** and **2B
 > specified time zones (`CRON_TZ=`/`TZ=` prefixes) and DST behavior. Those move
 > out of **Deferred** and into *Clock* and *Time zones and DST* below. Run
 > history (#119) and the protocol/CLI surface (#120) remain deferred.
+>
+> **Revision note (2026-09-11, #119).** Run history, per-run logs, `timeout`,
+> and `on_overlap` (skip, queue, replace) were built; see *Runs* below. They
+> leave **Deferred**. The protocol/CLI surface that reads them (#120) remains.
 
 1C because the daemon already *is* the supervisor, the state store, and the thing
 systemd/launchd keeps alive — giving it the clock costs one goroutine and keeps
@@ -149,6 +153,7 @@ prompt = "check all StumpCloud services and report anything unhealthy"
 auto_accept = true
 schedule = "CRON_TZ=UTC 0 */6 * * *"   # 5-field cron, or @daily / @every 6h
 catch_up = true                   # run once on wake if a window was missed
+timeout = "45m"                   # bound each run (default 1h; "0" = none)
 description = "scheduled sweep (every 6 hours)"
 ```
 
@@ -160,7 +165,8 @@ may carry a `CRON_TZ=<zone>` or `TZ=<zone>` prefix; see *Time zones and DST*.
 
 `catch_up` (default `false`) is the missed-window policy described under
 *Clock* below. It means nothing without `schedule`, so the parser rejects it
-there, and in project files, on the same terms as the exclusions above.
+there, and in project files, on the same terms as the exclusions above. So are
+`timeout`, `on_overlap` and `keep_runs`, the run keys described under *Runs*.
 Everything else on the table means exactly what ADR-0006 and ADR-0011 already say
 it means: same parser, same `core.Harness`, same `env_file` handling (ADR-0008),
 same prompt-harness argv synthesis.
@@ -170,15 +176,11 @@ forbidden alongside `schedule`; it was **not** redefined to mean "armed."
 
 ### Firing semantics
 
-At each cron firing the daemon starts the harness **if it is not already
-running**. Every active state — `starting`, `running`, `degraded`, `stopping` —
-skips the firing, so overlapping runs are dropped rather than stacked, and a
-firing landing during a graceful stop cannot resurrect it. `stopped`, `failed`,
-and `restarting` fire; a fresh scheduled attempt clears a failed latch through
-`Start`'s normal path.
-
-Overlap handling is therefore fixed at **skip**. `queue` and `replace` are
-deferred, not chosen against.
+At each cron firing the daemon starts the harness **if no run is in flight**. A
+firing that arrives while one is follows the harness's `on_overlap` policy (see
+*Runs*); none of them ever stacks a second process. A firing landing during a
+graceful stop is recorded skipped and cannot resurrect the harness. A fresh
+scheduled attempt clears a failed latch through the ordinary start path.
 
 The run exiting is terminal for that firing. The restart policy applies only to
 abnormal exit, and only if the operator configured `on-failure`.
@@ -221,8 +223,9 @@ repeating the last one.
 
 Recording the miss is the point. Silently doing nothing is the classic laptop
 cron failure, and a visible miss is what separates *"it ran and passed"* from
-*"it never fired."* Until run history (#119) gives it a `missed` row, the record
-is a warn-level daemon log line behind a `Recorder` seam that #119 fills.
+*"it never fired."* The scheduler reports it through a `Recorder` seam, and the
+daemon records it as a `missed` entry in run history (see *Runs*) as well as a
+warn-level log line.
 
 ### Time zones and DST
 
@@ -245,6 +248,45 @@ DST splits schedules the way ISC cron splits them:
   by a fall-back runs only at its first occurrence. robfig/cron's own `Next`
   skipped the first case outright and ran the second twice; the scheduler
   resolves these windows itself.
+
+### Runs: history, per-run logs, timeout, overlap
+
+Every run of a scheduled harness leaves a record — `{run_id, trigger, outcome,
+started_at, ended_at, exit_code}` — and a log of its own at
+`$XDG_STATE_HOME/harness/jobs/<name>/<run_id>.log`, next to (not instead of)
+ADR-0007's rotating harness log. History records what the daemon *decided*, not
+only what executed: `success`, `failed` and `timed_out` runs, but also `skipped`
+and `missed` decisions that started nothing, runs `replaced` or `cancelled` by an
+operator, and runs `interrupted` because the daemon went down under them. That
+is what makes "it never fired" as visible as "it ran and failed".
+
+* **The supervisor records; the Manager stores.** A run is opened and closed on
+  the harness's actor loop, the one goroutine that sees spawn, exit, timeout,
+  stop and shutdown in order — lifecycle bus events can be dropped under
+  backpressure, so they are not a foundation for history. The Manager hands out
+  ids, bounds the history to `keep_runs` (default 20), deletes the logs of
+  records that fall out, and persists it all in `state.json`, writing a run's id
+  before the run starts.
+* **Ids never repeat.** They count up per harness across restarts, and are
+  floored at the highest log on disk, so even a lost history cannot reissue an
+  id whose log still exists.
+* **A crash is reconciled, not left running.** A record still `running` at boot
+  becomes `interrupted` with no end time — the true end is unknown — and its log
+  gets a line saying so.
+* **`timeout`** (default `1h`, `"0"` for none) bounds every run: SIGTERM to the
+  process group, SIGKILL after the stop grace, recorded `timed_out`, harness left
+  `failed`. A hung agent no longer owns its schedule.
+* **`on_overlap`** decides a firing that arrives mid-run: `skip` (default)
+  records it skipped; `queue` holds one and starts it when the run ends on its
+  own terms; `replace` stops the run (recorded replaced) and starts the new one.
+  The decision is made on the actor loop, atomically with the start, which also
+  retires the daemon's old read-the-state-then-start guard and its race.
+
+Records carry outcomes, times and exit codes — never environment, `env_file`
+contents, prompt text or output (ADR-0008). Run logs are created private to the
+daemon's user. The histories are exposed to the rest of the daemon as exact run
+windows (`Manager.Runs`), which is what #120's `harness logs <job> --run N` and
+run correlation need; reading them over the protocol is #120's work.
 
 ### Reconciliation, not rebuild
 
@@ -306,15 +348,17 @@ CLIs generally need.
 * Bad, because the daemon wakes once a second for as long as it runs, whether or
   not anything is scheduled. A tick is one comparison per armed entry; the cost
   is the wakeup, not the work.
-* Bad, because there is **no run history and no per-run log**. The question
-  *"did last night's run pass?"* is answerable only from the harness's single
-  continuous scrollback and last-exit-code, exactly the limitation the original
-  draft called out. This is the largest gap between what this ADR promises in its
-  Context section and what ships.
+* Good, because *"did last night's run pass, and what did it print?"* has an
+  answer: a bounded, restart-safe run history and one log per run, including
+  records for the runs that never started.
+* Bad, because on-disk footprint grows from O(harnesses) to O(scheduled
+  harnesses × `keep_runs`) run logs. `keep_runs` is a first-class key, and
+  pruning deletes a log with its record, for that reason.
+* Bad, because history is not yet readable from a client. It is in
+  `state.json` and `jobs/` today; the protocol ops and CLI verbs are #120.
 * Bad, because **if `harnessd` is down at 03:00, the run does not fire at
   03:00.** System cron would have. The daemon notices on its next boot —
-  `catch_up = true` runs it once, `catch_up = false` records the miss — but the
-  record is a daemon log line until run history (#119) gives it a row.
+  `catch_up = true` runs it once, `catch_up = false` records a `missed` run.
 
 ### Confirmation
 
@@ -341,6 +385,17 @@ Acceptance tests, all present:
 * `CRON_TZ=`/`TZ=` override the daemon's zone, including half-hour zones.
 * Outside `clock.go` the scheduler package neither reads the time nor arms a
   timer — enforced by a source-scan test.
+* Every run outcome is reachable through the real supervisor path and recorded,
+  including `skipped`, `missed` and held-firing `cancelled` with no process.
+* Run ids survive a restart and floor at the logs on disk; `keep_runs` prunes
+  records and logs together and never the run in flight.
+* A record left `running` by a crash boots as `interrupted`; a malformed history
+  costs only its own harness; a pre-history `state.json` loads.
+* A run exceeding `timeout` is killed — including one that ignores SIGTERM — and
+  recorded `timed_out`; every run log opened is closed on every exit path.
+* `queue` holds one firing and skips the next; `replace` records the old run
+  replaced; a stop cancels both the run and the held firing.
+* No `env_file` value reaches run records or `state.json`.
 
 ### Deferred
 
@@ -348,14 +403,6 @@ Everything below was specified in this ADR's original 2026-07-26 draft and is
 **not implemented**. It is retained as the roadmap it is, not as a description of
 current behavior:
 
-* **Run history and per-run logs** — a bounded ring of
-  `{ run_id, started_at, ended_at, exit_code, outcome, trigger }` per harness,
-  plus one log file per run pruned to `keep_runs`. The single largest gap.
-  Missed windows are detected and logged today (see *Clock*) but have no durable
-  `missed` row until this lands (#119).
-* **`timeout`** — a hung agent currently owns its schedule indefinitely. The
-  original draft's 1h default remains the right target.
-* **`on_overlap = "queue" | "replace"`** — overlap is fixed at `skip`.
 * **`scheduled` / `completed` states** and a `consecutive_failures` counter.
 * **Protocol ops `jobs` / `run` / `runs`** and the `job_run_*` events.
 * **`tty = false`**, `on_failure` hooks and notifiers, scheduled units as
@@ -488,12 +535,18 @@ flowchart TD
         APPLY["Apply: reconcile incrementally<br/>unchanged spec keeps its entry<br/>(and therefore its phase)"]
         APPLY --> CRON["wall-clock tick (1s)<br/>robfig/cron parses · marks in state.json"]
         CRON --> TICK{"window due?"}
-        TICK -->|"missed · catch_up = false"| MISS["record one miss<br/>(log until run history)"]
+        TICK -->|"missed · catch_up = false"| MISS["record one missed run"]
     end
 
     TICK -->|"on time · or missed with catch_up = true (once)"| GUARD{"harness state"}
-    GUARD -->|"starting · running<br/>degraded · stopping"| SKIP["skip this firing<br/>(overlap dropped, not stacked)"]
-    GUARD -->|"stopped · failed · restarting"| START["Manager.Start"]
+    GUARD -->|"stopping"| SKIP["record skipped"]
+    GUARD -->|"run in flight"| OVERLAP{"on_overlap"}
+    OVERLAP -->|"skip"| SKIP
+    OVERLAP -->|"queue"| HOLD["hold one firing<br/>until the run ends"]
+    OVERLAP -->|"replace"| REPL["stop it · record replaced"]
+    REPL --> START
+    HOLD -.->|"run ended"| START
+    GUARD -->|"idle"| START["StartRun: open run record<br/>+ jobs/name/run_id.log · arm timeout"]
 
     subgraph exec["shared supervisor path (ADR-0003 / 0008 / 0011)"]
         START --> SPAWN["spawn prompt one-shot under PTY,<br/>env_file loaded"]
@@ -529,8 +582,8 @@ flowchart TD
   in-flight run work at all.
 * **Extends [ADR-0007](adr-0007-state-persistence-scrollback.md)** — `state.json`
   carries each schedule's position (the last window decided), which is what
-  makes a missed window detectable across a daemon restart. Run history and
-  per-run logs are *not* yet added; see Deferred.
+  makes a missed window detectable across a daemon restart, and each scheduled
+  harness's run history. Per-run logs live beside it under `jobs/`.
 * **Related [ADR-0008](adr-0008-security-and-secrets.md)** — scheduled runs load
   `env_file` through the same path.
 * **Related [ADR-0009](adr-0009-project-scoped-config-and-compose-commands.md)** —

@@ -54,8 +54,8 @@ and logs), ADR-0008 (secrets and file modes), ADR-0011 (prompt harness).
 - **Backoff between firings.** The schedule *is* the rate limiter.
 - **Agent-awareness.** The daemon does not know a sweep from a `sleep`.
 - **Distributed or multi-host scheduling.** One daemon, one host, one clock.
-- **Run history and answerability after the fact.** Deliberately deferred, and
-  the largest known gap — see Risks.
+- **Reading run history from a client.** The records and logs exist (#119); the
+  protocol ops and CLI verbs that expose them are #120.
 
 ## Decisions
 
@@ -210,21 +210,59 @@ goroutine is created after the write, so goroutine creation supplies the
 happens-before edge. The hook is documented as set-once and is not safe to
 replace later.
 
-### Overlap is fixed at skip
+### Overlap is a policy, decided on the actor loop
 
-**Choice**: A firing is dropped when the harness is in any active state —
-`starting`, `running`, `degraded`, or `stopping`.
+**Choice**: `on_overlap` = `skip` (default) | `queue` | `replace`. The firing
+travels to the harness's supervisor as a `cmdStartRun`, and the loop decides:
+idle starts a run; a run in flight is skipped, held (at most one), or replaced.
+The one check left outside the loop is `stopping`, in `Manager.StartRun`.
 
-**Why**: Skipping is the right default for a nightly job that occasionally runs
-long, and it is the only policy with no queueing machinery behind it. Including
-`stopping` matters for a reason beyond overlap: a firing landing during a
-graceful stop would otherwise call `Start` and restore enabled intent, silently
-undoing an operator's `harness stop`.
+**Why**: The daemon used to read the harness's state from a snapshot and then
+call start — two steps another start could land between. On the loop, the check
+and the start are one step. `skip` stays the default because it is right for a
+nightly job that occasionally runs long. `queue` holds one firing, not a
+backlog, for the same reason catch-up runs once: a slow week must not turn into
+a burst of back-to-back runs. `stopping` is decided outside the loop because the
+loop is blocked in the stop; a firing sent to it would only be seen once the
+stop finished, and would then start the harness an operator just stopped.
 
-`degraded` and `restarting` are both post-exit backoff waits with no live
-process. `restarting` fires and `degraded` does not; this asymmetry is
-conservative rather than principled, and either behavior is harmless because a
-harness in those states will respawn itself.
+### Runs are recorded by the supervisor, stored by the Manager
+
+**Choice**: `internal/supervisor/runs.go` opens a record when a scheduled
+harness's process starts, and closes it at every way a run ends — natural exit,
+spawn failure, timeout, replace, stop, restart, shutdown — through one
+`finishRun`, which is also the only place a run log is closed. The Manager
+(`manager_runs.go`) implements `RunJournal`: it assigns ids, bounds the history,
+prunes logs, and saves synchronously. Run logs tee the same sanitized history
+the rotating log gets (#279), plus the lifecycle lines.
+
+**Why**: The actor loop is the only place that sees a spawn, an exit, a timeout
+and a stop in a guaranteed order; lifecycle events on the bus are dropped for a
+slow subscriber and so cannot carry history. Saving the id before the run starts
+means a crash cannot hand the same id to two runs. Pruning never drops the run
+in flight, so an aggressive `keep_runs` cannot delete a log that is still being
+written, and a log is only ever deleted up to the id the pruning call saw, so a
+concurrent append cannot have its fresh log pruned from under it.
+
+### A timed-out run is failed, not stopped
+
+**Choice**: On timeout the loop kills the process group (SIGTERM, SIGKILL after
+the stop grace) without the graceful-stop transition, logs and publishes the
+exit, and moves the harness through `degraded` to `failed`.
+
+**Why**: A run that had to be killed did not succeed, and `harness list` should
+say so, just as it does for a run that exits non-zero. A graceful stop lands in
+`stopped`, and `stopped` has no legal edge to `failed`.
+
+### Run ids floor at the logs on disk
+
+**Choice**: The first allocation for a harness in each process raises its last
+id to the highest `<id>.log` present.
+
+**Why**: The history persists the last id, but a history can be lost — a
+malformed state file, or a harness briefly dropped from the config taking its
+history with it. The logs survive those, and reissuing an id would append a new
+run to an old run's log.
 
 ### Panic recovery is mandatory, not decorative
 
@@ -250,6 +288,9 @@ goroutine with an empty default chain.)
 | Zone and DST window resolution | `internal/scheduler/window.go` |
 | Schedule marks in `state.json` | `internal/supervisor` (`LoadScheduleMark`, `UpdateScheduleMarks`), adapted in `cmd/harness/daemon.go` |
 | Embedded zone database | `cmd/harness/tzdata.go` |
+| Run lifecycle, timeout, overlap decisions | `internal/supervisor/runs.go` |
+| Run history store, pruning, crash reconciliation | `internal/supervisor/manager_runs.go` |
+| Missed windows into run history | `cmd/harness/daemon.go` (`runHistoryRecorder`) |
 | Zone-qualified cadence labels | `internal/schedfmt` |
 | Reload choke point | `internal/supervisor.Manager.Reload` + `SetReloadHook` |
 | Firing guard and wiring | `cmd/harness/daemon.go` |
@@ -268,13 +309,17 @@ tick (wall clock, 1s) — also the first thing Start does
        └─ all stale, catch_up = false      → RecordMissed once
 fire
   └─ firing callback (own goroutine, recovered)
-       ├─ Snapshot(name)
-       │    ├─ starting/running/degraded/stopping → log, skip
-       │    └─ stopped/failed/restarting          → continue
-       └─ Manager.Start(name)
-            └─ ordinary supervised prompt spawn (PTY, env_file, workdir)
-                 └─ exit is terminal for this firing
-                      └─ restart policy applies only to abnormal exit
+       └─ Manager.StartRun(name, trigger, window)
+            ├─ state stopping            → record skipped
+            └─ supervisor loop (cmdStartRun)
+                 ├─ run in flight · skip    → record skipped
+                 ├─ run in flight · queue   → hold one (a second → skipped)
+                 ├─ run in flight · replace → stop, record replaced, then ↓
+                 └─ idle → open record (id saved) + jobs/<name>/<id>.log
+                      └─ ordinary supervised prompt spawn (PTY, env_file, workdir)
+                           ├─ timeout → SIGTERM → SIGKILL, timed_out, failed
+                           └─ exit → success / failed; run log closed;
+                                held firing (if any) starts
 ```
 
 ### Reconciliation path
@@ -300,13 +345,13 @@ during shutdown ahead of `srv.Close()` and `mgr.Close()`.
 
 ## Risks / Trade-offs
 
-- **No run history.** The question this feature exists to answer — *did last
-  night's run pass?* — is answerable only from the harness's single continuous
-  scrollback and its last exit code. This is the largest gap between ADR-0013's
-  stated motivation and what ships.
-- **A missed window is only a log line.** It is detected on wake or boot and
-  logged at warn level, but nothing a client can query records it until run
-  history (#119) lands.
+- **History is not on the protocol yet.** Records and logs exist, but a client
+  reads them only after #120.
+- **Footprint is O(scheduled harnesses × `keep_runs`).** Each run log can be as
+  large as the run's output; pruning is exact, but the bound is per harness.
+- **A crash leaves an unknown end.** An interrupted run's `ended_at` stays unset
+  because the true end is unknown; a process the crashed daemon had spawned may
+  outlive it.
 - **The DST semantics are ours now.** Resolving time-of-day windows ourselves
   fixed robfig's spring-forward skip and fall-back double, at the price of code
   (`window.go`) whose correctness is pinned by tests against real zones rather
@@ -317,8 +362,6 @@ during shutdown ahead of `srv.Close()` and `mgr.Close()`.
   written the run still starts (running matters more), and the failure is
   logged; a crash before the next successful write could then repeat or lose a
   window.
-- **A hung run owns its schedule.** With no `timeout`, an agent CLI that waits
-  forever on input keeps the harness `running`, so every subsequent firing skips.
 - **Enabled intent leaks.** A firing goes through `Manager.Start`, which persists
   `enabled = true`; an unclean daemon exit mid-run can autostart the one-shot
   off-schedule on the next boot
@@ -341,8 +384,5 @@ timer into a `[harness.*]` block and deleting the OS unit.
 
 ## Open Questions
 
-- Should run history land as an extension of ADR-0007's state file — where the
-  schedule marks already live — or as its own store? It is the prerequisite for
-  a `harness run --wait` verb being worth adding (ADR-0013 option 1A).
 - Is the `degraded`-skips / `restarting`-fires asymmetry worth resolving, and in
   which direction?

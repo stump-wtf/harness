@@ -80,7 +80,14 @@ type HarnessForm struct {
 	// CatchUp is the schedule's missed-window policy (issue #117): requires
 	// Schedule (Validate mirrors the parser). Round-trip field for the same
 	// reason as Schedule.
-	CatchUp      bool
+	CatchUp bool
+	// Timeout, OnOverlap and KeepRuns shape a schedule's runs (issue #119).
+	// Each holds only a value that differs from its parser default — "" / 0
+	// means "the default" — so an untouched edit round-trips without growing
+	// keys. Validate mirrors the parser: a non-default value requires Schedule.
+	Timeout      string
+	OnOverlap    string
+	KeepRuns     int
 	Args         []string
 	Workdir      string
 	EnvFile      string
@@ -183,7 +190,44 @@ func (f HarnessForm) Validate() error {
 	if f.CatchUp && strings.TrimSpace(f.Schedule) == "" {
 		return fmt.Errorf("catch_up requires schedule")
 	}
+	// Mirror the parser's run keys (issue #119).
+	scheduled := strings.TrimSpace(f.Schedule) != ""
+	if t := strings.TrimSpace(f.Timeout); t != "" {
+		if !scheduled {
+			return fmt.Errorf("timeout requires schedule")
+		}
+		if d, err := time.ParseDuration(t); err != nil || d < 0 {
+			return fmt.Errorf("invalid timeout %q (want a duration such as 45m or 2h, or 0 for no limit)", t)
+		}
+	}
+	if o := strings.TrimSpace(f.OnOverlap); o != "" && o != string(core.OverlapSkip) {
+		if !scheduled {
+			return fmt.Errorf("on_overlap requires schedule")
+		}
+		if !core.OverlapPolicy(o).Valid() {
+			return fmt.Errorf("on_overlap must be skip, queue, or replace")
+		}
+	}
+	if f.KeepRuns < 0 {
+		return fmt.Errorf("keep_runs must be at least 1")
+	}
+	if f.KeepRuns > 0 && f.KeepRuns != core.DefaultKeepRuns && !scheduled {
+		return fmt.Errorf("keep_runs requires schedule")
+	}
 	return nil
+}
+
+// formatRunTimeout renders a timeout the way an operator would type it:
+// "30m", "1h30m", "0s" — not Duration.String's "30m0s".
+func formatRunTimeout(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
 }
 
 // TOML renders the form as a `[harness.<name>]` table. Only set fields are
@@ -230,6 +274,17 @@ func (f HarnessForm) TOML() string {
 			fmt.Fprintf(&b, "schedule = %s\n", strconv.Quote(schedule))
 			if f.CatchUp {
 				b.WriteString("catch_up = true\n")
+			}
+			// Run keys (issue #119), emitted only when they differ from the
+			// parser default.
+			if t := strings.TrimSpace(f.Timeout); t != "" {
+				fmt.Fprintf(&b, "timeout = %s\n", strconv.Quote(t))
+			}
+			if o := strings.TrimSpace(f.OnOverlap); o != "" && o != string(core.OverlapSkip) {
+				fmt.Fprintf(&b, "on_overlap = %s\n", strconv.Quote(o))
+			}
+			if f.KeepRuns > 0 && f.KeepRuns != core.DefaultKeepRuns {
+				fmt.Fprintf(&b, "keep_runs = %d\n", f.KeepRuns)
 			}
 		}
 	} else {
@@ -369,6 +424,20 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.maxTurns = strconv.Itoa(h.MaxTurns)
 	fi.schedule = h.Schedule
 	fi.catchUp = h.CatchUp
+	if h.Schedule != "" {
+		// Pre-fill only what differs from the parser's defaults: a blank
+		// field means the default, and a harness that never set the key must
+		// not grow one on save (issue #119).
+		if h.Timeout != core.DefaultRunTimeout {
+			fi.timeout = formatRunTimeout(h.Timeout)
+		}
+		if h.OnOverlap != core.OverlapSkip {
+			fi.onOverlap = string(h.OnOverlap)
+		}
+		if h.KeepRuns != core.DefaultKeepRuns {
+			fi.keepRuns = strconv.Itoa(h.KeepRuns)
+		}
+	}
 	fi.args = shellQuoteJoin(h.Args)
 	fi.workdir = h.Workdir
 	fi.envFile = h.EnvFile
@@ -398,6 +467,8 @@ func (fi formInputs) toForm() HarnessForm {
 		Quiet:       fi.quiet,
 		Schedule:    strings.TrimSpace(fi.schedule),
 		CatchUp:     fi.catchUp,
+		Timeout:     strings.TrimSpace(fi.timeout),
+		OnOverlap:   strings.TrimSpace(fi.onOverlap),
 		Workdir:     strings.TrimSpace(fi.workdir),
 		EnvFile:     strings.TrimSpace(fi.envFile),
 		Restart:     strings.TrimSpace(fi.restart),
@@ -422,6 +493,9 @@ func (fi formInputs) toForm() HarnessForm {
 	}
 	if n, err := strconv.Atoi(strings.TrimSpace(fi.maxTurns)); err == nil {
 		f.MaxTurns = n
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(fi.keepRuns)); err == nil {
+		f.KeepRuns = n
 	}
 	return f
 }

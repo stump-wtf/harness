@@ -18,9 +18,10 @@ run exiting is terminal for that firing.
 
 Scheduling is expressed as a key on the existing `[harness.*]` table rather
 than as a distinct table kind. See ADR-0013 for that decision and for the list
-of deferred capability — run history, per-run logs, timeouts, and queue/replace
-overlap policies are **not** part of this revision. Suspend-safe evaluation,
-missed-window handling, `catch_up`, and time zones were added by #117.
+of capability still deferred. Suspend-safe evaluation, missed-window handling,
+`catch_up`, and time zones were added by #117; run history, per-run logs, run
+timeouts, and the overlap policy by #119. Their protocol and CLI surface is
+not part of this revision.
 
 This spec does **not** amend SPEC-0003. The restart-policy axis ADR-0013
 originally called for shipped independently as the `restart` key, and SPEC-0003
@@ -35,7 +36,9 @@ the global `harness.toml`. Its value SHALL be a 5-field cron expression
 (`min hour dom mon dow`), one of the `@daily`/`@hourly`/`@weekly`/`@monthly`/
 `@yearly` descriptors, or `@every <duration>`, optionally preceded by a zone
 prefix as specified in REQ "Schedule Time Zone". The daemon SHALL also accept an
-optional boolean `catch_up` key, specified in REQ "Missed Window Handling".
+optional boolean `catch_up` key, specified in REQ "Missed Window Handling", and
+the optional run keys `timeout` (REQ "Run Timeout"), `on_overlap` (REQ "Overlap
+Policy") and `keep_runs` (REQ "Run History").
 
 The daemon SHALL validate the expression at config-parse time using the same
 parser the scheduler uses at registration time, so a value accepted by the parser
@@ -79,6 +82,7 @@ which a key on `[harness.*]` remains unambiguous (ADR-0013).
 | `schedule` with `restart = "always"` or `"unless-stopped"` | A respawning policy restarts the one-shot after a clean exit |
 | `schedule` in a project `harness.toml` | Project harnesses never enter the daemon's config view, so the schedule could never fire |
 | `catch_up` without `schedule`, or in a project `harness.toml` | A missed-window policy with no schedule to apply to does nothing |
+| `timeout`, `on_overlap` or `keep_runs` without `schedule`, or in a project `harness.toml` | Run keys shape scheduled runs; without a schedule there are none |
 
 `enabled` SHALL retain its SPEC-0003 meaning of *autostart intent*; this spec
 SHALL NOT redefine it to mean *armed*.
@@ -138,26 +142,27 @@ SHALL NOT redefine it to mean *armed*.
 
 ### Requirement: Firing And Overlap
 
-At each firing the daemon SHALL start the scheduled harness if and only if it is
-not already active. The daemon SHALL treat `starting`, `running`, `degraded`, and
-`stopping` as active and SHALL skip the firing in each of those states; a firing
-arriving during a graceful stop SHALL NOT resurrect the harness or restore its
-enabled intent.
+At each firing the daemon SHALL start the scheduled harness if no run is in
+flight. A firing that arrives while a run is in flight SHALL be handled by the
+harness's overlap policy (REQ "Overlap Policy"). A firing arriving during a
+graceful stop SHALL be recorded `skipped` and SHALL NOT resurrect the harness or
+restore its enabled intent.
 
 The daemon SHALL fire when the harness is `stopped`, `failed`, or `restarting`; a
 firing from `failed` SHALL clear the failed latch through the ordinary start
 path.
 
-Overlapping firings SHALL be skipped, not queued and not stacked. Queue and
-replace policies are out of scope for this revision.
+A firing SHALL never stack a second concurrent process for the same harness,
+under any overlap policy.
 
 A firing naming a harness the daemon does not know SHALL be logged and otherwise
 be a no-op.
 
 #### Scenario: Firing while a run is in flight
 
-- **WHEN** a schedule fires while the harness is `running`
-- **THEN** the daemon skips the firing, logs it, and does not spawn a second
+- **WHEN** a schedule fires while the harness is `running` under the default
+  `on_overlap = "skip"`
+- **THEN** the daemon records the firing `skipped` and does not spawn a second
   process
 
 #### Scenario: Firing during a graceful stop
@@ -241,7 +246,8 @@ A schedule that a reload removes SHALL NOT be evaluated again, even if its
 window elapsed before the reload was applied, and its record SHALL be
 discarded.
 
-Until run history exists, a missed entry SHALL be recorded as a warning in the
+A missed entry SHALL be recorded in the harness's run history with outcome
+`missed` (REQ "Run History"), and SHALL also be logged as a warning in the
 daemon log.
 
 #### Scenario: Suspend across several windows with catch-up
@@ -349,6 +355,166 @@ that is a pure cadence SHALL NOT.
 - **WHEN** a surface labels `CRON_TZ=UTC 0 9 * * *` and `CRON_TZ=UTC 0 */6 * * *`
 - **THEN** they read `daily 09:00 UTC` and `every 6h`
 
+### Requirement: Run History
+
+The daemon SHALL keep, per scheduled harness, a bounded history of run records
+`{run_id, trigger, outcome, started_at, ended_at, exit_code}`, together with the
+schedule window a record honors and, for a missed record, the first window and
+the number of windows it covers. The history records what the daemon decided,
+not only what executed:
+
+| Outcome | Meaning | Process |
+| --- | --- | --- |
+| `success` | Exited 0 on its own | Yes |
+| `failed` | Exited non-zero on its own, or never spawned (no exit code) | Yes, or spawn failed |
+| `timed_out` | Killed for outliving `timeout` | Yes |
+| `skipped` | A firing the overlap policy dropped, or one arriving mid-stop | No |
+| `replaced` | Stopped so another run could start (`on_overlap = "replace"`, or an operator restart) | Yes |
+| `missed` | Windows that elapsed while nobody was evaluating, with `catch_up = false` | No |
+| `cancelled` | A run, or a held firing, ended by an operator stop | Yes, or held |
+| `interrupted` | A run, or a held firing, the daemon went down under | Yes, or held |
+
+A record SHALL read `running` while its run is in flight. `trigger` SHALL be
+`schedule` (on time), `manual` (an operator start or restart), or `catch_up`.
+
+`run_id` SHALL be a per-harness integer that increases monotonically and is
+never reused — across daemon restarts, and even after a history is lost, for as
+long as any of its per-run logs remain.
+
+The history SHALL be bounded by the `keep_runs` key (an integer of at least 1,
+default 20). The oldest finished records SHALL fall off first; a run in flight
+SHALL never be dropped.
+
+History SHALL persist in the daemon's state file and be written before the run
+it records starts. On startup, a record still reading `running` belongs to a
+daemon that died under it: it SHALL be reconciled to `interrupted` with its end
+time left unset, and a line recording that SHALL be appended to its log. A
+malformed history for one harness SHALL cost only that harness its records, and
+the rest of the state file SHALL still load; a state file that does not parse
+at all SHALL be copied aside before the daemon replaces it. A state file written
+before run history existed SHALL load unchanged.
+
+Records SHALL NOT contain environment values, `env_file` contents, prompt text,
+or output (ADR-0008).
+
+#### Scenario: Clean and failing exits
+
+- **WHEN** a scheduled run exits 0, and another exits 3
+- **THEN** their records read `success` with exit code 0 and `failed` with exit
+  code 3, each carrying its trigger, window, start and end
+
+#### Scenario: Run ids across a restart
+
+- **WHEN** a harness has run twice and the daemon restarts
+- **THEN** its next run is run 3
+
+#### Scenario: History bound
+
+- **WHEN** a harness with `keep_runs = 2` has run four times
+- **THEN** its history holds runs 3 and 4, and only their logs remain
+
+#### Scenario: Crash mid-run
+
+- **WHEN** the daemon crashes during run 4 and starts again
+- **THEN** run 4 reads `interrupted` with no end time, its log says so, and the
+  next run is run 5
+
+#### Scenario: Malformed history
+
+- **WHEN** one harness's history in the state file does not decode
+- **THEN** that harness starts with no records, and every other harness, the
+  active profile, and all persisted intent load normally
+
+#### Scenario: No secrets in history
+
+- **WHEN** a scheduled harness with an `env_file` runs
+- **THEN** neither its records nor the state file contain any `env_file` value
+
+### Requirement: Per-Run Logs
+
+Each run that starts a process SHALL write its sanitized output history and its
+lifecycle lines to `$XDG_STATE_HOME/harness/jobs/<harness>/<run_id>.log`, in
+addition to the harness's rotating log (ADR-0007). The file SHALL be readable
+only by the daemon's user. It SHALL be closed on every path a run ends by:
+natural exit, spawn failure, timeout, replace, operator stop, operator restart,
+and daemon shutdown.
+
+When a record falls out of the history its log SHALL be deleted, and a run log
+no record refers to SHALL be removed, so records and logs cannot drift apart. A
+record with no process (`skipped`, `missed`) has no log.
+
+#### Scenario: Output lands in the run log
+
+- **WHEN** a run prints a line and exits
+- **THEN** its run log holds that line between a run-started and a run-finished
+  line
+
+#### Scenario: Log closed on every exit path
+
+- **WHEN** runs end by success, failure, timeout, replace, stop, and daemon
+  shutdown
+- **THEN** every run log that was opened has been closed
+
+### Requirement: Run Timeout
+
+The `timeout` key on a scheduled harness — a duration string, default `"1h"`,
+`"0"` for no limit — SHALL bound each run, whatever started it. When a run
+outlives it, the daemon SHALL send SIGTERM to the run's process group, SHALL
+send SIGKILL if the group has not exited within the stop grace, SHALL record the
+run `timed_out`, and SHALL leave the harness `failed`.
+
+#### Scenario: Run exceeds its timeout
+
+- **WHEN** a run with `timeout = "30m"` is still running 30 minutes after it
+  started
+- **THEN** its process group is sent SIGTERM, the run is recorded `timed_out`,
+  and the harness is `failed`
+
+#### Scenario: Process ignores SIGTERM
+
+- **WHEN** a timed-out run's process ignores SIGTERM
+- **THEN** it is sent SIGKILL once the stop grace elapses, and is still recorded
+  `timed_out`
+
+#### Scenario: Invalid timeout
+
+- **WHEN** a scheduled harness sets `timeout = "soon"` or a negative duration
+- **THEN** config parsing fails with an error naming the harness and the value
+
+### Requirement: Overlap Policy
+
+The `on_overlap` key on a scheduled harness SHALL decide what a firing does
+while a run is in flight:
+
+- `skip` (default): the firing is recorded `skipped` and starts nothing.
+- `queue`: the firing is held, and starts when the run in flight ends by
+  success, failure, or timeout. At most one firing SHALL be held; a further
+  firing is recorded `skipped`. A held firing dropped by an operator stop is
+  recorded `cancelled`, and by a daemon shutdown `interrupted`.
+- `replace`: the run in flight is stopped gracefully and recorded `replaced`,
+  and the new run starts.
+
+The daemon SHALL make the overlap decision atomically with starting the run, so
+two firings can never both find the harness idle.
+
+#### Scenario: Queue
+
+- **WHEN** three firings arrive for a `queue` harness while its first run is in
+  flight
+- **THEN** the second is held and runs once the first ends, and the third is
+  recorded `skipped`
+
+#### Scenario: Replace
+
+- **WHEN** a firing arrives for a `replace` harness while a run is in flight
+- **THEN** that run is recorded `replaced` and the firing's run starts
+
+#### Scenario: Stop drops the held firing
+
+- **WHEN** an operator stops a `queue` harness that has a firing held
+- **THEN** the run in flight and the held firing are both recorded `cancelled`,
+  and the held firing never starts
+
 ### Requirement: Run Termination
 
 A scheduled run exiting SHALL be terminal for that firing: the supervisor SHALL
@@ -431,10 +597,11 @@ interval's countdown and could starve such a schedule indefinitely.
 
 ### Requirement: Schedule Round-Trip Through Config Writers
 
-Any surface that rewrites a `[harness.*]` table SHALL preserve the `schedule`
-and `catch_up` keys. The TUI harness form rewrites the whole table on save, so it
-SHALL pre-fill both from the config file (ADR-0006 file-is-truth) and SHALL
-re-emit them.
+Any surface that rewrites a `[harness.*]` table SHALL preserve the `schedule`,
+`catch_up`, `timeout`, `on_overlap`, and `keep_runs` keys. The TUI harness form
+rewrites the whole table on save, so it SHALL pre-fill them from the config file
+(ADR-0006 file-is-truth) and SHALL re-emit every one that differs from its
+default.
 
 A config writer SHALL validate the exclusions in REQ "Schedule Exclusions"
 before writing, because the file is written before the daemon parses it and an
@@ -549,11 +716,8 @@ The following were specified in this spec's 2026-07-26 draft against the
 `[job.*]` design and are **not** part of this revision. ADR-0013's *Deferred*
 section tracks them:
 
-* Run history, per-run logs, and a `keep_runs` retention key — including a
-  durable `missed` record; REQ "Missed Window Handling" logs misses until it
-  lands.
-* `timeout` and timed-out run outcomes.
-* `on_overlap = "queue" | "replace"`.
+* Reading run history and per-run logs from a client (`harness runs`,
+  `harness logs --run`), and a `harness run` trigger verb — issue #120.
 * A per-harness `timezone` key. Zones are expressed with a `CRON_TZ=` prefix
   instead (REQ "Schedule Time Zone").
 * `scheduled` and `completed` states, and a `consecutive_failures` counter.

@@ -129,8 +129,8 @@ description = "scheduled sweep (every 6 hours)"
 Rules:
 
 - Requires `prompt` or `prompt_file` — only agent one-shots can be scheduled.
-- At each firing the harness starts if it is not already running; **overlapping
-  firings are skipped, not stacked**.
+- At each firing the harness starts if no run is in flight; a firing that lands
+  mid-run follows `on_overlap` (below), and never stacks a second process.
 - The run exiting is terminal for that firing; the restart policy applies only
   to abnormal exit, so only `restart = "no"` (the prompt default) and
   `"on-failure"` are accepted here.
@@ -173,7 +173,40 @@ catch_up = true   # default false
   windows, and how many there were. The next window fires normally.
 
 `catch_up` requires `schedule`. The daemon records the last window it decided in
-`state.json`, so a restart never runs the same window twice.
+`state.json`, so a restart never runs the same window twice. A missed window is
+also a `missed` entry in the harness's run history.
+
+### Runs: history, logs, timeout, overlap
+
+Every run of a scheduled harness gets a numbered record and a log of its own:
+
+```toml
+[harness.nightly-sweep]
+prompt = "…"
+schedule = "CRON_TZ=UTC 0 3 * * *"
+timeout = "45m"        # default "1h"; "0" = no limit
+on_overlap = "queue"   # default "skip"; or "replace"
+keep_runs = 30         # default 20
+```
+
+- **History** lives in `state.json`: run id, trigger (`schedule`, `manual`,
+  `catch_up`), start, end, exit code, and an outcome — `success`, `failed`,
+  `timed_out`, `skipped`, `replaced`, `missed`, `cancelled`, or `interrupted`.
+  Firings that start nothing (skipped, missed) are recorded too. Run ids never
+  repeat, and a run the daemon crashed under reads `interrupted` on the next
+  boot.
+- **Logs** are at `$XDG_STATE_HOME/harness/jobs/<name>/<run_id>.log` — the run's
+  output history and lifecycle lines, alongside the usual harness log. The oldest
+  records beyond `keep_runs`, and their logs, are pruned together.
+- **`timeout`** stops a run that goes on too long: SIGTERM, then SIGKILL after
+  the stop grace. The run is `timed_out` and the harness shows `failed`.
+- **`on_overlap`** decides a firing that lands while a run is still going:
+  `skip` records it and does nothing; `queue` runs it once the current run
+  finishes (holding at most one); `replace` stops the current run and starts the
+  new one.
+
+All three keys require `schedule`. Reading history and per-run logs from the CLI
+(`harness runs`, `harness logs --run`) is coming in a later release.
 
 `harness list` marks a scheduled harness inline — a clock glyph in place of the
 state glyph, and the next firing appended to its description (`· in 4h3m`).
