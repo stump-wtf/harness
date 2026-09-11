@@ -44,6 +44,7 @@ type rawHarness struct {
 	Enabled           *bool    `toml:"enabled"`
 	TmuxSocket        string   `toml:"tmux_socket"`
 	Schedule          string   `toml:"schedule"`
+	CatchUp           *bool    `toml:"catch_up"`
 	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
 	MCPAllow          []string `toml:"mcp_allow"`
 
@@ -588,6 +589,16 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 				"harness %q: invalid \"schedule\" %q: %v", name, schedule, err)
 		}
 	}
+	// catch_up is the schedule's missed-window policy and means nothing
+	// without one. Rejected on presence, not only when true, for the same
+	// reason as every exclusion above: a key that silently does nothing is a
+	// mistake the operator should hear about at load, not discover at 03:00.
+	// Governing: SPEC-0008 REQ "Missed Window Handling"; issue #117.
+	if rh.CatchUp != nil && schedule == "" {
+		return newError(filename, line,
+			"harness %q: \"catch_up\" requires \"schedule\" (it decides what happens to missed schedule windows)", name)
+	}
+	catchUp := rh.CatchUp != nil && *rh.CatchUp
 
 	if resolve == nil {
 		resolve = func(p string) string { return p }
@@ -612,6 +623,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		Enabled:      enabled,
 		TmuxSocket:   rh.TmuxSocket,
 		Schedule:     schedule,
+		CatchUp:      catchUp,
 	}
 	if isAgent {
 		// Args stay EMPTY for a prompt harness (spawn-time synthesis,

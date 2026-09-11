@@ -76,7 +76,11 @@ type HarnessForm struct {
 	// three). Carried through the form so an edit round-trips it — the save
 	// path rewrites the whole table, so a field the form drops is a schedule
 	// silently deleted from harness.toml.
-	Schedule     string
+	Schedule string
+	// CatchUp is the schedule's missed-window policy (issue #117): requires
+	// Schedule (Validate mirrors the parser). Round-trip field for the same
+	// reason as Schedule.
+	CatchUp      bool
 	Args         []string
 	Workdir      string
 	EnvFile      string
@@ -176,6 +180,9 @@ func (f HarnessForm) Validate() error {
 			return fmt.Errorf("invalid schedule %q: %v", schedule, err)
 		}
 	}
+	if f.CatchUp && strings.TrimSpace(f.Schedule) == "" {
+		return fmt.Errorf("catch_up requires schedule")
+	}
 	return nil
 }
 
@@ -221,6 +228,9 @@ func (f HarnessForm) TOML() string {
 			// Prompt-only, like the knobs above: Validate rejects a schedule
 			// without a prompt, so this branch is the only place it can appear.
 			fmt.Fprintf(&b, "schedule = %s\n", strconv.Quote(schedule))
+			if f.CatchUp {
+				b.WriteString("catch_up = true\n")
+			}
 		}
 	} else {
 		if len(f.Args) > 0 {
@@ -358,6 +368,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.quiet = h.Quiet
 	fi.maxTurns = strconv.Itoa(h.MaxTurns)
 	fi.schedule = h.Schedule
+	fi.catchUp = h.CatchUp
 	fi.args = shellQuoteJoin(h.Args)
 	fi.workdir = h.Workdir
 	fi.envFile = h.EnvFile
@@ -386,6 +397,7 @@ func (fi formInputs) toForm() HarnessForm {
 		AutoAccept:  fi.autoAccept,
 		Quiet:       fi.quiet,
 		Schedule:    strings.TrimSpace(fi.schedule),
+		CatchUp:     fi.catchUp,
 		Workdir:     strings.TrimSpace(fi.workdir),
 		EnvFile:     strings.TrimSpace(fi.envFile),
 		Restart:     strings.TrimSpace(fi.restart),

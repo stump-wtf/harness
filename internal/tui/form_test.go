@@ -815,7 +815,7 @@ func TestTOMLKeepsTmuxSocketOnNativeBackend(t *testing.T) {
 var harnessFormFields = []string{
 	"Name", "Adapter", "Args", "Prompt", "PromptFile", "Model", "AutoAccept",
 	"Quiet", "MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart",
-	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule",
+	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule", "CatchUp",
 	"HarvestTrajectory", "MCPAllow",
 }
 
@@ -934,7 +934,8 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				"auto_accept = true",
 				"max_turns = 40",
 				"quiet = false",
-				`schedule = "0 9 * * 1"`,
+				`schedule = "CRON_TZ=UTC 0 9 * * 1"`,
+				"catch_up = true",
 				`description = "scheduled blog sweep"`,
 				"harvest_trajectory = true",
 				`mcp_allow = ["read", "write"]`,

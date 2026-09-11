@@ -112,6 +112,9 @@ type formInputs struct {
 	// space-separated (parsed by toForm, same shape as args).
 	tmuxSocket, description, mcpAllow             string
 	enabled, autoAccept, quiet, harvestTrajectory bool
+	// catchUp is the schedule's missed-window policy (issue #117), carried for
+	// the same round-trip reason as schedule.
+	catchUp bool
 }
 
 // Model is the root Bubble Tea model.

@@ -279,6 +279,10 @@ func addProjectHarness(cfg *core.Config, filename, name string, line int, rh raw
 		return newError(filename, line,
 			"harness %q: \"schedule\" is not supported in project files (define scheduled harnesses in the daemon's harness.toml)", name)
 	}
+	if rh.CatchUp != nil {
+		return newError(filename, line,
+			"harness %q: \"catch_up\" is not supported in project files (define scheduled harnesses in the daemon's harness.toml)", name)
+	}
 	// mcp_allow is a global-only concern (SPEC-0005 REQ "Capability Scoping"):
 	// a cloned repository granting its own harnesses write authority over the
 	// fleet is a privilege-escalation vector. Reject it loudly.

@@ -195,6 +195,13 @@ type Harness struct {
 	// REQ "Schedule Exclusions"; issue #66; ADR-0006 (schema); ADR-0011 (prompt
 	// one-shot); SPEC-0003 (enabled-intent model the exclusion carves against).
 	Schedule string
+	// CatchUp decides what happens to schedule windows that elapsed while
+	// nobody was evaluating them — the machine was suspended or the daemon was
+	// down. true runs the harness exactly once on wake or boot, however many
+	// windows were missed; false (the default) runs nothing and records the
+	// miss. Requires Schedule. Governing: ADR-0013; SPEC-0008 REQ "Missed
+	// Window Handling"; issue #117.
+	CatchUp bool
 	// Adapter is the harness kind — the config `harness` key, an enum:
 	// "crush" (the default when omitted), "claude-code", "codex",
 	// "generic". It selects the adapter, which supplies BOTH the
