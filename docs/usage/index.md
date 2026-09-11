@@ -10,7 +10,9 @@ This guide covers every supported Harness feature — what each one does, how to
 configure it, and the exact commands to drive it from the keyboard or a script.
 
 All commands below assume the `harness` binary is on your `$PATH` and the
-`harness daemon` is running (see [Quickstart](./quickstart) if you're new).
+`harness daemon` is running. New to Harness? [Getting started](/guides) walks
+from install to a supervised, scheduled, event-driven agent setup; the pages
+here are the reference behind it.
 
 ## The shape of Harness
 

@@ -46,22 +46,25 @@ description = "long-running agent in ~/src/my-project"
 enabled = false
 
 # An agent one-shot: give the harness a prompt instead of args and the
-# daemon synthesizes the agent invocation at spawn time (currently
-# `crush run --quiet <prompt>`). `prompt` is mutually exclusive with
+# daemon synthesizes the agent invocation at spawn time from the harness's
+# adapter (claude-code: `claude -p … <prompt>`; crush: `crush run … <prompt>`;
+# codex: `codex exec … <prompt>`). `prompt` is mutually exclusive with
 # `args`. One-shots default to restart = "no" — a completed run must
 # not respawn; set restart explicitly to opt back into supervision.
 [harness.deploy-check]
 harness = "claude-code"
 prompt = "check the deployments and report anything unhealthy"
 model = "claude-opus-5"  # optional: which model the agent runs (requires prompt)
-# auto_accept runs the agent unattended (currently crush's --yolo flag,
-# synthesized at spawn). WARNING: this bypasses ALL of the agent's permission
+# auto_accept runs the agent unattended (the adapter's own flag, synthesized at
+# spawn: --dangerously-skip-permissions for claude-code, --yolo for crush,
+# --full-auto for codex). WARNING: this bypasses ALL of the agent's permission
 # prompts — only enable it for trusted, headless runs. Requires `prompt`; a
 # long-running harness passes its tool's own flag through `args` instead.
 auto_accept = true
 # max_turns caps how many iterations the agent may run before it stops — the
 # budget guard for unattended one-shots (requires `prompt`; a long-running harness
-# passes its tool's flag through `args`). 0 or omitted means unlimited.
+# passes its tool's flag through `args`). 0 or omitted means unlimited. Only the
+# claude-code adapter has a turn-cap flag; crush and codex ignore this key.
 max_turns = 20
 # quiet runs the one-shot headless (suppresses agent output). It is the
 # default for a prompt harness, so set quiet = false to have the agent stream
@@ -81,11 +84,11 @@ enabled = false
 # The cron expression is validated at load; global config only (not project
 # files).
 #
-# [harness.stumpcloud-sweep]
+# [harness.fleet-sweep]
 # harness = "crush"
-# prompt = "check all StumpCloud services and report anything unhealthy"
+# prompt = "check all services and report anything unhealthy"
 # auto_accept = true
-# schedule = "0 */6 * * *"   # every 6 hours
+# schedule = "CRON_TZ=UTC 0 */6 * * *"   # every 6 hours, pinned to UTC
 # description = "scheduled sweep (every 6 hours)"
 
 # Harness kinds (ADR-0011, SPEC-0006): the `harness` key is an enum selecting

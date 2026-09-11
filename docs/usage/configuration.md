@@ -46,12 +46,13 @@ A bare `[name]` table is accepted for backward compatibility, but the
 
 ## Agent one-shot harnesses
 
-Give a harness a `prompt`, and the daemon synthesizes the
-agent invocation at spawn time (currently `crush run --quiet …`). This turns a
+Give a harness a `prompt`, and the daemon synthesizes the agent invocation at
+spawn time from the harness's adapter (see the table below). This turns a
 harness into a one-shot agent run:
 
 ```toml
 [harness.deploy-check]
+harness = "claude-code"
 prompt = "check the deployments and report anything unhealthy"
 model = "claude-opus-5"        # optional model (requires prompt)
 auto_accept = true             # optional: unattended/yolo mode (requires prompt)
@@ -77,6 +78,16 @@ These agent fields are **config truth only** — they are never written into
 into the synthesized agent argv at spawn time, and they **require `prompt`**:
 there is no vendor-agnostic place to inject a flag into an arbitrary
 argv, so a long-running harness passes its tool's flags through `args` itself.
+
+Each adapter maps those fields onto its own CLI. A field the CLI has no flag for
+is dropped, not emulated:
+
+| `harness` | Synthesized command | Ignored fields |
+|-----------|---------------------|----------------|
+| `crush` | `crush [--yolo] run [--quiet] [--model M] <prompt>` | `max_turns` (Crush has no turn cap) |
+| `claude-code` | `claude -p [--dangerously-skip-permissions] [--model M] [--max-turns N] --verbose --output-format stream-json <prompt>` | `quiet` (`-p` is already headless) |
+| `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
+| `generic` | same as `crush` | same as `crush` |
 
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
 it on trusted, headless runs.
@@ -119,12 +130,16 @@ config load) and the daemon fires it on that cadence — ADR-0013's replacement
 for the original SPEC-0008 timer design:
 
 ```toml
-[harness.stumpcloud-sweep]
-prompt = "check all StumpCloud services and report anything unhealthy"
+[harness.fleet-sweep]
+harness = "crush"
+prompt = "check all services and report anything unhealthy"
 auto_accept = true
-schedule = "0 */6 * * *"   # every 6 hours
+schedule = "CRON_TZ=UTC 0 */6 * * *"   # every 6 hours
 description = "scheduled sweep (every 6 hours)"
 ```
+
+For a full walkthrough — prompt design, run history, and reading outcomes — see
+the [Scheduled sweeps guide](/guides/scheduled-sweeps).
 
 Rules:
 
