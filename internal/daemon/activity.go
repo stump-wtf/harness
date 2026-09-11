@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -227,6 +228,9 @@ func (c *conn) peerScopes(target runtrace.Scope) ([]runtrace.Scope, []string) {
 	mgr := c.srv.mgr
 	var peers []runtrace.Scope
 	var notes []string
+	// A harness with no workdir is spawned in the daemon's own, and writes its
+	// stores there like any other peer.
+	daemonDir, _ := os.Getwd()
 	for _, snap := range mgr.Snapshots() {
 		if snap.Name == target.Name {
 			continue
@@ -236,7 +240,10 @@ func (c *conn) peerScopes(target runtrace.Scope) ([]runtrace.Scope, []string) {
 			continue
 		}
 		p := runtrace.Scope{Name: snap.Name, Adapter: h.Adapter, Workdir: supervisor.Workdir(h)}
-		if p.Workdir == "" || !sameDir(p.Workdir, target.Workdir) || !runtrace.CouldWrite(p.Adapter, target.Adapter) {
+		if p.Workdir == "" {
+			p.Workdir = daemonDir
+		}
+		if !runtrace.CouldWrite(p.Adapter, target.Adapter) || !runtrace.SameDir(p.Workdir, target.Workdir) {
 			continue
 		}
 		if w, _, ok := snapshotWindow(snap); ok {
@@ -363,14 +370,6 @@ func otherClaimants(self string, excluded []runtrace.Exclusion) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func sameDir(a, b string) bool {
-	return a != "" && b != "" && cleanPath(a) == cleanPath(b)
-}
-
-func cleanPath(p string) string {
-	return strings.TrimRight(p, "/")
 }
 
 func absDuration(d time.Duration) time.Duration {

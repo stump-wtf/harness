@@ -33,7 +33,10 @@ func TestTraceScopesAttributeTarsSessions(t *testing.T) {
 		meta tail.SessionMeta
 		want string
 	}{
-		{"pdx session", tail.SessionMeta{Harness: tail.HarnessCrush, Cwd: "/h/sweeps", StartedAt: "2026-09-11T11:40:02Z"}, "stumpcloud-sweep-pdx"},
+		// pr-sweep's latest run began after this session did, and `list` says
+		// nothing about its earlier runs — one of them may have covered 07:40.
+		// Only the daemon's log-backed view (`harness logs`) can tell.
+		{"pdx session, with a later-started sibling", tail.SessionMeta{Harness: tail.HarnessCrush, Cwd: "/h/sweeps", StartedAt: "2026-09-11T11:40:02Z"}, ""},
 		{"pr-sweep session", tail.SessionMeta{Harness: tail.HarnessCrush, Cwd: "/h/sweeps", StartedAt: "2026-09-11T13:30:03Z"}, "pr-sweep"},
 		{"between runs", tail.SessionMeta{Harness: tail.HarnessCrush, Cwd: "/h/sweeps", StartedAt: "2026-09-11T12:30:00Z"}, ""},
 		{"shared by two running agents", tail.SessionMeta{Harness: tail.HarnessCrush, Cwd: "/h/src", StartedAt: "2026-09-11T15:41:00Z"}, ""},
@@ -49,6 +52,24 @@ func TestTraceScopesAttributeTarsSessions(t *testing.T) {
 		if s.Name == "no-workdir" {
 			t.Error("a harness with no workdir became a scope; it identifies nothing")
 		}
+	}
+}
+
+// TestTraceScopesExitWithoutStartIsUnknownHistory: tars' state file has sweeps
+// with an exit and no start. Such a harness ran at some unknown time before its
+// exit, so it may have written a session its sibling's run covers.
+func TestTraceScopesExitWithoutStartIsUnknownHistory(t *testing.T) {
+	scopes := traceScopes([]protocol.HarnessInfo{
+		{Name: "pdx", Adapter: "crush", Workdir: "/h/sweeps", LastStarted: "2026-09-11T07:40:00-04:00", LastExitAt: "2026-09-11T07:56:21-04:00"},
+		{Name: "brief", Adapter: "crush", Workdir: "/h/sweeps", LastExitAt: "2026-09-11T08:14:26-04:00"},
+	})
+	meta := tail.SessionMeta{Harness: tail.HarnessCrush, Cwd: "/h/sweeps", StartedAt: "2026-09-11T11:45:00Z"}
+	now := time.Date(2026, 9, 11, 18, 0, 0, 0, time.UTC)
+	if got, _ := runtrace.Claimant(meta, scopes, now); got != "" {
+		t.Errorf("Claimant = %q, want none: brief exited at 08:14 with no recorded start", got)
+	}
+	if got, _ := runtrace.Claimant(meta, scopes[:1], now); got != "pdx" {
+		t.Errorf("Claimant without brief = %q, want pdx", got)
 	}
 }
 
@@ -72,8 +93,8 @@ func TestSyncAttributionRelabelsTheChatroom(t *testing.T) {
 	m.chatroom = chatroom.New(theme.Default(), nil)
 	m.chatroom.SetAttributor(m.attributeSession)
 	m.chatroom.Add(tail.Event{
-		Session:    tail.SessionMeta{Harness: tail.HarnessCrush, ID: "e088ec4e", Key: "e088ec4e", Cwd: "/h/sweeps", StartedAt: "2026-09-11T11:40:02Z"},
-		Classified: classify.Event{Seq: 1, Timestamp: "2026-09-11T11:40:30Z", Tool: "view", Action: classify.ActionRead},
+		Session:    tail.SessionMeta{Harness: tail.HarnessCrush, ID: "09a363b5", Key: "09a363b5", Cwd: "/h/sweeps", StartedAt: "2026-09-11T13:30:03Z"},
+		Classified: classify.Event{Seq: 1, Timestamp: "2026-09-11T13:31:00Z", Tool: "view", Action: classify.ActionRead},
 	})
 	if got := m.chatroom.Buffer().Visible()[0].Identity.Username; got != "@crush" {
 		t.Fatalf("before any harness list: %q, want @crush", got)
@@ -81,8 +102,8 @@ func TestSyncAttributionRelabelsTheChatroom(t *testing.T) {
 
 	m.harnesses = tarsHarnesses()
 	m.syncAttribution()
-	if got := m.chatroom.Buffer().Visible()[0].Identity.Username; got != "@stumpcloud-sweep-pdx" {
-		t.Errorf("after sync: %q, want @stumpcloud-sweep-pdx", got)
+	if got := m.chatroom.Buffer().Visible()[0].Identity.Username; got != "@pr-sweep" {
+		t.Errorf("after sync: %q, want @pr-sweep", got)
 	}
 	key := m.traceKey
 	m.syncAttribution()

@@ -198,6 +198,70 @@ func TestLogsEventsExcludesOverlappingPeer(t *testing.T) {
 	}
 }
 
+// requireExcludedByPeer runs sweep-pdx in work alongside one peer (a TOML
+// table, named peer) whose run overlaps pdx's, and requires the session inside
+// the overlap to be excluded naming both.
+func requireExcludedByPeer(t *testing.T, work, peer, peerTable string) {
+	t.Helper()
+	td := newTestDaemon(t, fmt.Sprintf(`
+[harness.sweep-pdx]
+harness = "crush"
+prompt = "sweep pdx"
+auto_accept = true
+workdir = %q
+restart = "no"
+
+[harness.%s]
+%s
+`, work, peer, peerTable))
+	rt.WriteCrushDB(t, filepath.Join(work, ".crush", "crush.db"),
+		rt.CrushSession{ID: "overlap", Created: local(8, 0, 5), Messages: viewCall("c1", "a.go", local(8, 0, 6))})
+	writeLog(t, td, "sweep-pdx", lifecycleLine(local(8, 0, 0), "state changed from=stopped to=starting")+lifecycleLine(local(8, 30, 0), "exited code=0"))
+	writeLog(t, td, peer, lifecycleLine(local(7, 55, 0), "state changed from=stopped to=starting")+lifecycleLine(local(8, 20, 0), "exited code=0"))
+
+	ld, err := td.dial(t, nil).LogEvents("sweep-pdx", client.LogOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ld.Entries {
+		if e.Session == "overlap" {
+			t.Fatalf("a session %s could have written was attributed to sweep-pdx: %+v", peer, e)
+		}
+	}
+	if len(ld.Excluded) != 1 || strings.Join(ld.Excluded[0].Claimants, ",") != "sweep-pdx,"+peer {
+		t.Errorf("excluded = %+v, want the overlap session naming sweep-pdx and %s", ld.Excluded, peer)
+	}
+}
+
+// TestLogsEventsPeerThroughSymlinkIsAClaimant: a peer whose workdir is a
+// symlink to the target's writes the same store, and the project-store source
+// stamps its sessions with the target's spelling — so it must still count.
+func TestLogsEventsPeerThroughSymlinkIsAClaimant(t *testing.T) {
+	hermeticHome(t)
+	root := t.TempDir()
+	work, alias := filepath.Join(root, "sweeps"), filepath.Join(root, "sweeps-link")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(work, alias); err != nil {
+		t.Fatal(err)
+	}
+	requireExcludedByPeer(t, work, "sweep-alias", fmt.Sprintf("harness = \"crush\"\nprompt = \"alias\"\nauto_accept = true\nworkdir = %q\nrestart = \"no\"", alias))
+}
+
+// TestLogsEventsPeerWithoutWorkdirIsAClaimant: a harness with no workdir is
+// spawned in the daemon's own directory; when that is the target's workdir the
+// two share a store.
+func TestLogsEventsPeerWithoutWorkdirIsAClaimant(t *testing.T) {
+	hermeticHome(t)
+	work := filepath.Join(t.TempDir(), "sweeps")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(work)
+	requireExcludedByPeer(t, work, "bare", "harness = \"crush\"\nprompt = \"bare\"\nauto_accept = true\nrestart = \"no\"")
+}
+
 // TestLogsEventsGenericFallsBackToText: a harness with no native transcript
 // answers with its durable log, unmarked, so the client prints it as before.
 func TestLogsEventsGenericFallsBackToText(t *testing.T) {

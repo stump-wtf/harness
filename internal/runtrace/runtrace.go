@@ -20,6 +20,11 @@
 // issue #89 (correlation rule), issue #302 (`harness logs` renders agent-trace).
 //
 // @joestump-agent 09/11/2026 - Added for harness#302 and harness#89.
+//
+// @joestump-agent 09/11/2026 - Review of #307: entry strings are redacted;
+// claimant checks resolve symlinked workdirs and count a peer whose history is
+// unknown at the session's start; a session reached through two sources is
+// counted once.
 package runtrace
 
 import (
@@ -110,6 +115,29 @@ type Scope struct {
 	// queried they are unused — the window passed to Attribute is the run in
 	// question; for peers they are what makes a session ambiguous.
 	Runs []Window
+	// KnownSince, when set, is how far back Runs is complete: the harness may
+	// have run before it with no record here. A consumer holding only each
+	// harness's latest run (the TUI, from `list`) sets it to that run's start,
+	// and a session older than it counts this harness as a possible author.
+	// Zero means Runs is all the history there is (the daemon's view, from the
+	// durable log).
+	KnownSince time.Time
+}
+
+// covers reports whether one of s's known runs covers t.
+func (s Scope) covers(t, now time.Time) bool {
+	for _, r := range s.Runs {
+		if r.Covers(t, now) {
+			return true
+		}
+	}
+	return false
+}
+
+// mayHaveRun reports whether s could have been running at t: a known run
+// covers t, or t predates KnownSince and so falls in history s does not hold.
+func (s Scope) mayHaveRun(t, now time.Time) bool {
+	return s.covers(t, now) || (!s.KnownSince.IsZero() && t.Before(s.KnownSince.Add(Slack)))
 }
 
 func (s Scope) home() string {
@@ -207,9 +235,11 @@ type Attribution struct {
 //     subdirectory is a different project to every agent tool here);
 //  3. it started inside w, Slack included;
 //  4. no other harness could have written it. A peer is a claimant when it
-//     shares the workdir, runs the same kind (or runs generic, which may be
-//     any tool), and one of its known runs covers the session's start. Any
-//     claimant besides target moves the session to Excluded, for everyone.
+//     shares the workdir (symlinks resolved), runs the same kind (or runs
+//     generic, which may be any tool), and one of its known runs covers the
+//     session's start — or the start predates the peer's KnownSince, where
+//     its history is unknown. Any claimant besides target moves the session
+//     to Excluded, for everyone.
 //
 // A session with no parseable start time cannot satisfy (3) and is dropped.
 // What (4) cannot catch is written down in SPEC-0006: a session started by hand
@@ -239,14 +269,20 @@ func Attribute(ctx context.Context, target Scope, w Window, peers []Scope, now t
 			return out, fmt.Errorf("runtrace: list %s sessions for %s: %w", target.Adapter, target.Name, err)
 		}
 		for _, m := range metas {
-			if seen[m.Key] || clean(m.Cwd) != work {
+			// Two sources can reach one store under different spellings — the
+			// project store directly, and a registry entry through a symlink
+			// — and the adapter keys a session by that spelling, which would
+			// list it, and every event in it, twice. A session id is a UUID,
+			// so identity is the tool plus the id.
+			id := string(m.Harness) + "/" + m.ID
+			if seen[id] || clean(m.Cwd) != work {
 				continue
 			}
 			started, ok := m.Started()
 			if !ok || started.Before(lo) || started.After(hi) {
 				continue
 			}
-			seen[m.Key] = true
+			seen[id] = true
 			sess := Session{Meta: m, Started: started, adapter: a}
 			if names := claimants(target, peers, work, started, now); len(names) > 1 {
 				out.Excluded = append(out.Excluded, Exclusion{Session: sess, Claimants: names})
@@ -267,14 +303,11 @@ func Attribute(ctx context.Context, target Scope, w Window, peers []Scope, now t
 func claimants(target Scope, peers []Scope, cwd string, started, now time.Time) []string {
 	var names []string
 	for _, p := range peers {
-		if p.Name == target.Name || clean(p.Workdir) != cwd || !CouldWrite(p.Adapter, target.Adapter) {
+		if p.Name == target.Name || !CouldWrite(p.Adapter, target.Adapter) || !SameDir(p.Workdir, cwd) {
 			continue
 		}
-		for _, r := range p.Runs {
-			if r.Covers(started, now) {
-				names = append(names, p.Name)
-				break
-			}
+		if p.mayHaveRun(started, now) {
+			names = append(names, p.Name)
 		}
 	}
 	sort.Strings(names)
@@ -296,11 +329,17 @@ func CouldWrite(adapter, kind string) bool {
 }
 
 // Claimant returns the single harness a discovered session is attributable to,
-// using the same rule as Attribute against each scope's known Runs. It is the
-// form a consumer holding many sessions and many harnesses needs — the TUI's
-// chatroom labels every session its machine-wide watcher discovers — and it
-// reports ok=false for a session with no claimant, with several, or whose only
-// claimant runs generic.
+// using the same rule as Attribute against each scope's Runs and KnownSince. It
+// is the form a consumer holding many sessions and many harnesses needs — the
+// TUI's chatroom labels every session its machine-wide watcher discovers — and
+// it reports ok=false for a session with no claimant, with several, whose only
+// claimant runs generic, or that a harness whose known history does not reach
+// back to it could also have written.
+//
+// That last case is what KnownSince is for. From latest runs alone, a peer
+// that restarted after the session began looks idle when it began, and the
+// session is credited to whichever sibling was running then — one agent's
+// work under another's name.
 func Claimant(meta tail.SessionMeta, scopes []Scope, now time.Time) (string, bool) {
 	started, ok := meta.Started()
 	cwd := clean(meta.Cwd)
@@ -310,17 +349,11 @@ func Claimant(meta tail.SessionMeta, scopes []Scope, now time.Time) (string, boo
 	kind := string(meta.Harness)
 	var found []Scope
 	for _, s := range scopes {
-		if clean(s.Workdir) != cwd || !CouldWrite(s.Adapter, kind) {
-			continue
-		}
-		for _, r := range s.Runs {
-			if r.Covers(started, now) {
-				found = append(found, s)
-				break
-			}
+		if CouldWrite(s.Adapter, kind) && SameDir(s.Workdir, cwd) && s.mayHaveRun(started, now) {
+			found = append(found, s)
 		}
 	}
-	if len(found) != 1 || found[0].Adapter != kind {
+	if len(found) != 1 || found[0].Adapter != kind || !found[0].covers(started, now) {
 		return "", false
 	}
 	return found[0].Name, true
@@ -528,6 +561,25 @@ func stamp(ts string, fallback time.Time) time.Time {
 		}
 	}
 	return fallback
+}
+
+// SameDir reports whether a and b name one directory: equal once cleaned, or
+// the same place once symlinks are resolved. Harnesses that spell a shared
+// workdir differently still share its stores, and the project-store source
+// stamps every session with the target's own spelling — so a claimant check
+// comparing spellings would miss the peer and credit its sessions to the
+// target.
+func SameDir(a, b string) bool {
+	a, b = clean(a), clean(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }
 
 // clean normalizes a directory for comparison, keeping "" empty rather than
