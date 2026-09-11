@@ -198,7 +198,14 @@ func cmdLogs(c *client.Client, o verbOpts) error {
 	if o.follow && !o.json {
 		return followLogs(c, o)
 	}
-	ld, err := c.Logs(o.name, o.lines)
+	fetch := c.Logs
+	if o.run > 0 {
+		// One run of a scheduled harness reads that run's own log (#120).
+		fetch = func(name string, lines int) (protocol.LogsData, error) {
+			return c.RunLogs(name, o.run, lines)
+		}
+	}
+	ld, err := fetch(o.name, o.lines)
 	if err != nil {
 		return err
 	}
@@ -206,6 +213,9 @@ func cmdLogs(c *client.Client, o verbOpts) error {
 		return printJSON(ld)
 	}
 	printLogText(os.Stdout, ld.Text)
+	for _, n := range ld.Notices {
+		fmt.Fprintln(os.Stderr, "note: "+n)
+	}
 	return nil
 }
 

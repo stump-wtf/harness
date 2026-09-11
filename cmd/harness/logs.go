@@ -41,7 +41,7 @@ const (
 // cmdLogEvents prints one structured logs reply, or follows the run.
 func cmdLogEvents(c *client.Client, o verbOpts, w io.Writer) error {
 	fetch := func(lines int) (protocol.LogsData, error) {
-		return c.LogEvents(o.name, client.LogOptions{Lines: lines, IncludeAmbiguous: o.ambiguous})
+		return c.LogEvents(o.name, client.LogOptions{Lines: lines, IncludeAmbiguous: o.ambiguous, Run: o.run})
 	}
 	if o.follow && !o.json {
 		ld, err := fetch(o.lines)

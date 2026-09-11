@@ -12,6 +12,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -33,6 +34,12 @@ func main() {
 
 	root := newRootCmd()
 	if err := root.Execute(); err != nil {
+		// A command that has already reported its own result exits with the
+		// status it chose: `trigger --wait` mirrors the run's exit code.
+		var ec exitCodeError
+		if errors.As(err, &ec) {
+			os.Exit(ec.code)
+		}
 		os.Exit(cliui.Fatal(err))
 	}
 }
@@ -49,6 +56,9 @@ type verbOpts struct {
 	ro         bool
 	all        bool // start/restart --all: apply to every harness
 	name       string
+	run        int  // logs --run: one run of a scheduled harness
+	wait       bool // trigger --wait: follow the run and exit with its code
+	limit      int  // runs --limit
 }
 
 // run dispatches one verb. Every verb dials the daemon fresh (thin client,
@@ -93,6 +103,14 @@ func run(verb string, o verbOpts) error {
 		return withClient(o, nil, projectScoped(verb, true, lifecycle(verb)))
 	case "logs":
 		return withClient(o, nil, projectScoped(verb, false, cmdLogs))
+	case "jobs":
+		// Scheduled harnesses are global-config only, so the job verbs are
+		// never project-scoped (SPEC-0008 REQ "Schedule Exclusions").
+		return withClient(o, nil, cmdJobs)
+	case "trigger":
+		return withClient(o, nil, cmdTrigger)
+	case "runs":
+		return withClient(o, nil, cmdRuns)
 	case "profiles":
 		return withClient(o, nil, cmdProfiles)
 	case "use-profile":
