@@ -219,12 +219,14 @@ func newLifecycleCmd(g *globalOpts, verb, short string) *cobra.Command {
 
 func newLogsCmd(g *globalOpts) *cobra.Command {
 	var (
-		lines  int
-		follow bool
+		lines     int
+		follow    bool
+		raw       bool
+		ambiguous bool
 	)
 	cmd := &cobra.Command{
 		Use:           "logs",
-		Short:         "tail a harness's log",
+		Short:         "show what a harness's latest run did",
 		Args:          cobra.MaximumNArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -235,11 +237,14 @@ func newLogsCmd(g *globalOpts) *cobra.Command {
 			}
 			o := g.opts()
 			o.name, o.lines, o.follow = name, lines, follow
+			o.raw, o.ambiguous = raw, ambiguous
 			return run("logs", o)
 		},
 	}
-	cmd.Flags().IntVar(&lines, "lines", 200, "number of trailing lines")
+	cmd.Flags().IntVar(&lines, "lines", 200, "number of trailing lines (entries, for an agent harness)")
 	cmd.Flags().BoolVar(&follow, "follow", false, "stream new output")
+	cmd.Flags().BoolVar(&raw, "raw", false, "print the durable log tail instead of agent activity")
+	cmd.Flags().BoolVar(&ambiguous, "include-ambiguous", false, "also show sessions another harness could have written")
 	return cmd
 }
 

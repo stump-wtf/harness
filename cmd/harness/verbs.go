@@ -187,6 +187,12 @@ func printAttachSessions(w io.Writer, sessions []protocol.AttachSessionInfo) err
 }
 
 func cmdLogs(c *client.Client, o verbOpts) error {
+	// Without --raw, logs is the structured activity view of the latest run
+	// (logs.go; #302). A generic harness, or a daemon too old to know the
+	// view, answers with the durable log tail, which prints exactly as --raw.
+	if !o.raw {
+		return cmdLogEvents(c, o, os.Stdout)
+	}
 	// --follow polls the tail and prints only newly appended bytes. JSON output
 	// is a single snapshot (a stream of JSON blobs would not be scriptable).
 	if o.follow && !o.json {
@@ -199,16 +205,19 @@ func cmdLogs(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(ld)
 	}
-	// The tail is raw PTY output. Make it inert before printing so escape
-	// payloads (DCS/sixel, OSC, cursor addressing) don't act on the user's
-	// terminal (#146 — acceptance criteria require no payload bytes reach
-	// `harness logs`).
-	text := strings.Join(ansifold.Lines(strings.Split(ld.Text, "\n")), "\n")
-	fmt.Print(text)
-	if len(text) > 0 && text[len(text)-1] != '\n' {
-		fmt.Println()
-	}
+	printLogText(os.Stdout, ld.Text)
 	return nil
+}
+
+// printLogText prints durable-log text made inert first, so escape payloads
+// (DCS/sixel, OSC, cursor addressing) don't act on the user's terminal (#146 —
+// acceptance criteria require no payload bytes reach `harness logs`).
+func printLogText(w io.Writer, raw string) {
+	text := inertLogText(raw)
+	fmt.Fprint(w, text)
+	if len(text) > 0 && text[len(text)-1] != '\n' {
+		fmt.Fprintln(w)
+	}
 }
 
 // followLogs re-fetches the tail on an interval and prints the new suffix.

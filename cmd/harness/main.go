@@ -44,6 +44,8 @@ type verbOpts struct {
 	json       bool
 	lines      int
 	follow     bool
+	raw        bool // logs --raw: the durable log tail, not the activity view
+	ambiguous  bool // logs --include-ambiguous
 	ro         bool
 	all        bool // start/restart --all: apply to every harness
 	name       string

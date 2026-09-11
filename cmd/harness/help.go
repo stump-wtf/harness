@@ -52,7 +52,7 @@ var helpText = struct {
 		{"start NAME", "start (enable) a harness"},
 		{"stop NAME", "stop (disable) a harness"},
 		{"restart NAME", "restart a harness (clears a failed latch)"},
-		{"logs NAME [--lines N] [--follow]", "show a harness's log tail"},
+		{"logs NAME [--lines N] [--follow] [--raw]", "show what a harness's latest run did"},
 		{"profiles", "list profiles (active one flagged)"},
 		{"use-profile NAME", "activate a profile"},
 		{"reload", "re-read the daemon config"},
