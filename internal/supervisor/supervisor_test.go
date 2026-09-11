@@ -25,7 +25,12 @@ func fastPolicy() Policy {
 		BackoffBase:    5 * time.Millisecond,
 		BackoffCap:     30 * time.Millisecond,
 		MaxRestarts:    3,
-		StopGrace:      80 * time.Millisecond,
+		// 500ms, not 80ms: TestGracefulStopFast asserts the SIGTERM path
+		// finishes INSIDE the grace, and on a loaded CI runner a well-behaved
+		// sh can take 82ms to notice a signal — #313's first CI run failed
+		// exactly there. 500ms keeps the assertion meaningful (a SIGKILL
+		// escalation cannot finish early) without racing the scheduler.
+		StopGrace: 500 * time.Millisecond,
 	}
 }
 
