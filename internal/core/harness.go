@@ -77,6 +77,42 @@ func (p RestartPolicy) ShouldRestart(code int) bool {
 	}
 }
 
+// OverlapPolicy decides what a scheduled harness does with a firing that
+// arrives while its previous run is still in flight (SPEC-0008 REQ "Overlap
+// Policy"). The empty string means the default, OverlapSkip.
+type OverlapPolicy string
+
+const (
+	// OverlapSkip drops the new firing and records it as skipped.
+	OverlapSkip OverlapPolicy = "skip"
+	// OverlapQueue holds one firing and starts it when the run in flight
+	// ends. A firing that arrives while one is already held is skipped.
+	OverlapQueue OverlapPolicy = "queue"
+	// OverlapReplace stops the run in flight, recording it as replaced, and
+	// starts the new one.
+	OverlapReplace OverlapPolicy = "replace"
+)
+
+// Valid reports whether p is a known overlap policy. The empty string means
+// the default, OverlapSkip.
+func (p OverlapPolicy) Valid() bool {
+	switch p {
+	case "", OverlapSkip, OverlapQueue, OverlapReplace:
+		return true
+	}
+	return false
+}
+
+const (
+	// DefaultRunTimeout bounds a scheduled run whose `timeout` is omitted. A
+	// hung agent must not own its schedule forever: an hour is well past any
+	// sweep that is making progress.
+	DefaultRunTimeout = time.Hour
+	// DefaultKeepRuns is how many run records (and their logs) a scheduled
+	// harness keeps when `keep_runs` is omitted.
+	DefaultKeepRuns = 20
+)
+
 // Harness is one supervised process definition: a command + args + working
 // directory the daemon spawns and keeps alive. The daemon knows nothing about
 // what runs inside — it is just cmd/args/workdir (ADR-0006).
@@ -202,6 +238,20 @@ type Harness struct {
 	// miss. Requires Schedule. Governing: ADR-0013; SPEC-0008 REQ "Missed
 	// Window Handling"; issue #117.
 	CatchUp bool
+	// Timeout bounds one run of a scheduled harness: past it the run's process
+	// group gets SIGTERM, then SIGKILL after the stop grace, and the run is
+	// recorded timed_out. Zero means no limit. The parser fills in
+	// DefaultRunTimeout for a scheduled harness that omits it. Requires
+	// Schedule. Governing: ADR-0013; SPEC-0008 REQ "Run Timeout"; issue #119.
+	Timeout time.Duration
+	// OnOverlap is what a firing does while a run is still in flight. Requires
+	// Schedule; the parser fills in OverlapSkip. Governing: ADR-0013; SPEC-0008
+	// REQ "Overlap Policy"; issue #119.
+	OnOverlap OverlapPolicy
+	// KeepRuns bounds this harness's run history and per-run logs. Zero means
+	// DefaultKeepRuns. Requires Schedule. Governing: SPEC-0008 REQ "Run
+	// History"; issue #119.
+	KeepRuns int
 	// Adapter is the harness kind — the config `harness` key, an enum:
 	// "crush" (the default when omitted), "claude-code", "codex",
 	// "generic". It selects the adapter, which supplies BOTH the

@@ -816,7 +816,7 @@ var harnessFormFields = []string{
 	"Name", "Adapter", "Args", "Prompt", "PromptFile", "Model", "AutoAccept",
 	"Quiet", "MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart",
 	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule", "CatchUp",
-	"HarvestTrajectory", "MCPAllow",
+	"Timeout", "OnOverlap", "KeepRuns", "HarvestTrajectory", "MCPAllow",
 }
 
 // TestHarnessFormCoversEveryHarnessField is the census half of the issue #161
@@ -936,6 +936,9 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				"quiet = false",
 				`schedule = "CRON_TZ=UTC 0 9 * * 1"`,
 				"catch_up = true",
+				`timeout = "30m"`,
+				`on_overlap = "queue"`,
+				"keep_runs = 5",
 				`description = "scheduled blog sweep"`,
 				"harvest_trajectory = true",
 				`mcp_allow = ["read", "write"]`,

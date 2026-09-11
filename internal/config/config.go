@@ -45,6 +45,9 @@ type rawHarness struct {
 	TmuxSocket        string   `toml:"tmux_socket"`
 	Schedule          string   `toml:"schedule"`
 	CatchUp           *bool    `toml:"catch_up"`
+	Timeout           *string  `toml:"timeout"`
+	OnOverlap         *string  `toml:"on_overlap"`
+	KeepRuns          *int     `toml:"keep_runs"`
 	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
 	MCPAllow          []string `toml:"mcp_allow"`
 
@@ -600,6 +603,52 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	}
 	catchUp := rh.CatchUp != nil && *rh.CatchUp
 
+	// timeout, on_overlap and keep_runs shape a schedule's runs, so like
+	// catch_up they are rejected on presence without one. With a schedule each
+	// gets its documented default, so every scheduled harness has a bounded run
+	// and a bounded history whether or not the operator thought to ask.
+	// Governing: ADR-0013; SPEC-0008 REQ "Run Timeout", REQ "Overlap Policy",
+	// REQ "Run History"; issue #119.
+	for _, k := range []struct {
+		key string
+		set bool
+	}{{"timeout", rh.Timeout != nil}, {"on_overlap", rh.OnOverlap != nil}, {"keep_runs", rh.KeepRuns != nil}} {
+		if k.set && schedule == "" {
+			return newError(filename, line, "harness %q: %q requires \"schedule\" (it applies to scheduled runs)", name, k.key)
+		}
+	}
+	var (
+		timeout  time.Duration
+		overlap  core.OverlapPolicy
+		keepRuns int
+	)
+	if schedule != "" {
+		timeout = core.DefaultRunTimeout
+		if rh.Timeout != nil {
+			d, err := time.ParseDuration(strings.TrimSpace(*rh.Timeout))
+			if err != nil || d < 0 {
+				return newError(filename, line,
+					"harness %q: invalid \"timeout\" %q (want a duration such as \"45m\" or \"2h\", or \"0\" for no limit)", name, *rh.Timeout)
+			}
+			timeout = d
+		}
+		overlap = core.OverlapSkip
+		if rh.OnOverlap != nil {
+			overlap = core.OverlapPolicy(strings.TrimSpace(*rh.OnOverlap))
+			if overlap == "" || !overlap.Valid() {
+				return newError(filename, line,
+					"harness %q: invalid \"on_overlap\" %q (want \"skip\", \"queue\", or \"replace\")", name, *rh.OnOverlap)
+			}
+		}
+		keepRuns = core.DefaultKeepRuns
+		if rh.KeepRuns != nil {
+			if *rh.KeepRuns < 1 {
+				return newError(filename, line, "harness %q: \"keep_runs\" must be at least 1 (got %d)", name, *rh.KeepRuns)
+			}
+			keepRuns = *rh.KeepRuns
+		}
+	}
+
 	if resolve == nil {
 		resolve = func(p string) string { return p }
 	}
@@ -624,6 +673,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		TmuxSocket:   rh.TmuxSocket,
 		Schedule:     schedule,
 		CatchUp:      catchUp,
+		Timeout:      timeout,
+		OnOverlap:    overlap,
+		KeepRuns:     keepRuns,
 	}
 	if isAgent {
 		// Args stay EMPTY for a prompt harness (spawn-time synthesis,

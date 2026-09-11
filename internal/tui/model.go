@@ -116,6 +116,9 @@ type formInputs struct {
 	// catchUp is the schedule's missed-window policy (issue #117), carried for
 	// the same round-trip reason as schedule.
 	catchUp bool
+	// timeout/onOverlap/keepRuns are the schedule's run keys (issue #119);
+	// blank means the parser default.
+	timeout, onOverlap, keepRuns string
 }
 
 // Model is the root Bubble Tea model.

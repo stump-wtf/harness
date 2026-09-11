@@ -485,5 +485,8 @@ func harnessDefEqual(a, b core.Harness) bool {
 		a.Enabled == b.Enabled &&
 		a.TmuxSocket == b.TmuxSocket &&
 		a.Schedule == b.Schedule &&
-		a.CatchUp == b.CatchUp
+		a.CatchUp == b.CatchUp &&
+		a.Timeout == b.Timeout &&
+		a.OnOverlap == b.OnOverlap &&
+		a.KeepRuns == b.KeepRuns
 }
