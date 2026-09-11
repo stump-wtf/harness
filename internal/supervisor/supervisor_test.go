@@ -337,6 +337,24 @@ func TestRestartPolicyNoSpawnFailureLandsFailed(t *testing.T) {
 	}
 }
 
+// TestSpawnFailureIsTheLatestRun: a start that never spawned still stamps
+// LastExitAt, so it must stamp LastStarted too. Otherwise the snapshot pairs
+// yesterday's start with today's failure, and run correlation reads that as
+// one run spanning the whole day (SPEC-0006 REQ "Run Correlation").
+func TestSpawnFailureIsTheLatestRun(t *testing.T) {
+	h := shHarnessWithRestart("nospawn-window", "exit 0", 5*time.Millisecond, core.RestartNo)
+	h.Workdir = "/nonexistent-harness-test-dir"
+	s := newTestSupervisor(t, h, noFlapPolicy())
+	prev := time.Now().Add(-24 * time.Hour)
+	s.Restore(true, 0, 0, prev.Add(11*time.Minute), prev)
+	s.Start()
+	waitState(t, s, core.StateFailed)
+	snap := s.Snapshot()
+	if !snap.LastStarted.After(prev.Add(time.Hour)) || snap.LastExitAt.Before(snap.LastStarted) {
+		t.Fatalf("LastStarted %v, LastExitAt %v: want the failed attempt's own start, at or before its exit", snap.LastStarted, snap.LastExitAt)
+	}
+}
+
 // ---- Restart Policy: "on-failure" skips clean exits, respawns failures ----
 
 func TestRestartPolicyOnFailureSkipsCleanExit(t *testing.T) {

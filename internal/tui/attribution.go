@@ -11,13 +11,20 @@ package tui
 // of every session and claims nothing.
 //
 // The daemon reports only each harness's latest run (LastStarted/LastExitAt),
-// so a session from an earlier run keeps its tool label. That under-reports;
-// it never misattributes.
+// so everything before that run is unknown here, and each scope says so with
+// KnownSince. A session older than a same-workdir sibling's latest start keeps
+// its tool label, because the sibling may have written it in a run `list` no
+// longer describes. That under-reports — a sweep's sessions lose their label
+// once a later sweep in the same workdir starts — and never misattributes.
 //
 // Governing: ADR-0015 (chatroom), SPEC-0009 REQ "Harness Identity Display",
 // SPEC-0006 REQ "Run Correlation".
 //
 // @joestump-agent 09/11/2026 - Added for harness#302.
+//
+// @joestump-agent 09/11/2026 - Review of #307: scopes carry KnownSince. Without
+// it, a peer that restarted after a session began looked idle when it began,
+// and the session went to whichever sibling was running then.
 
 import (
 	"fmt"
@@ -40,6 +47,12 @@ func traceScopes(infos []protocol.HarnessInfo) []runtrace.Scope {
 		s := runtrace.Scope{Name: h.Name, Adapter: h.Adapter, Workdir: h.Workdir}
 		if w, ok := latestRun(h); ok {
 			s.Runs = []runtrace.Window{w}
+			s.KnownSince = w.Start
+		} else if end, err := time.Parse(time.RFC3339Nano, h.LastExitAt); err == nil {
+			// An exit with no recorded start (a state file written before
+			// last_started was restored across restarts): it ran, but when is
+			// unknown.
+			s.KnownSince = end
 		}
 		out = append(out, s)
 	}

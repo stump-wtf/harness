@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stump-wtf/agent-trace/tail"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/redact"
 	rt "gitea.stump.rocks/stump.wtf/harness/internal/runtrace/runtracetest"
 )
 
@@ -320,6 +323,18 @@ func TestClaimant(t *testing.T) {
 		{"generic only", []Scope{{Name: "wrapper", Adapter: "generic", Workdir: "/w", Runs: []Window{run}}}, meta, ""},
 		{"subdirectory", []Scope{{Name: "sweep", Adapter: "crush", Workdir: "/", Runs: []Window{run}}}, meta, ""},
 		{"no start time", []Scope{{Name: "sweep", Adapter: "crush", Workdir: "/w", Runs: []Window{run}}}, tail.SessionMeta{Harness: tail.HarnessCrush, Cwd: "/w"}, ""},
+		// Latest runs only (the TUI's view): signal restarted after the session
+		// began, so whether its previous run covered it is unknown — and
+		// crediting switchboard would be a guess.
+		{"peer restarted since", []Scope{
+			{Name: "switchboard", Adapter: "crush", Workdir: "/w", Runs: []Window{{Start: spawn.Add(-time.Hour)}}, KnownSince: spawn.Add(-time.Hour)},
+			{Name: "signal", Adapter: "crush", Workdir: "/w", Runs: []Window{{Start: spawn.Add(2 * time.Hour)}}, KnownSince: spawn.Add(2 * time.Hour)},
+		}, meta, ""},
+		{"peer's known history reaches back", []Scope{
+			{Name: "switchboard", Adapter: "crush", Workdir: "/w", Runs: []Window{{Start: spawn.Add(-time.Hour)}}, KnownSince: spawn.Add(-time.Hour)},
+			{Name: "signal", Adapter: "crush", Workdir: "/w", Runs: []Window{{Start: spawn.Add(-3 * time.Hour), End: spawn.Add(-2 * time.Hour)}}, KnownSince: spawn.Add(-3 * time.Hour)},
+		}, meta, "switchboard"},
+		{"only unknown history", []Scope{{Name: "sweep", Adapter: "crush", Workdir: "/w", KnownSince: spawn.Add(time.Hour)}}, meta, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := Claimant(tc.meta, tc.scopes, spawn.Add(24*time.Hour))
@@ -351,5 +366,87 @@ func TestSourcesFollowRelocatedStores(t *testing.T) {
 	}
 	if len(crush) != 1 || crush[0].(*tail.CrushAdapter).ProjectsPath != "/xdg/crush/projects.json" {
 		t.Errorf("crush sources = %#v, want only the XDG registry (no project store on disk)", crush)
+	}
+}
+
+// TestAttributeSeesThroughSymlinkedPeerWorkdir: a peer spelling the shared
+// workdir through a symlink writes the same store. The project-store source
+// stamps every session with the target's spelling, so a spelling comparison
+// would miss the peer and hand the target its session.
+func TestAttributeSeesThroughSymlinkedPeerWorkdir(t *testing.T) {
+	root := t.TempDir()
+	work, alias := filepath.Join(root, "sweeps"), filepath.Join(root, "sweeps-link")
+	rt.WriteCrushDB(t, filepath.Join(work, ".crush", "crush.db"),
+		sess("shared", spawn.Add(time.Minute), read("c1", "x.go", spawn.Add(time.Minute))))
+	if err := os.Symlink(work, alias); err != nil {
+		t.Fatal(err)
+	}
+	run := Window{Start: spawn, End: spawn.Add(time.Hour)}
+	a := attribute(t, crushHarness(t, "sweep-a", work, nil), run, crushHarness(t, "sweep-b", alias, nil, run))
+	if len(a.Sessions) != 0 || len(a.Excluded) != 1 {
+		t.Errorf("attributed %v, excluded %+v; want the shared session excluded, naming both", ids(a.Sessions), a.Excluded)
+	}
+}
+
+// TestAttributeCountsASessionOnceAcrossSources: the project store and a
+// registry entry that reaches it through a symlink are one store. Listing the
+// session under both spellings printed every event twice.
+func TestAttributeCountsASessionOnceAcrossSources(t *testing.T) {
+	work := filepath.Join(t.TempDir(), "sweeps")
+	store := filepath.Join(work, ".crush")
+	rt.WriteCrushDB(t, filepath.Join(store, "crush.db"),
+		sess("once", spawn.Add(time.Minute), read("c1", "x.go", spawn.Add(time.Minute))))
+	alias := filepath.Join(t.TempDir(), "store-link")
+	if err := os.Symlink(store, alias); err != nil {
+		t.Fatal(err)
+	}
+	h := crushHarness(t, "sweep", work, nil)
+	rt.WriteProjects(t, filepath.Join(h.Env["HOME"], ".local", "share", "crush", "projects.json"), "",
+		rt.Project{Path: work, DataDir: alias, LastAccessed: spawn})
+
+	a := attribute(t, h, Window{Start: spawn, End: spawn.Add(time.Hour)})
+	if got := ids(a.Sessions); !reflect.DeepEqual(got, []string{"once"}) {
+		t.Fatalf("attributed = %v, want [once]", got)
+	}
+	entries, errs := Events(context.Background(), a, false, spawn.Add(2*time.Hour))
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	if n := len(entries); n != 2 {
+		t.Errorf("entries = %+v, want one session line and one read", entries)
+	}
+}
+
+// TestEntriesAreRedacted: a transcript records commands verbatim, and a sweep
+// that sets a token-bearing remote or sends an Authorization header must not
+// put the credential in `harness logs` or its --json.
+func TestEntriesAreRedacted(t *testing.T) {
+	work := filepath.Join(t.TempDir(), "sweeps")
+	rt.WriteCrushDB(t, filepath.Join(work, ".crush", "crush.db"),
+		sess("s1", spawn.Add(2*time.Second), []rt.CrushMessage{
+			{Role: "assistant", At: spawn.Add(3 * time.Second), Parts: rt.ToolCall("c1", "bash", map[string]any{
+				"command": "git remote set-url origin https://joestump-agent:0123456789abcdef0123@gitea.stump.rocks/a/b.git",
+			})},
+			{Role: "tool", At: spawn.Add(4 * time.Second), Parts: rt.ToolResult("c1", "")},
+			{Role: "assistant", At: spawn.Add(5 * time.Second), Parts: rt.FinishError("Unauthorized", "sent Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz")},
+		}))
+	a := attribute(t, crushHarness(t, "sweep", work, nil), Window{Start: spawn, End: spawn.Add(time.Minute)})
+	entries, errs := Events(context.Background(), a, false, spawn.Add(time.Hour))
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	masked := 0
+	for _, e := range entries {
+		for _, s := range []string{e.Target, e.Summary} {
+			if strings.Contains(s, "0123456789abcdef0123") || strings.Contains(s, "sk-abcdefghij") {
+				t.Errorf("entry %s carries a credential: %q", e.ID, s)
+			}
+			if strings.Contains(s, redact.Mask) {
+				masked++
+			}
+		}
+	}
+	if masked < 2 {
+		t.Errorf("entries = %+v, want the remote's password and the bearer token both masked", entries)
 	}
 }

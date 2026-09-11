@@ -482,7 +482,13 @@ func (s *Supervisor) beginStart() {
 	cols, rows := s.spawnSize()
 	proc, err := spawn(s.harness, cols, rows)
 	if err != nil {
-		// Treat a spawn failure like an immediate crash.
+		// Treat a spawn failure like an immediate crash. It is still the
+		// latest run, so it gets a start: onProcessGone stamps LastExitAt,
+		// and with no matching LastStarted that exit closes the PREVIOUS
+		// run's window at this moment — a day-long window for a daily sweep,
+		// credited with every session in between (SPEC-0006 REQ "Run
+		// Correlation").
+		s.lastStarted = time.Now()
 		s.onProcessGone(-1, err != nil)
 		return
 	}

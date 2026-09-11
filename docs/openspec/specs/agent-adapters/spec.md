@@ -288,12 +288,13 @@ following hold, and SHALL NOT attribute it otherwise (issue #89):
    run (an in-flight run's end is now). The two-second slack covers
    second-truncated storage, nothing more: every timestamp involved comes from
    the same machine's clock.
-4. **No other claimant.** No other harness shares the workdir, could have
-   written that kind of session (the same adapter, or `generic`, which may run
-   any tool), and has a known run covering the session's start. A session with
-   any other claimant SHALL be excluded for every claimant, and the exclusion
-   SHALL be reported — session, start time, claimants — rather than dropped
-   silently.
+4. **No other claimant.** No other harness shares the workdir (compared after
+   resolving symlinks; a harness with no workdir shares the daemon's), could
+   have written that kind of session (the same adapter, or `generic`, which may
+   run any tool), and either has a known run covering the session's start or
+   has no record of its runs that far back. A session with any other claimant
+   SHALL be excluded for every claimant, and the exclusion SHALL be reported —
+   session, start time, claimants — rather than dropped silently.
 
 **Run windows.** The inspected run's window SHALL come from the supervisor's
 own record (`last_started`, and `last_exit_at` when it closes that run; both
@@ -305,9 +306,21 @@ SHALL include their supervisor record plus every run their durable logs record.
 Lifecycle lines share a file with program output, so a log-derived window SHALL
 only ever add claimants; it never widens what an inspected run is credited with.
 
+A spawn that fails is still the latest run and SHALL record a start, so its exit
+never closes an earlier run's window. A run with no recorded end that began
+before the current daemon started SHALL be closed at that daemon's start: a
+harness is not supervised past the daemon that spawned it, and an open window
+would credit it with every later session in its workdir. A consumer that holds
+only each harness's latest run — the chatroom, from `list` — SHALL treat a
+harness's history before that run, or before an exit with no recorded start, as
+unknown, so a session older than a sibling's latest start is credited to no one.
+
 **Event scope.** Only the events of attributed sessions whose own timestamps fall
-inside the window are reported, so a session resumed in a later run reports each
-run's events under that run.
+inside the window are reported, so a session that continues past its run — for
+example one a later run resumes — reports none of that later activity under the
+run that started it. The later run is not credited with the resumed session
+either, because the session started outside its window; that activity is not
+shown by this view.
 
 **Threat model and residual gaps.** No supported transcript records the process
 that wrote it (the `HARNESS_RUN_ID` environment-stamping idea has nothing to
@@ -321,7 +334,12 @@ distinguish:
 - a peer harness's run older than that peer's durable-log retention, which
   therefore adds no claimant;
 - a store relocated by a tool config file rather than the environment and not
-  recorded in the instance's registry.
+  recorded in the instance's registry;
+- a harness since removed from the configuration or renamed, whose past runs
+  therefore add no claimant;
+- a peer's log-derived window after the daemon's time zone changes, or in the
+  repeated hour when clocks fall back: lifecycle stamps are zoneless local wall
+  time, read in the daemon's current zone.
 
 Attribution is not an exposure control. Harvest Opt-In below remains the gate for
 the facade; this requirement decides what `harness logs` and the chatroom credit
@@ -362,6 +380,18 @@ to a harness.
 - **WHEN** a harness's last run ended and the daemon has since restarted
 - **THEN** the run's window is restored from the state file and its sessions
   are still attributed
+
+#### Scenario: A run the daemon died with does not stay open
+
+- **WHEN** a harness's last run has no recorded end and began before the
+  current daemon started
+- **THEN** its window closes at the daemon's start, and the reply says so
+
+#### Scenario: A latest-run view does not guess across a restarted sibling
+
+- **WHEN** a consumer holding only each harness's latest run sees a session that
+  started before a same-workdir sibling's latest run began
+- **THEN** the session is credited to no harness
 
 ### Requirement: Harvest Opt-In
 

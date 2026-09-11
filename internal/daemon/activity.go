@@ -20,11 +20,16 @@ package daemon
 // fallback record), issues #302 and #89.
 //
 // @joestump-agent 09/11/2026 - Added for harness#302.
+//
+// @joestump-agent 09/11/2026 - Review of #307: a dead run's open window closes
+// at this daemon's start; peers match through symlinks, and a peer with no
+// workdir claims the daemon's own directory.
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,7 +75,7 @@ func (c *conn) activity(req protocol.ControlReq, snap supervisor.Snapshot, lines
 	if lerr != nil {
 		data.Notices = append(data.Notices, fmt.Sprintf("lifecycle lines partly unreadable: %v", lerr))
 	}
-	w, exit, note, err := runWindow(req, snap, supervisor.RunSpans(lifecycle))
+	w, exit, note, err := runWindow(req, snap, supervisor.RunSpans(lifecycle), c.srv.started)
 	if err != nil {
 		return data, err
 	}
@@ -161,8 +166,9 @@ const fallbackTailLines = 40
 //     at all — they share a file with program output, so they never override
 //     the supervisor's record.
 //
-// A closed run's exit code is returned when one was recorded.
-func runWindow(req protocol.ControlReq, snap supervisor.Snapshot, spans []supervisor.RunSpan) (runtrace.Window, *int, string, error) {
+// A closed run's exit code is returned when one was recorded. A run with no
+// recorded end that began before daemonStart is closed there (endedBy).
+func runWindow(req protocol.ControlReq, snap supervisor.Snapshot, spans []supervisor.RunSpan, daemonStart time.Time) (runtrace.Window, *int, string, error) {
 	if req.Since != "" {
 		start, err := time.Parse(time.RFC3339Nano, req.Since)
 		if err != nil {
@@ -187,6 +193,9 @@ func runWindow(req protocol.ControlReq, snap supervisor.Snapshot, spans []superv
 					w.End, exit = s.End, s.ExitCode
 				}
 			}
+			if closed, ok := endedBy(w, daemonStart); ok {
+				return closed, nil, "no exit was recorded for this run; it ended no later than this daemon's start, so its window closes there", nil
+			}
 			if w.Open() {
 				return w, nil, "no exit was recorded for this run; its window is left open", nil
 			}
@@ -195,10 +204,28 @@ func runWindow(req protocol.ControlReq, snap supervisor.Snapshot, spans []superv
 	}
 	if len(spans) > 0 {
 		last := spans[len(spans)-1]
-		return runtrace.Window{Start: last.Start, End: last.End}, last.ExitCode,
-			"run window recovered from the durable log's lifecycle lines", nil
+		w := runtrace.Window{Start: last.Start, End: last.End}
+		note := "run window recovered from the durable log's lifecycle lines"
+		if closed, ok := endedBy(w, daemonStart); ok {
+			w = closed
+			note += "; no exit was recorded, so it closes at this daemon's start"
+		}
+		return w, last.ExitCode, note, nil
 	}
 	return runtrace.Window{}, nil, "", nil
+}
+
+// endedBy closes an open window that began before daemonStart. A harness runs
+// under its daemon's PTY and nothing re-adopts it after a restart, so a run
+// with no recorded end was over, as far as supervision knows, when this daemon
+// started. Left open it would be credited with every session in its workdir
+// since — including ones the operator started by hand.
+func endedBy(w runtrace.Window, daemonStart time.Time) (runtrace.Window, bool) {
+	if !w.Open() || daemonStart.IsZero() || !w.Start.Before(daemonStart) {
+		return w, false
+	}
+	w.End = daemonStart
+	return w, true
 }
 
 // snapshotWindow is the latest run as the supervisor recorded it.
@@ -227,6 +254,9 @@ func (c *conn) peerScopes(target runtrace.Scope) ([]runtrace.Scope, []string) {
 	mgr := c.srv.mgr
 	var peers []runtrace.Scope
 	var notes []string
+	// A harness with no workdir is spawned in the daemon's own, and writes its
+	// stores there like any other peer.
+	daemonDir, _ := os.Getwd()
 	for _, snap := range mgr.Snapshots() {
 		if snap.Name == target.Name {
 			continue
@@ -236,7 +266,10 @@ func (c *conn) peerScopes(target runtrace.Scope) ([]runtrace.Scope, []string) {
 			continue
 		}
 		p := runtrace.Scope{Name: snap.Name, Adapter: h.Adapter, Workdir: supervisor.Workdir(h)}
-		if p.Workdir == "" || !sameDir(p.Workdir, target.Workdir) || !runtrace.CouldWrite(p.Adapter, target.Adapter) {
+		if p.Workdir == "" {
+			p.Workdir = daemonDir
+		}
+		if !runtrace.CouldWrite(p.Adapter, target.Adapter) || !runtrace.SameDir(p.Workdir, target.Workdir) {
 			continue
 		}
 		if w, _, ok := snapshotWindow(snap); ok {
@@ -268,8 +301,14 @@ type orderedEntry struct {
 // nanosecond after the one before it in the same second, which keeps that order
 // through the merge. Shifting "ending" lines to the end of their second instead
 // looked right for a lone exit and was wrong for a restart: on tars it printed
-// `starting → running` before the `stopping → stopped` it followed. Within a
-// shared second the lifecycle lines therefore print ahead of agent events.
+// `starting → running` before the `stopping → stopped` it followed.
+//
+// The offsets start at one nanosecond, not zero, so an agent event stamped at
+// the top of the same second — crush stores whole seconds — prints before the
+// lifecycle lines in it. That is the order at an exit: the provider error a run
+// died on lands in the second of the `exited` it caused, and printed after it.
+// At a start there is no tie to break, because a session is not open in the
+// second its process spawned.
 func lifecycleEntries(lines []supervisor.LifecycleEntry, w runtrace.Window, now time.Time) []orderedEntry {
 	var out []orderedEntry
 	var second time.Time
@@ -288,7 +327,7 @@ func lifecycleEntries(lines []supervisor.LifecycleEntry, w runtrace.Window, now 
 			Time: l.Time.Format(time.RFC3339Nano),
 			Kind: protocol.LogEntryLifecycle,
 		}
-		at := l.Time.Add(nth)
+		at := l.Time.Add(nth + 1)
 		switch l.Msg {
 		case "state changed":
 			e.Action = "state"
@@ -363,14 +402,6 @@ func otherClaimants(self string, excluded []runtrace.Exclusion) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func sameDir(a, b string) bool {
-	return a != "" && b != "" && cleanPath(a) == cleanPath(b)
-}
-
-func cleanPath(p string) string {
-	return strings.TrimRight(p, "/")
 }
 
 func absDuration(d time.Duration) time.Duration {
