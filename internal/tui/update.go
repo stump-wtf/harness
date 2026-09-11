@@ -232,6 +232,7 @@ func (m *Model) onRefresh(msg refreshMsg) (tea.Model, tea.Cmd) {
 		prevName = sel.Name
 	}
 	m.harnesses = msg.harnesses
+	m.syncAttribution()
 	m.profiles = msg.profiles
 	m.daemon = msg.daemon
 	// Advisory build-skew banner (#181): recompute on every refresh so a
@@ -287,6 +288,7 @@ func (m *Model) onReloadResult(msg reloadResultMsg) (tea.Model, tea.Cmd) {
 	}
 	m.banner = ""
 	m.harnesses = msg.harnesses
+	m.syncAttribution()
 	m.clampSel()
 	m.scrollListToSel()
 	return m, fetchState(m.ctrl)

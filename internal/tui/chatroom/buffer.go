@@ -25,13 +25,18 @@ import (
 // HarnessIdentity maps a tail.Harness to its chatroom display identity.
 type HarnessIdentity struct {
 	Harness  tail.Harness
-	Username string // e.g. "@claude-code"
+	Username string // e.g. "@claude-code", or "@<harness>" once attributed
 }
 
+// harnessIdentities are the tool-level identities a session shows under until
+// it is attributed to a harness. They name the TOOL, never a harness: crush's
+// used to be "@crush-signal", which labelled every crush session on the machine
+// — the sweeps, the switchboard agent, an operator's interactive run — as one
+// particular harness (issue #302).
 var harnessIdentities = map[tail.Harness]HarnessIdentity{
 	tail.HarnessClaudeCode: {Harness: tail.HarnessClaudeCode, Username: "@claude-code"},
 	tail.HarnessCodex:      {Harness: tail.HarnessCodex, Username: "@codex"},
-	tail.HarnessCrush:      {Harness: tail.HarnessCrush, Username: "@crush-signal"},
+	tail.HarnessCrush:      {Harness: tail.HarnessCrush, Username: "@crush"},
 	tail.HarnessOpenCode:   {Harness: tail.HarnessOpenCode, Username: "@opencode"},
 	tail.HarnessPi:         {Harness: tail.HarnessPi, Username: "@pi"},
 }
@@ -389,6 +394,16 @@ func (b *EventBuffer) Restyle() {
 	b.dirty = true
 }
 
+// Relabel rewrites every buffered event's identity and drops the cached
+// renderings built under the old one. The line count per event does not
+// change, so a scroll offset stays valid.
+func (b *EventBuffer) Relabel(identity func(tail.SessionMeta) HarnessIdentity) {
+	for i := range b.events {
+		b.events[i].Identity = identity(b.events[i].Event.Session)
+	}
+	b.Restyle()
+}
+
 // admits reports whether the current filter shows re.
 func (b *EventBuffer) admits(re RenderableEvent) bool {
 	if b.filter == AllHarnesses() {
@@ -464,6 +479,11 @@ type Model struct {
 	follow bool
 
 	errMsg string
+
+	// attribute names the harness a session belongs to, or "" when no single
+	// harness can be credited with it (SPEC-0006 REQ "Run Correlation"). Nil
+	// labels every session with its tool.
+	attribute func(tail.SessionMeta) string
 }
 
 func New(t *theme.Theme, logger *slog.Logger) *Model {
@@ -481,7 +501,39 @@ func New(t *theme.Theme, logger *slog.Logger) *Model {
 // view is on screen: rendering is deferred to Lines, which nobody calls while
 // the chatroom is closed.
 func (m *Model) Add(ev tail.Event) {
-	m.buffer.Insert(MakeRenderable(ev), m.styles)
+	re := MakeRenderable(ev)
+	re.Identity = m.identity(ev.Session)
+	m.buffer.Insert(re, m.styles)
+}
+
+// SetAttributor installs the function that names a session's harness and
+// relabels what is already buffered with it.
+//
+// Governing: ADR-0015, SPEC-0009 REQ "Harness Identity Display", SPEC-0006 REQ
+// "Run Correlation".
+func (m *Model) SetAttributor(fn func(tail.SessionMeta) string) {
+	m.attribute = fn
+	m.Reattribute()
+}
+
+// Reattribute relabels every buffered event. Attribution depends on what the
+// daemon reports about each harness's runs, which arrives after the watcher's
+// first events and changes whenever a harness starts or exits — so a label
+// computed on arrival has to be recomputable.
+func (m *Model) Reattribute() {
+	m.buffer.Relabel(m.identity)
+}
+
+// identity is the tool identity, with the harness name as the username when
+// the session is attributable to exactly one harness.
+func (m *Model) identity(meta tail.SessionMeta) HarnessIdentity {
+	id := IdentityFor(meta.Harness)
+	if m.attribute != nil {
+		if name := m.attribute(meta); name != "" {
+			id.Username = "@" + name
+		}
+	}
+	return id
 }
 
 // Settle re-anchors the scroll after a batch of Adds. Separate from Add so a
@@ -621,8 +673,8 @@ func (m *Model) renderStatusBar() string {
 		return left + strings.Repeat(" ", gap+2) + hints
 	}
 	// The state alone can outrun a narrow terminal: a partial filter spells out
-	// every harness it kept, so "filter: @claude-code @codex @crush-signal
-	// @opencode" is 51 columns before the LIVE indicator and the event count.
+	// every harness it kept, so "filter: @claude-code @codex @crush @opencode"
+	// is 44 columns before the LIVE indicator and the event count.
 	// Dropping the hints is not enough on its own — StatusBar.Width() WRAPS
 	// what overflows, which costs a display row the height budget never counted
 	// and overwrites the last row of the stream with the remainder.

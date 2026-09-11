@@ -238,5 +238,6 @@ func (m *Model) onAgentEvents(msg agentEventMsg) (tea.Model, tea.Cmd) {
 func (m *Model) ensureChatroom() {
 	if m.chatroom == nil {
 		m.chatroom = chatroom.New(m.theme, slog.Default())
+		m.chatroom.SetAttributor(m.attributeSession)
 	}
 }

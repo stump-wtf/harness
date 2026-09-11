@@ -26,6 +26,7 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"gitea.stump.rocks/stump.wtf/harness/internal/runtrace"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/keys"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
@@ -213,6 +214,10 @@ type Model struct {
 	// is on screen, so opening it shows what has been happening rather than an
 	// empty stream while a fresh scan runs.
 	chatroom *chatroom.Model
+	// traceScopes/traceKey are the run-correlation view of m.harnesses the
+	// chatroom attributes sessions with, and its fingerprint (attribution.go).
+	traceScopes []runtrace.Scope
+	traceKey    string
 
 	// lastActions tracks the most recent agent action per session working
 	// directory, for the dashboard's live activity field. Fed by a background

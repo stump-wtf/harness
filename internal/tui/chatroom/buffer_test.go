@@ -19,7 +19,7 @@ func TestIdentityFor(t *testing.T) {
 	}{
 		{tail.HarnessClaudeCode, "@claude-code"},
 		{"codex", "@codex"},
-		{tail.HarnessCrush, "@crush-signal"},
+		{tail.HarnessCrush, "@crush"},
 		{tail.HarnessOpenCode, "@opencode"},
 		{"pi", "@pi"},
 		{"unknown", "@unknown"},
@@ -73,8 +73,8 @@ func TestMakeRenderable(t *testing.T) {
 
 	re := MakeRenderable(ev)
 
-	if re.Identity.Username != "@crush-signal" {
-		t.Errorf("Username = %q, want @crush-signal", re.Identity.Username)
+	if re.Identity.Username != "@crush" {
+		t.Errorf("Username = %q, want @crush", re.Identity.Username)
 	}
 	if re.Badge != "[EXEC]" {
 		t.Errorf("Badge = %q, want [EXEC]", re.Badge)

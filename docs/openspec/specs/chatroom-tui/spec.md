@@ -70,13 +70,23 @@ Each harness SHALL have a distinct visual identity in the chatroom.
 
 #### Scenario: Harness Username
 
-- **WHEN** rendering an event from a harness
-- **THEN** the chatroom view SHALL display the harness username prefix:
+- **WHEN** rendering an event whose session SPEC-0006 REQ "Run Correlation"
+  attributes to exactly one harness — same adapter and workdir, a known run of
+  that harness covering the session's start, and no other claimant
+- **THEN** the username SHALL be `@<harness name>` (e.g. `@stumpcloud-sweep-pdx`)
+- **WHEN** the session is not attributable to exactly one harness
+- **THEN** the username SHALL be the tool identity, which names no harness:
   - `claude-code` → `@claude-code`
   - `codex` → `@codex`
-  - `crush` → `@crush-signal`
+  - `crush` → `@crush`
   - `opencode` → `@opencode`
   - `pi` → `@pi`
+- **THEN** usernames SHALL be recomputed whenever the daemon's harness list
+  changes, since a run starting or ending changes what is attributable
+
+The tool identity was once `@crush-signal` for crush, which labelled every crush
+session on the machine — scheduled sweeps, other agents, interactive runs — as
+one particular harness (issue #302).
 
 #### Scenario: Harness Color
 
@@ -86,7 +96,7 @@ Each harness SHALL have a distinct visual identity in the chatroom.
   through the same light/dark and `colorprofile` path as the rest of the TUI:
   - `@claude-code`: `Accent` (Charm purple — `#5A3FD6` light / `#7D56F4` dark)
   - `@codex`: `Mint` (`#009E70` / `#00F0A8`)
-  - `@crush-signal`: `Amber` (`#B26A00` / `#FFB454`)
+  - crush (`@crush`, or an attributed crush harness): `Amber` (`#B26A00` / `#FFB454`)
   - `@opencode`: `Cyan` (`#0E8FB0` / `#4EE6FF`)
   - `@pi`: `Pink` (`#D6247A` / `#FF5FA2`)
 - **THEN** no new palette token SHALL be introduced for harness identity; `Coral` stays reserved
@@ -100,7 +110,7 @@ Tool calls SHALL render as chat messages with action type badges.
 
 - **WHEN** a `classify.Event` with `Action` ≠ `ActionOther` is received
 - **THEN** the chatroom view SHALL render a message:
-  - Username in harness color (e.g., `@crush-signal`)
+  - Username in harness color (e.g., `@pr-sweep`, or `@crush` when unattributed)
   - Action badge: `[SEARCH]`, `[READ]`, `[EDIT]`, `[EXEC]`, `[VERIFY]`, `[OTHER]`
   - Tool name (e.g., `grep`, `bash`, `read_file`)
   - Summary from `Event.Summary` (truncated to 80 chars)

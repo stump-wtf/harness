@@ -155,5 +155,6 @@ graph TD
 * New chatroom code will live under `internal/tui/` within Harness; the exact package layout is deferred to implementation, since `internal/tui` is a flat package today with no `views/` tree
 * Uses Harness's existing bubbletea setup, theming (lipgloss), and viewport components
 * Harness usernames: `@claude-code`, `@codex`, `@crush-signal`, `@opencode`, `@pi`
+  * *(Amended, issue #302: `@crush-signal` named one particular harness but labelled every crush session on the machine. Tool identities are now `@claude-code`, `@codex`, `@crush`, `@opencode`, `@pi`, and a session SPEC-0006 REQ "Run Correlation" attributes to exactly one harness shows as `@<harness name>` — see SPEC-0009 REQ "Harness Identity Display".)*
 * Colors drawn from the existing `internal/tui/theme` palette (Accent, Mint, Amber, Cyan, Pink) so the chatroom degrades through the same `colorprofile` path as the rest of the TUI
 * Integrates with Harness daemon for supervision/lifecycle management
