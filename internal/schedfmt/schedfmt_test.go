@@ -73,6 +73,25 @@ func TestLabel(t *testing.T) {
 		{"month-step-daily", "0 9 * */3 *", ""},
 		{"month-step-monthly", "0 0 1 */2 *", ""},
 		{"dow-step", "0 9 * * */2", "day */2 09:00"},
+		// A CRON_TZ=/TZ= prefix pins the zone (SPEC-0008 REQ "Schedule Time
+		// Zone"). A label naming a time of day or a calendar boundary carries
+		// it, because "daily 09:00" alone reads as local time; a pure cadence
+		// is the same in every zone and does not. The prefix must never leak
+		// into the field split, where it made every prefixed expression read
+		// as six fields and render nothing.
+		//
+		// @joestump-agent 09/11/2026 - Added for issue #117.
+		{"cron-tz-daily", "CRON_TZ=UTC 0 9 * * *", "daily 09:00 UTC"},
+		{"tz-daily", "TZ=UTC 30 9 * * *", "daily 09:30 UTC"},
+		{"cron-tz-weekly-named-zone", "CRON_TZ=America/New_York 0 7 * * 1", "Mondays 07:00 America/New_York"},
+		{"cron-tz-monthly", "CRON_TZ=UTC 0 0 15 * *", "monthly 00:00 UTC"},
+		{"cron-tz-hourly-minute", "CRON_TZ=Asia/Kolkata 15 * * * *", "hourly :15 Asia/Kolkata"},
+		{"cron-tz-daily-descriptor", "CRON_TZ=UTC @daily", "daily UTC"},
+		{"cron-tz-interval", "CRON_TZ=UTC 0 */6 * * *", "every 6h"},
+		{"cron-tz-every", "CRON_TZ=UTC @every 6h", "every 6h"},
+		{"cron-tz-hourly-descriptor", "CRON_TZ=UTC @hourly", "hourly"},
+		{"cron-tz-irregular", "CRON_TZ=UTC 0 */7 * * *", ""},
+		{"cron-tz-without-expression", "CRON_TZ=UTC", ""},
 	}
 	for _, tc := range cases {
 		if got := Label(tc.in); got != tc.want {
@@ -96,6 +115,8 @@ func TestLabelOrRaw(t *testing.T) {
 		// The raw expression is strictly better than a false paraphrase: this
 		// one is daily at 09:00 for four months of the year, not "every 1d".
 		{"0 9 * */3 *", "0 9 * */3 *"},
+		{"CRON_TZ=UTC 0 9 * * *", "daily 09:00 UTC"},
+		{"CRON_TZ=UTC 0 */7 * * *", "CRON_TZ=UTC 0 */7 * * *"},
 	}
 	for _, tc := range cases {
 		if got := LabelOrRaw(tc.in); got != tc.want {

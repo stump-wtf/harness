@@ -119,41 +119,76 @@ func ShortDuration(d time.Duration) string {
 //
 // Clock-shaped cadences are named from the fields, because rendering "09:30"
 // requires reading them. Everything else falls through to interval().
+//
+// A CRON_TZ=/TZ= prefix pins the zone the scheduler reads the expression in,
+// whatever the daemon's own zone is (SPEC-0008 REQ "Schedule Time Zone"). A
+// label naming a wall-clock time or a calendar boundary carries that zone as a
+// suffix — "daily 09:00 UTC" — because "daily 09:00" alone reads as local time
+// and would be hours wrong on any other machine. A pure cadence ("every 6h",
+// "hourly") is the same in every zone and stays unsuffixed.
 func Label(schedule string) string {
+	zone, expr := splitZone(schedule)
+	label, wallClock := cadence(expr)
+	if label == "" || zone == "" || !wallClock {
+		return label
+	}
+	return label + " " + zone
+}
+
+// splitZone separates robfig/cron's CRON_TZ=<zone> or TZ=<zone> prefix from
+// the expression behind it, splitting on the first space exactly as the
+// parser does. No prefix returns ("", schedule).
+func splitZone(schedule string) (zone, expr string) {
+	for _, prefix := range []string{"CRON_TZ=", "TZ="} {
+		if rest, ok := strings.CutPrefix(schedule, prefix); ok {
+			zone, expr, found := strings.Cut(rest, " ")
+			if !found {
+				return "", "" // a zone with no expression: nothing to label
+			}
+			return zone, strings.TrimSpace(expr)
+		}
+	}
+	return "", schedule
+}
+
+// cadence is Label for an expression with no zone prefix. wallClock reports
+// whether the label names a time of day or a calendar boundary, and so depends
+// on the zone it is read in.
+func cadence(schedule string) (label string, wallClock bool) {
 	if schedule == "" {
-		return ""
+		return "", false
 	}
 	switch {
 	case strings.HasPrefix(schedule, "@every "):
 		dur := strings.TrimPrefix(schedule, "@every ")
-		return "every " + dur
+		return "every " + dur, false
 	case schedule == "@daily":
-		return "daily"
+		return "daily", true
 	case schedule == "@hourly":
-		return "hourly"
+		return "hourly", false
 	case schedule == "@weekly":
-		return "weekly"
+		return "weekly", true
 	case schedule == "@monthly":
-		return "monthly"
+		return "monthly", true
 	}
 	parts := strings.Fields(schedule)
 	if len(parts) != 5 {
-		return ""
+		return "", false
 	}
 	minute, hour, dom, month, dow := parts[0], parts[1], parts[2], parts[3], parts[4]
 	timeStr := formatCronTime(hour, minute)
 	switch {
 	case dom != "*" && month == "*" && dow == "*":
-		return fmt.Sprintf("monthly %s", timeStr)
+		return fmt.Sprintf("monthly %s", timeStr), true
 	case dow != "*" && dom == "*" && month == "*":
 		dayName := cronDayName(dow)
 		if dayName != "" {
-			return fmt.Sprintf("%s %s", dayName, timeStr)
+			return fmt.Sprintf("%s %s", dayName, timeStr), true
 		}
-		return fmt.Sprintf("day %s %s", dow, timeStr)
+		return fmt.Sprintf("day %s %s", dow, timeStr), true
 	case hour != "*" && minute != "*" && dom == "*" && month == "*" && dow == "*":
 		if !strings.Contains(hour, "/") && !strings.Contains(hour, ",") && !strings.Contains(hour, "-") {
-			return fmt.Sprintf("daily %s", timeStr)
+			return fmt.Sprintf("daily %s", timeStr), true
 		}
 	case hour == "*" && minute != "*" && dom == "*" && month == "*" && dow == "*":
 		// Only a single literal minute reads as "hourly :MM". A step, list or
@@ -162,7 +197,9 @@ func Label(schedule string) string {
 		// to the interval check below, which either names the cadence or
 		// declines.
 		if isLiteralField(minute) {
-			return fmt.Sprintf("hourly :%s", minute)
+			// The minute past the hour is wall clock: zones offset by a
+			// half hour put it somewhere else.
+			return fmt.Sprintf("hourly :%s", minute), true
 		}
 	}
 
@@ -170,9 +207,9 @@ func Label(schedule string) string {
 	// actually fires: if every gap is the same, it IS an interval and reads as
 	// "every 6h".
 	if d, ok := interval(schedule); ok {
-		return "every " + ShortDuration(d)
+		return "every " + ShortDuration(d), false
 	}
-	return ""
+	return "", false
 }
 
 // interval reports the firing period of a schedule, and whether it has one at
