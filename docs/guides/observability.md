@@ -22,6 +22,14 @@ harness logs NAME --follow            # keep printing as the agent works
 harness logs NAME --raw               # the durable log: raw output + lifecycle lines
 harness logs NAME --json              # structured, for scripts
 harness logs NAME --include-ambiguous # also sessions another harness could have written
+harness logs NAME --run 12            # one run of a scheduled harness
+```
+
+For scheduled harnesses, two more verbs find the run worth reading:
+
+```sh
+harness jobs                          # every scheduled harness: next run, last run, failure streak
+harness runs NAME                     # its run history: trigger, outcome, duration, exit code
 ```
 
 For an agent harness, `harness logs` reads the agent's **own session

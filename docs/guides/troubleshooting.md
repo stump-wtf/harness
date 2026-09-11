@@ -119,36 +119,41 @@ What to do right away:
 Check whether the daemon knows about the schedule at all:
 
 ```sh
-harness list                   # a scheduled harness shows ⏱ and "· in 3h12m"
-harness describe NAME          # schedule + next run
+harness jobs                   # every scheduled harness: schedule, next run, last run, failure streak
+harness runs NAME              # what each window did: success, failed, skipped, missed…
+harness describe NAME          # the cron spec and the absolute next run
 ```
 
-- **No `⏱`, or the harness is missing.** The config didn't load, or the
+- **It isn't in `harness jobs`.** The config didn't load, or the
   harness is in a drop-in the daemon hasn't read. `harness doctor` shows a parse
   error with its file and line. For drop-ins, run `harness reload` (see
   [the config didn't reload](#the-config-didnt-reload)).
 - **The machine was asleep or the daemon was down at that time.** The window
-  was **missed**. The daemon log has a `scheduled run MISSED` warning, and
-  nothing ran because `catch_up` defaults to `false`. Set `catch_up = true` for
-  work that should run once on wake.
+  was **missed**. `harness runs NAME` shows a `missed` record, the daemon log has
+  a `scheduled run MISSED` warning, and nothing ran because `catch_up` defaults
+  to `false`. Set `catch_up = true` for work that should run once on wake.
 - **It fired at the "wrong" time.** Without a prefix, a schedule uses the
   daemon's local time zone. `harness describe` shows the next run; compare it to
   what you expected, and pin the zone with `CRON_TZ=UTC`
   ([why](./scheduled-sweeps#schedule-cron-pinned-to-a-zone)).
 - **The previous run was still going.** With `on_overlap = "skip"`, the
   default, a window that fires mid-run records `skipped` and does nothing. A run
-  that never ends skips every later window. Check with
-  `grep -h 'run finished' ~/.local/state/harness/jobs/NAME/*.log`, and set a
-  `timeout`.
-- **It fired, and the run failed fast.** `harness logs NAME` shows the run with
-  its exit code. Work through [it keeps restarting](#it-keeps-restarting) for
-  the cause.
+  that never ends skips every later window. `harness runs NAME` shows the
+  `skipped` records, and `harness jobs` shows the stuck run as `running #N`. Set
+  a `timeout`.
+- **It fired, and the run failed fast.** `harness runs NAME` shows `failed`
+  with its exit code, and `harness logs NAME --run N` shows what it did. Work
+  through [it keeps restarting](#it-keeps-restarting) for the cause.
 - **It ran on a different machine.** A synced config fires on every host
   running a daemon. Keep scheduled harnesses in a per-host drop-in directory
   ([details](./scheduled-sweeps#a-schedule-runs-on-exactly-one-machine)).
 
-To rule out the schedule entirely, run it now with `harness start NAME` and
-watch with `harness logs NAME --follow`.
+To rule out the schedule entirely, run it now and watch:
+
+```sh
+harness trigger NAME --wait
+echo $?        # the run's exit code; 124 = timed out, 75 = skipped (a run was in flight)
+```
 
 ## The config didn't reload
 

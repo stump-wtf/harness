@@ -176,6 +176,7 @@ late is **missed**, and `catch_up` decides what happens:
 
 ```toml
 [harness.nightly-sweep]
+harness = "crush"
 prompt = "…"
 schedule = "CRON_TZ=UTC 0 3 * * *"
 catch_up = true   # default false
@@ -197,6 +198,7 @@ Every run of a scheduled harness gets a numbered record and a log of its own:
 
 ```toml
 [harness.nightly-sweep]
+harness = "crush"
 prompt = "…"
 schedule = "CRON_TZ=UTC 0 3 * * *"
 timeout = "45m"        # default "1h"; "0" = no limit
@@ -220,8 +222,10 @@ keep_runs = 30         # default 20
   finishes (holding at most one); `replace` stops the current run and starts the
   new one.
 
-All three keys require `schedule`. Reading history and per-run logs from the CLI
-(`harness runs`, `harness logs --run`) is coming in a later release.
+All three keys require `schedule`. Read history and per-run logs from the CLI
+with `harness jobs`, `harness runs <name>` and `harness logs <name> --run N`, and
+run a job now with `harness trigger <name>` — see
+[CLI → Scheduled jobs](./cli#scheduled-jobs).
 
 `harness list` marks a scheduled harness inline — a clock glyph in place of the
 state glyph, and the next firing appended to its description (`· in 4h3m`).

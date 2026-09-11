@@ -207,20 +207,69 @@ description. `ENABLED no` is normal: the schedule starts it, not autostart.
 `harness describe pr-sweep` adds the cron spec and the absolute time of the next
 run.
 
-To run a sweep **right now**, for example to test a prompt change, start it by
-hand:
+`harness jobs` shows only the scheduled harnesses, with the schedule in words,
+the next window, the latest run, and the current streak of failures:
 
 ```sh
-harness start pr-sweep
+$ harness jobs
+NAME           STATE    SCHEDULE         NEXT        LAST RUN             FAILS
+nightly-sweep  ⏱ idle   daily 03:00 UTC  in 7h56m    #14 success 21h ago  0
+triage         ⏱ idle   every 6h         in 4h56m    #31 failed 1h ago    2
 ```
 
-That run is recorded with `trigger=manual`, and the schedule carries on as
-before.
+`FAILS` counts consecutive `failed` and `timed_out` runs back to the last
+success. A number that keeps climbing is the first thing to look at.
+
+### Run it now
+
+To run a sweep **right now**, for example to test a prompt change, trigger it:
+
+```sh
+$ harness trigger pr-sweep --wait
+pr-sweep: started run #13
+2026/09/11 21:04:01 INFO run started run_id=13 trigger=manual
+…the run's log streams here…
+2026/09/11 21:10:42 INFO run finished run_id=13 outcome=success exit_code=0
+pr-sweep: run #13 success (exit 0) after 6m41s
+```
+
+A triggered run goes through the same path as a scheduled firing, so `timeout`,
+`on_overlap`, run history and the per-run log all apply. It is recorded with
+`trigger=manual`, and the schedule carries on as before. Without `--wait`,
+`trigger` starts the run and returns immediately.
+
+With `--wait`, the command exits the way the run did, so scripts can use it like
+the command it wraps:
+
+| Exit code | Meaning |
+|-----------|---------|
+| the run's own exit code | the run finished; `0` is success |
+| `124` | the run hit `timeout` |
+| `75` | a run was already in flight, so this trigger was recorded as `skipped` |
+| `1` | the run failed without a usable exit code |
+
+`trigger` only accepts scheduled harnesses; use `harness start` for anything
+else.
 
 ## Reading run outcomes
 
 Every run gets a numbered record in the daemon's state and a log file of its
-own. `harness logs` shows the latest run:
+own. `harness runs` lists the records, newest first:
+
+```sh
+$ harness runs pr-sweep --limit 3
+RUN   TRIGGER    OUTCOME    STARTED        DURATION   EXIT
+14    manual     skipped    Sep 11 14:02   —          —
+13    manual     success    Sep 11 14:00   6m41s      0
+12    schedule   failed     Sep 10 14:00   2m03s      1
+```
+
+Firings that started nothing, such as `skipped` and `missed`, are recorded too,
+so a quiet history still tells you what happened. `--json` gives the same
+records to scripts.
+
+`harness logs` shows what a run did. Without `--run` it shows the latest run;
+`harness logs pr-sweep --run 12` shows run 12:
 
 ```sh
 $ harness logs pr-sweep
@@ -259,6 +308,10 @@ $ harness logs pr-sweep --raw --lines 20
 2026/09/11 14:06:41 INFO state changed from=running to=stopped
 2026/09/11 14:06:41 INFO run finished run_id=12 outcome=success exit_code=0
 ```
+
+`--run N` works with `--raw` too. It can't be combined with `--follow`; to watch
+a run as it happens, use `harness trigger NAME --wait` or `harness logs NAME
+--follow`.
 
 Each run's log is also a plain file, which makes history easy to grep:
 
@@ -392,8 +445,9 @@ description = "morning CI digest"
 
 ```sh
 harness reload                       # pick up the new drop-in
-harness start ci-digest              # try it once now
-harness logs ci-digest --follow      # watch it run
+harness trigger ci-digest --wait     # run it once now, and watch it
+harness runs ci-digest               # its history from here on
+harness jobs                         # every sweep at a glance
 ```
 
 Next: [push events with MCP channels](./push-events), where agents wake on events
