@@ -85,6 +85,17 @@ type Manager struct {
 	// it. Recorded here so boot can log it and doctor can show it.
 	dormantAutostart []string
 
+	// scheduleMarks is the scheduler's durable per-harness position
+	// (ADR-0013; SPEC-0008 REQ "Missed Window Handling"), restored from and
+	// saved to state.json with everything else here.
+	scheduleMarks map[string]ScheduleMark
+
+	// saveMu serializes Save. The debounced persist loop is not the only
+	// writer — the scheduler flushes its marks synchronously before a run
+	// starts — and two unserialized Saves can rename an older snapshot over a
+	// newer one.
+	saveMu sync.Mutex
+
 	// projects tracks every registered project by name, and
 	// provenance maps a registered harness's full name to its owning project
 	// ("" / absent = global config) so `down`/`ps` scope correctly and a global
@@ -118,20 +129,21 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 	}
 
 	m := &Manager{
-		policy:       policy,
-		statePath:    statePath,
-		logCfg:       logCfg,
-		bus:          NewBus(),
-		extraOutFor:  opts.ExtraOutFor,
-		dropExtraOut: opts.DropExtraOut,
-		sizeFor:      opts.SizeFor,
-		cfg:          cfg,
-		supervisors:  make(map[string]*Supervisor),
-		projects:     make(map[string]*projectRecord),
-		scratchDefs:  make(map[string]core.Harness),
-		provenance:   make(map[string]string),
-		dirty:        make(chan struct{}, 1),
-		closed:       make(chan struct{}),
+		policy:        policy,
+		statePath:     statePath,
+		logCfg:        logCfg,
+		bus:           NewBus(),
+		extraOutFor:   opts.ExtraOutFor,
+		dropExtraOut:  opts.DropExtraOut,
+		sizeFor:       opts.SizeFor,
+		cfg:           cfg,
+		supervisors:   make(map[string]*Supervisor),
+		projects:      make(map[string]*projectRecord),
+		scratchDefs:   make(map[string]core.Harness),
+		provenance:    make(map[string]string),
+		scheduleMarks: make(map[string]ScheduleMark),
+		dirty:         make(chan struct{}, 1),
+		closed:        make(chan struct{}),
 	}
 	for _, name := range cfg.HarnessOrder {
 		m.addSupervisor(cfg.Harnesses[name])
@@ -198,6 +210,13 @@ func (m *Manager) Restore() error {
 
 	m.mu.Lock()
 	m.activeProfile = ps.ActiveProfile
+	for name, sched := range ps.Schedules {
+		mark := ScheduleMark{Spec: sched.Spec, DecidedThrough: sched.DecidedThrough}
+		if sched.LastRunAt != nil {
+			mark.LastRunAt = *sched.LastRunAt
+		}
+		m.scheduleMarks[name] = mark
+	}
 
 	// Re-register persisted projects (SPEC-0004 REQ "Registration
 	// Persistence") so their supervisors exist before the intent loop below
@@ -657,11 +676,29 @@ func (m *Manager) Close() {
 // definitions (Projects) and their runtime intent (Harnesses, keyed by the
 // fully-qualified name) are persisted.
 func (m *Manager) Save() error {
-	// Everything Save needs — the active profile, the supervisor set, and the
-	// project definitions — is collected under ONE lock hold, so a concurrent
-	// ProjectDown or UseProfile cannot interleave between the snapshot pieces
-	// and smuggle a torn-down project (or a stale profile) into state.json.
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+	// Everything Save needs — the active profile, the supervisor set, the
+	// project definitions, and the schedule marks — is collected under ONE
+	// lock hold, so a concurrent ProjectDown or UseProfile cannot interleave
+	// between the snapshot pieces and smuggle a torn-down project (or a stale
+	// profile) into state.json.
 	m.mu.Lock()
+	schedules := make(map[string]persistedSchedule, len(m.scheduleMarks))
+	for name, mark := range m.scheduleMarks {
+		// The scheduler forgets a disarmed entry's mark itself, but a harness
+		// deleted from harness.toml while the daemon was down never had an
+		// entry to forget; drop its mark here instead of carrying it forever.
+		if _, ok := m.supervisors[name]; !ok {
+			continue
+		}
+		ps := persistedSchedule{Spec: mark.Spec, DecidedThrough: mark.DecidedThrough}
+		if !mark.LastRunAt.IsZero() {
+			t := mark.LastRunAt
+			ps.LastRunAt = &t
+		}
+		schedules[name] = ps
+	}
 	activeProfile := m.activeProfile
 	sups := make([]*Supervisor, 0, len(m.supervisors))
 	for _, name := range m.order {
@@ -689,6 +726,7 @@ func (m *Manager) Save() error {
 		ActiveProfile: activeProfile,
 		Harnesses:     map[string]persistedHarness{},
 		Projects:      projects,
+		Schedules:     schedules,
 	}
 	for _, s := range sups {
 		snap := s.Snapshot()
@@ -711,6 +749,41 @@ func (m *Manager) Save() error {
 		ps.Harnesses[snap.Name] = ph
 	}
 	return saveState(m.statePath, ps)
+}
+
+// ScheduleMark is a scheduled harness's durable scheduler position: every
+// window at or before DecidedThrough has been decided (fired, caught up, or
+// recorded missed). It mirrors scheduler.Mark field for field — the daemon
+// converts between the two — so this package need not import the scheduler.
+// Governing: ADR-0007, ADR-0013; SPEC-0008 REQ "Missed Window Handling".
+type ScheduleMark struct {
+	Spec           string
+	DecidedThrough time.Time
+	LastRunAt      time.Time
+}
+
+// LoadScheduleMark returns the persisted scheduler mark for name, if any.
+func (m *Manager) LoadScheduleMark(name string) (ScheduleMark, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mark, ok := m.scheduleMarks[name]
+	return mark, ok
+}
+
+// UpdateScheduleMarks drops forget, writes put, and flushes state.json before
+// returning. Synchronous rather than debounced on purpose: the scheduler calls
+// it before starting the run a mark accounts for, so a daemon that crashes
+// right after a firing does not fire the same window again on restart.
+func (m *Manager) UpdateScheduleMarks(put map[string]ScheduleMark, forget []string) error {
+	m.mu.Lock()
+	for _, name := range forget {
+		delete(m.scheduleMarks, name)
+	}
+	for name, mark := range put {
+		m.scheduleMarks[name] = mark
+	}
+	m.mu.Unlock()
+	return m.Save()
 }
 
 // persistLoop debounces dirty signals into atomic state.json writes.

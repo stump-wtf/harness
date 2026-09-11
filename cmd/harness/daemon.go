@@ -111,26 +111,43 @@ func runDaemon(o daemonOpts) {
 	mgr.Autostart()
 
 	// Scheduled harnesses: cron-fired one-shot agent runs owned by the daemon.
-	// Governing: ADR-0013; SPEC-0008 REQ "Firing And Overlap"; issue #66.
+	// Governing: ADR-0013; SPEC-0008 REQ "Firing And Overlap", REQ "Missed
+	// Window Handling"; issues #66, #117.
 	// At each firing the daemon starts the harness if
 	// it is not already running (overlapping firings are skipped, not
 	// stacked). "Running" here means any state with a live or in-transition
 	// process: starting, running, degraded, and stopping all skip — a firing
 	// must never spawn a second copy or flip enabled intent mid-stop.
 	// Stopped, failed, and restarting fire (a fresh scheduled attempt clears
-	// a failed latch via Start's normal path).
-	sched := scheduler.New(func(name string) {
-		if snap, ok := mgr.Snapshot(name); ok {
-			switch snap.State {
-			case core.StateStarting, core.StateRunning, core.StateDegraded, core.StateStopping:
-				log.Debug("schedule fired but harness is active; skipping", "harness", name, "state", snap.State)
-				return
+	// a failed latch via Start's normal path). A catch-up run goes through the
+	// identical guard: it is the same firing, decided late.
+	sched := scheduler.New(scheduler.Options{
+		Start: func(f scheduler.Firing) {
+			name := f.Name
+			if snap, ok := mgr.Snapshot(name); ok {
+				switch snap.State {
+				case core.StateStarting, core.StateRunning, core.StateDegraded, core.StateStopping:
+					log.Debug("schedule fired but harness is active; skipping", "harness", name, "state", snap.State, "trigger", f.Trigger)
+					return
+				}
 			}
-		}
-		log.Info("schedule fired", "harness", name)
-		if !mgr.StartTransient(name) {
-			log.Warn("schedule fired for unknown harness", "harness", name)
-		}
+			if f.Trigger == scheduler.TriggerCatchUp {
+				log.Warn("catching up missed schedule: running once for windows that elapsed while the daemon was not evaluating",
+					"harness", name, "window", f.Window.Format(time.RFC3339), "late", f.Late.Round(time.Second), "missed", f.Missed)
+			} else {
+				log.Info("schedule fired", "harness", name)
+			}
+			if !mgr.StartTransient(name) {
+				log.Warn("schedule fired for unknown harness", "harness", name)
+			}
+		},
+		// Marks ride in state.json (ADR-0007), so a daemon started after a
+		// window it was down for knows it missed one, and a crash right after a
+		// firing does not fire the same window again on restart.
+		Store: scheduleStore{mgr},
+		// Interim: a missed window is logged loudly until run history (#119)
+		// gives it a `missed` record.
+		Recorder: scheduler.LogRecorder{},
 	})
 	sched.Apply(cfg)
 	sched.Start()
@@ -223,6 +240,24 @@ func runDaemon(o daemonOpts) {
 	}
 	srv.Close()
 	mgr.Close()
+}
+
+// scheduleStore adapts the Manager's state.json schedule marks to the
+// scheduler's Store seam. The two mark types match field for field, so these
+// conversions stop compiling the moment either one drifts.
+type scheduleStore struct{ mgr *supervisor.Manager }
+
+func (s scheduleStore) LoadMark(name string) (scheduler.Mark, bool) {
+	m, ok := s.mgr.LoadScheduleMark(name)
+	return scheduler.Mark(m), ok
+}
+
+func (s scheduleStore) UpdateMarks(put map[string]scheduler.Mark, forget []string) error {
+	marks := make(map[string]supervisor.ScheduleMark, len(put))
+	for name, m := range put {
+		marks[name] = supervisor.ScheduleMark(m)
+	}
+	return s.mgr.UpdateScheduleMarks(marks, forget)
 }
 
 // startRemote brings up the optional Wish SSH server when it is enabled by

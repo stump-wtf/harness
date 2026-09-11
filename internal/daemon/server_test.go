@@ -518,7 +518,7 @@ schedule = "0 */6 * * *"
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	sched := scheduler.New(func(string) {})
+	sched := scheduler.New(scheduler.Options{})
 	defer sched.Close()
 	sched.Apply(cfg)
 	sched.Start()

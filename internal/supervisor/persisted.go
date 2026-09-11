@@ -33,6 +33,20 @@ type persistedState struct {
 	// tears it down, Compose-style. Keyed by project name; the slice
 	// preserves project-file order.
 	Projects map[string]persistedProject `json:"projects,omitempty"`
+	// Schedules holds each scheduled harness's scheduler mark (ADR-0013;
+	// SPEC-0008 REQ "Missed Window Handling"): the windows already decided,
+	// which is what lets a daemon started after a window it was down for tell
+	// "missed" from "not due yet". Additive, so no schema version bump: an
+	// older daemon ignores the key, and a newer one reading an older file just
+	// arms every schedule from now.
+	Schedules map[string]persistedSchedule `json:"schedules,omitempty"`
+}
+
+// persistedSchedule is the on-disk form of a ScheduleMark.
+type persistedSchedule struct {
+	Spec           string     `json:"spec"`
+	DecidedThrough time.Time  `json:"decided_through"`
+	LastRunAt      *time.Time `json:"last_run_at,omitempty"`
 }
 
 // persistedProject is one registered project's definition set, in order.
