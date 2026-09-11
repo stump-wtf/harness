@@ -171,7 +171,7 @@ func TestScheduledFiringClearsStaleRestartCount(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newTestSupervisor(t, scheduledHarness("sweeper", tc.script, "0 */6 * * *"), fastPolicy())
 			// Seed the relic the way a daemon restart does (ADR-0007).
-			s.Restore(false, 4417, 1, time.Time{})
+			s.Restore(false, 4417, 1, time.Time{}, time.Time{})
 			if got := s.Snapshot().RestartCount; got != 4417 {
 				t.Fatalf("precondition: RestartCount = %d, want the seeded 4417", got)
 			}
@@ -198,7 +198,7 @@ func TestScheduledFiringClearsStaleRestartCount(t *testing.T) {
 // #99 fallback contract preserves it across a daemon restart.
 func TestUnscheduledHarnessKeepsRestartHistory(t *testing.T) {
 	s := newTestSupervisor(t, shHarnessWithRestart("worker", "exit 0", time.Millisecond, core.RestartNo), fastPolicy())
-	s.Restore(false, 7, 0, time.Time{})
+	s.Restore(false, 7, 0, time.Time{}, time.Time{})
 
 	s.Start()
 	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateStopped }) {

@@ -50,6 +50,10 @@ type restoreData struct {
 	restartCount int
 	lastExitCode int
 	lastExitAt   time.Time
+	// lastStarted is restored so a post-mortem `harness logs` after a daemon
+	// restart still knows when the last run began (SPEC-0006 REQ "Run
+	// Correlation").
+	lastStarted time.Time
 }
 
 // command is one request to the loop, with a done channel the caller waits on
@@ -335,6 +339,9 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.restartCount = r.restartCount
 		s.lastExitCode = r.lastExitCode
 		s.lastExitAt = r.lastExitAt
+		if s.lastStarted.IsZero() {
+			s.lastStarted = r.lastStarted
+		}
 		s.publishSnapshot()
 	case cmdResize:
 		// Governing: ADR-0003 (native backend owns PTY resize; the attach layer
@@ -964,11 +971,12 @@ func (s *Supervisor) publishChangeUnchanged() { s.publishSnapshot() }
 
 // Restore seeds persisted intent + counters (ADR-0007) before the harness is
 // started. Call immediately after New, before Start/Autostart.
-func (s *Supervisor) Restore(enabled bool, restartCount, lastExitCode int, lastExitAt time.Time) {
+func (s *Supervisor) Restore(enabled bool, restartCount, lastExitCode int, lastExitAt, lastStarted time.Time) {
 	s.send(command{kind: cmdRestore, restore: &restoreData{
 		enabled:      enabled,
 		restartCount: restartCount,
 		lastExitCode: lastExitCode,
 		lastExitAt:   lastExitAt,
+		lastStarted:  lastStarted,
 	}})
 }

@@ -87,6 +87,35 @@ func parseEnvFile(path string) ([]string, error) {
 	return out, nil
 }
 
+// DiscoveryEnv returns the values h's process sees for keys — its env_file
+// layered over the daemon's own environment, the same composition buildEnv
+// gives the child — and nothing else. It exists so trajectory discovery can
+// follow a tool an env_file relocated (CRUSH_GLOBAL_DATA, CLAUDE_CONFIG_DIR)
+// without the caller ever holding the rest of that file, which is where a
+// harness's secrets live (ADR-0008). An unreadable env_file still returns the
+// daemon-environment values, alongside the error.
+//
+// Governing: ADR-0008, SPEC-0006 REQ "Run Correlation".
+func DiscoveryEnv(h core.Harness, keys []string) (map[string]string, error) {
+	out := make(map[string]string, len(keys))
+	for _, k := range keys {
+		if v, ok := os.LookupEnv(k); ok {
+			out[k] = v
+		}
+	}
+	extra, err := parseEnvFile(h.EnvFile)
+	for _, kv := range extra {
+		k, v, _ := strings.Cut(kv, "=")
+		for _, want := range keys {
+			if k == want {
+				out[k] = v
+				break
+			}
+		}
+	}
+	return out, err
+}
+
 // unquote strips a single matching pair of surrounding single or double quotes.
 func unquote(s string) string {
 	if len(s) >= 2 {

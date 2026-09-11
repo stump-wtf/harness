@@ -131,7 +131,7 @@ func TestLogRecordsLifecycleEvents(t *testing.T) {
 		Bus:    NewBus(),
 		LogCfg: LogConfig{Dir: dir},
 	})
-	s.Restore(true, 0, 0, time.Time{})
+	s.Restore(true, 0, 0, time.Time{}, time.Time{})
 	s.Start()
 	waitState(t, s, core.StateStopped) // RestartNever: a clean exit lands stopped
 	s.Shutdown()

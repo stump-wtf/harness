@@ -284,12 +284,16 @@ func (m *Manager) Restore() error {
 		// Clamp it here: for a scheduled harness the schedule IS the intent.
 		// Residual of issue #159.
 		scheduled := s.Snapshot().Scheduled
+		var started time.Time
+		if inState && pr.LastStarted != nil {
+			started = *pr.LastStarted
+		}
 
 		switch {
 		case scheduled:
 			// Counters are observability, not intent — preserve them, the
 			// same contract the #99 fallback below keeps.
-			s.Restore(false, pr.RestartCount, pr.LastExitCode, last)
+			s.Restore(false, pr.RestartCount, pr.LastExitCode, last, started)
 		case unresolved && hasAutostartProfile && autostart[name]:
 			// The persisted profile is gone, so the persisted per-harness
 			// intent it produced cannot be trusted either — a member recorded
@@ -297,11 +301,11 @@ func (m *Manager) Restore() error {
 			// operator. Autostart membership wins, which is the whole point of
 			// the fallback: the daemon must not come up having started nothing.
 			// Counters are preserved so restart history is not lost (#99).
-			s.Restore(true, pr.RestartCount, pr.LastExitCode, last)
+			s.Restore(true, pr.RestartCount, pr.LastExitCode, last, started)
 		case inState:
-			s.Restore(pr.Enabled, pr.RestartCount, pr.LastExitCode, last)
+			s.Restore(pr.Enabled, pr.RestartCount, pr.LastExitCode, last, started)
 		case autostart[name]:
-			s.Restore(true, 0, 0, time.Time{})
+			s.Restore(true, 0, 0, time.Time{}, time.Time{})
 		}
 	}
 
