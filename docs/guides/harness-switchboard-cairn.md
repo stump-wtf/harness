@@ -72,12 +72,19 @@ link. It completes the todo with that link as its result.
 
 **4. A handoff closes the loop.** Say the review finds a problem that needs a
 different agent, one with deploy access or a bigger model. The worker publishes
-a handoff artifact to Cairn with a title such as `[handoff:deploy-pool] roll back
-the config change`. Cairn announces every new artifact through its outbound
-webhook. A Switchboard
-[routing rule](https://switchboard.stump.wtf/docs/guides/routing-rules) matches
-the title prefix and drops a todo on the deploy pool's queue. That pool's
-worker, also supervised by Harness, wakes up, and the loop goes around again.
+a handoff artifact to Cairn, tagged `handoff` and `lane:deploy`.
+
+The Cairn instance is configured by its operator with one outbound webhook list
+for the whole instance. It sends an `artifact.created` event for each new
+artifact or bundle, but not for traces, comments or reactions.
+
+A Switchboard
+[routing rule](https://switchboard.stump.wtf/docs/guides/routing-cookbook)
+matches the tags and drops a todo on the deploy pool's queue. The rule also
+checks `.artifact.actor_id`. Tags and titles are claims the publishing client
+makes, so without that check anyone who can publish to that Cairn could mint
+work for your agents. That pool's worker, also supervised by Harness, wakes up,
+and the loop goes around again.
 
 **Scheduled work joins the same loop.** A Harness
 [scheduled sweep](./scheduled-sweeps) with no event behind it can publish its
@@ -92,8 +99,8 @@ same way.
 | Supervise an agent | [Your first supervised agent](./first-agent) |
 | Run agents on a clock | [Scheduled sweeps](./scheduled-sweeps) |
 | Wake agents on events | [Push events with MCP channels](./push-events) |
-| Connect a webhook source to Switchboard | [Connect a provider](https://switchboard.stump.wtf/docs/guides/connect-a-provider) |
-| Give an agent a Switchboard endpoint | [Vend an endpoint](https://switchboard.stump.wtf/docs/guides/vend-an-endpoint) |
-| Route Cairn handoffs to the right pool | [Routing rules](https://switchboard.stump.wtf/docs/guides/routing-rules) |
-| Publish and share artifacts | [Cairn](https://cairn.stump.wtf/docs/intro/) |
+| Send your first webhook into Switchboard | [First webhook](https://switchboard.stump.wtf/docs/getting-started/first-webhook) |
+| Give an agent a Switchboard endpoint and wire it into Crush or Claude Code | [Connect an agent](https://switchboard.stump.wtf/docs/getting-started/connect-an-agent) |
+| Route Cairn handoffs to the right pool | [Routing cookbook](https://switchboard.stump.wtf/docs/guides/routing-cookbook) |
+| Publish and share artifacts | [Cairn](https://cairn.stump.wtf/docs/) |
 | See what every agent did | [Observability](./observability) |

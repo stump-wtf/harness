@@ -57,8 +57,10 @@ Usual causes, most likely first:
     another machine, using the same endpoint can take the ring and do nothing.
     See [one channel consumer per server](./push-events#exactly-one-channel-consumer-per-server).
   - **Does it drain on startup?** Doorbells sent while the worker was down were
-    dropped; their todos are still pending. The worker's instructions should
-    call `claim_next` until empty when it starts.
+    dropped; their todos are still pending. Switchboard re-rings them, but only
+    after about 5 minutes, then 20 minutes, 1 hour and 6 hours, and it stops
+    after a fixed number of attempts. The worker's instructions should call
+    `claim_next` until empty when it starts.
 - **It's a headless Claude Code channel consumer.** That setup isn't verified
   to act on doorbells, and the development-channels flag waits for an
   interactive confirmation. See

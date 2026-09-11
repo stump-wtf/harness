@@ -46,8 +46,10 @@ Two properties shape everything below:
 
 - **The queue is the record; the doorbell is only a hint.** Push is
   best-effort. If no session is listening, the doorbell is dropped and the todo
-  simply waits on the queue. Nothing is lost, but nothing wakes either, until
-  the agent next pulls.
+  waits on the queue, so nothing is lost. Switchboard re-rings a todo that is
+  still unclaimed after about 5 minutes, then 20 minutes, 1 hour and 6 hours,
+  up to a fixed number of attempts. After that the todo stays pending until a
+  worker pulls it.
 - **The session has to be alive to hear it.** That is Harness's job: keep the
   agent running, restart it when it falls over, and let you attach to see what
   it is doing.
@@ -55,7 +57,8 @@ Two properties shape everything below:
 ## What you need
 
 1. **A Switchboard endpoint** for the agent: its URL and `sbk_…` token. See
-   [Vend an endpoint](https://switchboard.stump.wtf/docs/guides/vend-an-endpoint).
+   [Connect an agent](https://switchboard.stump.wtf/docs/getting-started/connect-an-agent)
+   and [Vend an endpoint](https://switchboard.stump.wtf/docs/guides/vend-an-endpoint).
 2. **An agent CLI that turns channel notifications into turns.** Today that
    means Crush, built from the fork described next.
 3. **Harness running as a service** ([guide](./run-as-a-service)).
@@ -112,8 +115,9 @@ You are a queue worker. Work arrives as Switchboard todos.
 ```
 
 The startup drain matters. Doorbells sent while the worker was down were
-dropped, but their todos are still pending. A worker that only reacts to new
-doorbells would never see that backlog.
+dropped, but their todos are still pending. A worker that only reacts to
+doorbells would sit idle until Switchboard's next re-ring, which can be minutes
+or hours away, or never, once a todo has used up its re-rings.
 
 ### 2. Wire the Switchboard MCP server into Crush
 
@@ -196,7 +200,8 @@ sessions include:
 - a second copy of the worker left running on another machine;
 - an agent that receives notifications but never turns them into a turn.
 
-Push is lossy by design, so that todo just waits until something next pulls.
+Push is lossy by design, so that todo waits for a later re-ring or for a worker
+to pull it.
 
 In practice:
 
