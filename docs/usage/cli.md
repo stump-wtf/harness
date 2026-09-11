@@ -66,12 +66,26 @@ just configure `schedule` on a `prompt` harness (see
 `harness list` flags each job with a clock glyph and its next firing time;
 `harness describe` adds the cron spec.
 
+```sh
+harness jobs                    # every scheduled harness: next run, last run, consecutive failures
+harness runs <name>             # its run history, newest first (--limit N, default 20)
+harness trigger <name>          # run it now — on_overlap applies, as for a firing
+harness trigger <name> --wait   # …stream the run's log and exit with its exit code
+harness logs <name> --run 3     # what run 3 did (--raw for its own log)
+```
+
+`trigger --wait` exits with the run's own exit code, `124` when the run timed
+out, and `75` when it was skipped because a run was already in flight — so a job
+scripts like the command it wraps. The verb is `trigger` because `harness run`
+starts a throwaway scratchpad.
+
 ## Logs
 
 ```sh
 harness logs <name>           # tail (default 200 lines)
 harness logs <name> --lines 50    # a specific number of trailing lines
 harness logs <name> --follow      # stream new output as it arrives
+harness logs <name> --run 3       # one run of a scheduled harness (see harness runs)
 ```
 
 When a log rotates or truncates, `--follow` reprints the current tail so you
@@ -138,4 +152,6 @@ Daemon flags: `--config`, `--socket`, `--scrollback N` (per-harness ring depth),
 
 Every error is classified and rendered as a styled error box with an actionable
 hint. A `--json` error still prints a structured object. Exit code is 0 on
-success, non-zero on failure (`doctor` returns non-zero when any check fails).
+success, non-zero on failure (`doctor` returns non-zero when any check fails;
+`trigger --wait` returns the run's exit code, as described under
+[Scheduled jobs](#scheduled-jobs)).

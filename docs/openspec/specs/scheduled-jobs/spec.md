@@ -20,8 +20,8 @@ Scheduling is expressed as a key on the existing `[harness.*]` table rather
 than as a distinct table kind. See ADR-0013 for that decision and for the list
 of capability still deferred. Suspend-safe evaluation, missed-window handling,
 `catch_up`, and time zones were added by #117; run history, per-run logs, run
-timeouts, and the overlap policy by #119. Their protocol and CLI surface is
-not part of this revision.
+timeouts, and the overlap policy by #119; the protocol and CLI surface that
+reads and triggers them by #120.
 
 This spec does **not** amend SPEC-0003. The restart-policy axis ADR-0013
 originally called for shipped independently as the `restart` key, and SPEC-0003
@@ -515,6 +515,115 @@ two firings can never both find the harness idle.
 - **THEN** the run in flight and the held firing are both recorded `cancelled`,
   and the held firing never starts
 
+### Requirement: Protocol Operations
+
+The daemon SHALL expose scheduled runs through three control operations
+(SPEC-0002 REQ "Control Operations"), each computed from its own records so a
+client never evaluates a cron expression or guesses at a run:
+
+| Op | Request | Reply |
+| --- | --- | --- |
+| `jobs` | — | Every scheduled harness: schedule, state, next window (from the live scheduler), `catch_up`, `timeout`, `on_overlap`, `keep_runs`, the run in flight, the newest finished record, and consecutive failures |
+| `trigger` | `name` | The decision — `started`, `queued` or `skipped` — and the run record it made (none while queued) |
+| `runs` | `name`, `limit` | The harness's run records, newest first, at most `limit` (default 20) |
+
+`logs` SHALL accept a `run` selector naming one run by id: the raw reply is that
+run's own log, and the `events` reply describes exactly that record's window.
+
+Consecutive failures SHALL count the newest records that `failed` or
+`timed_out`, back to the latest `success`; records that pass no verdict on the
+job (`running`, `skipped`, `missed`, `replaced`, `cancelled`, `interrupted`)
+SHALL neither count nor reset the count.
+
+Errors SHALL be distinguishable: an unknown name is `unknown_harness`, a
+`trigger` for a harness with no schedule is `not_scheduled`, and a run id the
+history does not hold is `unknown_run`. Replies SHALL carry outcomes, times,
+exit codes and whether a run has a log — never environment, `env_file` contents,
+prompt text or output (ADR-0008).
+
+The protocol minor version SHALL be bumped for these additions and the bump
+documented alongside the constant.
+
+#### Scenario: Next run without cron math
+
+- **WHEN** a client requests `jobs`
+- **THEN** each scheduled harness carries its next window as an RFC 3339 time
+  resolved by the running scheduler, and harnesses without a schedule are absent
+
+#### Scenario: Failure streak
+
+- **WHEN** a scheduled harness's last two runs failed after an earlier success
+- **THEN** `jobs` reports two consecutive failures
+
+#### Scenario: Run history newest first
+
+- **WHEN** a client requests `runs` with `limit = 1` for a harness that has run
+  twice
+- **THEN** the reply holds run 2 only
+
+#### Scenario: Distinguishable errors
+
+- **WHEN** `trigger` names a harness with no schedule, or one that does not exist
+- **THEN** the replies are `not_scheduled` and `unknown_harness` respectively
+
+### Requirement: Manual Trigger
+
+`trigger` SHALL start a run of a scheduled harness with trigger `manual` through
+the same path a schedule firing takes, so the harness's `on_overlap` policy,
+`timeout`, run history and per-run log apply exactly as they would at the
+scheduled time.
+
+The CLI verb SHALL be `harness trigger <name>`, since `harness run` starts a
+scratchpad (ADR-0017). `harness trigger <name> --wait` SHALL stream the run's log
+and exit with the run's exit code; a run that timed out SHALL exit 124, a
+trigger recorded `skipped` SHALL exit 75, and any other unsuccessful run with no
+usable exit code SHALL exit 1. `harness daemon run` SHALL continue to start the
+daemon.
+
+`start` and `stop` SHALL keep their SPEC-0003 meaning on a scheduled harness:
+`start` runs it now and `stop` ends the run in flight.
+
+#### Scenario: Trigger during a run
+
+- **WHEN** `trigger` is issued for a harness with the default `on_overlap` while
+  a run is in flight
+- **THEN** the reply's decision is `skipped` and the history gains a `skipped`
+  record, exactly as a schedule firing would
+
+#### Scenario: Waiting on a run
+
+- **WHEN** an operator runs `harness trigger nightly --wait` and the run exits 3
+- **THEN** the run's log is streamed and the command exits 3
+
+### Requirement: Lifecycle Events
+
+The daemon SHALL push three events to subscribed clients (SPEC-0002 REQ "Event
+Subscription"):
+
+- `job_run_started { name, run_id, trigger }` when a run starts a process;
+- `job_run_finished { name, run_id, trigger, outcome, exit_code, duration_ms }`
+  when a record becomes final — including a decision that started no process
+  (`skipped`, `missed`), and a run whose process failed to spawn;
+- `job_schedule_changed { name, next_run_at }` whenever a harness's next window
+  moves: armed, re-armed by a reload, advanced past a firing, or disarmed (no
+  `next_run_at`).
+
+Events are notifications and MAY be dropped for a slow subscriber; the run
+history remains the record. `exit_code` SHALL be omitted, not zero, when no
+process exited.
+
+#### Scenario: A run seen live
+
+- **WHEN** a subscribed client is connected while a manual run exits 0
+- **THEN** it receives `job_run_started` and then `job_run_finished` with outcome
+  `success` and `exit_code` 0 for the same `run_id`
+
+#### Scenario: A reload moves the next window
+
+- **WHEN** a reload changes a harness's `schedule`
+- **THEN** subscribers receive `job_schedule_changed` carrying the new next
+  window
+
 ### Requirement: Run Termination
 
 A scheduled run exiting SHALL be terminal for that firing: the supervisor SHALL
@@ -716,13 +825,10 @@ The following were specified in this spec's 2026-07-26 draft against the
 `[job.*]` design and are **not** part of this revision. ADR-0013's *Deferred*
 section tracks them:
 
-* Reading run history and per-run logs from a client (`harness runs`,
-  `harness logs --run`), and a `harness run` trigger verb — issue #120.
+* Arming and disarming a schedule from a client. `start` and `stop` keep their
+  SPEC-0003 meaning on a scheduled harness (REQ "Manual Trigger").
+* Job rows in the TUI cockpit.
 * A per-harness `timezone` key. Zones are expressed with a `CRON_TZ=` prefix
   instead (REQ "Schedule Time Zone").
-* `scheduled` and `completed` states, and a `consecutive_failures` counter.
-* Protocol operations `jobs`, `run`, and `runs`, and `job_run_*` events.
-  Exposure of `schedule` and next-fire time over the protocol is **no longer**
-  deferred — it shipped as REQ "Schedule Visibility" above (issues #160, #205).
-  ([#160](https://gitea.stump.rocks/stump.wtf/harness/issues/160)).
+* `scheduled` and `completed` states.
 * Project-scoped schedules.

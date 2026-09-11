@@ -90,6 +90,11 @@ Chosen options: **1C (daemon-owned scheduler, no new trigger verb)** and **2B
 > **Revision note (2026-09-11, #119).** Run history, per-run logs, `timeout`,
 > and `on_overlap` (skip, queue, replace) were built; see *Runs* below. They
 > leave **Deferred**. The protocol/CLI surface that reads them (#120) remains.
+>
+> **Revision note (2026-09-11, #120).** The `jobs`, `trigger` and `runs` control
+> ops, a `run` selector on `logs`, the `job_run_*` and `job_schedule_changed`
+> events, and their CLI verbs were built. That adds option 1A's manual-trigger
+> verb after all, named `trigger`; see *Decision Outcome*.
 
 1C because the daemon already *is* the supervisor, the state store, and the thing
 systemd/launchd keeps alive — giving it the clock costs one goroutine and keeps
@@ -97,6 +102,15 @@ ADR-0005's "one init unit" property intact across both platforms. No new
 trigger verb was needed because a scheduled harness is still a harness:
 `harness start <name>` runs it now, through the identical code path the cron
 firing uses, so triggering by hand is a genuine test of what fires at 03:00.
+
+That verb arrived with #120 regardless, once run history made it worth having —
+the reason option 1A's Neutral bullet gave for waiting. `harness trigger <name>`
+enters through the same `StartRun` a firing does, so unlike `start` it honors
+`on_overlap`; and `--wait` streams the run and exits with its exit code, which is
+the seam that lets an external scheduler (option 1B) drive a job without the
+daemon adopting that model. It is `trigger` rather than 1A's `run` because
+`harness run` had meanwhile become ADR-0017's scratchpad verb. `start` and `stop`
+keep their meaning.
 
 2B because the structural argument for a separate table kind dissolved once
 `restart` shipped as a user-facing key.
@@ -286,7 +300,14 @@ Records carry outcomes, times and exit codes — never environment, `env_file`
 contents, prompt text or output (ADR-0008). Run logs are created private to the
 daemon's user. The histories are exposed to the rest of the daemon as exact run
 windows (`Manager.Runs`), which is what #120's `harness logs <job> --run N` and
-run correlation need; reading them over the protocol is #120's work.
+run correlation need.
+
+Clients read them over the protocol (#120): `jobs` (schedule, next window, the
+run in flight, the latest record, consecutive failures), `runs` (history,
+newest first), `trigger` (a manual run through `StartRun`), a `run` selector on
+`logs`, and `job_run_started` / `job_run_finished` / `job_schedule_changed`
+events. The CLI mirrors them as `harness jobs`, `harness runs`,
+`harness trigger [--wait]` and `harness logs --run N`.
 
 ### Reconciliation, not rebuild
 
@@ -354,8 +375,9 @@ CLIs generally need.
 * Bad, because on-disk footprint grows from O(harnesses) to O(scheduled
   harnesses × `keep_runs`) run logs. `keep_runs` is a first-class key, and
   pruning deletes a log with its record, for that reason.
-* Bad, because history is not yet readable from a client. It is in
-  `state.json` and `jobs/` today; the protocol ops and CLI verbs are #120.
+* Good, because a job can be driven from outside the daemon:
+  `harness trigger <job> --wait` streams the run and exits with its exit code
+  (124 for a timeout, 75 when skipped), so it composes like the command it wraps.
 * Bad, because **if `harnessd` is down at 03:00, the run does not fire at
   03:00.** System cron would have. The daemon notices on its next boot —
   `catch_up = true` runs it once, `catch_up = false` records a `missed` run.
@@ -404,7 +426,8 @@ Everything below was specified in this ADR's original 2026-07-26 draft and is
 current behavior:
 
 * **`scheduled` / `completed` states** and a `consecutive_failures` counter.
-* **Protocol ops `jobs` / `run` / `runs`** and the `job_run_*` events.
+* **Job rows in the TUI cockpit**, and arming or disarming a schedule from a
+  client.
 * **`tty = false`**, `on_failure` hooks and notifiers, scheduled units as
   `[profile.*]` members, retry-within-a-window, and a daemon-wide concurrent-run
   cap.
@@ -574,9 +597,10 @@ flowchart TD
 * **Related [ADR-0011](adr-0011-agent-adapters.md)** — the scheduled unit is a
   prompt one-shot; `schedule` requires `prompt`, and the `restart = "no"` prompt
   default is what makes the run terminal.
-* **Related [ADR-0002](adr-0002-daemon-client-architecture.md)** — no new control
-  ops were added; `start`/`stop`/`attach` on a scheduled harness are the existing
-  thin-client gestures.
+* **Related [ADR-0002](adr-0002-daemon-client-architecture.md)** — adds the
+  `jobs`, `trigger` and `runs` control ops (#120), mirrored 1:1 as CLI verbs;
+  `start`/`stop`/`attach` on a scheduled harness remain the existing thin-client
+  gestures.
 * **Related [ADR-0003](adr-0003-terminal-multiplexing.md)** — scheduled runs use
   the same owned PTY and `x/vt` emulator, which is what makes attaching to an
   in-flight run work at all.
