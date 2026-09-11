@@ -10,7 +10,11 @@ package supervisor
 // owns the event Bus, the state.json persistence, and the config-reload path.
 
 import (
+	"errors"
+	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"syscall"
@@ -54,6 +58,10 @@ type ManagerOptions struct {
 	// attach Registry so a harness (re)started while a client is attached comes
 	// up at the client's size instead of 80×24 (ADR-0003).
 	SizeFor func(name string) (cols, rows int)
+	// JobsDir is the root of per-run logs, <JobsDir>/<name>/<run_id>.log
+	// (SPEC-0008 REQ "Per-Run Logs"). Defaults to a "jobs" directory beside
+	// the log directory — $XDG_STATE_HOME/harness/jobs in production.
+	JobsDir string
 }
 
 // Manager supervises every harness in a config.
@@ -89,6 +97,11 @@ type Manager struct {
 	// (ADR-0013; SPEC-0008 REQ "Missed Window Handling"), restored from and
 	// saved to state.json with everything else here.
 	scheduleMarks map[string]ScheduleMark
+
+	// runs is each scheduled harness's run history, and jobsDir the root of
+	// their per-run logs (manager_runs.go; SPEC-0008 REQ "Run History").
+	runs    map[string]*runHistory
+	jobsDir string
 
 	// saveMu serializes Save. The debounced persist loop is not the only
 	// writer — the scheduler flushes its marks synchronously before a run
@@ -127,8 +140,14 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 	} else if logCfg.Dir == "" {
 		logCfg.Dir = DefaultLogDir()
 	}
+	jobsDir := opts.JobsDir
+	if jobsDir == "" {
+		jobsDir = filepath.Join(filepath.Dir(logCfg.Dir), "jobs")
+	}
 
 	m := &Manager{
+		runs:          make(map[string]*runHistory),
+		jobsDir:       jobsDir,
 		policy:        policy,
 		statePath:     statePath,
 		logCfg:        logCfg,
@@ -204,12 +223,21 @@ func (m *Manager) markDirty() {
 func (m *Manager) Restore() error {
 	ps, err := loadState(m.statePath)
 	if err != nil {
+		if errors.Is(err, errMalformedState) {
+			// The daemon carries on from config defaults and its next Save
+			// replaces this file. Keep a copy first, so what it held — intent,
+			// projects, run history — is recoverable by hand rather than gone.
+			if kept, cerr := preserveMalformedState(m.statePath); cerr == nil {
+				err = fmt.Errorf("%w (kept a copy at %s)", err, kept)
+			}
+		}
 		return err
 	}
 	autostart := autostartSet(m.cfg)
 
 	m.mu.Lock()
 	m.activeProfile = ps.ActiveProfile
+	interrupted := m.restoreRunsLocked(ps.Runs)
 	for name, sched := range ps.Schedules {
 		mark := ScheduleMark{Spec: sched.Spec, DecidedThrough: sched.DecidedThrough}
 		if sched.LastRunAt != nil {
@@ -315,7 +343,23 @@ func (m *Manager) Restore() error {
 	m.mu.Lock()
 	m.dormantAutostart = dormant
 	m.mu.Unlock()
+
+	if len(interrupted) > 0 {
+		m.noteInterrupted(interrupted)
+		m.markDirty() // the reconciled outcomes are state worth keeping
+	}
 	return nil
+}
+
+// preserveMalformedState copies an unparseable state file aside and returns the
+// copy's path.
+func preserveMalformedState(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	kept := path + ".malformed-" + time.Now().Format("20060102T150405")
+	return kept, os.WriteFile(kept, data, 0o600)
 }
 
 // Autostart starts every harness whose restored intent is enabled (SPEC-0003
@@ -643,6 +687,7 @@ func (m *Manager) addSupervisorLocked(h core.Harness) {
 		ExtraOut:    m.extraOut(h.Name),
 		OnChange:    m.markDirty,
 		InitialSize: m.initialSizeFor(h.Name),
+		Runs:        m,
 	})
 	m.supervisors[h.Name] = s
 }
@@ -703,6 +748,7 @@ func (m *Manager) Save() error {
 		}
 		schedules[name] = ps
 	}
+	runs := m.persistedRunsLocked()
 	activeProfile := m.activeProfile
 	sups := make([]*Supervisor, 0, len(m.supervisors))
 	for _, name := range m.order {
@@ -731,6 +777,7 @@ func (m *Manager) Save() error {
 		Harnesses:     map[string]persistedHarness{},
 		Projects:      projects,
 		Schedules:     schedules,
+		Runs:          runs,
 	}
 	for _, s := range sups {
 		snap := s.Snapshot()
