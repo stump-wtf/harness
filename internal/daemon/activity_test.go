@@ -90,7 +90,8 @@ func TestLogsEventsPostMortem(t *testing.T) {
 	td, work := sweepsDaemon(t)
 	rt.WriteCrushDB(t, filepath.Join(work, ".crush", "crush.db"),
 		rt.CrushSession{ID: "e088ec4e-pdx", Created: local(7, 40, 2), Updated: local(7, 56, 20),
-			Messages: viewCall("c1", filepath.Join(work, "pdx.yaml"), local(7, 40, 30))},
+			Messages: append(viewCall("c1", filepath.Join(work, "pdx.yaml"), local(7, 40, 30)),
+				rt.CrushMessage{Role: "assistant", At: local(7, 56, 20), Parts: rt.FinishError("Bad Request", "litellm.ContextWindowExceededError")})},
 		rt.CrushSession{ID: "09a363b5-pr", Created: local(9, 30, 3), Updated: local(9, 50, 24),
 			Messages: viewCall("c2", filepath.Join(work, "prs.md"), local(9, 31, 0))},
 	)
@@ -131,6 +132,18 @@ func TestLogsEventsPostMortem(t *testing.T) {
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("entries:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	// The reason the run died is in the session, not the process output: crush
+	// persists the provider error as a finish part (agent-trace#98).
+	var died bool
+	for i, e := range ld.Entries {
+		if e.Kind == protocol.LogEntryMark && e.Action == "error" {
+			died = e.Error && strings.Contains(e.Summary, "ContextWindowExceededError") &&
+				i+1 < len(ld.Entries) && ld.Entries[i+1].Action == "exited"
+		}
+	}
+	if !died {
+		t.Errorf("entries = %+v, want the provider error as an error mark immediately before the exit", ld.Entries)
 	}
 	if len(ld.Excluded) != 0 || ld.Text != "" {
 		t.Errorf("excluded = %+v, text = %q; want neither for an unambiguous run", ld.Excluded, ld.Text)
