@@ -6,8 +6,10 @@ import type * as Preset from '@docusaurus/preset-classic';
 // CONFIGURE THESE VALUES FOR YOUR PROJECT
 // ============================================================
 const PROJECT_TITLE = 'Harness';
-const PROJECT_TAGLINE = 'systemctl for your agents — usage, architecture decisions & specifications';
-const GITHUB_URL = 'https://gitea.stump.rocks/stump.wtf/harness';
+const PROJECT_TAGLINE = 'systemctl for your agents — guides, usage, architecture decisions & specifications';
+// The public GitHub mirror, not the Gitea origin: this site is public, and the
+// Gitea host is private, so a link to it is a dead link for most readers.
+const GITHUB_URL = 'https://github.com/stump-wtf/harness';
 // Host this build is served from. The same build ships to more than one host —
 // only `url` differs, so CI supplies it via DOCS_URL. Default is GitHub Pages,
 // the public canonical: Gitea Pages resolves to a private address and is only
@@ -89,6 +91,12 @@ const config: Config = {
       items: [
         {
           type: 'docSidebar',
+          sidebarId: 'guidesSidebar',
+          position: 'left',
+          label: 'Guides',
+        },
+        {
+          type: 'docSidebar',
           sidebarId: 'usageSidebar',
           position: 'left',
           label: 'Usage',
@@ -107,7 +115,7 @@ const config: Config = {
         },
         {
           href: GITHUB_URL,
-          label: 'Gitea',
+          label: 'GitHub',
           position: 'right',
         },
       ],
@@ -118,6 +126,10 @@ const config: Config = {
         {
           title: 'Documentation',
           items: [
+            {
+              label: 'Getting started',
+              to: '/guides',
+            },
             {
               label: 'Usage',
               to: '/usage',
@@ -136,8 +148,16 @@ const config: Config = {
           title: 'Project',
           items: [
             {
-              label: 'Gitea',
+              label: 'GitHub',
               href: GITHUB_URL,
+            },
+            {
+              label: 'Switchboard',
+              href: 'https://switchboard.stump.wtf/docs/',
+            },
+            {
+              label: 'Cairn',
+              href: 'https://cairn.stump.wtf/docs/intro/',
             },
           ],
         },
