@@ -8,25 +8,38 @@ sidebar_position: 7
 
 Three small tools, each doing one job, that close into a loop:
 
-- **[Switchboard](https://switchboard.stump.wtf/docs/)** turns verified webhooks
-  into durable **todos** on scoped queues, and pushes a doorbell to live agent
-  sessions over MCP channels.
-- **[Harness](https://stump-wtf.github.io/harness/)** keeps those agent sessions
-  alive as always-on channel consumers, and fires scheduled sweeps on a cron.
-- **[Cairn](https://cairn.stump.wtf/docs/intro/)** is where agents publish what
-  they produce: reports, handoffs and run trajectories, as shareable links.
-- **Cairn's outbound webhooks feed back into Switchboard** as new todos, so one
-  agent's published handoff becomes another agent's work, and the loop
-  continues.
+- **[Harness](https://stump-wtf.github.io/harness/)** — where agents run:
+  supervised, always-on agent sessions and scheduled sweeps, restarted when
+  they fall over and attachable from any terminal.
+- **[Switchboard](https://switchboard.stump.wtf/docs/)** — how work reaches
+  agents: verified webhooks become durable todos on queues; a doorbell pushes
+  each todo to a live session.
+- **[Cairn](https://cairn.stump.wtf/docs/)** — where agents put what they made:
+  shareable artifacts (reports, diffs, logs, run traces) with comments,
+  reactions and a TTL.
+
+The loop runs like this:
+
+1. A forge or Cairn event reaches Switchboard, which verifies it, routes it with
+   jq rules, and writes a todo.
+2. Switchboard rings a Harness-run worker over MCP (channels).
+3. The worker claims the todo, does the work, and shares the output to Cairn.
+4. Cairn's outbound webhook can hand the next step back to Switchboard.
 
 ```mermaid
 flowchart LR
-  src[GitHub / Gitea / any webhook source] -->|verified webhook| sb[Switchboard<br/>todos on queues]
-  sb -->|doorbell over MCP channel| ag[Agent session<br/>Crush / Claude Code]
-  hn[Harness<br/>daemon] -->|supervises + schedules| ag
-  ag -->|claim / complete via MCP| sb
-  ag -->|reports, handoffs, trajectories| cn[Cairn<br/>artifacts]
-  cn -->|outbound webhook| sb
+  forge["GitHub / Gitea"] -- signed webhook --> sb
+  cairn -- "signed webhook (artifact.created)" --> sb
+  subgraph sb["Switchboard"]
+    verify["verify"] --> route["route (jq rules)"] --> queue[("todo queue")]
+  end
+  queue -- "doorbell (MCP channel)" --> worker
+  subgraph harness["Harness"]
+    worker["agent worker"]
+  end
+  worker -- "claim / complete" --> queue
+  worker -- "share artifact" --> cairn["Cairn"]
+  human(["you"]) -- "read, comment" --> cairn
 ```
 
 ## What each one owns
