@@ -20,6 +20,10 @@ package supervisor
 // "Per-Run Logs".
 //
 // @joestump-agent 09/11/2026 - Added for issue #119.
+//
+// @joestump-agent 09/11/2026 - Review of PR #310: run log paths go through
+// runLogDir, so a name that is not a single path element (a project harness,
+// or a name from the protocol in #120) never writes or prunes outside jobs/.
 
 import (
 	"encoding/json"
@@ -145,9 +149,26 @@ func (m *Manager) Runs(name string) []RunRecord {
 	return slices.Clone(h.Runs)
 }
 
-// RunLogPath is where run id of name logs: <jobs dir>/<name>/<id>.log.
+// RunLogPath is where run id of name logs: <jobs dir>/<name>/<id>.log, or ""
+// when name cannot be a directory of its own (runLogDir).
 func (m *Manager) RunLogPath(name string, id int) string {
-	return filepath.Join(m.jobsDir, name, strconv.Itoa(id)+".log")
+	dir := m.runLogDir(name)
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, strconv.Itoa(id)+".log")
+}
+
+// runLogDir is name's directory under the jobs root, or "" for a name that is
+// not a single path element. The config parser already refuses "/" and dot
+// names, but this is where a name becomes a file write and a delete, so the
+// guard lives here too: a project harness ("proj/name"), or a name arriving
+// over the protocol, must never address a directory outside its own.
+func (m *Manager) runLogDir(name string) string {
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
+		return ""
+	}
+	return filepath.Join(m.jobsDir, name)
 }
 
 // historyLocked returns name's history, creating it, and floors its last id at
@@ -160,7 +181,7 @@ func (m *Manager) historyLocked(name string) *runHistory {
 	}
 	if !h.floored {
 		h.floored = true
-		if n := highestRunLog(filepath.Join(m.jobsDir, name)); n > h.LastRunID {
+		if n := highestRunLog(m.runLogDir(name)); n > h.LastRunID {
 			h.LastRunID = n
 		}
 	}
@@ -191,7 +212,10 @@ func (h *runHistory) prune(keep int) {
 // logs cannot drift. Only ids up to upTo are considered: a log newer than the
 // history this call saw belongs to a run opened since, and is not ours to judge.
 func (m *Manager) pruneRunLogs(name string, kept map[int]bool, upTo int) {
-	dir := filepath.Join(m.jobsDir, name)
+	dir := m.runLogDir(name)
+	if dir == "" {
+		return
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
