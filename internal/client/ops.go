@@ -7,9 +7,47 @@ package client
 
 import (
 	"encoding/json"
+	"time"
 
 	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
 )
+
+// LogOptions selects the structured activity view of a harness's logs
+// (SPEC-0006 REQ "Run Correlation", #302).
+type LogOptions struct {
+	// Lines caps the entries returned, newest kept.
+	Lines int
+	// Since/Until pin the run window. Zero describes the latest run.
+	Since, Until time.Time
+	// IncludeAmbiguous adds sessions another harness could have written,
+	// flagged as ambiguous.
+	IncludeAmbiguous bool
+}
+
+// LogEvents returns one run's lifecycle and attributed agent activity. A
+// daemon older than ProtoMinor 7 ignores the request's Events flag and answers
+// with the raw tail; the reply's empty Source says so.
+func (c *Client) LogEvents(name string, o LogOptions) (protocol.LogsData, error) {
+	req := protocol.ControlReq{
+		Op:               protocol.OpLogs,
+		Name:             name,
+		Lines:            o.Lines,
+		Events:           true,
+		IncludeAmbiguous: o.IncludeAmbiguous,
+	}
+	if !o.Since.IsZero() {
+		req.Since = o.Since.Format(time.RFC3339Nano)
+	}
+	if !o.Until.IsZero() {
+		req.Until = o.Until.Format(time.RFC3339Nano)
+	}
+	resp, err := c.call(req)
+	if err != nil {
+		return protocol.LogsData{}, err
+	}
+	var out protocol.LogsData
+	return out, json.Unmarshal(resp.Data, &out)
+}
 
 // List returns every harness in config order.
 func (c *Client) List() ([]protocol.HarnessInfo, error) {

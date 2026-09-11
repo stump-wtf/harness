@@ -30,7 +30,12 @@ const (
 	// ProtoMinor 6 added Cols/Rows on LogsData so the peek pane replays the
 	// tail at the guest's authoritative viewport instead of the pane's — additive
 	// only.
-	ProtoMinor = 6
+	// ProtoMinor 7 added the structured activity view of logs (Events, Since,
+	// Until and IncludeAmbiguous on ControlReq; Source, Run, Entries, Excluded
+	// and Notices on LogsData) and LastStarted/LastExitAt on HarnessInfo
+	// (issues #302, #89) — additive only. A daemon older than 7 ignores Events
+	// and answers with the raw Text, which a newer client prints as before.
+	ProtoMinor = 7
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -109,6 +114,20 @@ type ControlReq struct {
 	Lines     int              `json:"lines,omitempty"`
 	Follow    bool             `json:"follow,omitempty"`
 	Harnesses []ProjectHarness `json:"harnesses,omitempty"`
+
+	// Events asks logs for the structured activity view of one run — agent
+	// events attributed to the harness, interleaved with lifecycle lines —
+	// instead of the raw durable-log tail. Governing: SPEC-0002 REQ "Control
+	// Operations", SPEC-0006 REQ "Run Correlation" (#302).
+	Events bool `json:"events,omitempty"`
+	// Since/Until (RFC 3339) pin the run window Events describes. Unset, the
+	// daemon describes the harness's latest run. This is the seam a run
+	// selector (`logs --run N`, #120) resolves a run record into.
+	Since string `json:"since,omitempty"`
+	Until string `json:"until,omitempty"`
+	// IncludeAmbiguous adds sessions more than one harness could have
+	// written, flagged as ambiguous. Off by default: correlation fails closed.
+	IncludeAmbiguous bool `json:"include_ambiguous,omitempty"`
 }
 
 // ProjectHarness is one project-local harness definition carried by a
@@ -200,6 +219,12 @@ type HarnessInfo struct {
 	// agent ran in and nothing else that names a harness (ADR-0015 dashboard
 	// activity).
 	Workdir string `json:"workdir,omitempty"`
+	// LastStarted / LastExitAt (RFC 3339) bound the harness's latest run, so a
+	// client can attribute a session to the harness whose run covers it, not
+	// merely to one sharing its workdir (SPEC-0006 REQ "Run Correlation";
+	// ADR-0015 chatroom identity). Empty when never started / never exited.
+	LastStarted string `json:"last_started,omitempty"`
+	LastExitAt  string `json:"last_exit_at,omitempty"`
 	// Prompt is the agent one-shot instruction for a prompt harness; the
 	// argv is synthesized at spawn from the same adapter (ADR-0011).
 	Prompt string `json:"prompt,omitempty"`
@@ -288,6 +313,78 @@ type LogsData struct {
 	// falls back to its own geometry, the historical behaviour.
 	Cols int `json:"cols,omitempty"`
 	Rows int `json:"rows,omitempty"`
+
+	// Source is LogSourceAgentTrace when the reply is the structured activity
+	// view (Run/Entries). Empty means Text is the rendering — a raw request, a
+	// daemon older than ProtoMinor 7, or a harness whose adapter records no
+	// native trajectory (generic), for which the durable log is the record
+	// (ADR-0007).
+	Source string `json:"source,omitempty"`
+	// Run is the run window the entries describe.
+	Run *LogRun `json:"run,omitempty"`
+	// Entries is the run's lifecycle and agent activity, oldest first, trimmed
+	// to the requested line count.
+	Entries []LogEntry `json:"entries,omitempty"`
+	// Excluded lists sessions inside the window that more than one harness
+	// could have written. They are never attributed (SPEC-0006 REQ "Run
+	// Correlation"); listing them keeps the exclusion observable.
+	Excluded []LogExclusion `json:"excluded,omitempty"`
+	// Notices explain a degraded view: no attributable session, an unreadable
+	// store, a run window recovered from the log. With no agent activity the
+	// reply also carries the durable-log tail in Text.
+	Notices []string `json:"notices,omitempty"`
+}
+
+// LogSourceAgentTrace marks a logs reply rendered from agent-trace sessions.
+const LogSourceAgentTrace = "agent-trace"
+
+// LogRun is the run window a structured logs reply describes. Times are
+// RFC 3339.
+type LogRun struct {
+	Start string `json:"start"`
+	// End is empty while the run is in flight.
+	End string `json:"end,omitempty"`
+	// ExitCode is set when the run ended with a recorded exit.
+	ExitCode *int   `json:"exit_code,omitempty"`
+	Adapter  string `json:"adapter,omitempty"`
+	Workdir  string `json:"workdir,omitempty"`
+}
+
+// Kinds of LogEntry.
+const (
+	LogEntryLifecycle = "lifecycle"
+	LogEntrySession   = "session"
+	LogEntryTool      = "tool"
+	LogEntryMark      = "mark"
+)
+
+// LogEntry is one line of a run's activity.
+type LogEntry struct {
+	// ID is stable across repeated requests, so a follower prints each entry
+	// once.
+	ID   string `json:"id"`
+	Time string `json:"time"`
+	// Kind is one of the LogEntry* constants.
+	Kind string `json:"kind"`
+	// Action is the lifecycle message ("state", "exited", "flapping"), the
+	// classified tool action ("read", "edit", "exec", "search", "verify",
+	// "other"), the mark type ("user-message", "error", …) or "session".
+	Action  string `json:"action"`
+	Tool    string `json:"tool,omitempty"`
+	Target  string `json:"target,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	Session string `json:"session,omitempty"`
+	Error   bool   `json:"error,omitempty"`
+	// Ambiguous marks an entry from an excluded session, present only on an
+	// IncludeAmbiguous request.
+	Ambiguous bool `json:"ambiguous,omitempty"`
+}
+
+// LogExclusion is a session correlation refused to attribute.
+type LogExclusion struct {
+	Session   string   `json:"session"`
+	StartedAt string   `json:"started_at"`
+	Claimants []string `json:"claimants"`
 }
 
 // ProjectUpData is the project_up response payload: the project's harnesses

@@ -83,6 +83,12 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		ConfigChanged: snap.ConfigChanged,
 		PID:           snap.PID,
 	}
+	if !snap.LastStarted.IsZero() {
+		info.LastStarted = snap.LastStarted.Format(time.RFC3339Nano)
+	}
+	if !snap.LastExitAt.IsZero() {
+		info.LastExitAt = snap.LastExitAt.Format(time.RFC3339Nano)
+	}
 	// HarnessRecord resolves the definition and provenance together under one
 	// manager lock hold — so a list of N harnesses costs N+1 lock round-trips
 	// instead of 2N+1, and Cmd/Backend and Project can never come from two
@@ -210,14 +216,29 @@ func (c *conn) opEnableDisable(req protocol.ControlReq) {
 // the geometry it was drawn at. Sourced from the same Mux the attach plane
 // resizes, so the peek pane and an attach session agree on the guest's size
 // instead of each guessing (ADR-0003 smallest-attached-wins).
+//
+// With Events set the reply is instead the structured activity view of one run
+// (activity.go; SPEC-0006 REQ "Run Correlation", #302). Events is opt-in so
+// every existing reader of the raw tail — the peek pane above all — is
+// untouched.
 func (c *conn) opLogs(req protocol.ControlReq) {
-	if _, ok := c.srv.mgr.Snapshot(req.Name); !ok {
+	snap, ok := c.srv.mgr.Snapshot(req.Name)
+	if !ok {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
 		return
 	}
 	lines := req.Lines
 	if lines <= 0 {
 		lines = 200
+	}
+	if req.Events {
+		data, err := c.activity(req, snap, lines)
+		if err != nil {
+			_ = c.pc.WriteError(req.ID, protocol.ErrBadRequest, "logs %q: %v", req.Name, err)
+			return
+		}
+		c.respond(req, data)
+		return
 	}
 	text := readLogTail(c.srv.mgr.LogDir(), req.Name, lines)
 	data := protocol.LogsData{Name: req.Name, Text: text}

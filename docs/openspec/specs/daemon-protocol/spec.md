@@ -76,6 +76,26 @@ of reflowing it.
   so the tail reconstructs at the geometry it was drawn at rather than the
   client's own
 
+#### Scenario: Structured run activity
+
+- **WHEN** a client requests `logs` with `events` set for a harness whose
+  adapter records a native trajectory
+- **THEN** the reply describes one run — the latest, or the run bounded by the
+  request's `since`/`until` — as the supervisor's lifecycle lines interleaved
+  with the agent events SPEC-0006 REQ "Run Correlation" attributes to that run,
+  lists the sessions correlation excluded, and works whether or not the harness
+  is still running
+- **AND** when no agent activity is attributable the reply carries notices
+  saying why and the durable log tail as well
+- **AND** a harness whose adapter records no native trajectory answers with the
+  durable log tail and no `source`, as a daemon predating the field would
+
+#### Scenario: Raw log tail is unchanged
+
+- **WHEN** a client requests `logs` without `events`
+- **THEN** the reply is the durable log tail exactly as before, which the TUI
+  peek pane and `harness logs --raw` depend on
+
 ### Requirement: Event Subscription
 
 After a `HELLO` that includes `wants: ["events"]`, the daemon SHALL push
