@@ -258,6 +258,111 @@ consumers (SPEC-0007 distillation, OTel export).
 - **THEN** the underlying transcript is read only, and no daemon code path
   writes to it
 
+### Requirement: Run Correlation
+
+A tool's trajectory store is machine-global: it holds sessions from every
+harness running that tool, from sibling harnesses sharing a working directory,
+and from the operator's own interactive runs. The daemon SHALL attribute a
+native trajectory session to a run of a harness only when **all** of the
+following hold, and SHALL NOT attribute it otherwise (issue #89):
+
+1. **Adapter and store.** The session was discovered in a store the harness's
+   own tool instance writes to:
+   - `crush` — `<workdir>/.crush/crush.db`, and the `projects.json` registry
+     under the harness's `CRUSH_GLOBAL_DATA` (else `XDG_DATA_HOME/crush`, else
+     `~/.local/share/crush` — crush's own resolution order). The project store
+     is read directly because the registry is not reliable alone: crush
+     rewrites it without a cross-process lock, and it has been observed corrupt
+     and weeks stale on a host running several instances.
+   - `claude-code` — `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude/projects`).
+   - `codex` — `$CODEX_HOME/sessions` (default `~/.codex/sessions`).
+   - `generic` — none; nothing is attributed to a generic harness.
+
+   These keys SHALL be resolved from the harness's `env_file` layered over the
+   daemon's environment — what the process actually sees — and no other
+   `env_file` value SHALL enter the correlation path (ADR-0008).
+2. **Working directory.** The session's recorded cwd equals the harness's
+   resolved workdir exactly. A subdirectory is a different project to every
+   supported tool. A harness with no workdir has nothing attributed.
+3. **Time window.** The session started within `[start − 2s, end + 2s]` of the
+   run (an in-flight run's end is now). The two-second slack covers
+   second-truncated storage, nothing more: every timestamp involved comes from
+   the same machine's clock.
+4. **No other claimant.** No other harness shares the workdir, could have
+   written that kind of session (the same adapter, or `generic`, which may run
+   any tool), and has a known run covering the session's start. A session with
+   any other claimant SHALL be excluded for every claimant, and the exclusion
+   SHALL be reported — session, start time, claimants — rather than dropped
+   silently.
+
+**Run windows.** The inspected run's window SHALL come from the supervisor's
+own record (`last_started`, and `last_exit_at` when it closes that run; both
+persisted in the state file and restored across a daemon restart) or from a
+window the caller supplies — the seam a run selector resolves a run record
+into. Only when the supervisor has no record at all MAY the window be recovered
+from the lifecycle lines in the harness's durable log. Other harnesses' windows
+SHALL include their supervisor record plus every run their durable logs record.
+Lifecycle lines share a file with program output, so a log-derived window SHALL
+only ever add claimants; it never widens what an inspected run is credited with.
+
+**Event scope.** Only the events of attributed sessions whose own timestamps fall
+inside the window are reported, so a session resumed in a later run reports each
+run's events under that run.
+
+**Threat model and residual gaps.** No supported transcript records the process
+that wrote it (the `HARNESS_RUN_ID` environment-stamping idea has nothing to
+match against), so correlation is a heuristic, and it fails closed: an
+ambiguous session is hidden, because under-reporting is recoverable and putting
+another agent's — or the operator's — transcript on a harness is not. It cannot
+distinguish:
+
+- a session started by hand, or by any unsupervised instance of the tool, in the
+  harness's workdir during the run;
+- a peer harness's run older than that peer's durable-log retention, which
+  therefore adds no claimant;
+- a store relocated by a tool config file rather than the environment and not
+  recorded in the instance's registry.
+
+Attribution is not an exposure control. Harvest Opt-In below remains the gate for
+the facade; this requirement decides what `harness logs` and the chatroom credit
+to a harness.
+
+#### Scenario: A session started during the run is attributed
+
+- **WHEN** a session whose cwd is the harness's workdir starts after the run spawned
+- **THEN** it is attributed to that run
+
+#### Scenario: Sessions outside the run or the workdir are not attributed
+
+- **WHEN** a session in the workdir started before the run, or a session started
+  during the run is in a different working directory
+- **THEN** it is not attributed
+
+#### Scenario: Overlapping runs in a shared workdir exclude the session
+
+- **WHEN** two harnesses of the same adapter share a workdir and a store, and a
+  session starts while both are running (for example two crush agents with
+  different `CRUSH_GLOBAL_DATA` whose registries point at the same project store)
+- **THEN** neither harness is credited with it, and each reports the exclusion
+  naming both claimants
+
+#### Scenario: Staggered runs in a shared workdir are separated by time
+
+- **WHEN** scheduled harnesses share a workdir and store but their runs do not
+  overlap
+- **THEN** each run is attributed only the sessions that started inside it
+
+#### Scenario: A relocated registry is followed
+
+- **WHEN** a harness's `env_file` sets `CRUSH_GLOBAL_DATA`
+- **THEN** discovery reads that instance's registry, not the default one
+
+#### Scenario: Post-mortem after a daemon restart
+
+- **WHEN** a harness's last run ended and the daemon has since restarted
+- **THEN** the run's window is restored from the state file and its sessions
+  are still attributed
+
 ### Requirement: Harvest Opt-In
 
 Trajectory exposure SHALL be opt-in per harness via a configuration key
