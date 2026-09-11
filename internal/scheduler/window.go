@@ -25,6 +25,10 @@ package scheduler
 // Governing: ADR-0013, SPEC-0008 REQ "Schedule Time Zone".
 //
 // @joestump-agent 09/11/2026 - Added for issue #117.
+//
+// @joestump-agent 09/11/2026 - Review of PR #306: the label walk starts at the
+// pre-jump offset in the day after a spring-forward, so a schedule armed
+// between the jump and its gap window's resolved instant still runs that day.
 
 import (
 	"time"
@@ -37,8 +41,9 @@ const allHours = 1<<24 - 1
 
 // maxLabelSkips bounds the fall-back loop in wallNext. A label is skipped only
 // when its first occurrence is already behind t, which can happen for at most
-// the labels inside one repeated hour (60 minutes, or 120 for a two-hour
-// shift) — so the bound is never reached by a real zone.
+// the labels inside one repeated hour, plus the labels inside the look-back
+// wallNext takes after a forward shift (60 minutes each, or 120 for a
+// two-hour shift) — so the bound is never reached by a real zone.
 const maxLabelSkips = 256
 
 // nextAfter returns e's first window strictly after t, or zero if the
@@ -72,7 +77,16 @@ func wallNext(spec *cron.SpecSchedule, zone *time.Location, t time.Time) time.Ti
 	naive := *spec
 	naive.Location = time.UTC
 
-	lt := t.In(zone)
+	// Start from t's wall reading under the SMALLER of the offsets in force
+	// now and a day ago. They agree except in the day after a forward shift,
+	// where reading t at the post-jump offset starts the walk past a gap label
+	// whose instant is still ahead: at 03:10 EDT, "30 2 * * *" resolves to
+	// 03:30 EDT, but a walk from the 03:10 label never sees 02:30 and drops
+	// that day's run. Labels this earlier start adds resolve behind t and are
+	// skipped below.
+	_, offNow := t.In(zone).Zone()
+	_, offDayAgo := t.Add(-24 * time.Hour).In(zone).Zone()
+	lt := t.In(time.FixedZone("", min(offNow, offDayAgo)))
 	label := time.Date(lt.Year(), lt.Month(), lt.Day(), lt.Hour(), lt.Minute(), lt.Second(), 0, time.UTC)
 	for range maxLabelSkips {
 		label = naive.Next(label)
