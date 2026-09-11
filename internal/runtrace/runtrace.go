@@ -34,6 +34,8 @@ import (
 
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/redact"
 )
 
 // Slack widens a run window at both ends. Crush stores whole seconds, so a
@@ -412,6 +414,11 @@ func kindRank(k EntryKind) int {
 	return 2
 }
 
+// sessionEntries flattens one session into entries. Every string an entry
+// carries came from the transcript, which records commands verbatim — a
+// `curl -H "Authorization: …"` or a token-bearing git remote included — so
+// each passes through redact before it can reach `harness logs` or its --json
+// (ADR-0008).
 func sessionEntries(ctx context.Context, s Session, w Window, now time.Time) ([]Entry, error) {
 	events, marks, meta, err := s.adapter.Parse(ctx, s.Meta.Path)
 	if err != nil {
@@ -427,7 +434,7 @@ func sessionEntries(ctx context.Context, s Session, w Window, now time.Time) ([]
 		Seq:     -1,
 		Kind:    KindSession,
 		Action:  string(KindSession),
-		Summary: sessionSummary(s.Meta, meta),
+		Summary: redact.String(sessionSummary(s.Meta, meta)),
 	}}
 	for _, ev := range events {
 		t := stamp(ev.Timestamp, s.Started)
@@ -442,8 +449,8 @@ func sessionEntries(ctx context.Context, s Session, w Window, now time.Time) ([]
 			Kind:    KindTool,
 			Action:  ev.Action,
 			Tool:    ev.Tool,
-			Target:  primaryTarget(ev),
-			Summary: tallySuffix.ReplaceAllString(ev.Summary, ""),
+			Target:  redact.String(primaryTarget(ev)),
+			Summary: redact.String(tallySuffix.ReplaceAllString(ev.Summary, "")),
 			Error:   ev.IsError,
 		})
 	}
@@ -459,7 +466,7 @@ func sessionEntries(ctx context.Context, s Session, w Window, now time.Time) ([]
 			Seq:     mk.Seq,
 			Kind:    KindMark,
 			Action:  mk.Type,
-			Summary: mk.Note,
+			Summary: redact.String(mk.Note),
 			Error:   mk.Type == "error",
 		})
 	}

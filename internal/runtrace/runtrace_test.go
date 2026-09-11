@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stump-wtf/agent-trace/tail"
 
+	"gitea.stump.rocks/stump.wtf/harness/internal/redact"
 	rt "gitea.stump.rocks/stump.wtf/harness/internal/runtrace/runtracetest"
 )
 
@@ -351,5 +353,39 @@ func TestSourcesFollowRelocatedStores(t *testing.T) {
 	}
 	if len(crush) != 1 || crush[0].(*tail.CrushAdapter).ProjectsPath != "/xdg/crush/projects.json" {
 		t.Errorf("crush sources = %#v, want only the XDG registry (no project store on disk)", crush)
+	}
+}
+
+// TestEntriesAreRedacted: a transcript records commands verbatim, and a sweep
+// that sets a token-bearing remote or sends an Authorization header must not
+// put the credential in `harness logs` or its --json.
+func TestEntriesAreRedacted(t *testing.T) {
+	work := filepath.Join(t.TempDir(), "sweeps")
+	rt.WriteCrushDB(t, filepath.Join(work, ".crush", "crush.db"),
+		sess("s1", spawn.Add(2*time.Second), []rt.CrushMessage{
+			{Role: "assistant", At: spawn.Add(3 * time.Second), Parts: rt.ToolCall("c1", "bash", map[string]any{
+				"command": "git remote set-url origin https://joestump-agent:0123456789abcdef0123@gitea.stump.rocks/a/b.git",
+			})},
+			{Role: "tool", At: spawn.Add(4 * time.Second), Parts: rt.ToolResult("c1", "")},
+			{Role: "assistant", At: spawn.Add(5 * time.Second), Parts: rt.FinishError("Unauthorized", "sent Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz")},
+		}))
+	a := attribute(t, crushHarness(t, "sweep", work, nil), Window{Start: spawn, End: spawn.Add(time.Minute)})
+	entries, errs := Events(context.Background(), a, false, spawn.Add(time.Hour))
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	masked := 0
+	for _, e := range entries {
+		for _, s := range []string{e.Target, e.Summary} {
+			if strings.Contains(s, "0123456789abcdef0123") || strings.Contains(s, "sk-abcdefghij") {
+				t.Errorf("entry %s carries a credential: %q", e.ID, s)
+			}
+			if strings.Contains(s, redact.Mask) {
+				masked++
+			}
+		}
+	}
+	if masked < 2 {
+		t.Errorf("entries = %+v, want the remote's password and the bearer token both masked", entries)
 	}
 }
