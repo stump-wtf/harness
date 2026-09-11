@@ -319,34 +319,51 @@ func TestRunWindowPrecedence(t *testing.T) {
 	spans := []supervisor.RunSpan{{Start: local(7, 40, 0), End: local(7, 56, 22), ExitCode: &code}}
 
 	w, _, _, err := runWindow(protocol.ControlReq{Since: local(1, 0, 0).Format(time.RFC3339Nano), Until: local(2, 0, 0).Format(time.RFC3339Nano)},
-		supervisor.Snapshot{LastStarted: started, LastExitAt: exited}, spans)
+		supervisor.Snapshot{LastStarted: started, LastExitAt: exited}, spans, time.Time{})
 	if err != nil || !w.Start.Equal(local(1, 0, 0)) || !w.End.Equal(local(2, 0, 0)) {
 		t.Errorf("explicit window = %+v, %v; want 01:00–02:00", w, err)
 	}
 
-	w, exit, _, _ := runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: exited, LastExitCode: 1}, spans)
+	w, exit, _, _ := runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: exited, LastExitCode: 1}, spans, time.Time{})
 	if !w.Start.Equal(started) || !w.End.Equal(exited) || exit == nil || *exit != 1 {
 		t.Errorf("snapshot window = %+v exit %v; want the supervisor's own record", w, exit)
 	}
 
-	w, exit, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, PID: 42}, spans)
+	w, exit, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, PID: 42}, spans, time.Time{})
 	if !w.Open() || exit != nil {
 		t.Errorf("running window = %+v; want it open", w)
 	}
 
 	// Not running, no exit after the start: the daemon died with the run. The
 	// log's matching span closes it.
-	w, exit, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: started.Add(-time.Hour)}, spans)
+	w, exit, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: started.Add(-time.Hour)}, spans, time.Time{})
 	if !w.End.Equal(local(7, 56, 22)) || exit == nil {
 		t.Errorf("recovered end = %+v exit %v; want the span's end", w, exit)
 	}
 
-	w, _, note, _ := runWindow(protocol.ControlReq{}, supervisor.Snapshot{}, spans)
+	w, _, note, _ := runWindow(protocol.ControlReq{}, supervisor.Snapshot{}, spans, time.Time{})
 	if !w.Start.Equal(local(7, 40, 0)) || note == "" {
 		t.Errorf("log-derived window = %+v note %q; want the last span, with its provenance noted", w, note)
 	}
 
-	if _, _, _, err := runWindow(protocol.ControlReq{Since: "yesterday"}, supervisor.Snapshot{}, nil); !errors.Is(err, errBadWindow) {
+	// A dead run with no span to close it began before this daemon did, and a
+	// harness does not outlive the daemon that spawned it: the window closes at
+	// the daemon's start instead of vouching for every session since.
+	boot := started.Add(2 * time.Hour)
+	w, _, note, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: started.Add(-time.Hour)}, nil, boot)
+	if !w.End.Equal(boot) || note == "" {
+		t.Errorf("dead run = %+v note %q; want it closed at the daemon's start, noted", w, note)
+	}
+	w, _, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{}, []supervisor.RunSpan{{Start: local(7, 40, 0)}}, boot)
+	if !w.End.Equal(boot) {
+		t.Errorf("log-derived dead run = %+v; want it closed at the daemon's start", w)
+	}
+	w, _, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: started.Add(-time.Hour)}, nil, started.Add(-time.Minute))
+	if !w.Open() {
+		t.Errorf("run begun under this daemon = %+v; want it left open", w)
+	}
+
+	if _, _, _, err := runWindow(protocol.ControlReq{Since: "yesterday"}, supervisor.Snapshot{}, nil, time.Time{}); !errors.Is(err, errBadWindow) {
 		t.Errorf("bad since: err = %v, want errBadWindow", err)
 	}
 }

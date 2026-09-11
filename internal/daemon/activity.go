@@ -20,6 +20,10 @@ package daemon
 // fallback record), issues #302 and #89.
 //
 // @joestump-agent 09/11/2026 - Added for harness#302.
+//
+// @joestump-agent 09/11/2026 - Review of #307: a dead run's open window closes
+// at this daemon's start; peers match through symlinks, and a peer with no
+// workdir claims the daemon's own directory.
 
 import (
 	"context"
@@ -71,7 +75,7 @@ func (c *conn) activity(req protocol.ControlReq, snap supervisor.Snapshot, lines
 	if lerr != nil {
 		data.Notices = append(data.Notices, fmt.Sprintf("lifecycle lines partly unreadable: %v", lerr))
 	}
-	w, exit, note, err := runWindow(req, snap, supervisor.RunSpans(lifecycle))
+	w, exit, note, err := runWindow(req, snap, supervisor.RunSpans(lifecycle), c.srv.started)
 	if err != nil {
 		return data, err
 	}
@@ -162,8 +166,9 @@ const fallbackTailLines = 40
 //     at all — they share a file with program output, so they never override
 //     the supervisor's record.
 //
-// A closed run's exit code is returned when one was recorded.
-func runWindow(req protocol.ControlReq, snap supervisor.Snapshot, spans []supervisor.RunSpan) (runtrace.Window, *int, string, error) {
+// A closed run's exit code is returned when one was recorded. A run with no
+// recorded end that began before daemonStart is closed there (endedBy).
+func runWindow(req protocol.ControlReq, snap supervisor.Snapshot, spans []supervisor.RunSpan, daemonStart time.Time) (runtrace.Window, *int, string, error) {
 	if req.Since != "" {
 		start, err := time.Parse(time.RFC3339Nano, req.Since)
 		if err != nil {
@@ -188,6 +193,9 @@ func runWindow(req protocol.ControlReq, snap supervisor.Snapshot, spans []superv
 					w.End, exit = s.End, s.ExitCode
 				}
 			}
+			if closed, ok := endedBy(w, daemonStart); ok {
+				return closed, nil, "no exit was recorded for this run; it ended no later than this daemon's start, so its window closes there", nil
+			}
 			if w.Open() {
 				return w, nil, "no exit was recorded for this run; its window is left open", nil
 			}
@@ -196,10 +204,28 @@ func runWindow(req protocol.ControlReq, snap supervisor.Snapshot, spans []superv
 	}
 	if len(spans) > 0 {
 		last := spans[len(spans)-1]
-		return runtrace.Window{Start: last.Start, End: last.End}, last.ExitCode,
-			"run window recovered from the durable log's lifecycle lines", nil
+		w := runtrace.Window{Start: last.Start, End: last.End}
+		note := "run window recovered from the durable log's lifecycle lines"
+		if closed, ok := endedBy(w, daemonStart); ok {
+			w = closed
+			note += "; no exit was recorded, so it closes at this daemon's start"
+		}
+		return w, last.ExitCode, note, nil
 	}
 	return runtrace.Window{}, nil, "", nil
+}
+
+// endedBy closes an open window that began before daemonStart. A harness runs
+// under its daemon's PTY and nothing re-adopts it after a restart, so a run
+// with no recorded end was over, as far as supervision knows, when this daemon
+// started. Left open it would be credited with every session in its workdir
+// since — including ones the operator started by hand.
+func endedBy(w runtrace.Window, daemonStart time.Time) (runtrace.Window, bool) {
+	if !w.Open() || daemonStart.IsZero() || !w.Start.Before(daemonStart) {
+		return w, false
+	}
+	w.End = daemonStart
+	return w, true
 }
 
 // snapshotWindow is the latest run as the supervisor recorded it.
