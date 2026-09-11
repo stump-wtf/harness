@@ -216,24 +216,4 @@ ssh -p 23234 your-host
 - The server's host key is generated once and kept under
   `~/.local/state/harness/`, so clients see a stable fingerprint.
 
-## Traces elsewhere (optional)
-
-If you already run an OpenTelemetry backend, the daemon can export agent
-sessions as traces:
-
-```toml
-[daemon]
-otel_endpoint = "https://otel.example.com"
-
-[harness.reviewer]
-harness = "crush"
-workdir = "~/agents/reviewer"
-harvest_trajectory = true
-enabled = true
-```
-
-`harvest_trajectory` is opt-in per harness, because transcripts can contain
-whatever an agent printed, secrets included. The daemon POSTs standard OTLP
-JSON to `otel_endpoint` + `/v1/traces`.
-
 Next: [how Harness, Switchboard and Cairn fit together](./harness-switchboard-cairn).

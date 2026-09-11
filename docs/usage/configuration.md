@@ -261,29 +261,34 @@ harness = "claude-code"
 
 ## Trajectory harvesting & facade scope
 
-- `harvest_trajectory = true` (default `false`) exposes this harness's session
-  transcripts read-only through the MCP facade (`list_trajectories` /
-  `get_trajectory`). Opt-in because a transcript may contain secrets the
-  harnessed program printed itself (ADR-0008).
-- `mcp_allow` (default `["read"]`) lists the operations this harness may
-  invoke through the MCP facade; include `"write"` to permit
-  `harness_start/stop/restart` through the facade. **Global config only** —
-  project files reject the key so a cloned repository cannot grant itself write
-  authority over the fleet.
+:::note Reserved, not yet active
+
+The daemon does not run the MCP facade (ADR-0010) or any trajectory export
+today. These keys are validated and kept in config — the TUI edit form
+round-trips them — but setting them changes nothing at runtime yet.
+
+:::
+
+- `harvest_trajectory = true` (default `false`) is the opt-in for exposing this
+  harness's session transcripts read-only through the planned MCP facade
+  (`list_trajectories` / `get_trajectory`). Opt-in because a transcript may
+  contain secrets the harnessed program printed itself (ADR-0008).
+- `mcp_allow` (default `["read"]`) lists the operations this harness will be
+  permitted to invoke through that facade; `"write"` would permit
+  `harness_start/stop/restart`. **Global config only** — project files already
+  reject the key, so a cloned repository cannot grant itself write authority
+  over the fleet.
 
 ## Daemon settings (`[daemon]`)
 
 ```toml
 [daemon]
-watch_config = true                   # auto-reload on config file changes (default true)
-otel_endpoint = "https://cairn.stump.wtf"   # OTLP/HTTP trace export (optional)
+watch_config = true   # auto-reload on config file changes (default true)
 ```
 
-`otel_endpoint` is an OTLP/HTTP URL the daemon ships agent traces to. Any
-OTLP-compatible endpoint works (Honeycomb, Tempo, Jaeger, Grafana, or a Cairn
-instance exposing OTLP): the daemon builds OTel traces from harvested sessions
-(`harvest_trajectory = true`) and POSTs standard OTLP JSON to
-`<endpoint>/v1/traces`.
+`watch_config` is the only daemon setting with a runtime effect today.
+`otel_endpoint` is also accepted (an OTLP/HTTP URL for trace export), but
+nothing in the daemon exports traces yet, so setting it does nothing.
 
 ## Restart policy
 

@@ -15,13 +15,9 @@
 # # explicit `harness reload` or SIGHUP after config changes.
 # watch_config = true
 #
-# # otel_endpoint is the OTLP/HTTP URL the daemon ships agent traces to.
-# # Any OTLP-compatible endpoint works: Honeycomb, Tempo, Jaeger, Grafana,
-# # or a Cairn instance exposing an OTLP endpoint. The daemon builds OTel
-# # traces from harvested sessions (harvest_trajectory = true) and POSTs
-# # them as standard OTLP JSON to <endpoint>/v1/traces. Harness does not
-# # know or care what is on the other end.
-# otel_endpoint = "https://cairn.stump.wtf"
+# # otel_endpoint is accepted and reserved for OTLP/HTTP trace export, but the
+# # daemon does not export traces yet: setting it has no effect today.
+# otel_endpoint = "https://otel.example.com"
 
 # Each harness is one supervised process. The new-style [harness.<name>]
 # form is preferred; a bare [name] table is supported for backward
@@ -101,15 +97,17 @@ enabled = false
 #
 # harness = "claude-code"   # required on every [harness.*] table
 
-# Trajectory harvesting (SPEC-0006 REQ "Harvest Opt-In"): expose this harness's
-# session transcripts read-only through the facade (list_trajectories /
-# get_trajectory). Defaults to false - a transcript may contain secrets the
-# harnessed program printed itself (ADR-0008), so exposure is opt-in.
+# Trajectory harvesting (SPEC-0006 REQ "Harvest Opt-In"): the opt-in for
+# exposing this harness's session transcripts read-only through the MCP facade
+# (list_trajectories / get_trajectory). Defaults to false - a transcript may
+# contain secrets the harnessed program printed itself (ADR-0008). NOTE: the
+# daemon does not run the MCP facade yet, so this key and mcp_allow below are
+# validated but have no runtime effect today.
 #
 # harvest_trajectory = true
 
 # MCP facade capability scope (SPEC-0005 REQ "Capability Scoping"): the
-# operations this harness is permitted to invoke through the MCP facade.
+# operations this harness will be permitted to invoke through the MCP facade.
 # Defaults to ["read"] (read-only facade tools like harness_list,
 # list_trajectories). Include "write" to permit harness_start/stop/restart
 # through the facade. Global config only - project files reject this key so a
