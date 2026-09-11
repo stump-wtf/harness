@@ -2,9 +2,9 @@
 status: accepted
 date: 2026-07-26
 decision-makers: [joestump]
-extends: [ADR-0005, ADR-0006]
+extends: [ADR-0005, ADR-0006, ADR-0007]
 governs: [SPEC-0008]
-related: [ADR-0002, ADR-0003, ADR-0007, ADR-0008, ADR-0009, ADR-0011]
+related: [ADR-0002, ADR-0003, ADR-0008, ADR-0009, ADR-0011]
 ---
 
 # ADR-0013: Scheduled one-shot runs — daemon-owned cron and `schedule` on `[harness.*]`
@@ -79,6 +79,13 @@ Chosen options: **1C (daemon-owned scheduler, no new trigger verb)** and **2B
 > **Deferred**. The original 2A rationale is preserved verbatim under *Pros and
 > Cons of the Options* — it was not wrong, it was outvoted by a schema change
 > that landed in between. See "Why 2B, given 2A's argument" below.
+>
+> **Revision note (2026-09-11).** #117 replaced the timer-driven `robfig/cron`
+> runner with a wall-clock tick, added missed-window detection and the
+> `catch_up` key, persisted each schedule's position in `state.json`, and
+> specified time zones (`CRON_TZ=`/`TZ=` prefixes) and DST behavior. Those move
+> out of **Deferred** and into *Clock* and *Time zones and DST* below. Run
+> history (#119) and the protocol/CLI surface (#120) remain deferred.
 
 1C because the daemon already *is* the supervisor, the state store, and the thing
 systemd/launchd keeps alive — giving it the clock costs one goroutine and keeps
@@ -140,14 +147,20 @@ args = ["--remote-control", "--dangerously-skip-permissions"]
 [harness.stumpcloud-sweep]        # scheduled one-shot
 prompt = "check all StumpCloud services and report anything unhealthy"
 auto_accept = true
-schedule = "0 */6 * * *"          # 5-field cron, or @daily / @every 6h
+schedule = "CRON_TZ=UTC 0 */6 * * *"   # 5-field cron, or @daily / @every 6h
+catch_up = true                   # run once on wake if a window was missed
 description = "scheduled sweep (every 6 hours)"
 ```
 
 `schedule` is a 5-field cron expression (`min hour dom mon dow`), the
 `@daily`/`@hourly`/`@weekly`/`@monthly`/`@yearly` descriptors, or
 `@every <duration>` — validated at parse time by the same parser the scheduler
-itself uses, so config and scheduler cannot disagree about what is valid.
+itself uses, so config and scheduler cannot disagree about what is valid. It
+may carry a `CRON_TZ=<zone>` or `TZ=<zone>` prefix; see *Time zones and DST*.
+
+`catch_up` (default `false`) is the missed-window policy described under
+*Clock* below. It means nothing without `schedule`, so the parser rejects it
+there, and in project files, on the same terms as the exclusions above.
 Everything else on the table means exactly what ADR-0006 and ADR-0011 already say
 it means: same parser, same `core.Harness`, same `env_file` handling (ADR-0008),
 same prompt-harness argv synthesis.
@@ -170,13 +183,77 @@ deferred, not chosen against.
 The run exiting is terminal for that firing. The restart policy applies only to
 abnormal exit, and only if the operator configured `on-failure`.
 
+### Clock: wall-clock evaluation, missed windows, catch-up
+
+The daemon never arms a timer to a window. Once a second
+(`scheduler.TickInterval`) it compares the wall clock against each armed
+schedule's next window, and that one-second ticker is the longest timer it
+holds. A timer armed for 03:00 and carried across a laptop suspend fires
+whenever the platform decides — Go's timers and its monotonic clock do not
+advance while macOS or Linux sleeps — so a wake at 08:00 would get an
+OS-dependent outcome. The tick reaches a decision that is ours instead. The
+wall-clock reading has its monotonic component stripped before any comparison,
+or Go would compare on precisely the clock that stopped. Firing is dispatched
+on its own goroutine, so a slow start cannot delay evaluating anything else.
+
+A window first evaluated more than `LateGrace` (one minute) after it was due
+was not seen on time: the machine slept, the daemon was down, or the clock
+jumped forward. For those windows:
+
+* **`catch_up = true`** runs the harness **exactly once**, however many windows
+  elapsed.
+* **`catch_up = false`** (the default) runs nothing and records **exactly one**
+  missed entry covering all of them.
+
+If the most recent elapsed window is itself inside the grace, it runs as an
+ordinary firing and only the older windows count as missed. Windows a slow tick
+lands a few seconds late on coalesce into a single on-time run.
+
+Each scheduled harness's position — the last window decided, with the
+expression it was decided under — is persisted in `state.json` (extending
+ADR-0007) and written synchronously **before** the run starts. So a daemon
+started after an outage resumes from it and takes the same code path a wake
+does, and a daemon that crashes just after firing does not fire that window
+again on restart. A position recorded under a different expression is
+discarded rather than used to invent misses. A wall clock that steps backwards
+never re-decides a window already decided; it delays the next run rather than
+repeating the last one.
+
+Recording the miss is the point. Silently doing nothing is the classic laptop
+cron failure, and a visible miss is what separates *"it ran and passed"* from
+*"it never fired."* Until run history (#119) gives it a `missed` row, the record
+is a warn-level daemon log line behind a `Recorder` seam that #119 fills.
+
+### Time zones and DST
+
+An expression is evaluated in the zone its `CRON_TZ=`/`TZ=` prefix names —
+robfig/cron's own syntax, so the validating parser already understood it — and
+otherwise in the daemon's local zone. There is no separate `timezone` key: a
+second place to state a zone is a second place for it to disagree with the
+expression. The binary embeds the IANA database, so a named zone validates the
+same on a host with no zoneinfo installed.
+
+DST splits schedules the way ISC cron splits them:
+
+* An expression that fires in **every hour**, or any `@every` interval, is a
+  cadence in real time. It runs once per real hour straight through both
+  transitions.
+* An expression **restricted to particular hours** names wall-clock times, and
+  each wall-clock window runs exactly once. A window inside a spring-forward gap
+  runs at the instant the pre-transition offset names (`30 2 * * *` runs at
+  03:30 EDT, 24 real hours after the previous day's run), and a window repeated
+  by a fall-back runs only at its first occurrence. robfig/cron's own `Next`
+  skipped the first case outright and ran the second twice; the scheduler
+  resolves these windows itself.
+
 ### Reconciliation, not rebuild
 
 Schedules re-apply after **every** successful config reload — SIGHUP, the
 fsnotify config watcher, and the `reload` control op all funnel through
 `Manager.Reload`, which invokes a single reload hook. Reconciliation is
-**incremental**: an entry whose spec is unchanged keeps its existing cron
-registration, and therefore its phase.
+**incremental**: an entry whose spec is unchanged keeps its existing
+registration, and therefore its phase. Changing only `catch_up` updates the
+entry in place.
 
 This is load-bearing, not an optimization. Rebuilding the cron on every reload
 resets each `@every` interval's countdown, and this config file is rewritten
@@ -219,17 +296,25 @@ CLIs generally need.
   enforces. Tracked as
   [#159](https://gitea.stump.rocks/stump.wtf/harness/issues/159); the fix is a
   supervisor-level "start without persisting intent" primitive.
+* Good, because a laptop that sleeps through a window reaches a deliberate,
+  tested decision on wake — run once, or record the miss — rather than whatever
+  the OS did to a long timer, and a missed window is never silent.
 * Bad, because the daemon is now a scheduler, and clock correctness — DST,
-  suspend/resume, timezone data, wall-clock jumps — becomes our bug surface.
+  suspend/resume, timezone data, wall-clock jumps — becomes our bug surface. It
+  is contained in `internal/scheduler`, behind an injectable clock, with each of
+  those cases pinned by a test that runs in milliseconds.
+* Bad, because the daemon wakes once a second for as long as it runs, whether or
+  not anything is scheduled. A tick is one comparison per armed entry; the cost
+  is the wakeup, not the work.
 * Bad, because there is **no run history and no per-run log**. The question
   *"did last night's run pass?"* is answerable only from the harness's single
   continuous scrollback and last-exit-code, exactly the limitation the original
   draft called out. This is the largest gap between what this ADR promises in its
   Context section and what ships.
-* Bad, because **if `harnessd` is down at 03:00, the run does not fire**, and
-  nothing records that it was missed. System cron would have fired. This is the
-  honest cost of daemon-owned scheduling, mitigated only by the daemon's own
-  `Restart=on-failure` supervision.
+* Bad, because **if `harnessd` is down at 03:00, the run does not fire at
+  03:00.** System cron would have. The daemon notices on its next boot —
+  `catch_up = true` runs it once, `catch_up = false` records the miss — but the
+  record is a daemon log line until run history (#119) gives it a row.
 
 ### Confirmation
 
@@ -247,6 +332,15 @@ Acceptance tests, all present:
 * The reload hook fires on `Reload` and `ReloadFromFile`, and does not fire on a
   failed parse.
 * `schedule` survives a TUI edit round-trip that touches an unrelated field.
+* Advancing a fake clock past five windows in one jump runs once with
+  `catch_up = true` and records exactly one miss without it, and a daemon
+  started after the same outage decides identically.
+* A restart just after a firing, and a backwards clock step, do not refire.
+* A time-of-day schedule runs exactly once on both DST transition days; an
+  every-hour cadence runs once per real hour through them.
+* `CRON_TZ=`/`TZ=` override the daemon's zone, including half-hour zones.
+* Outside `clock.go` the scheduler package neither reads the time nor arms a
+  timer — enforced by a source-scan test.
 
 ### Deferred
 
@@ -257,19 +351,11 @@ current behavior:
 * **Run history and per-run logs** — a bounded ring of
   `{ run_id, started_at, ended_at, exit_code, outcome, trigger }` per harness,
   plus one log file per run pruned to `keep_runs`. The single largest gap.
-* **Missed-window recording and `catch_up`** — the shipped scheduler neither
-  records nor replays a window missed while the daemon was down.
+  Missed windows are detected and logged today (see *Clock*) but have no durable
+  `missed` row until this lands (#119).
 * **`timeout`** — a hung agent currently owns its schedule indefinitely. The
   original draft's 1h default remains the right target.
 * **`on_overlap = "queue" | "replace"`** — overlap is fixed at `skip`.
-* **`timezone`** — schedules evaluate in the daemon's local zone
-  (`time.Local`); there is no per-harness IANA zone key, and the DST semantics
-  the draft specified are unverified.
-* **Suspend-safe wall-clock evaluation** — the draft mandated re-evaluating "is
-  anything due?" against the wall clock on a short tick rather than arming long
-  timers. The shipped scheduler delegates timing to `robfig/cron/v3`, which arms
-  a timer to the next due entry. Behavior across a laptop suspend has not been
-  verified against that requirement.
 * **`scheduled` / `completed` states** and a `consecutive_failures` counter.
 * **Protocol ops `jobs` / `run` / `runs`** and the `job_run_*` events.
 * **`tty = false`**, `on_failure` hooks and notifiers, scheduled units as
@@ -293,8 +379,9 @@ The daemon carries an internal cron engine driven from config; the existing
   a harness, so `start`, `stop`, `attach`, and `logs` already do the right thing.
 * Neutral, because it adds a scheduler goroutine to a daemon that previously
   only reacted to process exits.
-* Bad, because a daemon that is down at the scheduled instant simply misses the
-  window, with no record that it did.
+* Bad, because a daemon that is down at the scheduled instant misses the
+  window. (Since #117 the miss is recorded on the next boot, and `catch_up`
+  can run it once.)
 * Bad, because DST, timezone data, and suspend/resume correctness become our
   problem rather than systemd's.
 
@@ -399,11 +486,12 @@ flowchart TD
 
     subgraph sched["scheduler (in harnessd)"]
         APPLY["Apply: reconcile incrementally<br/>unchanged spec keeps its entry<br/>(and therefore its phase)"]
-        APPLY --> CRON["robfig/cron v3<br/>+ Recover chain"]
-        CRON --> TICK{"entry due"}
+        APPLY --> CRON["wall-clock tick (1s)<br/>robfig/cron parses · marks in state.json"]
+        CRON --> TICK{"window due?"}
+        TICK -->|"missed · catch_up = false"| MISS["record one miss<br/>(log until run history)"]
     end
 
-    TICK --> GUARD{"harness state"}
+    TICK -->|"on time · or missed with catch_up = true (once)"| GUARD{"harness state"}
     GUARD -->|"starting · running<br/>degraded · stopping"| SKIP["skip this firing<br/>(overlap dropped, not stacked)"]
     GUARD -->|"stopped · failed · restarting"| START["Manager.Start"]
 
@@ -439,8 +527,10 @@ flowchart TD
 * **Related [ADR-0003](adr-0003-terminal-multiplexing.md)** — scheduled runs use
   the same owned PTY and `x/vt` emulator, which is what makes attaching to an
   in-flight run work at all.
-* **Related [ADR-0007](adr-0007-state-persistence-scrollback.md)** — *not* yet
-  extended with run history or per-run logs; see Deferred.
+* **Extends [ADR-0007](adr-0007-state-persistence-scrollback.md)** — `state.json`
+  carries each schedule's position (the last window decided), which is what
+  makes a missed window detectable across a daemon restart. Run history and
+  per-run logs are *not* yet added; see Deferred.
 * **Related [ADR-0008](adr-0008-security-and-secrets.md)** — scheduled runs load
   `env_file` through the same path.
 * **Related [ADR-0009](adr-0009-project-scoped-config-and-compose-commands.md)** —

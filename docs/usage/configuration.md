@@ -137,9 +137,48 @@ Rules:
 - Mutually exclusive with `enabled = true` and with profile membership.
 - Global config only — project files reject the key.
 
+### Time zones
+
+By default an expression runs in the daemon's local zone. Prefix it with
+`CRON_TZ=<zone>` (or `TZ=<zone>`) to pin it to an IANA zone regardless of where
+the daemon runs:
+
+```toml
+schedule = "CRON_TZ=UTC 0 9 * * *"   # 09:00 UTC on every host
+```
+
+Across daylight-saving changes, a schedule that names a time of day runs once
+per day: a time the clock skips (02:30 on spring-forward day) runs just after
+the jump, and a time the clock repeats runs only the first time. A schedule that
+fires every hour, or an `@every` interval, keeps running once per real hour.
+
+### Sleep, outages, and `catch_up`
+
+The daemon checks the wall clock every second rather than setting a timer, so a
+laptop that sleeps through a window notices the moment it wakes, and a daemon
+that starts after an outage notices at boot. A window noticed more than a minute
+late is **missed**, and `catch_up` decides what happens:
+
+```toml
+[harness.nightly-sweep]
+prompt = "…"
+schedule = "CRON_TZ=UTC 0 3 * * *"
+catch_up = true   # default false
+```
+
+- `catch_up = true` — run **once** on wake or boot, however many windows were
+  missed.
+- `catch_up = false` (default) — run nothing and log a `scheduled run MISSED`
+  warning in the daemon log naming the harness, the first and last missed
+  windows, and how many there were. The next window fires normally.
+
+`catch_up` requires `schedule`. The daemon records the last window it decided in
+`state.json`, so a restart never runs the same window twice.
+
 `harness list` marks a scheduled harness inline — a clock glyph in place of the
 state glyph, and the next firing appended to its description (`· in 4h3m`).
-`harness describe` adds the cron spec and the absolute next-run time. The
+`harness describe` adds the cron spec and the absolute next-run time. A
+zone-prefixed schedule's cadence carries the zone (`daily 09:00 UTC`). The
 [cockpit](./tui#the-dashboard) tags the row `(scheduled)` with the same
 countdown, and carries the cadence on the row's sub-line.
 
