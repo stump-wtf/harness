@@ -70,9 +70,12 @@ the PR.
 into a chat message, the worker publishes it to Cairn and gets back a short
 link. It completes the todo with that link as its result.
 
-**4. A handoff closes the loop.** Say the review finds a problem that needs a
-different agent, one with deploy access or a bigger model. The worker publishes
-a handoff artifact to Cairn, tagged `handoff` and `lane:deploy`.
+**4. A handoff closes the loop.** Say the review finds a problem too hard for
+the worker's small model. The worker publishes a handoff artifact to Cairn,
+tagged `handoff` and `lane:l`. Cairn's
+[handoff convention](https://cairn.stump.wtf/docs/tags) uses lanes to pick a
+worker by difficulty: `lane:s`, `lane:m`, `lane:l`, `lane:vision` and
+`lane:auto`.
 
 The Cairn instance is configured by its operator with one outbound webhook list
 for the whole instance. It sends an `artifact.created` event for each new
@@ -80,7 +83,8 @@ artifact or bundle, but not for traces, comments or reactions.
 
 A Switchboard
 [routing rule](https://switchboard.stump.wtf/docs/guides/routing-cookbook)
-matches the tags and drops a todo on the deploy pool's queue. The rule also
+matches the tags and drops a todo on the queue of a pool running a larger
+model. The rule also
 checks `.artifact.actor_id`. Tags and titles are claims the publishing client
 makes, so without that check anyone who can publish to that Cairn could mint
 work for your agents. That pool's worker, also supervised by Harness, wakes up,
