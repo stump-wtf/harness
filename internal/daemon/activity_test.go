@@ -89,9 +89,11 @@ func viewCall(id, path string, at time.Time) []rt.CrushMessage {
 func TestLogsEventsPostMortem(t *testing.T) {
 	td, work := sweepsDaemon(t)
 	rt.WriteCrushDB(t, filepath.Join(work, ".crush", "crush.db"),
-		rt.CrushSession{ID: "e088ec4e-pdx", Created: local(7, 40, 2), Updated: local(7, 56, 20),
+		// The finish error shares the exit's second, as it did on tars: the
+		// error is what ended the run.
+		rt.CrushSession{ID: "e088ec4e-pdx", Created: local(7, 40, 2), Updated: local(7, 56, 21),
 			Messages: append(viewCall("c1", filepath.Join(work, "pdx.yaml"), local(7, 40, 30)),
-				rt.CrushMessage{Role: "assistant", At: local(7, 56, 20), Parts: rt.FinishError("Bad Request", "litellm.ContextWindowExceededError")})},
+				rt.CrushMessage{Role: "assistant", At: local(7, 56, 21), Parts: rt.FinishError("Bad Request", "litellm.ContextWindowExceededError")})},
 		rt.CrushSession{ID: "09a363b5-pr", Created: local(9, 30, 3), Updated: local(9, 50, 24),
 			Messages: viewCall("c2", filepath.Join(work, "prs.md"), local(9, 31, 0))},
 	)
@@ -198,6 +200,70 @@ func TestLogsEventsExcludesOverlappingPeer(t *testing.T) {
 	}
 }
 
+// requireExcludedByPeer runs sweep-pdx in work alongside one peer (a TOML
+// table, named peer) whose run overlaps pdx's, and requires the session inside
+// the overlap to be excluded naming both.
+func requireExcludedByPeer(t *testing.T, work, peer, peerTable string) {
+	t.Helper()
+	td := newTestDaemon(t, fmt.Sprintf(`
+[harness.sweep-pdx]
+harness = "crush"
+prompt = "sweep pdx"
+auto_accept = true
+workdir = %q
+restart = "no"
+
+[harness.%s]
+%s
+`, work, peer, peerTable))
+	rt.WriteCrushDB(t, filepath.Join(work, ".crush", "crush.db"),
+		rt.CrushSession{ID: "overlap", Created: local(8, 0, 5), Messages: viewCall("c1", "a.go", local(8, 0, 6))})
+	writeLog(t, td, "sweep-pdx", lifecycleLine(local(8, 0, 0), "state changed from=stopped to=starting")+lifecycleLine(local(8, 30, 0), "exited code=0"))
+	writeLog(t, td, peer, lifecycleLine(local(7, 55, 0), "state changed from=stopped to=starting")+lifecycleLine(local(8, 20, 0), "exited code=0"))
+
+	ld, err := td.dial(t, nil).LogEvents("sweep-pdx", client.LogOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ld.Entries {
+		if e.Session == "overlap" {
+			t.Fatalf("a session %s could have written was attributed to sweep-pdx: %+v", peer, e)
+		}
+	}
+	if len(ld.Excluded) != 1 || strings.Join(ld.Excluded[0].Claimants, ",") != "sweep-pdx,"+peer {
+		t.Errorf("excluded = %+v, want the overlap session naming sweep-pdx and %s", ld.Excluded, peer)
+	}
+}
+
+// TestLogsEventsPeerThroughSymlinkIsAClaimant: a peer whose workdir is a
+// symlink to the target's writes the same store, and the project-store source
+// stamps its sessions with the target's spelling — so it must still count.
+func TestLogsEventsPeerThroughSymlinkIsAClaimant(t *testing.T) {
+	hermeticHome(t)
+	root := t.TempDir()
+	work, alias := filepath.Join(root, "sweeps"), filepath.Join(root, "sweeps-link")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(work, alias); err != nil {
+		t.Fatal(err)
+	}
+	requireExcludedByPeer(t, work, "sweep-alias", fmt.Sprintf("harness = \"crush\"\nprompt = \"alias\"\nauto_accept = true\nworkdir = %q\nrestart = \"no\"", alias))
+}
+
+// TestLogsEventsPeerWithoutWorkdirIsAClaimant: a harness with no workdir is
+// spawned in the daemon's own directory; when that is the target's workdir the
+// two share a store.
+func TestLogsEventsPeerWithoutWorkdirIsAClaimant(t *testing.T) {
+	hermeticHome(t)
+	work := filepath.Join(t.TempDir(), "sweeps")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(work)
+	requireExcludedByPeer(t, work, "bare", "harness = \"crush\"\nprompt = \"bare\"\nauto_accept = true\nrestart = \"no\"")
+}
+
 // TestLogsEventsGenericFallsBackToText: a harness with no native transcript
 // answers with its durable log, unmarked, so the client prints it as before.
 func TestLogsEventsGenericFallsBackToText(t *testing.T) {
@@ -255,34 +321,51 @@ func TestRunWindowPrecedence(t *testing.T) {
 	spans := []supervisor.RunSpan{{Start: local(7, 40, 0), End: local(7, 56, 22), ExitCode: &code}}
 
 	w, _, _, err := runWindow(protocol.ControlReq{Since: local(1, 0, 0).Format(time.RFC3339Nano), Until: local(2, 0, 0).Format(time.RFC3339Nano)},
-		supervisor.Snapshot{LastStarted: started, LastExitAt: exited}, spans)
+		supervisor.Snapshot{LastStarted: started, LastExitAt: exited}, spans, time.Time{})
 	if err != nil || !w.Start.Equal(local(1, 0, 0)) || !w.End.Equal(local(2, 0, 0)) {
 		t.Errorf("explicit window = %+v, %v; want 01:00–02:00", w, err)
 	}
 
-	w, exit, _, _ := runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: exited, LastExitCode: 1}, spans)
+	w, exit, _, _ := runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: exited, LastExitCode: 1}, spans, time.Time{})
 	if !w.Start.Equal(started) || !w.End.Equal(exited) || exit == nil || *exit != 1 {
 		t.Errorf("snapshot window = %+v exit %v; want the supervisor's own record", w, exit)
 	}
 
-	w, exit, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, PID: 42}, spans)
+	w, exit, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, PID: 42}, spans, time.Time{})
 	if !w.Open() || exit != nil {
 		t.Errorf("running window = %+v; want it open", w)
 	}
 
 	// Not running, no exit after the start: the daemon died with the run. The
 	// log's matching span closes it.
-	w, exit, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: started.Add(-time.Hour)}, spans)
+	w, exit, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: started.Add(-time.Hour)}, spans, time.Time{})
 	if !w.End.Equal(local(7, 56, 22)) || exit == nil {
 		t.Errorf("recovered end = %+v exit %v; want the span's end", w, exit)
 	}
 
-	w, _, note, _ := runWindow(protocol.ControlReq{}, supervisor.Snapshot{}, spans)
+	w, _, note, _ := runWindow(protocol.ControlReq{}, supervisor.Snapshot{}, spans, time.Time{})
 	if !w.Start.Equal(local(7, 40, 0)) || note == "" {
 		t.Errorf("log-derived window = %+v note %q; want the last span, with its provenance noted", w, note)
 	}
 
-	if _, _, _, err := runWindow(protocol.ControlReq{Since: "yesterday"}, supervisor.Snapshot{}, nil); !errors.Is(err, errBadWindow) {
+	// A dead run with no span to close it began before this daemon did, and a
+	// harness does not outlive the daemon that spawned it: the window closes at
+	// the daemon's start instead of vouching for every session since.
+	boot := started.Add(2 * time.Hour)
+	w, _, note, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: started.Add(-time.Hour)}, nil, boot)
+	if !w.End.Equal(boot) || note == "" {
+		t.Errorf("dead run = %+v note %q; want it closed at the daemon's start, noted", w, note)
+	}
+	w, _, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{}, []supervisor.RunSpan{{Start: local(7, 40, 0)}}, boot)
+	if !w.End.Equal(boot) {
+		t.Errorf("log-derived dead run = %+v; want it closed at the daemon's start", w)
+	}
+	w, _, _, _ = runWindow(protocol.ControlReq{}, supervisor.Snapshot{LastStarted: started, LastExitAt: started.Add(-time.Hour)}, nil, started.Add(-time.Minute))
+	if !w.Open() {
+		t.Errorf("run begun under this daemon = %+v; want it left open", w)
+	}
+
+	if _, _, _, err := runWindow(protocol.ControlReq{Since: "yesterday"}, supervisor.Snapshot{}, nil, time.Time{}); !errors.Is(err, errBadWindow) {
 		t.Errorf("bad since: err = %v, want errBadWindow", err)
 	}
 }

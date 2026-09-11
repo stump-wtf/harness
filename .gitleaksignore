@@ -1,0 +1,12 @@
+# Findings in ce1e2f7, a commit reachable only from refs/pull/311/head (the
+# closed #311, superseded by #313). Its redact test fixtures were literal
+# credential shapes; #313 rebuilt that commit with fixtures assembled at run
+# time, so no branch carries them. Gitea keeps pull refs forever, so a scan
+# that fetches refs/pull/* would still find them. Nothing else is ignored.
+
+ce1e2f708621573d3a01fbbc4aa6a820392b656e:internal/redact/redact.go:curl-auth-user:63
+ce1e2f708621573d3a01fbbc4aa6a820392b656e:internal/redact/redact_test.go:curl-auth-header:17
+ce1e2f708621573d3a01fbbc4aa6a820392b656e:internal/redact/redact_test.go:curl-auth-header:18
+ce1e2f708621573d3a01fbbc4aa6a820392b656e:internal/redact/redact_test.go:curl-auth-header:21
+ce1e2f708621573d3a01fbbc4aa6a820392b656e:internal/redact/redact_test.go:generic-api-key:26
+ce1e2f708621573d3a01fbbc4aa6a820392b656e:internal/redact/redact_test.go:curl-auth-user:46
