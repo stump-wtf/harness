@@ -21,7 +21,7 @@ Think `tmux` + `systemctl` + an agent-ops dashboard in one Go binary.
 
 ## Docs
 
-**Documentation lives at https://stump-wtf.github.io/harness/**
+**Documentation:** https://stump-wtf.github.io/harness/
 
 - **[Getting started](https://stump-wtf.github.io/harness/guides)** — the 0-to-1
   path: install, run the daemon as a service, supervise your first agent,
