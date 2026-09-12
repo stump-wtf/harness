@@ -25,6 +25,7 @@ package supervisor
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -111,11 +112,36 @@ func (h *ptyHistory) Write(p []byte) (int, error) {
 		if i >= 0 {
 			chunk = p[:i+1]
 		}
-		_, _ = h.term.Write(chunk)
+		h.feedLocked(chunk)
 		p = p[len(chunk):]
-		h.diffLocked()
 	}
 	return n, nil
+}
+
+// feedLocked hands one chunk to the emulator and diffs the screen, surviving
+// a panic inside the emulator. x/vt's ScrollUp → ultraviolet DeleteLineArea
+// indexes past the buffer when a guest sets a scroll region taller than the
+// PTY (crush does, rendering a channel doorbell on an 80×24 PTY):
+// "index out of range [24] with length 24". Unrecovered, that panic is on
+// the PTY reader goroutine and takes the whole daemon — and every harness
+// it supervises — down with it (2026-09-12, stump-wtf/harness#1's cousin).
+// The frame is dropped, the emulator is rebuilt at the same size, and the
+// guest keeps running; the durable log loses at most one screen of context.
+func (h *ptyHistory) feedLocked(chunk []byte) {
+	defer func() {
+		if r := recover(); r != nil {
+			cols, rows := h.term.Width(), h.term.Height()
+			if cols < 1 || rows < 1 {
+				cols, rows = defaultPTYCols, defaultPTYRows
+			}
+			h.term = vt.NewEmulator(cols, rows)
+			h.prev = blankScreen(cols, rows)
+			go h.drainReplies()
+			_, _ = io.WriteString(h.out, fmt.Sprintf("[harness] dropped a frame the terminal emulator could not render (%v); emulator reset\n", r))
+		}
+	}()
+	_, _ = h.term.Write(chunk)
+	h.diffLocked()
 }
 
 // diffLocked emits the rows that scrolled off since the last diff and caches

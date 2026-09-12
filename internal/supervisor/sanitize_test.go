@@ -208,3 +208,30 @@ func TestPtyHistoryQueriesDoNotBlock(t *testing.T) {
 		t.Fatal("ptyHistory.Write blocked on the guest's terminal queries")
 	}
 }
+
+// TestPtyHistorySurvivesEmulatorPanic pins the recovery in feedLocked. A
+// guest that sets a scroll region taller than the PTY and then scrolls
+// (DECSTBM 1;30 on a 24-row screen, then SU) makes x/vt's ScrollUp index
+// past ultraviolet's buffer: "index out of range [24] with length 24". That
+// panic was on the PTY reader goroutine and took the daemon down; crush does
+// exactly this when it renders a channel doorbell on the default 80×24.
+func TestPtyHistorySurvivesEmulatorPanic(t *testing.T) {
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 80, 24)
+	for i := 1; i <= 3; i++ {
+		_, _ = h.Write([]byte(fmt.Sprintf("before %d\r\n", i)))
+	}
+	// Must not panic. (Without the recover, this call kills the process.)
+	_, _ = h.Write([]byte("\x1b[1;30r\x1b[9S\r\n"))
+	if !strings.Contains(out.String(), "dropped a frame") {
+		t.Fatalf("expected the dropped-frame marker in the log, got:\n%s", out.String())
+	}
+	// The sanitizer keeps working on a fresh emulator: enough lines to scroll
+	// the 24-row screen must still land in the log.
+	for i := 1; i <= 30; i++ {
+		_, _ = h.Write([]byte(fmt.Sprintf("after %02d\r\n", i)))
+	}
+	if !strings.Contains(out.String(), "after 01") {
+		t.Fatalf("scrolled lines after the recovery did not reach the log:\n%s", out.String())
+	}
+}
