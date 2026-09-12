@@ -35,8 +35,6 @@ import (
 	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
 )
 
-// runDaemon is the entry point for `harness daemon`. It owns its own flag set
-// (the daemon's flags don't overlap with the client verbs') and parses args
 // daemonManagerOptions is the ManagerOptions the daemon actually runs with.
 //
 // It is a function rather than a literal at the call site so a test can assert
@@ -67,6 +65,8 @@ func daemonManagerOptions(reg *attach.Registry) supervisor.ManagerOptions {
 	}
 }
 
+// runDaemon is the entry point for `harness daemon`. It owns its own flag set
+// (the daemon's flags don't overlap with the client verbs') and parses args
 // after the `daemon` subcommand token.
 //
 // Governing: ADR-0001 (the daemon uses charmbracelet/log for structured,
