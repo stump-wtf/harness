@@ -34,7 +34,7 @@ catch_up = true
 timeout = "30m"
 on_overlap = "skip"
 keep_runs = 30
-description = "weekday PR review sweep"
+description = "PR review sweep"
 ```
 
 | Key | What it does |
@@ -200,7 +200,7 @@ the error with its file and line. `harness doctor` shows the same error.
 $ harness list
 NAME      STATE         SCHEDULE            NEXT        RESTARTS   DESCRIPTION
 ticker    ● running     —                   —           0          prints the time
-pr-sweep  ⏱ armed       day 1-5 14:00 UTC   in 2d7h     0          weekday PR review sweep
+pr-sweep  ⏱ armed       day 1-5 14:00 UTC   in 2d7h     0          PR review sweep
 ```
 
 A scheduled harness reads **`⏱ armed`**, not "stopped": between firings it is
@@ -462,7 +462,7 @@ catch_up = true
 timeout = "20m"
 on_overlap = "skip"
 keep_runs = 30
-description = "morning CI digest"
+description = "CI digest"
 ```
 
 ```sh

@@ -135,7 +135,7 @@ harness = "crush"
 prompt = "check all services and report anything unhealthy"
 auto_accept = true
 schedule = "CRON_TZ=UTC 0 */6 * * *"   # every 6 hours
-description = "scheduled sweep (every 6 hours)"
+description = "fleet health sweep"
 ```
 
 For a full walkthrough — prompt design, run history, and reading outcomes — see

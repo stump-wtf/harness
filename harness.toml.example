@@ -85,7 +85,7 @@ enabled = false
 # prompt = "check all services and report anything unhealthy"
 # auto_accept = true
 # schedule = "CRON_TZ=UTC 0 */6 * * *"   # every 6 hours, pinned to UTC
-# description = "scheduled sweep (every 6 hours)"
+# description = "fleet health sweep"   # say what it does; the cadence is its own column
 
 # Harness kinds (ADR-0011, SPEC-0006): the `harness` key is an enum selecting
 # the adapter, which owns the executable a long-running harness runs (args are
