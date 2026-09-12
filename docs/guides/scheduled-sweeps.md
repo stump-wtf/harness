@@ -198,24 +198,37 @@ the error with its file and line. `harness doctor` shows the same error.
 
 ```sh
 $ harness list
-NAME      STATE         ENABLED    RESTARTS   DESCRIPTION
-pr-sweep  ⏱ idle        no         0          weekday PR review sweep · in 3h12m
+NAME      STATE         SCHEDULE            NEXT        RESTARTS   DESCRIPTION
+ticker    ● running     —                   —           0          prints the time
+pr-sweep  ⏱ armed       day 1-5 14:00 UTC   in 2d7h     0          weekday PR review sweep
 ```
 
-A clock glyph marks a scheduled harness, and its next firing is appended to the
-description. `ENABLED no` is normal: the schedule starts it, not autostart.
-`harness describe pr-sweep` adds the cron spec and the absolute time of the next
-run.
+A scheduled harness reads **`⏱ armed`**, not "stopped": between firings it is
+waiting, not switched off. Its cadence and countdown are their own columns, and
+an unscheduled harness shows an em dash in both.
+
+`harness describe pr-sweep` adds the cron expression verbatim and the absolute
+next-run time:
+
+```
+state         ⏱ armed
+armed         yes
+schedule      CRON_TZ=UTC 0 14 * * 1-5
+next run      Mon Sep 14 14:00 (in 2d7h)
+```
 
 `harness jobs` shows only the scheduled harnesses, with the schedule in words,
 the next window, the latest run, and the current streak of failures:
 
 ```sh
 $ harness jobs
-NAME           STATE    SCHEDULE         NEXT        LAST RUN             FAILS
-nightly-sweep  ⏱ idle   daily 03:00 UTC  in 7h56m    #14 success 21h ago  0
-triage         ⏱ idle   every 6h         in 4h56m    #31 failed 1h ago    2
+NAME           STATE     SCHEDULE         NEXT        LAST RUN             FAILS
+nightly-sweep  ⏱ armed   daily 03:00 UTC  in 7h56m    #14 success 21h ago  0
+triage         ⏱ armed   every 6h         in 4h56m    #31 failed 1h ago    2
 ```
+
+With nothing scheduled it says so rather than printing an empty table: `no
+scheduled harnesses (give a prompt harness a schedule in harness.toml)`.
 
 `FAILS` counts consecutive `failed` and `timed_out` runs back to the last
 success. A number that keeps climbing is the first thing to look at.

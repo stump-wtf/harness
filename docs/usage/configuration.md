@@ -227,9 +227,12 @@ with `harness jobs`, `harness runs <name>` and `harness logs <name> --run N`, an
 run a job now with `harness trigger <name>` — see
 [CLI → Scheduled jobs](./cli#scheduled-jobs).
 
-`harness list` marks a scheduled harness inline — a clock glyph in place of the
-state glyph, and the next firing appended to its description (`· in 4h3m`).
-`harness describe` adds the cron spec and the absolute next-run time. A
+`harness list` gives the schedule its own columns — `SCHEDULE` (the cadence) and
+`NEXT` (the countdown) — and reads the state as `⏱ armed`, since a cron job
+between firings is waiting rather than switched off. An unscheduled harness shows
+an em dash in both columns.
+`harness describe` adds an `armed` row, the cron spec and the absolute next-run
+time. A
 zone-prefixed schedule's cadence carries the zone (`daily 09:00 UTC`). The
 [cockpit](./tui#the-dashboard) tags the row `(scheduled)` with the same
 countdown, and carries the cadence on the row's sub-line.

@@ -75,7 +75,7 @@ sees. You can always `harness attach` and finish the prompt there.
 ## The verbs
 
 ```sh
-harness list                    # every harness: state, enabled, restarts, description
+harness list                    # every harness: state, schedule, next run, restarts, description
 harness describe crush-main     # one harness in detail
 harness attach crush-main       # drive it as a live terminal
 harness logs crush-main         # what it did (see Observability)
@@ -88,14 +88,18 @@ harness                         # the dashboard: all of the above, one keystroke
 `harness list` looks like this:
 
 ```
-NAME         STATE         ENABLED    RESTARTS   DESCRIPTION
-crush-main   ● running     yes        0          Crush in my-project
-claude-main  ○ stopped     no         0          Claude Code in my-project
+NAME         STATE         SCHEDULE            NEXT        RESTARTS   DESCRIPTION
+crush-main   ● running     —                   —           0          Crush in my-project
+claude-main  ○ stopped     —                   —           0          Claude Code in my-project
 ```
+
+The `SCHEDULE` and `NEXT` columns are em dashes here because neither harness is
+scheduled; [scheduled sweeps](./scheduled-sweeps) fill them in.
 
 `start` and `stop` change **intent**, not just the process. A harness you
 `stop` stays stopped across daemon restarts and reboots until you `start` it
-again. The intent lives in the daemon's `state.json`.
+again. The intent lives in the daemon's `state.json`, and `harness describe`
+shows it as the `enabled` row.
 
 ### Attaching and detaching
 
