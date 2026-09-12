@@ -44,7 +44,7 @@ func traceScopes(infos []protocol.HarnessInfo) []runtrace.Scope {
 		if h.Workdir == "" {
 			continue
 		}
-		s := runtrace.Scope{Name: h.Name, Adapter: h.Adapter, Workdir: h.Workdir}
+		s := runtrace.Scope{Name: h.Name, Adapter: h.Adapter, Workdir: h.Workdir, Args: h.Args}
 		if w, ok := latestRun(h); ok {
 			s.Runs = []runtrace.Window{w}
 			s.KnownSince = w.Start
@@ -85,7 +85,10 @@ func latestRun(h protocol.HarnessInfo) (runtrace.Window, bool) {
 func scopesKey(scopes []runtrace.Scope) string {
 	var b strings.Builder
 	for _, s := range scopes {
-		fmt.Fprintf(&b, "%s|%s|%s", s.Name, s.Adapter, s.Workdir)
+		// The argv rather than the resolved store: it discriminates just as
+		// well, and resolving can read a config file — too much for a key
+		// recomputed on every state poll.
+		fmt.Fprintf(&b, "%s|%s|%s|%s", s.Name, s.Adapter, s.Workdir, strings.Join(s.Args, "\x00"))
 		for _, r := range s.Runs {
 			fmt.Fprintf(&b, "|%d-%d", r.Start.UnixNano(), r.End.UnixNano())
 		}

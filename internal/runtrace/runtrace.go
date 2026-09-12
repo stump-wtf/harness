@@ -29,12 +29,14 @@ package runtrace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/stump-wtf/agent-trace/classify"
@@ -108,6 +110,10 @@ type Scope struct {
 	// Workdir is the resolved absolute working directory the process was
 	// spawned in. Empty means none was configured.
 	Workdir string
+	// Args is the harness's configured argv, as the supervisor spawns it.
+	// Correlation reads only the flags that relocate a tool's store — today
+	// crush's --data-dir/-D — and nothing else from it.
+	Args []string
 	// Env holds DiscoveryEnvKeys as the harness's process sees them. Missing
 	// keys fall back to the defaults each tool uses.
 	Env map[string]string
@@ -165,6 +171,13 @@ func Sources(s Scope) ([]tail.Adapter, error) {
 	work := clean(s.Workdir)
 	switch s.Adapter {
 	case "crush":
+		// A store named outright is the whole answer. It belongs to this
+		// harness alone, so neither the shared project store nor the registry
+		// may widen the search — both are reachable by every harness in the
+		// workdir, which is exactly the ambiguity an explicit store resolves.
+		if store := Store(s); store != "" {
+			return []tail.Adapter{&tail.CrushAdapter{DBPath: filepath.Join(store, "crush.db"), Cwd: work}}, nil
+		}
 		var out []tail.Adapter
 		if work != "" {
 			db := filepath.Join(work, ".crush", "crush.db")
@@ -200,6 +213,121 @@ func crushGlobalData(s Scope) string {
 		return filepath.Join(x, "crush")
 	}
 	return filepath.Join(s.home(), ".local", "share", "crush")
+}
+
+// Store is the session store a harness's tool instance was configured to
+// write, or "" when nothing names one and discovery must infer it.
+//
+// This is what makes several harnesses sharing one working directory
+// correlatable. Attribution's other signal is the working directory, and on a
+// host where three crush harnesses all run in ~/src it rules nothing out: the
+// sessions are genuinely indistinguishable, so every one of them is excluded.
+// A store, when the config names one, identifies the harness by itself.
+//
+// crush resolves it as --data-dir/-D over options.data_directory over
+// <workdir>/.crush, and the first two are the ones a harness can be configured
+// with. The third is the inferred case this returns "" for.
+//
+// Governing: SPEC-0006 REQ "Run Correlation", issue #330.
+func Store(s Scope) string {
+	if s.Adapter != "crush" {
+		return ""
+	}
+	work := clean(s.Workdir)
+	if d := dataDirArg(s.Args); d != "" {
+		return resolveStore(d, work)
+	}
+	if d := crushConfigDataDir(s, work); d != "" {
+		return resolveStore(d, work)
+	}
+	return ""
+}
+
+// dataDirArg reads crush's --data-dir/-D out of an argv. crush parses flags
+// with pflag, which takes a value as the following entry, joined with "=", or
+// — for a shorthand — joined directly ("-D/path"), so all four spellings are
+// read rather than only the one a config happens to use today.
+func dataDirArg(args []string) string {
+	for i, a := range args {
+		switch {
+		case a == "--data-dir", a == "-D":
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+		case strings.HasPrefix(a, "--data-dir="):
+			return strings.TrimPrefix(a, "--data-dir=")
+		case strings.HasPrefix(a, "-D="):
+			return strings.TrimPrefix(a, "-D=")
+		case strings.HasPrefix(a, "-D") && len(a) > 2:
+			return a[2:]
+		}
+	}
+	return ""
+}
+
+// resolveStore applies crush's own rule for a configured data directory: an
+// absolute path is used as-is, a relative one resolves against the working
+// directory. {workdir} is expanded first, because the supervisor expands it in
+// argv at spawn and the value correlation reads is the one crush was given.
+func resolveStore(dir, work string) string {
+	dir = strings.ReplaceAll(dir, "{workdir}", work)
+	if filepath.IsAbs(dir) {
+		return filepath.Clean(dir)
+	}
+	if work == "" {
+		return ""
+	}
+	return filepath.Join(work, dir)
+}
+
+// crushConfigDataDir reads options.data_directory from the configs this crush
+// instance loads: its global crush.json under CRUSH_GLOBAL_DATA, then the
+// project-local file in the workdir, which overrides it. crush also walks up
+// from the working directory looking for a project config; a harness spawns
+// directly into its configured workdir, so the walk-up is not reproduced here
+// — a store it would find is left to the inferred path.
+func crushConfigDataDir(s Scope, work string) string {
+	out := configDataDir(filepath.Join(crushGlobalData(s), "crush.json"))
+	if work == "" {
+		return out
+	}
+	// crush's own order, first match wins.
+	for _, name := range []string{".crushrc", "crushrc", ".crush.json", "crush.json"} {
+		if d := configDataDir(filepath.Join(work, name)); d != "" {
+			return d
+		}
+	}
+	return out
+}
+
+// configDataDir reads options.data_directory from one crush config file. A
+// missing or malformed file is not an error: discovery falls through to the
+// next source, the same way it survives a corrupt registry.
+func configDataDir(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Options struct {
+			DataDirectory string `json:"data_directory"`
+		} `json:"options"`
+	}
+	if json.Unmarshal(b, &cfg) != nil {
+		return ""
+	}
+	return cfg.Options.DataDirectory
+}
+
+// storeOf recovers the store a discovered session came from. The crush adapter
+// keys a session as "<database path>/<session id>", so the directory holding
+// the database is the store — the same value Store reports for a harness
+// configured with one.
+func storeOf(meta tail.SessionMeta) string {
+	if meta.Harness != tail.HarnessCrush || meta.Path == "" {
+		return ""
+	}
+	return filepath.Dir(filepath.Dir(meta.Path))
 }
 
 // Session is one discovered session together with the adapter that can parse
@@ -263,6 +391,13 @@ func Attribute(ctx context.Context, target Scope, w Window, peers []Scope, now t
 	// and the JSONL stores skip files by mtime. The exact checks run below.
 	filter := tail.SessionFilter{Cwd: work, Since: lo}
 	seen := map[string]bool{}
+	// Resolved once: a store can cost a config read, and the claimant check
+	// below runs for every peer of every session.
+	targetStore := Store(target)
+	peerStores := make([]string, len(peers))
+	for i, p := range peers {
+		peerStores[i] = Store(p)
+	}
 	for _, a := range sources {
 		metas, err := tail.ListSessionsFiltered(ctx, a, filter)
 		if err != nil {
@@ -284,7 +419,7 @@ func Attribute(ctx context.Context, target Scope, w Window, peers []Scope, now t
 			}
 			seen[id] = true
 			sess := Session{Meta: m, Started: started, adapter: a}
-			if names := claimants(target, peers, work, started, now); len(names) > 1 {
+			if names := claimants(target, targetStore, peers, peerStores, work, started, now); len(names) > 1 {
 				out.Excluded = append(out.Excluded, Exclusion{Session: sess, Claimants: names})
 				continue
 			}
@@ -300,10 +435,18 @@ func Attribute(ctx context.Context, target Scope, w Window, peers []Scope, now t
 
 // claimants returns every harness that could have written a session started
 // at started in cwd — target first, then peers by name.
-func claimants(target Scope, peers []Scope, cwd string, started, now time.Time) []string {
+func claimants(target Scope, targetStore string, peers []Scope, peerStores []string, cwd string, started, now time.Time) []string {
 	var names []string
-	for _, p := range peers {
+	for i, p := range peers {
 		if p.Name == target.Name || !CouldWrite(p.Adapter, target.Adapter) || !SameDir(p.Workdir, cwd) {
+			continue
+		}
+		// Sharing a workdir is not sharing a store: two harnesses each told to
+		// keep their sessions somewhere of their own cannot have written each
+		// other's, so neither clouds the other's runs. Positive evidence only
+		// — an inferred store is "" and stays a possible author, because a
+		// registry can point anywhere.
+		if targetStore != "" && peerStores[i] != "" && !SameDir(targetStore, peerStores[i]) {
 			continue
 		}
 		if p.mayHaveRun(started, now) {
@@ -351,6 +494,21 @@ func Claimant(meta tail.SessionMeta, scopes []Scope, now time.Time) (string, boo
 	for _, s := range scopes {
 		if CouldWrite(s.Adapter, kind) && SameDir(s.Workdir, cwd) && s.mayHaveRun(started, now) {
 			found = append(found, s)
+		}
+	}
+	// The session says which store it came from, and a configured store names
+	// one harness. Drop only those whose own store is demonstrably a different
+	// directory — a harness with an inferred store stays a candidate, because
+	// its registry could point anywhere.
+	if store := storeOf(meta); store != "" {
+		var owners []Scope
+		for _, s := range found {
+			if st := Store(s); st == "" || SameDir(st, store) {
+				owners = append(owners, s)
+			}
+		}
+		if len(owners) > 0 {
+			found = owners
 		}
 	}
 	if len(found) != 1 || found[0].Adapter != kind || !found[0].covers(started, now) {

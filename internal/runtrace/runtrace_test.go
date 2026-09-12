@@ -450,3 +450,143 @@ func TestEntriesAreRedacted(t *testing.T) {
 		t.Errorf("entries = %+v, want the remote's password and the bearer token both masked", entries)
 	}
 }
+
+// TestAttributeExplicitStoresDisambiguateOneWorkdir is issue #330, and the
+// tars shape the correlation rule could not handle: three crush harnesses all
+// working in ~/src, sharing one registry, each told to keep its sessions in a
+// data directory of its own. The working directory rules nothing out — before
+// this, every session was excluded from all three — and the store settles it.
+func TestAttributeExplicitStoresDisambiguateOneWorkdir(t *testing.T) {
+	root := t.TempDir()
+	work := filepath.Join(root, "src")
+	shared := filepath.Join(root, "global")
+	names := []string{"crush-signal", "crush-switchboard", "crush-switchboard-2"}
+
+	var scopes []Scope
+	for _, n := range names {
+		store := filepath.Join(root, n, "data")
+		rt.WriteCrushDB(t, filepath.Join(store, "crush.db"),
+			sess(n, spawn.Add(2*time.Hour), read("c1", "x.go", spawn.Add(2*time.Hour))))
+		s := crushHarness(t, n, work, map[string]string{"CRUSH_GLOBAL_DATA": shared}, Window{Start: spawn})
+		s.Args = []string{"--data-dir", store}
+		scopes = append(scopes, s)
+	}
+	// One registry for all three, pointing at the project store they would
+	// otherwise share — the configuration that made every session ambiguous.
+	rt.WriteProjects(t, filepath.Join(shared, "projects.json"), "",
+		rt.Project{Path: work, DataDir: filepath.Join(work, ".crush"), LastAccessed: spawn})
+
+	for i, target := range scopes {
+		var peers []Scope
+		for j, p := range scopes {
+			if i != j {
+				peers = append(peers, p)
+			}
+		}
+		a := attribute(t, target, Window{Start: spawn}, peers...)
+		if got := ids(a.Sessions); !reflect.DeepEqual(got, []string{names[i]}) {
+			t.Errorf("%s attributed %v, want [%s]: its own store names it", names[i], got, names[i])
+		}
+		if len(a.Excluded) != 0 {
+			t.Errorf("%s excluded %+v, want none: no sibling can write its store", names[i], a.Excluded)
+		}
+	}
+}
+
+// TestStoreReadsEveryDataDirSpelling: crush parses flags with pflag, so a
+// config may write the data directory any of these ways and mean one store.
+func TestStoreReadsEveryDataDirSpelling(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"separate value", []string{"--data-dir", "/s"}, "/s"},
+		{"joined with =", []string{"--data-dir=/s"}, "/s"},
+		{"shorthand, separate", []string{"-D", "/s"}, "/s"},
+		{"shorthand, joined with =", []string{"-D=/s"}, "/s"},
+		{"shorthand, joined", []string{"-D/s"}, "/s"},
+		{"after other flags", []string{"-y", "--data-dir", "/s"}, "/s"},
+		{"none", []string{"-y"}, ""},
+		{"relative resolves against the workdir", []string{"--data-dir", "d"}, "/w/d"},
+		{"workdir placeholder", []string{"--data-dir", "{workdir}/d"}, "/w/d"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := Scope{Adapter: "crush", Workdir: "/w", Args: tc.args, Env: map[string]string{"HOME": t.TempDir()}}
+			if got := Store(s); got != tc.want {
+				t.Errorf("Store = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStoreFollowsConfigDataDirectory: the flag is what a harness config uses,
+// but crush also takes options.data_directory from its own config, and a
+// harness configured that way is just as unambiguous. The flag still wins,
+// the way crush resolves it.
+func TestStoreFollowsConfigDataDirectory(t *testing.T) {
+	root := t.TempDir()
+	global := filepath.Join(root, "global")
+	if err := os.MkdirAll(global, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"options":{"data_directory":"` + filepath.Join(root, "store") + `"}}`
+	if err := os.WriteFile(filepath.Join(global, "crush.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := Scope{Adapter: "crush", Workdir: filepath.Join(root, "w"), Env: map[string]string{"HOME": root, "CRUSH_GLOBAL_DATA": global}}
+	if got, want := Store(s), filepath.Join(root, "store"); got != want {
+		t.Errorf("Store = %q, want the configured data_directory %q", got, want)
+	}
+	s.Args = []string{"--data-dir", filepath.Join(root, "flag")}
+	if got, want := Store(s), filepath.Join(root, "flag"); got != want {
+		t.Errorf("Store = %q, want the flag to win: %q", got, want)
+	}
+}
+
+// TestSourcesUseOnlyAnExplicitStore: the shared project store and the registry
+// are both reachable by every harness in the workdir, so neither may widen a
+// store the configuration named outright.
+func TestSourcesUseOnlyAnExplicitStore(t *testing.T) {
+	root := t.TempDir()
+	work := filepath.Join(root, "w")
+	rt.WriteCrushDB(t, filepath.Join(work, ".crush", "crush.db"), sess("shared", spawn, read("c1", "a.go", spawn)))
+	store := filepath.Join(root, "own", "data")
+
+	got, err := Sources(Scope{Adapter: "crush", Workdir: work, Args: []string{"--data-dir", store}, Env: map[string]string{"HOME": root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("sources = %#v, want only the configured store", got)
+	}
+	a, ok := got[0].(*tail.CrushAdapter)
+	if !ok || a.DBPath != filepath.Join(store, "crush.db") || a.ProjectsPath != "" {
+		t.Errorf("source = %#v, want DBPath %s and no registry", got[0], filepath.Join(store, "crush.db"))
+	}
+}
+
+// TestClaimantPrefersTheSessionsOwnStore is the chatroom half of the same
+// rule: a session records the database it came from, so a sibling sharing the
+// workdir but keeping its own store cannot take it.
+func TestClaimantPrefersTheSessionsOwnStore(t *testing.T) {
+	run := Window{Start: spawn, End: spawn.Add(time.Hour)}
+	meta := tail.SessionMeta{
+		Harness:   tail.HarnessCrush,
+		Cwd:       "/w",
+		Path:      "/store/signal/crush.db/abc",
+		StartedAt: spawn.Add(time.Minute).Format(time.RFC3339),
+	}
+	env := map[string]string{"HOME": t.TempDir()}
+	signal := Scope{Name: "signal", Adapter: "crush", Workdir: "/w", Env: env, Args: []string{"--data-dir", "/store/signal"}, Runs: []Window{run}}
+	board := Scope{Name: "switchboard", Adapter: "crush", Workdir: "/w", Env: env, Args: []string{"--data-dir", "/store/board"}, Runs: []Window{run}}
+
+	if got, ok := Claimant(meta, []Scope{signal, board}, spawn.Add(24*time.Hour)); !ok || got != "signal" {
+		t.Errorf("Claimant = %q, %v; want signal — the session came out of its store", got, ok)
+	}
+	// With nothing naming a store the pair is ambiguous, exactly as before.
+	signal.Args, board.Args = nil, nil
+	if got, ok := Claimant(meta, []Scope{signal, board}, spawn.Add(24*time.Hour)); ok {
+		t.Errorf("Claimant = %q, %v; want no claimant when nothing names a store", got, ok)
+	}
+}

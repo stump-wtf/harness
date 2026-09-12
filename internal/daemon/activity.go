@@ -60,7 +60,7 @@ func (c *conn) activity(req protocol.ControlReq, snap supervisor.Snapshot, lines
 		data.Text = readLogTail(dir, req.Name, lines)
 		return data, nil
 	}
-	target := runtrace.Scope{Name: req.Name, Adapter: h.Adapter, Workdir: supervisor.Workdir(h)}
+	target := runtrace.Scope{Name: req.Name, Adapter: h.Adapter, Workdir: supervisor.Workdir(h), Args: h.Args}
 	if _, err := runtrace.Sources(target); err != nil {
 		// No native transcript (generic): the durable log is this harness's
 		// record, exactly as ADR-0007 has it. Source stays empty so the client
@@ -267,7 +267,7 @@ func (c *conn) peerScopes(target runtrace.Scope) ([]runtrace.Scope, []string) {
 		if !ok {
 			continue
 		}
-		p := runtrace.Scope{Name: snap.Name, Adapter: h.Adapter, Workdir: supervisor.Workdir(h)}
+		p := runtrace.Scope{Name: snap.Name, Adapter: h.Adapter, Workdir: supervisor.Workdir(h), Args: h.Args}
 		if p.Workdir == "" {
 			p.Workdir = daemonDir
 		}

@@ -50,7 +50,15 @@ const (
 	// Schedule and NextRun. On DaemonInfo: ProfileResolved, DormantAutostart,
 	// SshAddr and SshKeys. All additive and omitempty, so no reader broke; they
 	// simply shipped under whatever minor was current.
-	ProtoMinor = 8
+	//
+	// ProtoMinor 9 added Args on HarnessInfo (issue #330): the harness's
+	// configured argv, which carries the flag naming a crush instance's
+	// session store (--data-dir). A client correlating sessions to harnesses
+	// needs it to tell apart several harnesses sharing one working directory,
+	// where the store is the only thing that differs — additive only. A daemon
+	// older than 9 omits it, and correlation infers the store from the workdir
+	// as it did before.
+	ProtoMinor = 9
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -251,6 +259,13 @@ type HarnessInfo struct {
 	// agent ran in and nothing else that names a harness (ADR-0015 dashboard
 	// activity).
 	Workdir string `json:"workdir,omitempty"`
+	// Args is the harness's configured argv, as spawned. It is on the wire
+	// because it carries the flag that names a crush instance's session store
+	// (--data-dir): a working directory shared by several harnesses cannot
+	// tell them apart, and the store can, so without this a client attributes
+	// nothing on a host where the agents all work in one tree (SPEC-0006 REQ
+	// "Run Correlation"; issue #330).
+	Args []string `json:"args,omitempty"`
 	// LastStarted / LastExitAt (RFC 3339) bound the harness's latest run, so a
 	// client can attribute a session to the harness whose run covers it, not
 	// merely to one sharing its workdir (SPEC-0006 REQ "Run Correlation";

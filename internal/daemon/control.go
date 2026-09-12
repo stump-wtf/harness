@@ -104,6 +104,7 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 	if ok {
 		info.Adapter = h.Adapter
 		info.Workdir = supervisor.Workdir(h)
+		info.Args = h.Args
 		info.Prompt = h.Prompt
 		info.PromptFile = h.PromptFile
 		info.Model = h.Model
