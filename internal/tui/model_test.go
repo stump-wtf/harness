@@ -946,6 +946,10 @@ func TestToggleRefusesScheduledHarness(t *testing.T) {
 
 // TestRenderRowLabelsDisabledAndScheduled: "(disabled)" must not be hung on a
 // cron job that is merely waiting to fire.
+//
+// The row used to add a "(scheduled)" suffix to say so. It no longer does:
+// the clock glyph and the word "armed" already carry it, and repeating it
+// spent a third of the label on a fact stated twice beside it (#331).
 func TestRenderRowLabelsDisabledAndScheduled(t *testing.T) {
 	m := New(Options{})
 	m.w, m.h = 100, 40
@@ -958,8 +962,11 @@ func TestRenderRowLabelsDisabledAndScheduled(t *testing.T) {
 	if strings.Contains(sched, "(disabled)") {
 		t.Errorf("scheduled row = %q, must not read as disabled", sched)
 	}
-	if !strings.Contains(sched, "(scheduled)") {
-		t.Errorf("scheduled row = %q, want the scheduled label", sched)
+	if !strings.Contains(sched, "armed") {
+		t.Errorf("scheduled row = %q, want it to read armed", sched)
+	}
+	if strings.Contains(sched, "(scheduled)") {
+		t.Errorf("scheduled row = %q, still carries the redundant suffix", sched)
 	}
 }
 
@@ -971,8 +978,8 @@ func TestRenderRowIdleForScheduledStopped(t *testing.T) {
 	m.w, m.h = 100, 40
 
 	sched := m.renderRow(protocol.HarnessInfo{Name: "sweep", State: "stopped", Schedule: "0 */6 * * *"}, false)
-	if !strings.Contains(sched, "idle") {
-		t.Errorf("scheduled stopped row = %q, want it to read idle", sched)
+	if !strings.Contains(sched, "armed") {
+		t.Errorf("scheduled stopped row = %q, want it to read armed", sched)
 	}
 	if strings.Contains(sched, "stopped") {
 		t.Errorf("scheduled stopped row = %q, must not still say stopped", sched)
@@ -983,8 +990,8 @@ func TestRenderRowIdleForScheduledStopped(t *testing.T) {
 	if !strings.Contains(plain, "stopped") {
 		t.Errorf("unscheduled stopped row = %q, want it to still say stopped", plain)
 	}
-	if strings.Contains(plain, "idle") {
-		t.Errorf("unscheduled stopped row = %q, must not be relabelled idle", plain)
+	if strings.Contains(plain, "armed") {
+		t.Errorf("unscheduled stopped row = %q, must not be relabelled armed", plain)
 	}
 
 	// A scheduled run that failed keeps its own word — it did fail.
@@ -997,10 +1004,11 @@ func TestRenderRowIdleForScheduledStopped(t *testing.T) {
 // Scheduled Harness Icon And Status Line
 //
 // Two surfaces still derived their presentation from the bare state after
-// #268 taught `harness list` and the dashboard label about idle: the
-// dashboard's row GLYPH (state-derived, so ○ where the table drew ⏱) and the
-// attached status line (fully schedule-unaware, so "○ stopped" in pink for a
-// harness the row beside it called "⏱ idle"). Both now read schedfmt.
+// #268 taught `harness list` and the dashboard label about the resting-job
+// label (#331 renamed it to "armed"): the dashboard's row GLYPH
+// (state-derived, so ○ where the table drew ⏱) and the attached status line
+// (fully schedule-unaware, so "○ stopped" in pink for a harness the row beside
+// it called "⏱ armed"). Both now read schedfmt.
 //
 // @joestump-agent 08/26/2026 - Added with the fix.
 
@@ -1010,12 +1018,12 @@ func TestRenderRowUsesScheduleGlyph(t *testing.T) {
 	m := New(Options{})
 	m.w, m.h = 100, 40
 
-	idle := m.renderRow(protocol.HarnessInfo{Name: "sweep", State: "stopped", Schedule: "0 */6 * * *"}, false)
-	if !strings.Contains(idle, schedfmt.ScheduleGlyph) {
-		t.Errorf("idle scheduled row = %q, want the %q glyph", idle, schedfmt.ScheduleGlyph)
+	armed := m.renderRow(protocol.HarnessInfo{Name: "sweep", State: "stopped", Schedule: "0 */6 * * *"}, false)
+	if !strings.Contains(armed, schedfmt.ScheduleGlyph) {
+		t.Errorf("armed scheduled row = %q, want the %q glyph", armed, schedfmt.ScheduleGlyph)
 	}
-	if strings.Contains(idle, core.StateStopped.Glyph()) {
-		t.Errorf("idle scheduled row = %q, must not still draw the stopped glyph", idle)
+	if strings.Contains(armed, core.StateStopped.Glyph()) {
+		t.Errorf("armed scheduled row = %q, must not still draw the stopped glyph", armed)
 	}
 
 	// The clock marks "cron-fired", not "resting" — a running one keeps it.
@@ -1036,7 +1044,7 @@ func TestRenderRowUsesScheduleGlyph(t *testing.T) {
 
 // TestStatusBarIdleForScheduledStopped: attached to a resting cron job, the
 // status line must say what every other surface says.
-func TestStatusBarIdleForScheduledStopped(t *testing.T) {
+func TestStatusBarArmedForScheduledStopped(t *testing.T) {
 	m := New(Options{})
 	m.w, m.h = 100, 40
 	m.harnesses = []protocol.HarnessInfo{
@@ -1045,8 +1053,8 @@ func TestStatusBarIdleForScheduledStopped(t *testing.T) {
 	m.att = &attachState{name: "sweep"}
 
 	bar := m.viewStatusBar()
-	if !strings.Contains(bar, schedfmt.IdleLabel) {
-		t.Errorf("status bar = %q, want it to read idle", bar)
+	if !strings.Contains(bar, schedfmt.ArmedLabel) {
+		t.Errorf("status bar = %q, want it to read armed", bar)
 	}
 	if strings.Contains(bar, string(core.StateStopped)) {
 		t.Errorf("status bar = %q, must not still say stopped", bar)

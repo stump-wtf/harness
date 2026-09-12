@@ -418,11 +418,11 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 		glyph = m.theme.StateStyle(st).Render(schedfmt.Glyph(h.State, h.Schedule))
 	}
 	name := h.Name
-	// Between firings a scheduled harness is "idle", not "stopped" — armed and
-	// waiting, not switched off. Shared with `harness list` via schedfmt so
-	// the two surfaces never phrase the same harness two ways.
+	// Between firings a scheduled harness is "armed", not "stopped" — loaded
+	// and waiting, not switched off. Shared with `harness list` via schedfmt
+	// so the two surfaces never phrase the same harness two ways.
 	state := schedfmt.StateLabel(h.State, h.Schedule)
-	if schedfmt.IsIdle(h.State, h.Schedule) {
+	if schedfmt.IsArmed(h.State, h.Schedule) {
 		glyph = m.theme.IdleStyle().Render(schedfmt.Glyph(h.State, h.Schedule))
 	}
 	switch {
@@ -430,8 +430,8 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 		// A scheduled one-shot is ALWAYS Enabled=false — config rejects
 		// `schedule` alongside `enabled = true` — so the disabled label would
 		// be wrong on every cron job, reading as "someone turned this off"
-		// for a harness that fires on its own (ADR-0013).
-		state += " (scheduled)"
+		// for a harness that fires on its own (ADR-0013). The clock glyph and
+		// the armed label already say it is scheduled, so no suffix is added.
 	case !h.Enabled:
 		state += " (disabled)"
 	}

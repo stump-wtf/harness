@@ -63,30 +63,35 @@ func renderHarnessList(c *client.Client, o verbOpts, project string) error {
 // `ps`, and the `up` one-shot status output (SPEC-0004 REQ "Bring Up"), so
 // every listing surface stays one product.
 //
-// Scheduled harnesses are marked inline rather than by dedicated columns:
-// their STATE glyph swaps to a clock (same palette color, so the state still
-// reads at a glance) and the human-readable next-run time ("in 2h", "due")
-// is appended to DESCRIPTION, highlighted. The cron spec itself stays
-// available via `describe` and `--json` — it is config, not status.
+// A schedule is a FIELD, not prose. SCHEDULE holds the cadence ("daily 09:00
+// UTC") and NEXT the countdown ("in 2h"), both derived from config and the
+// live scheduler, so they are styled and aligned like any other column and a
+// harness that says nothing about its schedule in its description still shows
+// one. They used to be spliced into DESCRIPTION, and the cadence was
+// highlighted only where it happened to appear VERBATIM in text the operator
+// had written — so rewording a description silently unhighlighted it, and the
+// rest was freetext pretending to be data (#331). DESCRIPTION is now only the
+// operator's own words.
 func printHarnessTable(w io.Writer, hs []protocol.HarnessInfo) error {
-	t := NewTable(w, "NAME", "STATE", "ENABLED", "RESTARTS", "DESCRIPTION")
+	t := NewTable(w, "NAME", "STATE", "SCHEDULE", "NEXT", "RESTARTS", "DESCRIPTION")
 	for _, h := range hs {
 		t.Row(
 			h.Name,
 			t.stateCell(h.State, h.Schedule),
-			t.enabledCell(h.Enabled),
+			t.scheduleCell(h.Schedule),
+			t.nextRunCell(h.Schedule, h.NextRun),
 			fmt.Sprintf("%d", h.RestartCount),
-			t.descriptionCell(h.Description, h.Schedule, h.NextRun),
+			t.dimPlain(h.Description),
 		)
 	}
 	return t.Flush()
 }
 
-// nextRunCell renders a human-readable next-run time ("in 3h",
-// "in 12m", "due") so a glance answers "how long until it fires" without
-// mental timezone math. Absolute time and the cron spec stay available via
-// describe/--json.
-func nextRunCell(nextRun string) string {
+// nextRunSuffix renders a human-readable next-run time ("in 3h", "in 12m",
+// "due") for `describe`, which prints it in parentheses after the absolute
+// time. The listing table has its own (*Table).nextRunCell: that one owns a
+// whole column and styles it, this one is a bare parenthetical.
+func nextRunSuffix(nextRun string) string {
 	if s := schedfmt.NextIn(nextRun); s != "" {
 		return s
 	}
@@ -104,10 +109,17 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	t := NewTable(os.Stdout, "FIELD", "VALUE")
 	t.Row(t.accentBold("name"), fmt.Sprintf("%s %s", t.stateGlyphOnly(h.State), h.Name))
 	// Pass the schedule: without it describe renders "stopped" in pink for the
-	// same harness `harness list` shows as amber "idle" (#268). schedfmt exists
+	// same harness `harness list` shows as amber "armed" (#268, #331). schedfmt exists
 	// so the surfaces cannot phrase one harness two ways.
 	t.Row("state", t.stateCell(h.State, h.Schedule))
-	t.Row("enabled", t.enabledCell(h.Enabled))
+	// A scheduled harness is always enabled = false (SPEC-0008 REQ "Schedule
+	// Exclusions"), so printing "enabled no" says nothing true about it: the
+	// schedule is its intent. Show whether it is armed instead (#331).
+	if h.Schedule != "" {
+		t.Row("armed", t.faintPlain("yes"))
+	} else {
+		t.Row("enabled", t.enabledCell(h.Enabled))
+	}
 	// A prompt harness has no configured cmd — show what the user wrote (the
 	// prompt), not the synthesized agent argv (ADR-0011 spawn-time synthesis).
 	switch {
@@ -132,7 +144,7 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 		t.Row("schedule", t.faintPlain(h.Schedule))
 		if h.NextRun != "" {
 			if next, err := time.Parse(time.RFC3339, h.NextRun); err == nil {
-				t.Row("next run", t.faintPlain(fmt.Sprintf("%s (%s)", next.Format("Mon Jan 2 15:04"), nextRunCell(h.NextRun))))
+				t.Row("next run", t.faintPlain(fmt.Sprintf("%s (%s)", next.Format("Mon Jan 2 15:04"), nextRunSuffix(h.NextRun))))
 			}
 		}
 	}

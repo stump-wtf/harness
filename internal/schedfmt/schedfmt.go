@@ -365,25 +365,31 @@ func cronDayName(dow string) string {
 //   orange-not-red and "idle" after a scheduled sweep read as failed-adjacent
 //   in `harness list`.
 
-// IdleLabel is what a stopped scheduled harness is called instead of
+// ArmedLabel is what a stopped scheduled harness is called instead of
 // "stopped".
-const IdleLabel = "idle"
+//
+// It was "idle" between #268 and #331. Idle says only "not doing anything",
+// which next to an ENABLED cell reading `no` invited the obvious question:
+// if it is idle, isn't it enabled? "Armed" answers it — the harness is loaded
+// and will fire on its own — and pairs with "disarmed" for the harness whose
+// schedule was removed.
+const ArmedLabel = "armed"
 
-// IsIdle reports whether this state/schedule pair is a scheduled harness
-// resting between firings — the one combination StateLabel renames. Callers
-// use it to pick amber over the stopped color; every other state of a
+// IsArmed reports whether this state/schedule pair is a scheduled harness
+// waiting for its next firing — the one combination StateLabel renames.
+// Callers use it to pick amber over the stopped color; every other state of a
 // scheduled harness (running, failed, degraded) keeps its own color, because
 // each still means exactly what it says.
-func IsIdle(state, schedule string) bool {
+func IsArmed(state, schedule string) bool {
 	return schedule != "" && core.State(state) == core.StateStopped
 }
 
-// StateLabel renders a harness's state for humans, substituting "idle" for a
+// StateLabel renders a harness's state for humans, substituting "armed" for a
 // scheduled harness's "stopped". Every other state, and every unscheduled
 // harness, is returned unchanged.
 func StateLabel(state, schedule string) string {
-	if IsIdle(state, schedule) {
-		return IdleLabel
+	if IsArmed(state, schedule) {
+		return ArmedLabel
 	}
 	return state
 }
