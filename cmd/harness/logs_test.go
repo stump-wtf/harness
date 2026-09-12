@@ -70,19 +70,28 @@ func TestRenderActivityPrintsLogTextForGenericHarness(t *testing.T) {
 	}
 }
 
-func TestRenderActivityShowsNoticesAndLogTailWithoutAgentActivity(t *testing.T) {
+// TestRenderActivityShowsNoticesWithoutAgentActivity: with nothing
+// attributable the view is the run header and the notices, and NOT the durable
+// log — whose tail, for a full-screen agent, is a screenshot of its idle TUI
+// (#279). It holds even if a daemon sends Text anyway.
+func TestRenderActivityShowsNoticesWithoutAgentActivity(t *testing.T) {
 	ld := protocol.LogsData{
 		Source:  protocol.LogSourceAgentTrace,
 		Run:     &protocol.LogRun{Start: stampAt(12, 6, 39), Adapter: "crush", Workdir: "/home/agent/src"},
 		Notices: []string{"2 session(s) in this run's window not shown"},
-		Text:    "crush output\n",
+		Text:    "  ╱╱╱╱╱╱ ▄▀▀▀▀ █▀▀▀▄\nThanks for using Crush!\n",
 	}
 	var buf bytes.Buffer
 	renderActivity(&buf, ld)
 	out := buf.String()
-	for _, want := range []string{"→ running", "note      2 session(s)", "durable log tail:\ncrush output\n"} {
+	for _, want := range []string{"→ running", "note      2 session(s)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q\n--- got ---\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"durable log tail:", "Thanks for using Crush!", "▄▀▀▀▀"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("activity view printed the durable log (%q)\n--- got ---\n%s", unwanted, out)
 		}
 	}
 }

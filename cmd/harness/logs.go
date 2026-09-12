@@ -83,10 +83,10 @@ func renderActivity(w io.Writer, ld protocol.LogsData) {
 	for _, e := range ld.Entries {
 		fmt.Fprintln(w, formatEntry(e))
 	}
-	if ld.Text != "" {
-		fmt.Fprintln(w, "durable log tail:")
-		printLogText(w, ld.Text)
-	}
+	// The activity view never prints the durable log, even if a daemon sent
+	// one: this view is agent activity, and the stored history of a
+	// full-screen agent is its repainted screen. `--raw` is the way to read
+	// the log, and the daemon's notices say so (#279).
 }
 
 // followActivity prints first, then re-fetches until wait reports false,

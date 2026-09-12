@@ -87,7 +87,8 @@ of reflowing it.
   lists the sessions correlation excluded, and works whether or not the harness
   is still running
 - **AND** when no agent activity is attributable the reply carries notices
-  saying why and the durable log tail as well
+  saying why, and points at `--raw` — it SHALL NOT carry the durable log,
+  whose tail for a full-screen agent is a screenshot of its idle TUI
 - **AND** a harness whose adapter records no native trajectory answers with the
   durable log tail and no `source`, as a daemon predating the field would
 

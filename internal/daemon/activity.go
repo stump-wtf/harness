@@ -83,8 +83,8 @@ func (c *conn) activity(req protocol.ControlReq, snap supervisor.Snapshot, lines
 		data.Notices = append(data.Notices, note)
 	}
 	if w.Start.IsZero() {
-		data.Notices = append(data.Notices, "this harness has not run yet")
-		data.Text = readLogTail(dir, req.Name, lines)
+		data.Notices = append(data.Notices,
+			"this harness has not run yet; run `harness logs "+req.Name+" --raw` to read the durable log itself")
 		return data, nil
 	}
 	data.Run = &protocol.LogRun{
@@ -142,17 +142,19 @@ func (c *conn) activity(req protocol.ControlReq, snap supervisor.Snapshot, lines
 	}
 
 	if len(events) == 0 {
-		data.Notices = append(data.Notices, "no agent-trace session is attributable to this run; the durable log tail follows")
-		data.Text = readLogTail(dir, req.Name, min(lines, fallbackTailLines))
+		// Deliberately no durable-log tail here. The tail of a full-screen
+		// agent is its idle screen — splash art, box-drawing chrome, a
+		// farewell line — and appending it made `harness logs` look like it
+		// was dumping the PTY even though the stored history is line-oriented
+		// and escape-free (#279, sanitize.go). The activity view answers "what
+		// did this run do"; when nothing is attributable, the honest answer is
+		// the notices and where to look next, not a screenshot of the TUI.
+		// Governing: #279, and the operator report behind it.
+		data.Notices = append(data.Notices,
+			"no agent-trace session is attributable to this run; run `harness logs "+req.Name+" --raw` to read the durable log itself")
 	}
 	return data, nil
 }
-
-// fallbackTailLines caps the durable-log tail appended when no agent activity
-// is attributable. The tail of a full-screen agent is its idle screen; forty
-// lines shows how it last looked without burying the notices above it
-// (`--raw` has the rest).
-const fallbackTailLines = 40
 
 // runWindow picks the run a structured logs request describes, in order of
 // authority:
