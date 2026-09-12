@@ -93,8 +93,10 @@ harness describe NAME          # last_exit, flapping
 - **A `generic` harness exits immediately.** `args` go to `sh`, so a bare
   `args = ["/usr/local/bin/thing"]` asks `sh` to read that binary as a script.
   Use `args = ["-c", "/usr/local/bin/thing --flag"]`.
-- **A flag the CLI rejects.** The agent prints its usage and exits 1. The
-  durable log shows the message.
+- **A flag the CLI rejects.** The agent prints its usage and exits 1. Read it
+  with `harness logs NAME --raw`: for an agent harness, the default view shows
+  agent activity, so a failure before any session started leaves only `note`
+  lines there.
 - **A real crash loop.** After three exits within ten seconds the harness is
   `flapping`, and restarts back off.
 

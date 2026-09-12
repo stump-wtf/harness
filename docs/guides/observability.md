@@ -73,9 +73,15 @@ That happens, for example, when two harnesses share a `workdir`. They are only
 shown with `--include-ambiguous`. Give every harness its own `workdir` and this
 goes away.
 
-When there is no transcript to match, `harness logs` explains why in `note`
-lines and prints the durable log instead. That covers `generic` harnesses, a
-harness with no `workdir`, and an agent that died before it opened a session.
+When an agent harness has a transcript but nothing matches this run — it has
+not run yet, it has no `workdir`, or it died before opening a session — the
+activity view prints `note` lines saying so and pointing at
+`harness logs NAME --raw`. It does **not** print the log itself: the stored
+history of a full-screen agent is mostly its repainted screen, which buries the
+notices telling you what to do next.
+
+A `generic` harness has no agent transcript at all, so `harness logs` shows its
+durable log directly. That is the whole record for one (ADR-0007).
 
 ### The durable log
 
