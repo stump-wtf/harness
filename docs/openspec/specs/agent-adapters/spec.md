@@ -268,8 +268,18 @@ following hold, and SHALL NOT attribute it otherwise (issue #89):
 
 1. **Adapter and store.** The session was discovered in a store the harness's
    own tool instance writes to:
-   - `crush` — `<workdir>/.crush/crush.db`, and the `projects.json` registry
-     under the harness's `CRUSH_GLOBAL_DATA` (else `XDG_DATA_HOME/crush`, else
+   - `crush` — when the harness's configuration names a data directory, that
+     store **alone**: `--data-dir`/`-D` in its `args`, else
+     `options.data_directory` in the crush config the instance loads (an
+     absolute path as-is, a relative one against the workdir — crush's own
+     rule). A named store belongs to one harness, so the shared stores below
+     SHALL NOT be consulted alongside it: both are reachable by every harness
+     in the working directory, which is the ambiguity a named store exists to
+     resolve.
+
+     Otherwise the store is inferred and both are read —
+     `<workdir>/.crush/crush.db`, and the `projects.json` registry under the
+     harness's `CRUSH_GLOBAL_DATA` (else `XDG_DATA_HOME/crush`, else
      `~/.local/share/crush` — crush's own resolution order). The project store
      is read directly because the registry is not reliable alone: crush
      rewrites it without a cross-process lock, and it has been observed corrupt
@@ -280,7 +290,9 @@ following hold, and SHALL NOT attribute it otherwise (issue #89):
 
    These keys SHALL be resolved from the harness's `env_file` layered over the
    daemon's environment — what the process actually sees — and no other
-   `env_file` value SHALL enter the correlation path (ADR-0008).
+   `env_file` value SHALL enter the correlation path (ADR-0008). From a
+   harness's `args`, only the flags that name a store SHALL be read; no other
+   argument enters that path either.
 2. **Working directory.** The session's recorded cwd equals the harness's
    resolved workdir exactly. A subdirectory is a different project to every
    supported tool. A harness with no workdir has nothing attributed.
@@ -292,9 +304,21 @@ following hold, and SHALL NOT attribute it otherwise (issue #89):
    resolving symlinks; a harness with no workdir shares the daemon's), could
    have written that kind of session (the same adapter, or `generic`, which may
    run any tool), and either has a known run covering the session's start or
-   has no record of its runs that far back. A session with any other claimant
-   SHALL be excluded for every claimant, and the exclusion SHALL be reported —
-   session, start time, claimants — rather than dropped silently.
+   has no record of its runs that far back.
+
+   A harness whose store is named, and differs from the inspected harness's
+   named store, SHALL NOT be a claimant: two harnesses each keeping their
+   sessions somewhere of their own cannot have written each other's, however
+   much else they share. This is positive evidence only — an inferred store
+   rules nothing out, because a registry may point anywhere — so a shared
+   working directory remains decisive wherever the configuration does not say
+   better. A consumer attributing a session it discovered (rather than
+   inspecting one run) MAY likewise use the store the session came from, which
+   its own record names, to the same effect and under the same limit.
+
+   A session with any other claimant SHALL be excluded for every claimant, and
+   the exclusion SHALL be reported — session, start time, claimants — rather
+   than dropped silently.
 
 **Run windows.** The inspected run's window SHALL come from the supervisor's
 own record (`last_started`, and `last_exit_at` when it closes that run; both
@@ -333,8 +357,9 @@ distinguish:
   harness's workdir during the run;
 - a peer harness's run older than that peer's durable-log retention, which
   therefore adds no claimant;
-- a store relocated by a tool config file rather than the environment and not
-  recorded in the instance's registry;
+- a store relocated by a project config above the working directory — crush
+  walks up to find one and correlation does not — and not recorded in the
+  instance's registry;
 - a harness since removed from the configuration or renamed, whose past runs
   therefore add no claimant;
 - a peer's log-derived window after the daemon's time zone changes, or in the
@@ -363,6 +388,30 @@ to a harness.
   different `CRUSH_GLOBAL_DATA` whose registries point at the same project store)
 - **THEN** neither harness is credited with it, and each reports the exclusion
   naming both claimants
+
+#### Scenario: Named stores separate harnesses that share a workdir
+
+- **WHEN** several crush harnesses run in one working directory and each is
+  configured with a data directory of its own (`--data-dir`, or
+  `options.data_directory`)
+- **THEN** each run is attributed the sessions from its own store, and no
+  sibling is a claimant — even where their runs overlap and they share one
+  registry
+
+#### Scenario: A named store is not widened by the shared ones
+
+- **WHEN** a harness names a data directory, and the project store
+  `<workdir>/.crush` or the instance's registry also holds sessions for that
+  working directory
+- **THEN** only the named store is read, so a sibling's sessions are never
+  offered to it
+
+#### Scenario: An inferred store rules nothing out
+
+- **WHEN** one harness names a data directory and a sibling sharing its
+  working directory names none
+- **THEN** the sibling remains a possible author, because its registry may
+  point anywhere, and a session either could have written is still excluded
 
 #### Scenario: Staggered runs in a shared workdir are separated by time
 
