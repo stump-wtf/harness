@@ -313,9 +313,11 @@ between the lifecycle events are the agent's actions:
 - `exec` shows the command, with `(failed)` if it failed.
 - `ERROR` is the error the agent hit.
 
-The match uses the harness's `workdir`, which is one more reason to set one. When
-nothing can be matched, `harness logs` says so in a `note` line and points you at
-`harness logs NAME --raw`; it does not print the log itself.
+The match uses the harness's `workdir`, which is one more reason to set one — or,
+for Crush, a session store of its own (`--data-dir`), which identifies the
+harness outright. When nothing can be matched, `harness logs` says so in a `note`
+line and points you at `harness logs NAME --raw`; it does not print the log
+itself.
 
 `--raw` shows the durable log instead: the run's own output, bracketed by
 lifecycle lines that carry its outcome:
