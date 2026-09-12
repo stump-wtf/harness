@@ -37,6 +37,36 @@ import (
 
 // runDaemon is the entry point for `harness daemon`. It owns its own flag set
 // (the daemon's flags don't overlap with the client verbs') and parses args
+// daemonManagerOptions is the ManagerOptions the daemon actually runs with.
+//
+// It is a function rather than a literal at the call site so a test can assert
+// on the policy THE DAEMON builds, and that distinction is the whole of #315.
+// This construction supplied no Policy at all, so every production supervisor
+// ran with the zero value — and Policy.normalize fills in every field except
+// MaxRestarts, which the supervisor reads as "never give up". A harness that
+// failed on every run retried forever instead of parking in `failed`. Every
+// test that exercised give-up handed NewManager its own Policy, so nothing
+// pointed at this one.
+//
+// Governing: SPEC-0003 REQ "Backoff Give-Up"; ADR-0005 (capped-exponential
+// backoff); issue #315.
+func daemonManagerOptions(reg *attach.Registry) supervisor.ManagerOptions {
+	return supervisor.ManagerOptions{
+		// Restart, backoff, give-up and stop-grace tunables. Without it the
+		// give-up branch is unreachable, which is the protection harness.toml's
+		// own comments promise: a harness once restarted 6,212 times and
+		// exhausted a model provider's weekly quota.
+		Policy:      supervisor.DefaultPolicy(),
+		ExtraOutFor: reg.WriterFor,
+		// Deregistered project harnesses release their Mux so removed projects
+		// never leak emulators/scrollback (SPEC-0004 REQ "Tear Down").
+		DropExtraOut: reg.Remove,
+		// A harness (re)started while a client is attached is spawned into a PTY
+		// the size of that client's viewport, not 80×24 (ADR-0003).
+		SizeFor: reg.SizeFor,
+	}
+}
+
 // after the `daemon` subcommand token.
 //
 // Governing: ADR-0001 (the daemon uses charmbracelet/log for structured,
@@ -76,15 +106,7 @@ func runDaemon(o daemonOpts) {
 	// ADR-0007). The Registry's controller (the Manager) applies the
 	// smallest-attached-wins resize and delivers read-write keystrokes.
 	reg := attach.NewRegistry(o.ringLines)
-	mgr := supervisor.NewManager(cfg, supervisor.ManagerOptions{
-		ExtraOutFor: reg.WriterFor,
-		// Deregistered project harnesses release their Mux so removed projects do
-		// projects never leak emulators/scrollback (SPEC-0004 REQ "Tear Down").
-		DropExtraOut: reg.Remove,
-		// A harness (re)started while a client is attached is spawned into a PTY
-		// the size of that client's viewport, not 80×24 (ADR-0003).
-		SizeFor: reg.SizeFor,
-	})
+	mgr := supervisor.NewManager(cfg, daemonManagerOptions(reg))
 	reg.SetController(mgr)
 
 	// Mandated boot order (ADR-0005): restore intent from state.json, then
