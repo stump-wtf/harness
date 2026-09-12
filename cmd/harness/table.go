@@ -189,8 +189,13 @@ func defaultColumnWidths(headers []string, budget, nameWidth int) (widths []int,
 	// NAME is deliberately absent: its width comes from the measured
 	// nameWidth, and it wraps (truncate stays false) so it is never cut.
 	fixed := map[string]int{
-		"STATE":     12,
-		"ENABLED":   9,
+		"STATE":   12,
+		"ENABLED": 9,
+		// Wide enough for the longest cadence the labeller produces with a
+		// zone suffix ("Mondays 09:00 UTC" is 17); a rawer expression still
+		// truncates, and `describe` has it whole.
+		"SCHEDULE":  18,
+		"NEXT":      10,
 		"RESTARTS":  9,
 		"FIELD":     12,
 		"CHECK":     12,
@@ -565,9 +570,9 @@ func (t *Table) bold(s string) string {
 // schedule swaps the state glyph for a clock so a scheduled harness is
 // legible as such at a glance.
 //
-// A scheduled harness that is stopped reads as "idle" in amber rather than
-// "stopped" in pink: it is resting between firings, not switched off, and the
-// stopped color is deliberately warm enough to draw the eye (schedfmt).
+// A scheduled harness that is stopped reads as "armed" in amber rather than
+// "stopped" in pink: it is loaded and waiting to fire, not switched off, and
+// the stopped color is deliberately warm enough to draw the eye (schedfmt).
 func (t *Table) stateCell(state string, schedule ...string) string {
 	s := core.State(state)
 	sched := ""
@@ -580,42 +585,39 @@ func (t *Table) stateCell(state string, schedule ...string) string {
 		return fmt.Sprintf("%s %s", glyph, label)
 	}
 	color := stateColor(s, t.pal)
-	if schedfmt.IsIdle(state, sched) {
+	if schedfmt.IsArmed(state, sched) {
 		color = t.pal.Amber
 	}
 	return lipgloss.NewStyle().Foreground(color).Bold(true).
 		Render(fmt.Sprintf("%s %s", glyph, label))
 }
 
-// descriptionCell renders the DESCRIPTION cell, highlighting the schedule
-// label (derived from the raw cron expression) in cyan and appending the
-// human-readable next-run time ("in 2h", "due") in accent. The two colors
-// let an operator distinguish "when it runs" from "how soon" at a glance.
-// nextRunCell returns "-" when there is nothing to show, which leaves an
-// unscheduled (or not-yet-computed) row exactly as before.
-func (t *Table) descriptionCell(desc, schedule, nextRun string) string {
-	cell := desc
-	if label := schedfmt.Label(schedule); label != "" {
-		cell = highlightSchedule(cell, label, t)
+// scheduleCell renders the SCHEDULE column: the cadence an operator reads
+// ("daily 09:00 UTC", "every 6h"), in cyan, falling back to the raw cron
+// expression when it cannot be paraphrased — a schedule too irregular to
+// name is exactly the one worth reading verbatim (SPEC-0008 REQ "Schedule
+// Visibility"). An unscheduled harness gets an em dash, not a blank, so the
+// column reads as "no schedule" rather than "unknown".
+func (t *Table) scheduleCell(schedule string) string {
+	if schedule == "" {
+		return "—"
 	}
-	if nr := nextRunCell(nextRun); nr != "-" {
-		if cell != "" {
-			cell += " · "
-		}
-		cell += t.accentBoldWords(nr)
-	}
-	return cell
+	return t.cyanBold(schedfmt.LabelOrRaw(schedule))
 }
 
-// highlightSchedule replaces the first occurrence of label in desc with its
-// cyan-bold highlighted form, splitting on whitespace boundaries so wrap
-// resets stay balanced (same strategy as accentBoldWords).
-func highlightSchedule(desc, label string, t *Table) string {
-	idx := strings.Index(desc, label)
-	if idx < 0 {
-		return desc
+// nextRunCell renders the NEXT column: the countdown to the next firing
+// ("in 2h", "due"), in accent. A scheduled harness whose next firing the
+// daemon has not resolved shows an em dash rather than a placeholder time,
+// and an unscheduled one has nothing to say at all.
+func (t *Table) nextRunCell(schedule, nextRun string) string {
+	if schedule == "" {
+		return "—"
 	}
-	return desc[:idx] + t.cyanBoldWords(label) + desc[idx+len(label):]
+	s := schedfmt.NextIn(nextRun)
+	if s == "" {
+		return "—"
+	}
+	return t.accentBoldWords(s)
 }
 
 // stateGlyphOnly renders just the colored glyph for leading-column use.

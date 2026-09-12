@@ -63,8 +63,13 @@ attached right now, and whether each session is read-only.
 Scheduled one-shots fire daemon-side on a cron schedule — no verb to remember,
 just configure `schedule` on a `prompt` harness (see
 [Configuration → Scheduled one-shots](./configuration#scheduled-one-shots)).
-`harness list` flags each job with a clock glyph and its next firing time;
-`harness describe` adds the cron spec.
+`harness list` gives every harness a **SCHEDULE** column (the cadence, e.g.
+`daily 10:00 UTC`, or the raw expression when it cannot be paraphrased) and a
+**NEXT** column (the countdown, e.g. `in 2h`), both derived from the config and
+the running scheduler — never from the description text. A job waiting for its
+next firing reads `⏱ armed` rather than `stopped`, because it is loaded and
+will fire on its own; `harness describe` reports `armed` instead of an
+`enabled` that is false for every scheduled harness by construction.
 
 ```sh
 harness jobs                    # every scheduled harness: next run, last run, consecutive failures
@@ -89,26 +94,14 @@ Scheduled firings never collide this way.
 ## Logs
 
 ```sh
-harness logs <name>               # what the latest run did: lifecycle + agent activity
-harness logs <name> --lines 50    # cap the entries (or, with --raw, the lines)
-harness logs <name> --follow      # keep printing new activity as it arrives
+harness logs <name>           # tail (default 200 lines)
+harness logs <name> --lines 50    # a specific number of trailing lines
+harness logs <name> --follow      # stream new output as it arrives
 harness logs <name> --run 3       # one run of a scheduled harness (see harness runs)
-harness logs <name> --raw         # the durable log itself, byte for byte
 ```
 
-For an agent harness this is the **activity view**: the run's lifecycle
-transitions interleaved with what the agent did — the files it read, the
-commands it ran, the error it died on — taken from the agent's own transcript.
-
-It never prints the durable log. The stored log is line-oriented rather than
-raw PTY bytes (ADR-0007, amended by #279), but for a full-screen agent those
-lines are still its repainted screen: splash art, box-drawing chrome, a
-farewell. When nothing can be attributed to the run, `harness logs` says so and
-points at `--raw` rather than printing that screen.
-
-`--raw` prints the durable log verbatim, and is also what a harness with no
-agent transcript (`generic`) shows by default. When a log rotates or truncates,
-`--follow` reprints the current tail so you never silently lose context.
+When a log rotates or truncates, `--follow` reprints the current tail so you
+never silently lose context.
 
 ## Profiles
 

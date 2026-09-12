@@ -41,90 +41,101 @@ func TestNextRunCell(t *testing.T) {
 		{"future", time.Now().Add(90 * time.Minute).Format(time.RFC3339), "in 1h30m"},
 	}
 	for _, tc := range cases {
-		if got := nextRunCell(tc.in); got != tc.want {
+		if got := nextRunSuffix(tc.in); got != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }
 
-func TestPrintHarnessTableMarksScheduledInline(t *testing.T) {
+// TestPrintHarnessTableShowsScheduleAsAField: the cadence and the countdown
+// are their own columns, derived from config and the scheduler — NOT spliced
+// into DESCRIPTION, and not dependent on the operator having written the
+// cadence into their description text (#331).
+func TestPrintHarnessTableShowsScheduleAsAField(t *testing.T) {
 	var buf bytes.Buffer
 	hs := []protocol.HarnessInfo{
-		{Name: "sweep", State: "stopped", Schedule: "0 */6 * * *", NextRun: time.Now().Add(2 * time.Hour).Format(time.RFC3339)},
-		{Name: "always-on", State: "running"},
+		{
+			Name: "sweep", State: "stopped",
+			Schedule:    "CRON_TZ=UTC 0 10 * * *",
+			NextRun:     time.Now().Add(2 * time.Hour).Format(time.RFC3339),
+			Description: "checks the fleet",
+		},
+		{Name: "always-on", State: "running", Description: "the api"},
 	}
 	if err := printHarnessTable(&buf, hs); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	// The scheduled row carries the clock glyph and the highlighted next-run
-	// time in DESCRIPTION; no SCHEDULE/NEXT columns exist anymore. It reads
-	// "idle" rather than "stopped" — a cron job between firings is armed, not
-	// switched off (#268).
-	for _, want := range []string{"⏱ idle", "in 2h"} {
+	// Columns exist, the cadence is rendered from the expression, the
+	// countdown from the scheduler's stamp, and the state reads "armed".
+	for _, want := range []string{"SCHEDULE", "NEXT", "daily 10:00 UTC", "in 2h", "⏱ armed", "checks the fleet"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in table:\n%s", want, out)
 		}
 	}
-	// The unscheduled row keeps its plain state glyph.
+	// The unscheduled row keeps its plain state glyph and says it has no
+	// schedule rather than leaving the cells ambiguous.
 	if !strings.Contains(out, "● running") {
 		t.Errorf("unscheduled row lost its state glyph:\n%s", out)
 	}
-	for _, unwanted := range []string{"SCHEDULE", "NEXT", "PID", "0 */6 * * *"} {
-		if strings.Contains(out, unwanted) {
-			t.Errorf("schedule column/data leaked into table (%q):\n%s", unwanted, out)
-		}
+	if !strings.Contains(out, "—") {
+		t.Errorf("unscheduled row should show an em dash for schedule/next:\n%s", out)
 	}
 }
 
-// TestPrintHarnessTableOmitsScheduleColumnsWhenUnused is the other half:
-// with no scheduled harness there is nothing schedule-shaped on screen at
-// all — no clock glyph, no next-run badge — and DESCRIPTION keeps its full
-// budget.
-func TestPrintHarnessTableOmitsScheduleColumnsWhenUnused(t *testing.T) {
+// TestPrintHarnessTableDescriptionIsOnlyTheDescription: the description cell
+// carries the operator's words and nothing else. Before #331 the cadence and
+// the countdown were appended to it, so a harness whose description happened
+// not to mention its schedule showed an unhighlighted one — and dotfiles had
+// to write the cadence into prose to get it on screen at all.
+func TestPrintHarnessTableDescriptionIsOnlyTheDescription(t *testing.T) {
 	var buf bytes.Buffer
-	hs := []protocol.HarnessInfo{
-		{Name: "web", State: "running", Description: "the reduit web frontend dev server"},
-		{Name: "api", State: "running", Description: "the reduit api"},
-	}
+	hs := []protocol.HarnessInfo{{
+		Name: "sweep", State: "stopped",
+		Schedule:    "0 */6 * * *",
+		NextRun:     time.Now().Add(90 * time.Minute).Format(time.RFC3339),
+		Description: "checks every StumpCloud service",
+	}}
 	if err := printHarnessTable(&buf, hs); err != nil {
 		t.Fatal(err)
 	}
+	// Find the description text and confirm no schedule text trails it on the
+	// same line: the columns hold that now.
 	out := buf.String()
-	for _, unwanted := range []string{"SCHEDULE", "NEXT"} {
-		if strings.Contains(out, unwanted) {
-			t.Errorf("unscheduled fleet still paid for the %s column:\n%s", unwanted, out)
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.Contains(line, "checks every") {
+			continue
+		}
+		if strings.Contains(line, "·") {
+			t.Errorf("description cell still carries appended schedule text:\n%s", line)
 		}
 	}
-	// The description must survive on one line rather than wrapping into a
-	// stack of fragments — that is the budget the columns were eating.
-	if !strings.Contains(out, "the reduit web frontend dev server") {
-		t.Errorf("description wrapped away:\n%s", out)
+	if !strings.Contains(out, "every 6h") || !strings.Contains(out, "in 1h30m") {
+		t.Errorf("cadence and countdown missing from their columns:\n%s", out)
 	}
 }
 
-// TestDescriptionCellStylesSurviveWrapping pins the rendering bug behind the
-// inline next-run: DESCRIPTION is the wrapping column, and wrapWords breaks on
-// spaces without any notion of style spans. Styling "in 1h30m" as one run put
-// the opening escape on one line and its reset on the next whenever the break
-// fell between the two words, so the attribute bled past the row on a color
-// terminal (reproduced in the real CLI at 80 columns for 6 of 16 sampled
-// description lengths).
+// TestScheduleColumnStylesSurviveWrapping pins the style-span hazard the old
+// inline next-run had, now against the styled SCHEDULE and NEXT columns:
+// wrapWords breaks on spaces with no notion of style spans, so a multi-word
+// cadence ("daily 10:00 UTC") styled as ONE run would put the opening escape
+// on one line and its reset on the next, bleeding the attribute past the row.
+// Both cells style per word for that reason.
 //
 // Every rendered line must close whatever it opens, at every description
-// length that shifts the wrap boundary across the appended time.
-func TestDescriptionCellStylesSurviveWrapping(t *testing.T) {
+// length that shifts the wrap boundaries.
+func TestScheduleColumnStylesSurviveWrapping(t *testing.T) {
 	const base = "sweeps the fleet and reports anything unhealthy every six hours to the operator"
 	next := time.Now().Add(90 * time.Minute).Format(time.RFC3339)
 
 	for n := 1; n <= len(base); n++ {
 		var buf bytes.Buffer
-		tbl := NewTable(&buf, "NAME", "STATE", "ENABLED", "RESTARTS", "DESCRIPTION")
+		tbl := NewTable(&buf, "NAME", "STATE", "SCHEDULE", "NEXT", "RESTARTS", "DESCRIPTION")
 		// Force the styled path: a real TTY colors, a *bytes.Buffer does not.
 		tbl.colored = true
-		tbl.Row("stumpcloud-sweep", tbl.stateCell("stopped", "0 */6 * * *"),
-			tbl.enabledCell(false), "0",
-			tbl.descriptionCell(base[:n], "0 */6 * * *", next))
+		tbl.Row("stumpcloud-sweep", tbl.stateCell("stopped", "CRON_TZ=UTC 0 10 * * *"),
+			tbl.scheduleCell("CRON_TZ=UTC 0 10 * * *"), tbl.nextRunCell("CRON_TZ=UTC 0 10 * * *", next),
+			"0", tbl.dimPlain(base[:n]))
 		if err := tbl.Flush(); err != nil {
 			t.Fatalf("flush: %v", err)
 		}
@@ -140,12 +151,12 @@ func TestDescriptionCellStylesSurviveWrapping(t *testing.T) {
 	}
 }
 
-// TestStateCellIdleForScheduledStopped pins the two things #268 asked for: a
-// scheduled harness that is stopped reads "idle", not "stopped", and it is
-// amber rather than the pink SPEC-0001 gives stopped — which sat next to
-// failed's coral and read as trouble on a job that was simply waiting for its
-// next firing.
-func TestStateCellIdleForScheduledStopped(t *testing.T) {
+// TestStateCellArmedForScheduledStopped pins what #268 asked for and #331
+// reworded: a scheduled harness that is stopped reads "armed", not "stopped",
+// and it is amber rather than the pink SPEC-0001 gives stopped — which sat
+// next to failed's coral and read as trouble on a job that was simply waiting
+// for its next firing.
+func TestStateCellArmedForScheduledStopped(t *testing.T) {
 	tbl := NewTable(&bytes.Buffer{}, "NAME", "STATE")
 	tbl.colored = true
 
@@ -160,12 +171,12 @@ func TestStateCellIdleForScheduledStopped(t *testing.T) {
 		want     string
 	}{
 		{
-			"scheduled + stopped is amber idle",
+			"scheduled + stopped is amber armed",
 			"stopped", "0 */6 * * *",
-			amber.Render(schedfmt.ScheduleGlyph + " idle"),
+			amber.Render(schedfmt.ScheduleGlyph + " armed"),
 		},
 		{
-			// An operator really did turn this one off. Saying "idle" would
+			// An operator really did turn this one off. Saying "armed" would
 			// hide that, so an unscheduled harness is untouched.
 			"unscheduled + stopped keeps pink stopped",
 			"stopped", "",
@@ -190,13 +201,13 @@ func TestStateCellIdleForScheduledStopped(t *testing.T) {
 	}
 }
 
-// TestStateCellUncoloredIdleLabel covers the mono path: color is decorative,
+// TestStateCellUncoloredArmedLabel covers the mono path: color is decorative,
 // so the word itself must carry the change (SPEC-0001 REQ "State
 // Presentation" — legible from glyphs and text alone).
-func TestStateCellUncoloredIdleLabel(t *testing.T) {
+func TestStateCellUncoloredArmedLabel(t *testing.T) {
 	tbl := NewTable(&bytes.Buffer{}, "NAME", "STATE")
 	tbl.colored = false
-	if got, want := tbl.stateCell("stopped", "0 */6 * * *"), schedfmt.ScheduleGlyph+" idle"; got != want {
+	if got, want := tbl.stateCell("stopped", "0 */6 * * *"), schedfmt.ScheduleGlyph+" armed"; got != want {
 		t.Errorf("stateCell = %q, want %q", got, want)
 	}
 	if got, want := tbl.stateCell("stopped"), core.StateStopped.Glyph()+" stopped"; got != want {
@@ -206,7 +217,7 @@ func TestStateCellUncoloredIdleLabel(t *testing.T) {
 
 // describe is the third surface that renders a state, and it has the schedule
 // on hand (it prints it a few rows down). Left off, a resting sweep read
-// "stopped" under `harness describe` and "idle" in `harness list` — the
+// "stopped" under `harness describe` and "armed" in `harness list` — the
 // divergence schedfmt was created to prevent, and the one its package doc
 // calls out by name.
 //
@@ -215,7 +226,7 @@ func TestStateCellUncoloredIdleLabel(t *testing.T) {
 // a test of stateCell alone cannot see.
 //
 // @joestump 08/26/2026 - Found in review of #269.
-func TestDescribeRendersScheduledHarnessAsIdle(t *testing.T) {
+func TestDescribeRendersScheduledHarnessAsArmed(t *testing.T) {
 	socket := bootScheduledDaemon(t)
 
 	out, err := captureStdout(t, func() error {
@@ -224,10 +235,15 @@ func TestDescribeRendersScheduledHarnessAsIdle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("describe: %v", err)
 	}
-	if !strings.Contains(out, schedfmt.IdleLabel) {
+	if !strings.Contains(out, schedfmt.ArmedLabel) {
 		t.Errorf("describe does not render a resting scheduled harness as %q "+
 			"— `harness list` calls it that, so the two surfaces disagree "+
-			"about one harness:\n%s", schedfmt.IdleLabel, out)
+			"about one harness:\n%s", schedfmt.ArmedLabel, out)
+	}
+	// And it reports whether the schedule is armed rather than an `enabled`
+	// that is false for every cron job by construction (#331).
+	if strings.Contains(out, "enabled") {
+		t.Errorf("describe still reports enabled for a scheduled harness:\n%s", out)
 	}
 	if strings.Contains(out, "state") && strings.Contains(out, " stopped") {
 		t.Errorf("describe still says \"stopped\" for a scheduled harness:\n%s", out)
@@ -235,7 +251,7 @@ func TestDescribeRendersScheduledHarnessAsIdle(t *testing.T) {
 }
 
 // bootScheduledDaemon is bootTestDaemon with a cron one-shot in the config,
-// which is the shape TestDescribeRendersScheduledHarnessAsIdle needs and
+// which is the shape TestDescribeRendersScheduledHarnessAsArmed needs and
 // writeMinimalConfig does not provide.
 func bootScheduledDaemon(t *testing.T) string {
 	t.Helper()

@@ -240,7 +240,7 @@ func (t *Theme) RenderState(s core.State) string {
 
 // RenderHarnessState renders "<glyph> <label>" for a harness, honouring the
 // scheduled-harness presentation: the clock glyph for anything cron-fired,
-// "idle" instead of "stopped" between firings, and amber instead of the
+// "armed" instead of "stopped" between firings, and amber instead of the
 // stopped pink to carry it.
 //
 // RenderState above takes a bare core.State and cannot know any of that — it
@@ -249,7 +249,7 @@ func (t *Theme) RenderState(s core.State) string {
 // call, so the cockpit and `harness list` cannot describe it two ways.
 func (t *Theme) RenderHarnessState(state, schedule string) string {
 	style := t.StateStyle(core.State(state))
-	if schedfmt.IsIdle(state, schedule) {
+	if schedfmt.IsArmed(state, schedule) {
 		style = t.IdleStyle()
 	}
 	return style.Render(schedfmt.Glyph(state, schedule) + " " + schedfmt.StateLabel(state, schedule))

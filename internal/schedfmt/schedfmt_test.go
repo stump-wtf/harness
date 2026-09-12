@@ -216,15 +216,17 @@ func TestScheduledHarnessDescriptionsHighlight(t *testing.T) {
 
 func TestStateLabel(t *testing.T) {
 	tests := []struct {
-		name     string
-		state    string
-		schedule string
-		want     string
-		wantIdle bool
+		name      string
+		state     string
+		schedule  string
+		want      string
+		wantArmed bool
 	}{
-		// The one substitution: a scheduled harness resting between firings.
-		{"scheduled stopped is idle", "stopped", "0 */6 * * *", "idle", true},
-		{"scheduled stopped weekly is idle", "stopped", "0 7 * * 1", "idle", true},
+		// The one substitution: a scheduled harness waiting for its next
+		// firing. "armed", not "idle" — idle next to `enabled no` read as a
+		// contradiction (#331).
+		{"scheduled stopped is armed", "stopped", "0 */6 * * *", "armed", true},
+		{"scheduled stopped weekly is armed", "stopped", "0 7 * * 1", "armed", true},
 
 		// An unscheduled harness that is stopped really is stopped — someone
 		// turned it off, and renaming that would hide the fact.
@@ -248,8 +250,8 @@ func TestStateLabel(t *testing.T) {
 			if got := StateLabel(tc.state, tc.schedule); got != tc.want {
 				t.Errorf("StateLabel(%q, %q) = %q, want %q", tc.state, tc.schedule, got, tc.want)
 			}
-			if got := IsIdle(tc.state, tc.schedule); got != tc.wantIdle {
-				t.Errorf("IsIdle(%q, %q) = %v, want %v", tc.state, tc.schedule, got, tc.wantIdle)
+			if got := IsArmed(tc.state, tc.schedule); got != tc.wantArmed {
+				t.Errorf("IsArmed(%q, %q) = %v, want %v", tc.state, tc.schedule, got, tc.wantArmed)
 			}
 		})
 	}
