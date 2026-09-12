@@ -249,7 +249,9 @@ the command it wraps:
 | `1` | the run failed without a usable exit code |
 
 `trigger` only accepts scheduled harnesses; use `harness start` for anything
-else.
+else. Don't reach for `harness run`: that is the scratchpad verb, which runs a
+throwaway harness and attaches to it. `harness trigger` is the one that fires a
+job.
 
 ## Reading run outcomes
 
