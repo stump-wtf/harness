@@ -92,11 +92,28 @@ of reflowing it.
 - **AND** a harness whose adapter records no native trajectory answers with the
   durable log tail and no `source`, as a daemon predating the field would
 
-#### Scenario: Raw log tail is unchanged
+#### Scenario: Raw log tail keeps its structure, minus credentials
 
 - **WHEN** a client requests `logs` without `events`
-- **THEN** the reply is the durable log tail exactly as before, which the TUI
-  peek pane and `harness logs --raw` depend on
+- **THEN** the reply is the durable log tail — the same lines, in the same
+  order, which the TUI peek pane and `harness logs --raw` depend on
+- **AND** credential-shaped spans within those lines SHALL be masked, so
+  `--raw` shows the shape of what ran without the secret inside it
+- **AND** the masking SHALL apply to every client of the op, `--json`
+  included, rather than being a rendering choice made by one client
+
+#### Scenario: Credentials are masked in what the daemon persists and serves
+
+- **WHEN** a harnessed program prints a credential — a token-bearing remote
+  URL, an `Authorization:` header, a secret-named assignment or flag
+- **THEN** the daemon SHALL mask it on a best-effort basis in the durable log
+  as it is written, in the durable and run-log tails as they are served, and
+  in the agent activity it renders
+- **AND** this is defence in depth, NOT a guarantee: the matcher is
+  deliberately conservative, so a secret in an unrecognised shape passes
+  through and `env_file` handling remains the actual control (ADR-0008)
+- **AND** a live attach SHALL be unaffected, since it carries the raw byte
+  stream the terminal needs (ADR-0003)
 
 #### Scenario: Run-scoped logs
 

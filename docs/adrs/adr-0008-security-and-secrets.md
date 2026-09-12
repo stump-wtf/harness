@@ -74,6 +74,20 @@ the agent**. That's inherent to the product, not a bug. Consequences:
   secrets to its terminal — that output lands in scrollback/logs like any other
   output. We document this; optionally offer per-harness "don't persist scrollback
   to disk" for sensitive ones — ADR-0007.)
+  *(Amended, issue #312: the parenthetical above scoped this decision to the
+  smaller half of the problem. The secrets that actually reach our logs are
+  exactly the ones a harnessed program prints — an agent runs `git remote
+  set-url` with a token in the URL, or `curl -H "Authorization: …"`, and the
+  command text lands in the durable log verbatim. Measured on tars: 216 such
+  lines across 80 log files. We cannot stop a program printing them, but
+  "cannot prevent" is not "must not mitigate". The daemon now masks
+  credential-shaped spans on a best-effort basis — at write time, so they do
+  not reach the file, and again at read time, which is the only thing covering
+  logs already written — in the durable log, the run logs, and the chatroom.
+  This is defence in depth for display and storage, NOT a guarantee: the
+  matcher is deliberately conservative and a secret in an unrecognised shape
+  still passes through, so `env_file` handling above remains the actual
+  control. Live attach is unchanged — it needs the raw byte stream, ADR-0003.)*
 - `env_file` path and file perms are the user's responsibility (as today); we can
   **warn** in the TUI if an `env_file` is group/world-readable.
 - Fits Joe's setup: `env_file` already points at Vault/OpenBao-rendered static env
