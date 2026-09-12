@@ -238,6 +238,13 @@ A triggered run goes through the same path as a scheduled firing, so `timeout`,
 `trigger=manual`, and the schedule carries on as before. Without `--wait`,
 `trigger` starts the run and returns immediately.
 
+`--wait` follows the run by polling the run history, which stays authoritative
+even when an event is dropped. One consequence is worth knowing if you trigger
+by hand while a run is in flight: a queued `--wait` attaches to the oldest
+manual run newer than the moment you issued it, so two manual triggers fired at
+the same time can each end up streaming the other's run. Scheduled firings never
+collide this way.
+
 With `--wait`, the command exits the way the run did, so scripts can use it like
 the command it wraps:
 
