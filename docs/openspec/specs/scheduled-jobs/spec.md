@@ -743,13 +743,19 @@ A scheduled harness SHALL be visually distinguishable from a disabled one on
 every listing surface. A scheduled harness is always `enabled = false` (REQ
 "Schedule Exclusions"), so `enabled` alone cannot carry the distinction and
 rendering it as merely disabled would misreport an armed cron job as one
-somebody turned off.
+somebody turned off. A harness waiting for its next firing SHALL be described
+as **armed**, and a surface SHALL NOT report `enabled` for it as though that
+were its intent: the schedule is.
 
 Both listing surfaces — the CLI table and the cockpit dashboard — SHALL show
-the cadence and the countdown to the next firing. Where a surface cannot
-paraphrase an expression into a cadence label it SHALL render the expression
-verbatim rather than nothing. A scheduled harness whose next firing the daemon
-has not resolved SHALL render no countdown rather than a placeholder time.
+the cadence and the countdown to the next firing **as fields of their own**,
+derived from the configured expression and the live scheduler. Neither SHALL
+depend on the operator's `description` text to carry, or to highlight, either
+value: a description is prose the operator owns, and a schedule stated in it is
+freetext pretending to be data. Where a surface cannot paraphrase an expression
+into a cadence label it SHALL render the expression verbatim rather than
+nothing. A scheduled harness whose next firing the daemon has not resolved SHALL
+render no countdown rather than a placeholder time.
 
 #### Scenario: Scheduled harness on the wire
 
@@ -761,12 +767,19 @@ has not resolved SHALL render no countdown rather than a placeholder time.
 
 - **WHEN** a scheduled harness appears in the CLI table or the cockpit dashboard
 - **THEN** it is marked as scheduled, and its cadence and time-to-next-firing
-  are both on screen
+  are both on screen, in fields of their own
+
+#### Scenario: Schedule is not carried by the description
+
+- **WHEN** a scheduled harness's `description` says nothing about its schedule
+- **THEN** its cadence and countdown are shown and styled exactly as they are
+  for a harness whose description does mention them
 
 #### Scenario: Scheduled harness is not reported as disabled
 
 - **WHEN** a scheduled harness (necessarily `enabled = false`) is rendered
-- **THEN** the surface marks it scheduled rather than disabled
+- **THEN** the surface describes it as armed rather than as disabled, and does
+  not present `enabled` as its intent
 
 #### Scenario: Unresolved next firing
 

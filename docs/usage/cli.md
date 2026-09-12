@@ -63,8 +63,13 @@ attached right now, and whether each session is read-only.
 Scheduled one-shots fire daemon-side on a cron schedule — no verb to remember,
 just configure `schedule` on a `prompt` harness (see
 [Configuration → Scheduled one-shots](./configuration#scheduled-one-shots)).
-`harness list` flags each job with a clock glyph and its next firing time;
-`harness describe` adds the cron spec.
+`harness list` gives every harness a **SCHEDULE** column (the cadence, e.g.
+`daily 10:00 UTC`, or the raw expression when it cannot be paraphrased) and a
+**NEXT** column (the countdown, e.g. `in 2h`), both derived from the config and
+the running scheduler — never from the description text. A job waiting for its
+next firing reads `⏱ armed` rather than `stopped`, because it is loaded and
+will fire on its own; `harness describe` reports `armed` instead of an
+`enabled` that is false for every scheduled harness by construction.
 
 ```sh
 harness jobs                    # every scheduled harness: next run, last run, consecutive failures
