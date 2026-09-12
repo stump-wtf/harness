@@ -36,22 +36,22 @@ the same protocol version.
 ## Listing & inspection
 
 ```sh
-harness list                  # table of every harness: name, state, schedule, next run, restarts, description
+harness list                  # table of every harness: name, state, enabled, restarts, PID
 harness ps                    # inside a project: only that project's harnesses
 harness describe <name>       # one harness in detail (state, harness kind, backend, flapping, ...)
 harness daemon status         # daemon version, proto, PID, uptime, socket, active profile
 ```
 
 `list` and `describe` also surface **schedule metadata** for scheduled
-one-shots (see [Scheduled jobs](#scheduled-jobs) under Configuration). The
-listing carries it in two columns of its own — `SCHEDULE`, the cadence rendered
-from the expression (`day 1-5 14:00 UTC`), and `NEXT`, the countdown to the next
-firing (`in 2d7h`) — so the description cell holds the operator's words and
-nothing else. A harness with no schedule shows an em dash in both.
+one-shots (see [Scheduled jobs](#scheduled-jobs) under Configuration). In the
+listing, a scheduled harness is marked inline rather than by extra columns: its
+state glyph becomes a clock (⏱, in the same colour, so the state still reads at
+a glance) and its next firing is appended to the description as a relative time
+— `sweeps the fleet · in 4h3m`. `describe` shows the full picture: the cron
+spec verbatim plus the absolute time of the next firing.
 
-A scheduled harness's state reads `⏱ armed` rather than "stopped": between
-firings it is waiting, not switched off. `describe` shows the full picture: an
-`armed` row, the cron spec verbatim, and the absolute time of the next firing.
+The cron spec itself is config, not status, so it stays off the listing
+surface; reach for `describe` or `--json` when you need it.
 
 `describe` additionally lists the harness's **live attach sessions** — who is
 attached right now, and whether each session is read-only.
@@ -63,9 +63,8 @@ attached right now, and whether each session is read-only.
 Scheduled one-shots fire daemon-side on a cron schedule — no verb to remember,
 just configure `schedule` on a `prompt` harness (see
 [Configuration → Scheduled one-shots](./configuration#scheduled-one-shots)).
-`harness list` shows each job as `⏱ armed` with its cadence and countdown;
-`harness describe` adds the cron spec. With nothing scheduled, `harness jobs`
-says so instead of printing an empty table.
+`harness list` flags each job with a clock glyph and its next firing time;
+`harness describe` adds the cron spec.
 
 ```sh
 harness jobs                    # every scheduled harness: next run, last run, consecutive failures
