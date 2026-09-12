@@ -38,7 +38,7 @@ Traps in this repo specifically, each of which has already cost a wrong
   correct `harness.toml` says nothing about a harness that is already running;
   it keeps its old argv until it restarts. Read the process, not the file.
 - **CI.** `GET /actions/runs` (the list) requires auth even on this public
-  repo and returns null anonymously, while `GET /actions/runs/<id>` does not —
+  repo — it 401s anonymously — while `GET /actions/runs/<id>` does not —
   so an anonymous list poll is indistinguishable from "no CI ran". Use
   `$GITEA_TOKEN`, and read `conclusion`, never an exit code.
 - **Tests.** A test that builds its own fixture where production builds the
