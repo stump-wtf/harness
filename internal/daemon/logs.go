@@ -9,7 +9,40 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"strings"
+
+	"gitea.stump.rocks/stump.wtf/harness/internal/redact"
 )
+
+// redactTail masks credentials in a durable-log tail, line by line.
+//
+// The log records whatever the harnessed program printed, verbatim — a
+// token-bearing git remote, an `Authorization:` header, a `--password` flag.
+// Every reader of a log goes through this function or its sibling in jobs.go,
+// so `--raw`, `--follow`, the peek pane, a generic harness's fallback and
+// `--json` are covered in one place rather than each client being trusted to
+// remember.
+//
+// Line by line, because that is the granularity redact's rules are written
+// for, and because it leaves the tail's structure intact: `--raw` still shows
+// the shape of what ran, only not the secret inside it.
+//
+// New output is also masked before it reaches disk (ptyHistory, in
+// internal/supervisor); this is what covers logs already written. redact.String
+// is idempotent, so a line masked at write time passes through unchanged.
+//
+// Governing: ADR-0008 (secrets, as amended for #312), SPEC-0002 REQ "Control
+// Operations" ("logs"); issue #312.
+func redactTail(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	lines := strings.Split(string(b), "\n")
+	for i, ln := range lines {
+		lines[i] = redact.String(ln)
+	}
+	return strings.Join(lines, "\n")
+}
 
 // readLogTail returns the last `lines` lines of the harness's active log file,
 // or "" if the log does not exist yet. Best-effort: a read error yields "".
@@ -21,7 +54,7 @@ func readLogTail(dir, name string, lines int) string {
 	if err != nil {
 		return ""
 	}
-	return string(tailLines(data, lines))
+	return redactTail(tailLines(data, lines))
 }
 
 // tailLines returns the last n lines of data (preserving trailing newline

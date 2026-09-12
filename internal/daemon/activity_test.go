@@ -285,9 +285,12 @@ func TestLogsEventsGenericFallsBackToText(t *testing.T) {
 	}
 }
 
-// TestLogsRawIsUnchanged: without Events the op is byte-for-byte what it was,
-// which is what the peek pane and --raw depend on.
-func TestLogsRawIsUnchanged(t *testing.T) {
+// TestLogsRawKeepsStructure: the raw op still answers with the file's own
+// lines, in order, with no Source or Entries — what the peek pane and
+// `harness logs --raw` depend on. Credential-free content is byte-exact;
+// credential masking is pinned separately below, because the spec now
+// promises structure rather than byte-for-byte identity (issue #312).
+func TestLogsRawKeepsStructure(t *testing.T) {
 	td, _ := sweepsDaemon(t)
 	body := lifecycleLine(local(7, 40, 0), "state changed from=stopped to=starting") + "\x1b[2Jrepaint\n"
 	writeLog(t, td, "sweep-pdx", body)
@@ -297,6 +300,49 @@ func TestLogsRawIsUnchanged(t *testing.T) {
 	}
 	if ld.Text != body || ld.Source != "" || ld.Entries != nil {
 		t.Errorf("raw reply = %+v, want exactly the file", ld)
+	}
+}
+
+// Credential-shaped fixtures, assembled at run time from split literals so no
+// high-entropy token exists as a contiguous string in this source. Assertions
+// reference these rather than restating the value — restating it puts the
+// literal back and the secret scan flags it.
+var (
+	logPwSecret     = "0123456789" + "abcdef0123"
+	logBearerSecret = "sk-" + "abcdefghijklmnopqrstuvwxyz"
+)
+
+var logCredFixtures = strings.NewReplacer(
+	"<PW_REMOTE>", "https://joestump-agent:"+logPwSecret+"@gitea.stump.rocks/a/b.git",
+	"<BEARER>", "Authorization: Bearer "+logBearerSecret,
+)
+
+// TestLogsRawMasksCredentials covers the logs already on disk — the reason
+// read-time masking exists alongside write-time masking. It also proves the
+// masking is served by the DAEMON, so `--json` and any other client get it
+// too, rather than it being a rendering choice one client makes (issue #312).
+func TestLogsRawMasksCredentials(t *testing.T) {
+	td, _ := sweepsDaemon(t)
+	remote := logCredFixtures.Replace("<PW_REMOTE>")
+	bearer := logCredFixtures.Replace("<BEARER>")
+	body := "git remote set-url origin " + remote + "\n" +
+		"curl -H '" + bearer + "' https://example.com\n"
+	writeLog(t, td, "sweep-pdx", body)
+
+	ld, err := td.dial(t, nil).Logs("sweep-pdx", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{logPwSecret, logBearerSecret} {
+		if strings.Contains(ld.Text, secret) {
+			t.Errorf("raw logs reply leaked a credential (%q):\n%s", secret, ld.Text)
+		}
+	}
+	if !strings.Contains(ld.Text, "[REDACTED]") {
+		t.Errorf("nothing was masked at all:\n%s", ld.Text)
+	}
+	if !strings.Contains(ld.Text, "git remote set-url origin") {
+		t.Errorf("masking ate the command text:\n%s", ld.Text)
 	}
 }
 

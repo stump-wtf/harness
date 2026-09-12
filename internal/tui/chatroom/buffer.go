@@ -16,6 +16,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"gitea.stump.rocks/stump.wtf/harness/internal/redact"
 	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stump-wtf/agent-trace/classify"
@@ -146,7 +147,48 @@ func (re *RenderableEvent) Lines(s *Styles) []string {
 	return re.lines
 }
 
+// redactEvent masks credentials in every free-text field an event carries,
+// before anything stores or renders it.
+//
+// A transcript records what the agent ran, verbatim — a token-bearing git
+// remote, an `Authorization:` header, a `--password` flag — so these fields
+// arrive exactly as typed. `harness logs` already masks the same strings on
+// its way to the activity view; the chatroom reads the events directly from
+// the watcher and did not (ADR-0008; issue #312).
+//
+// It is done here, at construction, rather than at each render site because
+// RenderLines reads some fields back off the raw event — the error line takes
+// Classified.Summary rather than the truncated copy — so masking only what
+// MakeRenderable stores would leave that one unmasked.
+//
+// The copy is deliberate. Marks and Targets are slices that share a backing
+// array with the caller's event, so masking them in place would reach through
+// into the watcher's own copy.
+//
+// Governing: ADR-0008 (secrets), issue #312.
+func redactEvent(ev tail.Event) tail.Event {
+	ev.Classified.Summary = redact.String(ev.Classified.Summary)
+	if len(ev.Marks) > 0 {
+		marks := make([]classify.Mark, len(ev.Marks))
+		copy(marks, ev.Marks)
+		for i := range marks {
+			marks[i].Note = redact.String(marks[i].Note)
+		}
+		ev.Marks = marks
+	}
+	if len(ev.Classified.Targets) > 0 {
+		targets := make([]classify.Target, len(ev.Classified.Targets))
+		copy(targets, ev.Classified.Targets)
+		for i := range targets {
+			targets[i].Path = redact.String(targets[i].Path)
+		}
+		ev.Classified.Targets = targets
+	}
+	return ev
+}
+
 func MakeRenderable(ev tail.Event) RenderableEvent {
+	ev = redactEvent(ev)
 	id := IdentityFor(ev.Session.Harness)
 	re := RenderableEvent{
 		Event:    ev,

@@ -229,7 +229,10 @@ func readRunLogTail(path string, lines int) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return string(tailLines(data, lines)), true
+	// Masked like the harness-wide tail: a run log is the same durable output,
+	// and opLogsRun serves it on the events path too, not only for --raw
+	// (ADR-0008 as amended; issue #312).
+	return redactTail(tailLines(data, lines)), true
 }
 
 // noRunLogNotice explains a run with no log.

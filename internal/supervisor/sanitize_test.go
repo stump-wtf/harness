@@ -105,6 +105,52 @@ func TestPtyHistoryFlushLandsFinalScreen(t *testing.T) {
 	}
 }
 
+// Credential-shaped fixtures, assembled at run time from split literals so no
+// high-entropy token exists as a contiguous string in this source. Assertions
+// reference these rather than restating the value — restating it puts the
+// literal back and the secret scan flags it.
+var (
+	pwSecret     = "0123456789" + "abcdef0123"
+	bearerSecret = "sk-" + "abcdefghijklmnopqrstuvwxyz"
+)
+
+var credFixtures = strings.NewReplacer(
+	"<PW_REMOTE>", "https://joestump-agent:"+pwSecret+"@gitea.stump.rocks/a/b.git",
+	"<BEARER>", "Authorization: Bearer "+bearerSecret,
+)
+
+// TestPtyHistoryMasksCredentialsBeforeDisk: the durable log records what the
+// program printed, so an agent running `git remote set-url` with a token in
+// the URL puts it in the file verbatim. Masking at write time is what keeps
+// the secret out of the artifact — the log is readable directly under
+// $XDG_STATE_HOME regardless of what the protocol serves (ADR-0008 as
+// amended; issue #312).
+func TestPtyHistoryMasksCredentialsBeforeDisk(t *testing.T) {
+	remote := credFixtures.Replace("<PW_REMOTE>")
+	bearer := credFixtures.Replace("<BEARER>")
+
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 200, 24)
+	_, _ = h.Write([]byte("git remote set-url origin " + remote + "\r\n"))
+	_, _ = h.Write([]byte("curl -H '" + bearer + "' https://example.com\r\n"))
+	h.Flush()
+	got := out.String()
+
+	for _, secret := range []string{pwSecret, bearerSecret} {
+		if strings.Contains(got, secret) {
+			t.Errorf("durable log kept a credential (%q):\n%s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Errorf("nothing was masked at all:\n%s", got)
+	}
+	// The surrounding command must survive: --raw still shows the shape of
+	// what ran, only not the secret inside it.
+	if !strings.Contains(got, "git remote set-url origin") {
+		t.Errorf("masking ate the command text:\n%s", got)
+	}
+}
+
 // TestPtyHistoryFlushIsOnce verifies a second Flush (closeLog runs
 // defensively after the reader EOF flush) cannot duplicate the screen.
 func TestPtyHistoryFlushIsOnce(t *testing.T) {

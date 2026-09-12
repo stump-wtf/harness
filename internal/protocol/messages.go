@@ -378,7 +378,9 @@ type LogsData struct {
 	Excluded []LogExclusion `json:"excluded,omitempty"`
 	// Notices explain a degraded view: no attributable session, an unreadable
 	// store, a run window recovered from the log. With no agent activity the
-	// reply also carries the durable-log tail in Text.
+	// reply carries notices and points at `--raw`; it does NOT carry the
+	// durable-log tail in Text (#279, #328 — the tail of a full-screen agent
+	// is a screenshot of its idle TUI).
 	Notices []string `json:"notices,omitempty"`
 }
 
