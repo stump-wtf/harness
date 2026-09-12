@@ -178,8 +178,15 @@ func TestLogsEventsExcludesOverlappingPeer(t *testing.T) {
 	if len(ld.Excluded) != 1 || strings.Join(ld.Excluded[0].Claimants, ",") != "sweep-pdx,sweep-pr" {
 		t.Errorf("excluded = %+v, want the overlap session naming both harnesses", ld.Excluded)
 	}
-	if !containsNotice(ld, "sweep-pr") || ld.Text == "" {
-		t.Errorf("notices = %q, text = %q; want the exclusion explained and the log tail as fallback", ld.Notices, ld.Text)
+	// The exclusion is explained and `--raw` is offered, but the durable log
+	// itself is never sent: its tail for a full-screen agent is a screenshot
+	// of the idle TUI, which is what made `harness logs` look like a PTY dump
+	// (#279).
+	if !containsNotice(ld, "sweep-pr") || !containsNotice(ld, "--raw") {
+		t.Errorf("notices = %q; want the exclusion explained and --raw offered", ld.Notices)
+	}
+	if ld.Text != "" {
+		t.Errorf("text = %q; want no durable log in the activity view", ld.Text)
 	}
 
 	ld, err = c.LogEvents("sweep-pdx", client.LogOptions{IncludeAmbiguous: true})
