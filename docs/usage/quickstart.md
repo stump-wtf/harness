@@ -15,8 +15,7 @@ Homebrew builds from source, so there is no macOS Gatekeeper prompt. `--HEAD`
 builds `main`, which these docs track:
 
 ```sh
-brew tap stump-wtf/tap
-brew install --HEAD harness
+brew install --HEAD stump-wtf/tap/harness
 ```
 
 Or build from source (Go 1.26+):
