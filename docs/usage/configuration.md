@@ -46,12 +46,13 @@ A bare `[name]` table is accepted for backward compatibility, but the
 
 ## Agent one-shot harnesses
 
-Give a harness a `prompt`, and the daemon synthesizes the
-agent invocation at spawn time (currently `crush run --quiet …`). This turns a
+Give a harness a `prompt`, and the daemon synthesizes the agent invocation at
+spawn time from the harness's adapter (see the table below). This turns a
 harness into a one-shot agent run:
 
 ```toml
 [harness.deploy-check]
+harness = "claude-code"
 prompt = "check the deployments and report anything unhealthy"
 model = "claude-opus-5"        # optional model (requires prompt)
 auto_accept = true             # optional: unattended/yolo mode (requires prompt)
@@ -77,6 +78,16 @@ These agent fields are **config truth only** — they are never written into
 into the synthesized agent argv at spawn time, and they **require `prompt`**:
 there is no vendor-agnostic place to inject a flag into an arbitrary
 argv, so a long-running harness passes its tool's flags through `args` itself.
+
+Each adapter maps those fields onto its own CLI. A field the CLI has no flag for
+is dropped, not emulated:
+
+| `harness` | Synthesized command | Ignored fields |
+|-----------|---------------------|----------------|
+| `crush` | `crush [--yolo] run [--quiet] [--model M] <prompt>` | `max_turns` (Crush has no turn cap) |
+| `claude-code` | `claude -p [--dangerously-skip-permissions] [--model M] [--max-turns N] --verbose --output-format stream-json <prompt>` | `quiet` (`-p` is already headless) |
+| `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
+| `generic` | same as `crush` | same as `crush` |
 
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
 it on trusted, headless runs.
@@ -119,12 +130,16 @@ config load) and the daemon fires it on that cadence — ADR-0013's replacement
 for the original SPEC-0008 timer design:
 
 ```toml
-[harness.stumpcloud-sweep]
-prompt = "check all StumpCloud services and report anything unhealthy"
+[harness.fleet-sweep]
+harness = "crush"
+prompt = "check all services and report anything unhealthy"
 auto_accept = true
-schedule = "0 */6 * * *"   # every 6 hours
+schedule = "CRON_TZ=UTC 0 */6 * * *"   # every 6 hours
 description = "scheduled sweep (every 6 hours)"
 ```
+
+For a full walkthrough — prompt design, run history, and reading outcomes — see
+the [Scheduled sweeps guide](/guides/scheduled-sweeps).
 
 Rules:
 
@@ -161,6 +176,7 @@ late is **missed**, and `catch_up` decides what happens:
 
 ```toml
 [harness.nightly-sweep]
+harness = "crush"
 prompt = "…"
 schedule = "CRON_TZ=UTC 0 3 * * *"
 catch_up = true   # default false
@@ -182,6 +198,7 @@ Every run of a scheduled harness gets a numbered record and a log of its own:
 
 ```toml
 [harness.nightly-sweep]
+harness = "crush"
 prompt = "…"
 schedule = "CRON_TZ=UTC 0 3 * * *"
 timeout = "45m"        # default "1h"; "0" = no limit
@@ -205,12 +222,17 @@ keep_runs = 30         # default 20
   finishes (holding at most one); `replace` stops the current run and starts the
   new one.
 
-All three keys require `schedule`. Reading history and per-run logs from the CLI
-(`harness runs`, `harness logs --run`) is coming in a later release.
+All three keys require `schedule`. Read history and per-run logs from the CLI
+with `harness jobs`, `harness runs <name>` and `harness logs <name> --run N`, and
+run a job now with `harness trigger <name>` — see
+[CLI → Scheduled jobs](./cli#scheduled-jobs).
 
-`harness list` marks a scheduled harness inline — a clock glyph in place of the
-state glyph, and the next firing appended to its description (`· in 4h3m`).
-`harness describe` adds the cron spec and the absolute next-run time. A
+`harness list` gives the schedule its own columns — `SCHEDULE` (the cadence) and
+`NEXT` (the countdown) — and reads the state as `⏱ armed`, since a cron job
+between firings is waiting rather than switched off. An unscheduled harness shows
+an em dash in both columns.
+`harness describe` adds an `armed` row, the cron spec and the absolute next-run
+time. A
 zone-prefixed schedule's cadence carries the zone (`daily 09:00 UTC`). The
 [cockpit](./tui#the-dashboard) tags the row `(scheduled)` with the same
 countdown, and carries the cadence on the row's sub-line.
@@ -242,29 +264,34 @@ harness = "claude-code"
 
 ## Trajectory harvesting & facade scope
 
-- `harvest_trajectory = true` (default `false`) exposes this harness's session
-  transcripts read-only through the MCP facade (`list_trajectories` /
-  `get_trajectory`). Opt-in because a transcript may contain secrets the
-  harnessed program printed itself (ADR-0008).
-- `mcp_allow` (default `["read"]`) lists the operations this harness may
-  invoke through the MCP facade; include `"write"` to permit
-  `harness_start/stop/restart` through the facade. **Global config only** —
-  project files reject the key so a cloned repository cannot grant itself write
-  authority over the fleet.
+:::note Reserved, not yet active
+
+The daemon does not run the MCP facade (ADR-0010) or any trajectory export
+today. These keys are validated and kept in config — the TUI edit form
+round-trips them — but setting them changes nothing at runtime yet.
+
+:::
+
+- `harvest_trajectory = true` (default `false`) is the opt-in for exposing this
+  harness's session transcripts read-only through the planned MCP facade
+  (`list_trajectories` / `get_trajectory`). Opt-in because a transcript may
+  contain secrets the harnessed program printed itself (ADR-0008).
+- `mcp_allow` (default `["read"]`) lists the operations this harness will be
+  permitted to invoke through that facade; `"write"` would permit
+  `harness_start/stop/restart`. **Global config only** — project files already
+  reject the key, so a cloned repository cannot grant itself write authority
+  over the fleet.
 
 ## Daemon settings (`[daemon]`)
 
 ```toml
 [daemon]
-watch_config = true                   # auto-reload on config file changes (default true)
-otel_endpoint = "https://cairn.stump.wtf"   # OTLP/HTTP trace export (optional)
+watch_config = true   # auto-reload on config file changes (default true)
 ```
 
-`otel_endpoint` is an OTLP/HTTP URL the daemon ships agent traces to. Any
-OTLP-compatible endpoint works (Honeycomb, Tempo, Jaeger, Grafana, or a Cairn
-instance exposing OTLP): the daemon builds OTel traces from harvested sessions
-(`harvest_trajectory = true`) and POSTs standard OTLP JSON to
-`<endpoint>/v1/traces`.
+`watch_config` is the only daemon setting with a runtime effect today.
+`otel_endpoint` is also accepted (an OTLP/HTTP URL for trace export), but
+nothing in the daemon exports traces yet, so setting it does nothing.
 
 ## Restart policy
 

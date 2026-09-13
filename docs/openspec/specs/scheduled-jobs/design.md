@@ -86,7 +86,7 @@ prompt harness now supply, and by the parser's ability to reject nonsense, which
 validation on one table achieves at a fraction of the downstream cost. What a
 table kind would still have bought is type-based dispatch in consumers; that is
 the accepted cost, tracked as
-[#160](https://gitea.stump.rocks/stump.wtf/harness/issues/160).
+#160.
 
 The exclusions are the load-bearing part of this choice and are enumerated in
 SPEC-0008 REQ "Schedule Exclusions". Notably `enabled` is **not** redefined to
@@ -365,14 +365,14 @@ during shutdown ahead of `srv.Close()` and `mgr.Close()`.
 - **Enabled intent leaks.** A firing goes through `Manager.Start`, which persists
   `enabled = true`; an unclean daemon exit mid-run can autostart the one-shot
   off-schedule on the next boot
-  ([#159](https://gitea.stump.rocks/stump.wtf/harness/issues/159)).
+  (#159).
 - **Consumers branch on a key.** Every surface wanting to render a scheduled
   harness distinctly tests `Schedule != ""`, and none do yet
-  ([#160](https://gitea.stump.rocks/stump.wtf/harness/issues/160)).
+  (#160).
 - **Config writers must be kept in sync.** Because the TUI form rewrites a whole
   `[harness.*]` table, any schema key it does not carry is deleted on save. This
   bit `schedule` before release and still affects `tmux_socket`
-  ([#161](https://gitea.stump.rocks/stump.wtf/harness/issues/161)). A
+  (#161). A
   table-driven test asserting every `core.Harness` key survives an edit
   round-trip would close the class.
 

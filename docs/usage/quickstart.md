@@ -5,22 +5,24 @@ sidebar_position: 1
 
 # Quickstart
 
-Get a harness up and attached in a couple of minutes.
+Get a harness up and attached in a couple of minutes. For the longer
+walkthrough — running the daemon as a service, supervising real agents,
+scheduled sweeps and push events — start with [Getting started](/guides).
 
 ## 1. Install
 
-The preferred method is Homebrew (builds from source, so no macOS Gatekeeper
-prompt):
+Homebrew builds from source, so there is no macOS Gatekeeper prompt. `--HEAD`
+builds `main`, which these docs track:
 
 ```sh
 brew tap stump-wtf/tap
-brew install harness
+brew install --HEAD harness
 ```
 
-Or build from source (Go 1.22+):
+Or build from source (Go 1.26+):
 
 ```sh
-git clone https://gitea.stump.rocks/stump.wtf/harness.git
+git clone https://github.com/stump-wtf/harness.git
 cd harness
 go install ./cmd/harness
 ```

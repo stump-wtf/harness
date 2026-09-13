@@ -52,10 +52,10 @@ args = ["--remote-control", "--dangerously-skip-permissions"]
 workdir = "~/src"
 # env_file, restart_delay, tmux_socket, backend … all as today
 
-[harness.crush-signal]
+[harness.crush-worker]
 cmd = "crush"
 args = ["--yolo", "--data-dir", "{workdir}", "--channels", "server:signal"]
-workdir = "~/.local/share/crush-signal-channel"
+workdir = "~/.local/share/crush-worker"
 env_file = "~/.config/vault/secrets-static.env"
 
 [harness.reduit-agent]
@@ -70,7 +70,7 @@ autostart = true            # daemon starts this profile's harnesses on boot
 
 [profile.signal-ops]
 description = "Headless agents wired to Signal"
-harnesses = ["crush-signal", "claude-src"]
+harnesses = ["crush-worker", "claude-src"]
 
 [profile.reduit]
 description = "Everything for the reduit project"

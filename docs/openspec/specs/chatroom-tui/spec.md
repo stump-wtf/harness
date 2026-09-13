@@ -12,7 +12,7 @@ requires: [SPEC-0006]
 
 ## Overview
 
-This specification defines a new "chatroom" view within the Harness TUI that aggregates live output from all supported agent harnesses (Claude Code, Codex, Crush, OpenCode, Pi) into a single chronological stream. Each harness appears as a distinct "user" with a username (e.g., `@crush-signal`) and color. Tool calls, tool results, and user messages render as chat messages. An activity feed panel provides a summary timeline.
+This specification defines a new "chatroom" view within the Harness TUI that aggregates live output from all supported agent harnesses (Claude Code, Codex, Crush, OpenCode, Pi) into a single chronological stream. Each harness appears as a distinct "user" with a username (e.g., `@crush-worker`) and color. Tool calls, tool results, and user messages render as chat messages. An activity feed panel provides a summary timeline.
 
 The chatroom view is a new mode in the Harness TUI (bubbletea-based), accessible via keybinding from the main view. It leverages `agent-trace`'s `tail.Watcher` to consume live events.
 
@@ -73,7 +73,7 @@ Each harness SHALL have a distinct visual identity in the chatroom.
 - **WHEN** rendering an event whose session SPEC-0006 REQ "Run Correlation"
   attributes to exactly one harness — same adapter and workdir, a known run of
   that harness covering the session's start, and no other claimant
-- **THEN** the username SHALL be `@<harness name>` (e.g. `@stumpcloud-sweep-pdx`)
+- **THEN** the username SHALL be `@<harness name>` (e.g. `@fleet-sweep`)
 - **WHEN** the session is not attributable to exactly one harness
 - **THEN** the username SHALL be the tool identity, which names no harness:
   - `claude-code` → `@claude-code`
@@ -84,7 +84,7 @@ Each harness SHALL have a distinct visual identity in the chatroom.
 - **THEN** usernames SHALL be recomputed whenever the daemon's harness list
   changes, since a run starting or ending changes what is attributable
 
-The tool identity was once `@crush-signal` for crush, which labelled every crush
+The tool identity was once `@crush-worker` for crush, which labelled every crush
 session on the machine — scheduled sweeps, other agents, interactive runs — as
 one particular harness (issue #302).
 

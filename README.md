@@ -21,31 +21,38 @@ Think `tmux` + `systemctl` + an agent-ops dashboard in one Go binary.
 
 ## Docs
 
-**Full usage documentation — install, quickstart, CLI reference, config,
-supervision, TUI, projects, remote access — lives on the docs site:**
+**Documentation:** https://stump-wtf.github.io/harness/
 
-- **https://stump-wtf.pages.stump.rocks/harness/** ← the current build
-- **https://stump-wtf.github.io/harness/** ← public mirror
+- **[Getting started](https://stump-wtf.github.io/harness/guides)** — the 0-to-1
+  path: install, run the daemon as a service, supervise your first agent,
+  scheduled sweeps, push events with MCP channels, observability, and how
+  Harness fits with [Switchboard](https://switchboard.stump.wtf/docs/) and
+  [Cairn](https://cairn.stump.wtf/docs/intro/).
+- **[Usage](https://stump-wtf.github.io/harness/usage)** — the reference: every
+  verb, config key, and flag.
 
 The site also publishes this project's architecture decisions and
-specifications. Source of truth for these docs lives in `docs/` and `docs-site/`
-in this repo.
+specifications. Source for the docs lives in `docs/` and `docs-site/` in this
+repo.
 
 ## Install
 
-### Homebrew (preferred)
+### Homebrew
 
 ```sh
 brew tap stump-wtf/tap
-brew install harness
+brew install --HEAD harness
 ```
+
+`--HEAD` builds `main`; the tap's tagged formula can lag behind the features the
+docs describe.
 
 ### From source
 
-Requires Go 1.22+.
+Requires Go 1.26+ (older Go toolchains download it automatically).
 
 ```sh
-git clone https://gitea.stump.rocks/stump.wtf/harness.git
+git clone https://github.com/stump-wtf/harness.git
 cd harness
 go install ./cmd/harness
 ```
@@ -77,15 +84,16 @@ reference and every verb are in the docs above.
 
 ## Status
 
-**Alpha — and self-hosting.** `v0.1.0` is tagged, and Harness supervises real
-work daily. Everything in the docs is implemented and exercised, but the TOML
-schema and daemon protocol can still change before v1.
+**Alpha — and self-hosting.** `v0.3.0` is the latest tag, and Harness supervises
+real work daily. Everything in the docs is implemented and exercised on `main`,
+but the TOML schema and daemon protocol can still change before v1.
 
 ## Development
 
-Origin of truth is [gitea.stump.rocks/stump.wtf/harness](https://gitea.stump.rocks/stump.wtf/harness),
-mirrored read-only to [github.com/stump-wtf/harness](https://github.com/stump-wtf/harness).
-Do work against Gitea.
+Development happens on a private Gitea instance, which is the origin of truth.
+[github.com/stump-wtf/harness](https://github.com/stump-wtf/harness) is a
+read-only mirror of it, so issues and pull requests opened on GitHub are not
+seen.
 
 ```sh
 make check       # fmt + vet + test + race (the CI gate)
