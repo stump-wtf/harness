@@ -78,6 +78,11 @@ type Manager struct {
 	// at daemon boot via SetReloadHook (issue #66).
 	reloadHook func()
 
+	// guard, when set (SetSessionGuard at daemon boot), samples running
+	// crush stores for context-limit wedges and rotates stalled sessions
+	// (issue #347). Its per-harness findings overlay onto every Snapshot.
+	guard *SessionGuard
+
 	mu                sync.Mutex
 	cfg               *core.Config
 	supervisors       map[string]*Supervisor
@@ -549,9 +554,31 @@ func (m *Manager) UseProfile(name string) bool {
 // Snapshot returns one harness's runtime snapshot, ok=false if unknown.
 func (m *Manager) Snapshot(name string) (Snapshot, bool) {
 	if s := m.get(name); s != nil {
-		return s.Snapshot(), true
+		return m.overlayGuard(s.Snapshot()), true
 	}
 	return Snapshot{}, false
+}
+
+// SetSessionGuard attaches the session guard whose findings overlay onto
+// every Snapshot (issue #347). Nil detaches (daemon shutdown).
+func (m *Manager) SetSessionGuard(g *SessionGuard) {
+	m.mu.Lock()
+	m.guard = g
+	m.mu.Unlock()
+}
+
+// overlayGuard stamps the session guard's observation onto snap so callers
+// see a wedged session even while process state still reads healthy. Zero
+// when no guard is attached or it never flagged the harness.
+func (m *Manager) overlayGuard(snap Snapshot) Snapshot {
+	m.mu.Lock()
+	g := m.guard
+	m.mu.Unlock()
+	if g == nil {
+		return snap
+	}
+	snap.SessionStalled, snap.SessionRotations = g.Flag(snap.Name)
+	return snap
 }
 
 // Snapshots returns every harness's snapshot in config order.
@@ -568,7 +595,7 @@ func (m *Manager) Snapshots() []Snapshot {
 	m.mu.Unlock()
 	out := make([]Snapshot, 0, len(list))
 	for _, s := range list {
-		out = append(out, s.Snapshot())
+		out = append(out, m.overlayGuard(s.Snapshot()))
 	}
 	return out
 }

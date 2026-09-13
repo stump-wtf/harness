@@ -93,6 +93,12 @@ type Snapshot struct {
 	// actor goroutine — Manager.Restore, Manager.Autostart — can ask without
 	// racing applyConfig, which reassigns s.harness (ADR-0013).
 	Scheduled bool
+	// SessionStalled reports the session guard's finding: every recent
+	// assistant turn failed with a context-limit error, so the harness is
+	// accepting events and answering none of them no matter what State says
+	// (issue #347). SessionRotations counts rotations the guard performed.
+	SessionStalled   bool
+	SessionRotations int
 }
 
 // Supervisor owns the lifecycle of exactly one harness. It runs a single actor

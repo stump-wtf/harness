@@ -216,6 +216,15 @@ func runDaemon(o daemonOpts) {
 		}
 	}
 
+	// Issue #347: watch running crush harnesses for sessions wedged on
+	// context-limit errors — the failure that reports healthy while the
+	// harness answers nothing — and rotate the session (stop, archive the
+	// store, start) when one stalls.
+	sessionGuard := supervisor.NewSessionGuard(mgr, 0, 0)
+	mgr.SetSessionGuard(sessionGuard)
+	sessionGuard.Start()
+	log.Info("session guard active", "interval", supervisor.DefaultSessionGuardInterval, "lookback", supervisor.DefaultSessionGuardLookback)
+
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
 	// tear down connections, stop harnesses, flush state. SIGHUP triggers a
 	// graceful config reload (hot-reload harness.toml without stopping running
@@ -249,6 +258,8 @@ func runDaemon(o daemonOpts) {
 	}
 
 	log.Info("shutting down")
+	sessionGuard.Close()
+	mgr.SetSessionGuard(nil)
 	if cfgWatcher != nil {
 		cfgWatcher.Close()
 	}

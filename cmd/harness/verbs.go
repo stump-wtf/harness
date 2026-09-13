@@ -75,9 +75,15 @@ func renderHarnessList(c *client.Client, o verbOpts, project string) error {
 func printHarnessTable(w io.Writer, hs []protocol.HarnessInfo) error {
 	t := NewTable(w, "NAME", "STATE", "SCHEDULE", "NEXT", "RESTARTS", "DESCRIPTION")
 	for _, h := range hs {
+		// A stalled session (issue #347) reads healthy in every process
+		// signal; the marker is the one place the truth shows in `list`.
+		state := t.stateCell(h.State, h.Schedule)
+		if h.SessionStalled {
+			state += " ⚠ session stalled"
+		}
 		t.Row(
 			h.Name,
-			t.stateCell(h.State, h.Schedule),
+			state,
 			t.scheduleCell(h.Schedule),
 			t.nextRunCell(h.Schedule, h.NextRun),
 			fmt.Sprintf("%d", h.RestartCount),
