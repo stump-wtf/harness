@@ -44,10 +44,20 @@ metadata baked in and installs to `~/.local/bin`.
 
 :::caution Use the clone, not `go install …@latest`
 
-The module's import path is not its GitHub URL, so
-`go install github.com/stump-wtf/harness/cmd/harness@latest` fails. Clone and
-build from the checkout as shown above. Every dependency resolves from the
-public Go module proxy.
+The module's import path is not its GitHub URL, so installing it by module path
+fails — the mirror is a byte copy, and its `go.mod` still declares the original
+path:
+
+```
+$ go install github.com/stump-wtf/harness/cmd/harness@main
+go: github.com/stump-wtf/harness/cmd/harness@main: version constraints conflict:
+	github.com/stump-wtf/harness@v0.3.1-…: parsing go.mod:
+	module declares its path as: <the module's own path>
+	        but was required as: github.com/stump-wtf/harness
+```
+
+Clone and build from the checkout as shown above, which sidesteps the module
+path entirely. Every dependency resolves from the public Go module proxy.
 
 :::
 

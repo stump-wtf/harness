@@ -34,7 +34,7 @@ catch_up = true
 timeout = "30m"
 on_overlap = "skip"
 keep_runs = 30
-description = "weekday PR review sweep"
+description = "PR review sweep"
 ```
 
 | Key | What it does |
@@ -200,7 +200,7 @@ the error with its file and line. `harness doctor` shows the same error.
 $ harness list
 NAME      STATE         SCHEDULE            NEXT        RESTARTS   DESCRIPTION
 ticker    ● running     —                   —           0          prints the time
-pr-sweep  ⏱ armed       day 1-5 14:00 UTC   in 2d7h     0          weekday PR review sweep
+pr-sweep  ⏱ armed       day 1-5 14:00 UTC   in 2d7h     0          PR review sweep
 ```
 
 A scheduled harness reads **`⏱ armed`**, not "stopped": between firings it is
@@ -313,9 +313,11 @@ between the lifecycle events are the agent's actions:
 - `exec` shows the command, with `(failed)` if it failed.
 - `ERROR` is the error the agent hit.
 
-The match uses the harness's `workdir`, which is one more reason to set one. When
-nothing can be matched, `harness logs` says so in a `note` line and points you at
-`harness logs NAME --raw`; it does not print the log itself.
+The match uses the harness's `workdir`, which is one more reason to set one — or,
+for Crush, a session store of its own (`--data-dir`), which identifies the
+harness outright. When nothing can be matched, `harness logs` says so in a `note`
+line and points you at `harness logs NAME --raw`; it does not print the log
+itself.
 
 `--raw` shows the durable log instead: the run's own output, bracketed by
 lifecycle lines that carry its outcome:
@@ -462,7 +464,7 @@ catch_up = true
 timeout = "20m"
 on_overlap = "skip"
 keep_runs = 30
-description = "morning CI digest"
+description = "CI digest"
 ```
 
 ```sh

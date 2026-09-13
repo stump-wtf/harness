@@ -250,9 +250,19 @@ enabled = true
 ```
 
 Give each worker **its own `workdir`**, each with the same `AGENTS.md` and
-`crush.json`. `harness logs` attributes an agent's sessions to a harness by
-working directory, so workers sharing one directory become impossible to tell
-apart in a post-mortem.
+`crush.json`. Crush keeps its sessions under the working directory, and
+`harness logs` leans on that to tell one worker's work from another's, so
+workers sharing a directory become hard to tell apart in a post-mortem.
+
+If you would rather run a pool out of one directory, give each worker **its own
+session store** instead, with `--data-dir` in its `args`:
+
+```toml
+args = ["--yolo", "--data-dir", "~/agents/stores/sb-worker-1", "--channels", "server:switchboard"]
+```
+
+A named store belongs to one harness, so Harness attributes its sessions to that
+worker alone and never offers them to a sibling — even when the runs overlap.
 
 A pool is not fan-out:
 

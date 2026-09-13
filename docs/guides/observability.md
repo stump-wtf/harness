@@ -70,8 +70,13 @@ contract that says "stop and report blocked" when a tool fails. See
 
 Lines prefixed with `?` are sessions that could also belong to another harness.
 That happens, for example, when two harnesses share a `workdir`. They are only
-shown with `--include-ambiguous`. Give every harness its own `workdir` and this
-goes away.
+shown with `--include-ambiguous`.
+
+Two ways to make it go away: give every harness its own `workdir`, or — for
+Crush — give each one its own session store, with `--data-dir` in its `args` or
+`options.data_directory` in the crush config it loads. A named store belongs to
+one harness, so two harnesses that each keep their sessions somewhere of their
+own are never claimants for each other's, however much else they share.
 
 When an agent harness has a transcript but nothing matches this run — it has
 not run yet, it has no `workdir`, or it died before opening a session — the
