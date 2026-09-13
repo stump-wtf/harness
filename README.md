@@ -40,9 +40,13 @@ repo.
 ### Homebrew
 
 ```sh
-brew tap stump-wtf/tap
-brew install --HEAD harness
+brew install --HEAD stump-wtf/tap/harness
 ```
+
+Since Homebrew 6.0.0, non-official taps require explicit trust, so
+`brew tap stump-wtf/tap` followed by a short `brew install harness` is refused.
+Installing by the fully qualified name trusts only this one formula and is a
+single command.
 
 `--HEAD` builds `main`; the tap's tagged formula can lag behind the features the
 docs describe.

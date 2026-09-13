@@ -11,9 +11,14 @@ Pick one of the two methods below, then verify with `harness doctor`.
 ## Homebrew (macOS and Linux)
 
 ```sh
-brew tap stump-wtf/tap
-brew install --HEAD harness
+brew install --HEAD stump-wtf/tap/harness
 ```
+
+Install by the fully qualified name: since [Homebrew
+6.0.0](https://brew.sh/2026/06/11/homebrew-6.0.0/) non-official taps require
+explicit trust, so `brew tap stump-wtf/tap` followed by a short
+`brew install harness` is refused. The qualified name trusts only this one
+formula.
 
 `--HEAD` builds the latest `main` from the
 [GitHub repository](https://github.com/stump-wtf/harness). The tap's tagged
@@ -24,7 +29,7 @@ and there is no Gatekeeper prompt on macOS.
 To update a `--HEAD` install later:
 
 ```sh
-brew upgrade --fetch-HEAD harness
+brew upgrade --fetch-HEAD stump-wtf/tap/harness
 ```
 
 ## From source
