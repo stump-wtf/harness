@@ -79,15 +79,17 @@ func (c *conn) respond(req protocol.ControlReq, data any) {
 // infoFor projects a snapshot + config record onto the wire HarnessInfo.
 func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 	info := protocol.HarnessInfo{
-		Name:          snap.Name,
-		State:         string(snap.State),
-		Enabled:       snap.Enabled,
-		RestartCount:  snap.RestartCount,
-		LastExitCode:  snap.LastExitCode,
-		Flapping:      snap.Flapping,
-		NextRetryInMs: snap.NextRetryIn.Milliseconds(),
-		ConfigChanged: snap.ConfigChanged,
-		PID:           snap.PID,
+		Name:             snap.Name,
+		State:            string(snap.State),
+		Enabled:          snap.Enabled,
+		RestartCount:     snap.RestartCount,
+		LastExitCode:     snap.LastExitCode,
+		Flapping:         snap.Flapping,
+		NextRetryInMs:    snap.NextRetryIn.Milliseconds(),
+		ConfigChanged:    snap.ConfigChanged,
+		PID:              snap.PID,
+		SessionStalled:   snap.SessionStalled,
+		SessionRotations: snap.SessionRotations,
 	}
 	if !snap.LastStarted.IsZero() {
 		info.LastStarted = snap.LastStarted.Format(time.RFC3339Nano)

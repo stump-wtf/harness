@@ -247,6 +247,12 @@ type HarnessInfo struct {
 	NextRetryInMs int64  `json:"next_retry_in_ms,omitempty"`
 	ConfigChanged bool   `json:"config_changed,omitempty"`
 	PID           int    `json:"pid,omitempty"`
+	// SessionStalled reports the daemon's session guard finding (issue #347):
+	// every recent assistant turn failed with a context-limit error, so the
+	// harness is accepting events and answering none of them no matter what
+	// state says. SessionRotations counts rotations the guard has performed.
+	SessionStalled   bool `json:"session_stalled,omitempty"`
+	SessionRotations int  `json:"session_rotations,omitempty"`
 	// Adapter is the harness-kind enum the harness selected ("crush" default).
 	Adapter string `json:"adapter,omitempty"`
 	// Workdir is the resolved process working directory the supervisor spawns
