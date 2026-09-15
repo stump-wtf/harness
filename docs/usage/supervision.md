@@ -114,6 +114,11 @@ Two launchd specifics worth knowing:
 - **Restart on exit**: the `restart` policy and `restart_delay` in
   [Configuration](./configuration#restart-policy) control whether and how fast a
   harness is brought back after it exits.
+- **Provider failover is not supervision**: the restart budget only helps when
+  the process crashes. A quota wall or provider outage leaves the harness
+  `running` — dead on the inside. See
+  [Configuration → Model routing](./configuration#model-routing-and-provider-failover)
+  for the mitigation.
 - **State persistence (ADR-0007)**: the daemon persists intent to `state.json`,
   restores it on boot, and re-attaches to intended running set regardless of how
   it restarted.
