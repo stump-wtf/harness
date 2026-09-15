@@ -262,6 +262,80 @@ that file as a shell script, which fails on a compiled binary.
 harness = "claude-code"
 ```
 
+## Model routing and provider failover
+
+When you pin a harness to a single model on a single provider, a quota wall or
+provider outage stops every harness sharing it — simultaneously. The restart
+policy does not help: the process is healthy, and the API is refusing every
+call.
+
+### Where it shows up
+
+Not in `harness list` — a harness whose provider has hit a quota limit shows
+`running`. The failure is visible in:
+
+- `harness logs <name>` — repeated provider errors in the output stream
+- The provider's dashboard — quota exhaustion or rate limits
+
+Supervision cannot see upstream refusals; it only knows whether the process
+restarted.
+
+### Mitigation: an OpenAI-compatible gateway
+
+A gateway in front of your providers (LiteLLM is one example) lets multiple
+deployments share a single `model_name`, with failover and retries between them:
+
+```yaml
+# Example: LiteLLM proxy config
+model_list:
+  - model_name: glm-5.3-balanced         # deployment 1
+    litellm_params:
+      model: openai/glm-5.3
+      api_base: https://provider-a.example.com/v1
+      api_key: os.environ/A_KEY
+
+  - model_name: glm-5.3-balanced         # deployment 2
+    litellm_params:
+      model: openai/glm-5.3
+      api_base: https://provider-b.example.com/v1
+      api_key: os.environ/B_KEY
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  allowed_fails: 2
+  cooldown_time: 300  # re-probe after 5 minutes
+  fallbacks:
+    - glm-5.3-balanced: ["<cheap-tier-model>"]
+```
+
+The harness pins `model = "litellm/glm-5.3-balanced"` and knows nothing about
+providers. Failover happens inside each request, and `cooldown_time` automatically
+retries the benched provider after its quota resets.
+
+### Per-request vs per-worker failover
+
+Running one worker per provider is **not** equivalent:
+
+- Per-worker failover burns the restart budget on each dead worker until it
+  hits the `failed` state (terminal, needs a human).
+- Capacity halves while one worker recovers.
+- A gateway retries the sibling deployment inside the same request and keeps
+  every worker productive.
+
+### The trade
+
+A gateway is a dependency on the hot path. Failing over from a
+subscription-metered provider to a pay-per-token one **removes a fail-closed
+spend cap**. That is the right trade for an always-on agent and the wrong one
+for an unattended cron job that nobody is watching.
+
+### Cost and observability
+
+One gateway also means one set of spend and latency metrics instead of
+per-provider guesswork — useful even when quota exhaustion is not your primary
+risk.
+
 ## Trajectory harvesting & facade scope
 
 :::note Reserved, not yet active
