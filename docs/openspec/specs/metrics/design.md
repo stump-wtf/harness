@@ -45,8 +45,9 @@ an instrument with no way to notice it had gone blind.
 
 ## Listener
 
-A separate `http.Server` from the SSH cockpit, defaulting to `127.0.0.1:9footnote`
-(port in SPEC/config), started with the daemon and stopped with it.
+A separate `http.Server` from the SSH cockpit, defaulting to loopback
+(`127.0.0.1`, per REQ-1; the default port is pinned in the `[server]` config),
+started with the daemon and stopped with it.
 
 Non-loopback bind without a token is refused **at startup**, not at request time.
 A daemon that starts and quietly serves agent inventory to the network is worse
