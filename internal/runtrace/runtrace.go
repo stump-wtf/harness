@@ -42,7 +42,7 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/redact"
+	"github.com/stump-wtf/harness/internal/redact"
 )
 
 // Slack widens a run window at both ends. Crush stores whole seconds, so a

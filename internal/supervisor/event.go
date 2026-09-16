@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // EventKind names a lifecycle event. The three kinds map 1:1 to the payloads

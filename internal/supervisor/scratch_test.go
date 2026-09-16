@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // scratchDef builds a scratchpad definition with the slug passed separately,

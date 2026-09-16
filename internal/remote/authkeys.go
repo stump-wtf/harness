@@ -15,7 +15,7 @@ import (
 
 	"charm.land/ssh"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // authorizedKey is one entry of the resolved allowlist: a parsed SSH public key

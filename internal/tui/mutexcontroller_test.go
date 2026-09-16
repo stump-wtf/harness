@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // recordingController records the order and identity of calls, and can be made

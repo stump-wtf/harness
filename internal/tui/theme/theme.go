@@ -19,8 +19,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/schedfmt"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/schedfmt"
 )
 
 // readOnlyGlyph is the eye badge shown on a read-only attach (SPEC-0001 REQ

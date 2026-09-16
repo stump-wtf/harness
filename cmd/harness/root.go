@@ -39,7 +39,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
+	"github.com/stump-wtf/harness/internal/buildinfo"
 )
 
 // globalOpts holds the persistent flags. Verb-local flags live on their own

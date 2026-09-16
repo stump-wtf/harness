@@ -35,7 +35,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
+	"github.com/stump-wtf/harness/internal/tui/chatroom"
 )
 
 const (

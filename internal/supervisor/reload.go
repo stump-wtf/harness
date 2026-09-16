@@ -5,7 +5,7 @@ package supervisor
 // error rather than crashing); SPEC-0003 REQ "Config Change Application".
 
 import (
-	"gitea.stump.rocks/stump.wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/config"
 )
 
 // ReloadFromFile re-parses the config at path and applies it. On a parse or

@@ -16,10 +16,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 // HarnessIdentity maps a tail.Harness to its chatroom display identity.

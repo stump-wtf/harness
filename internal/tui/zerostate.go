@@ -14,7 +14,7 @@ import (
 	"strings"
 	"syscall"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // startCondition is how the TUI came up with respect to the daemon.

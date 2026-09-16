@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/adapter"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/adapter"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // TestResolvePromptReadsAtSpawn: a prompt_file harness spawns with the file's

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/schedfmt"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/schedfmt"
 )
 
 // filterByProfile returns the harnesses visible under the active profile. When

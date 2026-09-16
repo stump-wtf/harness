@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // writeProjectFile writes data to a harness.toml in dir and returns its path.

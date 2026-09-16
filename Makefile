@@ -23,7 +23,7 @@ export GOPRIVATE = gitea.stump.rocks/*
 GO        ?= go
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 BIN_DIR   ?= $(HOME)/.local/bin
-PKG       := gitea.stump.rocks/stump.wtf/harness
+PKG       := github.com/stump-wtf/harness
 LDFLAGS   := -X $(PKG)/internal/buildinfo.Version=$(VERSION)
 GOFLAGS   := -trimpath -ldflags "$(LDFLAGS)"
 BIN       := harness

@@ -29,8 +29,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"golang.org/x/term"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/config"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 // Level is the severity of a user-facing CLI message. It selects the colour,

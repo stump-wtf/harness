@@ -21,7 +21,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // lifecycleTail is what a headless harness's log actually contains: the

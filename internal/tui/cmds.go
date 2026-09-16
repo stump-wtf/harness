@@ -16,7 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	osc52 "github.com/aymanbagabas/go-osc52/v2"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // --- messages ---

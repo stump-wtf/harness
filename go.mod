@@ -1,4 +1,4 @@
-module gitea.stump.rocks/stump.wtf/harness
+module github.com/stump-wtf/harness
 
 go 1.26.8
 

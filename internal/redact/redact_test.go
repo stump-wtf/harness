@@ -25,8 +25,8 @@ var fixtures = strings.NewReplacer(
 func TestStringMasksCredentials(t *testing.T) {
 	for _, tc := range []struct{ name, in, want string }{
 		{"git remote with password",
-			"git remote set-url origin https://joestump-agent:<HEX>@gitea.stump.rocks/stump.wtf/harness.git",
-			"git remote set-url origin https://joestump-agent:<MASK>@gitea.stump.rocks/stump.wtf/harness.git"},
+			"git remote set-url origin https://joestump-agent:<HEX>@github.com/stump-wtf/harness.git",
+			"git remote set-url origin https://joestump-agent:<MASK>@github.com/stump-wtf/harness.git"},
 		{"x-access-token userinfo",
 			"git clone https://x-access-token:<GHS>@github.com/stump-wtf/harness.git",
 			"git clone https://x-access-token:<MASK>@github.com/stump-wtf/harness.git"},

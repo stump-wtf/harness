@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/attach"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/attach"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // conn is one live client connection: the framed transport plus its attach

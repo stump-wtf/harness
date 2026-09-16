@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // spinnerFrames simulates what a full-screen agent TUI emits every second

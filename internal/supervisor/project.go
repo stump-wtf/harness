@@ -23,8 +23,8 @@ import (
 	"strings"
 	"sync"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/config"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // ErrInvalidProjectDef is the sentinel for a project_up carrying an invalid

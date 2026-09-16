@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // persistDebounce is how long the manager coalesces state-change writes before

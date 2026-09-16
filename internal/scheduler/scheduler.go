@@ -35,7 +35,7 @@ import (
 	"charm.land/log/v2"
 	"github.com/robfig/cron/v3"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // TickInterval is how often the scheduler compares the wall clock against

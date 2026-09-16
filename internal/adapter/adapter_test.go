@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 func TestRegistryGet(t *testing.T) {

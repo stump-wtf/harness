@@ -33,8 +33,8 @@ import (
 
 	clog "github.com/charmbracelet/log"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/sessionguard"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/sessionguard"
 )
 
 // guardLog is the guard's logger over the daemon log.

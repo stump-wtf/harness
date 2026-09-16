@@ -24,8 +24,8 @@ import (
 	"os"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/supervisor"
 )
 
 // defaultRunsLimit is how many records runs returns when the request sets no

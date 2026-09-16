@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // TargetKind says what a verb operates on: nothing, a harness, or a profile.

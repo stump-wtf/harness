@@ -24,7 +24,7 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 // rebuildLines is what Lines() produces on a dirty buffer, computed independently.

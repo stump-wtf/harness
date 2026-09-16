@@ -25,12 +25,12 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/term"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/runtrace"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/keys"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
 	"github.com/stump-wtf/agent-trace/tail"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/runtrace"
+	"github.com/stump-wtf/harness/internal/tui/chatroom"
+	"github.com/stump-wtf/harness/internal/tui/keys"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 // mode is a primary UI mode (SPEC-0001 REQ "Mode Machine").

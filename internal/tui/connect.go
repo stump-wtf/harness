@@ -9,8 +9,8 @@ package tui
 import (
 	"sync"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/client"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/client"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // attachConn is the events+attach side of the wire: the read loop owns its

@@ -35,10 +35,10 @@ import (
 	"strings"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/runtrace"
-	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/runtrace"
+	"github.com/stump-wtf/harness/internal/supervisor"
 )
 
 // activityTimeout bounds one structured logs request. The work is local

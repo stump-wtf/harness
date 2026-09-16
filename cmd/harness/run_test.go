@@ -11,7 +11,7 @@ import (
 
 	"github.com/charmbracelet/x/xpty"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
+	"github.com/stump-wtf/harness/internal/cliui"
 )
 
 func TestScratchpadDefKindDispatch(t *testing.T) {

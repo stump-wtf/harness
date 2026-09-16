@@ -5,7 +5,7 @@ package tui
 // members; harnesses outside the profile keep running (ADR-0006). This computes
 // exactly which harnesses the "start stopped" action would touch.
 
-import "gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+import "github.com/stump-wtf/harness/internal/protocol"
 
 // runningStates are the states we consider "already up" — we never restart or
 // stop these when switching profiles.

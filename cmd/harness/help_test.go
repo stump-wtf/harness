@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/colorprofile"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 // ansiStrip removes all SGR escape sequences from a string so styled and

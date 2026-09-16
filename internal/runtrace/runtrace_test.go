@@ -13,8 +13,8 @@ import (
 
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/redact"
-	rt "gitea.stump.rocks/stump.wtf/harness/internal/runtrace/runtracetest"
+	"github.com/stump-wtf/harness/internal/redact"
+	rt "github.com/stump-wtf/harness/internal/runtrace/runtracetest"
 )
 
 // spawn is when the run under test began: nanosecond precision, the way the

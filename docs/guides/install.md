@@ -48,22 +48,26 @@ That puts `harness` in `$(go env GOPATH)/bin`, usually `~/go/bin`; make sure
 that is on your `PATH`. Alternatively, `make install` builds with version
 metadata baked in and installs to `~/.local/bin`.
 
-:::caution Use the clone, not `go install …@latest`
+### Or install by module path
 
-The module's import path is not its GitHub URL, so installing it by module path
-fails — the mirror is a byte copy, and its `go.mod` still declares the original
-path:
+Since v0.4.0 the module declares itself as `github.com/stump-wtf/harness`, so
+the one-liner works:
 
-```
-$ go install github.com/stump-wtf/harness/cmd/harness@main
-go: github.com/stump-wtf/harness/cmd/harness@main: version constraints conflict:
-	github.com/stump-wtf/harness@v0.3.1-…: parsing go.mod:
-	module declares its path as: <the module's own path>
-	        but was required as: github.com/stump-wtf/harness
+```sh
+go install github.com/stump-wtf/harness/cmd/harness@latest
 ```
 
-Clone and build from the checkout as shown above, which sidesteps the module
-path entirely. Every dependency resolves from the public Go module proxy.
+:::note Versions before v0.4.0
+
+Up to and including v0.3.0 the module declared a private path, so installing by
+module path failed with a `version constraints conflict` — the GitHub mirror is
+a byte copy, and its `go.mod` carried the original path. Pin `@v0.4.0` or later,
+or clone and build as above.
+
+Note that `go install` alone reports `harness dev` for its version: the version
+string is injected at link time, which `go install` does not do. Use `make
+install`, a release binary, or the Homebrew formula if you want
+`harness --version` to report a real version.
 
 :::
 

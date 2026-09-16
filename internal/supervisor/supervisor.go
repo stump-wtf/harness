@@ -18,7 +18,7 @@ import (
 
 	clog "github.com/charmbracelet/log"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // exitResult carries a finished process's outcome from the waiter goroutine to

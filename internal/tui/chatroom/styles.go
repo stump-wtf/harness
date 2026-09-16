@@ -10,7 +10,7 @@ import (
 	"image/color"
 
 	"charm.land/lipgloss/v2"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 // Styles holds pre-computed lipgloss styles for the chatroom.

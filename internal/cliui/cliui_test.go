@@ -14,8 +14,8 @@ import (
 
 	"github.com/charmbracelet/colorprofile"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/config"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 // newTestPrinter returns a Printer that writes to a buffer with JSON on or off.

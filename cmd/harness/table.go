@@ -24,10 +24,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"golang.org/x/term"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/schedfmt"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/stump-wtf/harness/internal/cliui"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/schedfmt"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 // Table sizing. The table targets tableWidthRatio of the terminal window

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // Session is one client's attach to one harness. The client-chosen id tags the

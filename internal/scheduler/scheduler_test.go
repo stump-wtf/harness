@@ -26,7 +26,7 @@ import (
 	"time"
 	_ "time/tzdata" // the DST cases must not depend on the runner's zoneinfo
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // fakeClock is a hand-driven Clock.

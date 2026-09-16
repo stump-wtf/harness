@@ -21,7 +21,7 @@ import (
 	"charm.land/log/v2"
 	"github.com/fsnotify/fsnotify"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // ConfigWatcher watches the config file's directory for changes that imply
