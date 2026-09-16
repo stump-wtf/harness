@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // TestFilterByProfile verifies the dashboard list is filtered to the active

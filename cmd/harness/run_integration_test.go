@@ -19,8 +19,8 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/client"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/client"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // stubAttach installs a fake runAttachFn that records every call and returns

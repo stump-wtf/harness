@@ -19,9 +19,9 @@ import (
 	"sort"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/adapter"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
 	"github.com/stump-wtf/agent-trace/tail"
+	"github.com/stump-wtf/harness/internal/adapter"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // Sentinel errors for domain-specific failure modes callers need to

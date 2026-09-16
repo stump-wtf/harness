@@ -37,7 +37,7 @@ import (
 
 	clog "github.com/charmbracelet/log"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // RunTrigger names what started a run.

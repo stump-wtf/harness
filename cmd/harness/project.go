@@ -17,9 +17,9 @@ import (
 	"os"
 	"strings"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/client"
-	"gitea.stump.rocks/stump.wtf/harness/internal/config"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/client"
+	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // activeConfigPath returns the global config path in effect for this

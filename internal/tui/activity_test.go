@@ -9,8 +9,8 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 func sessionEvent(kind tail.Harness, cwd, tool, ts string) tail.Event {

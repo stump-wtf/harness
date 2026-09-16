@@ -25,10 +25,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/client"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/stump-wtf/harness/internal/client"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 // lifecycleStyle bundles the lipgloss styles for the animated run, resolved

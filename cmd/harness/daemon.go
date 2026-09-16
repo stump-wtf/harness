@@ -24,15 +24,15 @@ import (
 
 	"charm.land/log/v2"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/attach"
-	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
-	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
-	"gitea.stump.rocks/stump.wtf/harness/internal/config"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/daemon"
-	"gitea.stump.rocks/stump.wtf/harness/internal/remote"
-	"gitea.stump.rocks/stump.wtf/harness/internal/scheduler"
-	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/attach"
+	"github.com/stump-wtf/harness/internal/buildinfo"
+	"github.com/stump-wtf/harness/internal/cliui"
+	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/daemon"
+	"github.com/stump-wtf/harness/internal/remote"
+	"github.com/stump-wtf/harness/internal/scheduler"
+	"github.com/stump-wtf/harness/internal/supervisor"
 )
 
 // daemonManagerOptions is the ManagerOptions the daemon actually runs with.

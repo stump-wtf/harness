@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/config"
 )
 
 // TestHarnessFormRoundTripCatchUp: a zone-prefixed schedule with catch_up

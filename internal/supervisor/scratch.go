@@ -18,7 +18,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // ProvenanceScratch is the provenance value marking a scratchpad harness. It

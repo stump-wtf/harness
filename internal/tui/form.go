@@ -26,9 +26,9 @@ import (
 	"github.com/anmitsu/go-shlex"
 	"github.com/robfig/cron/v3"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/config"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // HarnessForm is the editable harness schema behind the n/e Huh form. It is the

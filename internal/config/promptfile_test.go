@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // writePromptFile drops a prompt file in a fresh temp dir and returns its

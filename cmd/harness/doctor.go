@@ -22,13 +22,13 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
-	"gitea.stump.rocks/stump.wtf/harness/internal/client"
-	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
-	"gitea.stump.rocks/stump.wtf/harness/internal/config"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/settings"
+	"github.com/stump-wtf/harness/internal/buildinfo"
+	"github.com/stump-wtf/harness/internal/client"
+	"github.com/stump-wtf/harness/internal/cliui"
+	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/settings"
 )
 
 // check is one row in the doctor table.

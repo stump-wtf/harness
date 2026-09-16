@@ -21,7 +21,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // peekPaintedModel is a connected dashboard whose selected harness has a

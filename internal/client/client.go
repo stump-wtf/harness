@@ -14,7 +14,7 @@ import (
 	"net"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // Client is a connected control-plane client. It is not safe for concurrent

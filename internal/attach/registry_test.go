@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // recordingController is a fake supervisor.Manager slice: it records the resize,

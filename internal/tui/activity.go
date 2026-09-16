@@ -44,8 +44,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/tui/chatroom"
 )
 
 // actionFieldWidth is the column budget the live activity field occupies in a

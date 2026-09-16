@@ -11,8 +11,8 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/buildinfo"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // Update implements tea.Model.

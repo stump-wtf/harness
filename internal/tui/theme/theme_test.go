@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/colorprofile"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // asciiTheme is a theme pinned to a monochrome (Ascii) profile — the SPEC-0001

@@ -6,7 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // TestAttachedFillsWindow verifies viewAttached emits exactly m.h lines, each

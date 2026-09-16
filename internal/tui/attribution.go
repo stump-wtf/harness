@@ -33,8 +33,8 @@ import (
 
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/runtrace"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/runtrace"
 )
 
 // traceScopes converts the daemon's harness list into correlation scopes.

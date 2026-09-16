@@ -14,13 +14,13 @@ import (
 	"testing"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/attach"
-	"gitea.stump.rocks/stump.wtf/harness/internal/client"
-	"gitea.stump.rocks/stump.wtf/harness/internal/config"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/scheduler"
-	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/attach"
+	"github.com/stump-wtf/harness/internal/client"
+	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/scheduler"
+	"github.com/stump-wtf/harness/internal/supervisor"
 )
 
 // testDaemon is a running daemon on a private socket for one test.

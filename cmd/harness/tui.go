@@ -7,8 +7,8 @@ package main
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui"
+	"github.com/stump-wtf/harness/internal/buildinfo"
+	"github.com/stump-wtf/harness/internal/tui"
 )
 
 // runTUI launches the interactive cockpit against the daemon socket.

@@ -17,8 +17,8 @@ import (
 
 	"github.com/charmbracelet/x/xpty"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/adapter"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/adapter"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // defaultPTYCols/Rows size a freshly spawned PTY when no client viewport is

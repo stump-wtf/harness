@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // TestClassifyDialErr verifies the no-daemon detection that drives the inline

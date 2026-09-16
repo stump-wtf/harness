@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // TestNextChangedReportsEveryMove: arming, advancing past a firing, re-arming

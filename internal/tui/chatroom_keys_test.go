@@ -20,7 +20,7 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
+	"github.com/stump-wtf/harness/internal/tui/chatroom"
 )
 
 // chatModel is a chatroom with enough buffered events to scroll through.

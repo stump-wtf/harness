@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // LogOptions selects the structured activity view of a harness's logs

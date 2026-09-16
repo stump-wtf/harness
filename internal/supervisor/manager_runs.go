@@ -35,7 +35,7 @@ import (
 	"strings"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // runHistory is one scheduled harness's run history, in memory and on disk.

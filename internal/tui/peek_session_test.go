@@ -11,7 +11,7 @@ package tui
 import (
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // peekModel is a connected dashboard on a wide window with a selection.

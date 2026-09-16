@@ -19,7 +19,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // refreshWith builds a refreshMsg carrying the given harnesses, mirroring what

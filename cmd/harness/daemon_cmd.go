@@ -31,8 +31,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/attach"
-	"gitea.stump.rocks/stump.wtf/harness/internal/buildinfo"
+	"github.com/stump-wtf/harness/internal/attach"
+	"github.com/stump-wtf/harness/internal/buildinfo"
 )
 
 // daemonOpts carries the resolved daemon settings. Previously these were flag

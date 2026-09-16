@@ -14,7 +14,7 @@ import (
 	"github.com/charmbracelet/harmonica"
 	"github.com/charmbracelet/x/ansi"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // attachSubstate is the mode within Attached: driving the live PTY, or frozen in

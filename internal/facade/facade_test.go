@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/trajectory"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/trajectory"
 )
 
 func TestTrajectoryToolsClass(t *testing.T) {

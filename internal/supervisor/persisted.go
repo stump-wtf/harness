@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // stateSchemaVersion is bumped on incompatible state.json changes so a future

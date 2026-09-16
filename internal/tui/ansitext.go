@@ -7,7 +7,7 @@ package tui
 // read-only tail). See internal/ansifold/ansifold.go for the full governing
 // comment and the eviction-case documentation.
 
-import "gitea.stump.rocks/stump.wtf/harness/internal/ansifold"
+import "github.com/stump-wtf/harness/internal/ansifold"
 
 func inertText(line string, initialState byte) (string, byte) {
 	return ansifold.Text(line, initialState)

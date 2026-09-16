@@ -15,7 +15,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // --- async messages the read loop feeds into the Bubble Tea update cycle ---

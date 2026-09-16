@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // recordingMux returns a Mux whose PTY writes are captured.

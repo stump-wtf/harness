@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/attach"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/attach"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/supervisor"
 )
 
 // sizeProbeScript polls its PTY dimensions, so a reading reflects the size the

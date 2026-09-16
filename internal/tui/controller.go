@@ -9,7 +9,7 @@ package tui
 import (
 	"errors"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // errChannelClosed is the disconnect cause when the read-loop channel closes.

@@ -7,10 +7,10 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	"gitea.stump.rocks/stump.wtf/harness/internal/runtrace"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/chatroom"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/runtrace"
+	"github.com/stump-wtf/harness/internal/tui/chatroom"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 // tarsHarnesses is the 2026-09-11 tars shape: staggered sweeps sharing

@@ -13,7 +13,7 @@ package client
 import (
 	"encoding/json"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // Jobs lists every scheduled harness with its next window and latest run.

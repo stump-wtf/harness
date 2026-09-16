@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/client"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
-	rt "gitea.stump.rocks/stump.wtf/harness/internal/runtrace/runtracetest"
-	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/client"
+	"github.com/stump-wtf/harness/internal/protocol"
+	rt "github.com/stump-wtf/harness/internal/runtrace/runtracetest"
+	"github.com/stump-wtf/harness/internal/supervisor"
 )
 
 // local builds a wall-clock time on 2026-09-11 in the daemon's zone, which is

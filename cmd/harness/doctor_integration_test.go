@@ -9,7 +9,7 @@ package main
 import (
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
+	"github.com/stump-wtf/harness/internal/cliui"
 )
 
 // TestRunDoctorHappyPath boots an in-process daemon with one disabled

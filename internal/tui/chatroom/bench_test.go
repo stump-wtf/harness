@@ -8,7 +8,7 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui/theme"
+	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
 // benchEvent produces a monotonically increasing timestamp. An earlier version

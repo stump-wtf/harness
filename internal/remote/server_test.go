@@ -19,11 +19,11 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/attach"
-	"gitea.stump.rocks/stump.wtf/harness/internal/config"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/daemon"
-	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/attach"
+	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/daemon"
+	"github.com/stump-wtf/harness/internal/supervisor"
 )
 
 // clientKey mints an ed25519 signer plus its authorized_keys line for a test.

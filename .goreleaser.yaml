@@ -36,7 +36,7 @@ builds:
       - -s -w
       # Matches the Makefile's LDFLAGS so a released binary reports its version
       # the same way a local `make build` does.
-      - -X gitea.stump.rocks/stump.wtf/harness/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/stump-wtf/harness/internal/buildinfo.Version={{ .Version }}
 
 archives:
   - id: default

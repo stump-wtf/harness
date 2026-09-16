@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/adapter"
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/adapter"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 func TestParseEnvFile(t *testing.T) {

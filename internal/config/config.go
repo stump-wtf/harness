@@ -20,7 +20,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/robfig/cron/v3"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // rawHarness mirrors a harness TOML table before validation/normalization.

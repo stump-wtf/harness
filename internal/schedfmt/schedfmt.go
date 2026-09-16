@@ -37,7 +37,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // NextIn renders an RFC 3339 next-run stamp as a countdown an operator reads

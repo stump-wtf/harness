@@ -25,9 +25,9 @@ import (
 	"charm.land/wish/v2/activeterm"
 	bm "charm.land/wish/v2/bubbletea"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/supervisor"
-	"gitea.stump.rocks/stump.wtf/harness/internal/tui"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/tui"
 )
 
 // DefaultListen is the conservative default bind address: loopback only, so an

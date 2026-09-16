@@ -15,8 +15,8 @@ import (
 	"errors"
 	"fmt"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
-	"gitea.stump.rocks/stump.wtf/harness/internal/trajectory"
+	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/trajectory"
 )
 
 // Class classifies a facade tool as read or write for mcp_allow gating.

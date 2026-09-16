@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // stallTimeout is how long a writer may make NO progress before it counts as

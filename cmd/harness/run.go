@@ -19,9 +19,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/client"
-	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/client"
+	"github.com/stump-wtf/harness/internal/cliui"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 // runAttachFn is a seam over cmdAttach so tests can assert whether/how

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"syscall"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/cliui"
+	"github.com/stump-wtf/harness/internal/cliui"
 )
 
 // defaultDetachLog is where --detach sends daemon output when the caller did

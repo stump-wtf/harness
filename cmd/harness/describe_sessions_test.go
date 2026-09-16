@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/protocol"
 )
 
 func TestPrintAttachSessionsMarksClamp(t *testing.T) {

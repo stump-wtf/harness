@@ -11,7 +11,7 @@ import (
 	"charm.land/ssh"
 	gossh "golang.org/x/crypto/ssh"
 
-	"gitea.stump.rocks/stump.wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // newKey mints an ed25519 SSH keypair, returning the wire public key and its
