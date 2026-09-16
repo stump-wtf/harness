@@ -49,7 +49,7 @@ when you save. Run `harness reload` if you'd rather be explicit.
 | `workdir` | The directory the agent starts in. Set it: agents are project-scoped, and `harness logs` uses it to find the agent's sessions. `~` expands. |
 | `env_file` | A `KEY=VALUE` file layered onto this harness's environment at start. Credentials go here rather than in `harness.toml` — though on macOS a Keychain-backed agent login needs no `env_file` at all (see below). A missing file is silently skipped. |
 | `description` | Free text shown in `harness list` and the dashboard. |
-| `enabled` | `true` means "keep this running": it starts now, and again every time the daemon starts. `false` means defined but idle until you `harness start` it. |
+| `enabled` | `true` means "keep this running": it starts now, and again every time the daemon starts. `false` means defined but idle until you `harness start` it — **unless** the harness is a member of an autostart profile, in which case the profile wins (see Profiles). |
 | `restart` | What to do when the process exits. See [Restart policy](#restart-policy-and-what-it-costs). |
 | `restart_delay` | Seconds to wait before a restart. Default `0`. |
 
@@ -166,6 +166,13 @@ harness use-profile full      # switch
 
 Only one profile is active at a time. With `autostart = true`, its harnesses
 come up whenever the daemon starts.
+
+:::caution Profile membership starts a harness regardless of `enabled`
+A harness in an autostart profile starts on boot and on `harness reload` even
+when `enabled = false`. `enabled` only guards harnesses NOT in a profile. If you
+want a profile member to stay down, remove it from the profile or make the
+profile `autostart = false`.
+:::
 
 ## Restart policy, and what it costs
 
