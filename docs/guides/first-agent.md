@@ -47,7 +47,7 @@ when you save. Run `harness reload` if you'd rather be explicit.
 | `harness` | **Required.** Which adapter runs this harness: `crush`, `claude-code`, `codex`, or `generic`. The adapter supplies the executable (`crush`, `claude`, `codex`, or `sh` for `generic`). |
 | `args` | Arguments appended after the executable, such as `["--yolo"]` for Crush. For `generic` these are `sh`'s arguments, so an arbitrary command is `args = ["-c", "my-command --flag"]`. |
 | `workdir` | The directory the agent starts in. Set it: agents are project-scoped, and `harness logs` uses it to find the agent's sessions. `~` expands. |
-| `env_file` | A `KEY=VALUE` file layered onto this harness's environment at start. Put credentials here, not in `harness.toml`. A missing file is silently skipped. |
+| `env_file` | A `KEY=VALUE` file layered onto this harness's environment at start. Credentials go here rather than in `harness.toml` — though on macOS a Keychain-backed agent login needs no `env_file` at all (see below). A missing file is silently skipped. |
 | `description` | Free text shown in `harness list` and the dashboard. |
 | `enabled` | `true` means "keep this running": it starts now, and again every time the daemon starts. `false` means defined but idle until you `harness start` it. |
 | `restart` | What to do when the process exits. See [Restart policy](#restart-policy-and-what-it-costs). |
@@ -64,8 +64,24 @@ Run each agent once by hand, in the same `workdir` and as the same user, and
 get it fully logged in:
 
 - **Claude Code:** `claude` opens a login flow and a "trust this folder"
-  prompt. Harness can't click through either for you. Alternatively, put
-  `ANTHROPIC_API_KEY` in the harness's `env_file`.
+  prompt. Harness can't click through either for you.
+
+  **On macOS you are then done — no `env_file`, no API key.** Claude Code
+  keeps the session it just created in your login Keychain (as the
+  generic-password item `Claude Code-credentials`), not in a file, and a
+  harness inherits it because the daemon spawns the agent as the same user.
+  Copying `ANTHROPIC_API_KEY` into an `env_file` here would move a credential
+  *out* of the Keychain and onto disk in plaintext, which is strictly worse.
+
+  The one condition is that the daemon runs in your GUI login session. The
+  LaunchAgent in [Run the daemon as a service](/guides/run-as-a-service) does
+  (`launchctl bootstrap gui/$(id -u)`), so the normal setup is fine. A
+  *system* LaunchDaemon, a different user, or an SSH session with no login
+  keychain unlocked cannot reach it — use `ANTHROPIC_API_KEY` in the
+  `env_file` there.
+
+  On Linux and on headless boxes there is no Keychain: log in interactively,
+  or put `ANTHROPIC_API_KEY` in the harness's `env_file`.
 - **Crush:** configure a provider in `crush.json` or its environment, and put
   the API key in the `env_file`.
 

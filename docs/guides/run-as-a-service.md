@@ -158,6 +158,13 @@ launchctl bootout gui/$(id -u)/dev.harness.daemon   # stop and unload
 A LaunchAgent runs inside your GUI login session. On a Mac that must stay up
 headless, turn on automatic login so the session exists after a reboot.
 
+That session is also what gives agents their Keychain-backed credentials. A
+LaunchAgent bootstrapped into `gui/$(id -u)`, as above, can read your login
+Keychain, so a `claude-code` harness uses the session `claude` already stored
+there and needs no `env_file`. A *system* LaunchDaemon cannot — it runs
+outside your login session, and agents there fall back to an `env_file`. Use
+a LaunchAgent unless you have a specific reason not to.
+
 ## Environment and secrets
 
 There are two places to put environment, and they have different reach:
