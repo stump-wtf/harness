@@ -25,11 +25,11 @@ var fixtures = strings.NewReplacer(
 func TestStringMasksCredentials(t *testing.T) {
 	for _, tc := range []struct{ name, in, want string }{
 		{"git remote with password",
-			"git remote set-url origin https://joestump-agent:<HEX>@github.com/stump-wtf/harness.git",
-			"git remote set-url origin https://joestump-agent:<MASK>@github.com/stump-wtf/harness.git"},
+			"git remote set-url origin https://joestump-agent:<HEX>@gitea.stump.rocks/stump.wtf/harness.git",
+			"git remote set-url origin https://joestump-agent:<MASK>@gitea.stump.rocks/stump.wtf/harness.git"},
 		{"x-access-token userinfo",
-			"git clone https://x-access-token:<GHS>@github.com/stump-wtf/harness.git",
-			"git clone https://x-access-token:<MASK>@github.com/stump-wtf/harness.git"},
+			"git clone https://x-access-token:<GHS>@gitea.stump.rocks/stump.wtf/harness.git",
+			"git clone https://x-access-token:<MASK>@gitea.stump.rocks/stump.wtf/harness.git"},
 		{"bare token userinfo",
 			"git push https://<HEX>@gitea.stump.rocks/a/b.git main",
 			"git push https://<MASK>@gitea.stump.rocks/a/b.git main"},
@@ -105,7 +105,7 @@ func TestStringLeavesOrdinaryCommandsAlone(t *testing.T) {
 		`if [ -z "${TOKEN:-}" ]; then echo NO_TOKEN; fi`,
 		`export GITEA_TOKEN="$(cat /tmp/gitea-token)"`,
 		`curl -sS -H "Authorization: token $TOKEN" https://gitea.stump.rocks/api/v1/user`,
-		"git push https://x-access-token:$GH_TOKEN@github.com/stump-wtf/harness.git",
+		"git push https://x-access-token:$GH_TOKEN@gitea.stump.rocks/stump.wtf/harness.git",
 	} {
 		if got := String(in); got != in {
 			t.Errorf("String(%q) = %q, want it unchanged", in, got)
