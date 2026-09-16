@@ -59,8 +59,9 @@ func newPtyHistory(out io.Writer, cols, rows int) *ptyHistory {
 	if rows < 1 {
 		rows = defaultPTYRows
 	}
-	h := &ptyHistory{term: vt.NewEmulator(cols, rows), out: out, prev: blankScreen(cols, rows)}
-	go h.drainReplies()
+	term := vt.NewEmulator(cols, rows)
+	h := &ptyHistory{term: term, out: out, prev: blankScreen(cols, rows)}
+	go h.drainReplies(term)
 	return h
 }
 
@@ -80,14 +81,20 @@ func newPtyHistory(out io.Writer, cols, rows int) *ptyHistory {
 // and a second answer to the same query would land in the guest's input as
 // spurious keystrokes.
 //
-// The pump runs for the ptyHistory's lifetime and is never stopped — the
+// The pump runs for its emulator's lifetime and is never stopped — the
 // same never-Close trade the mux's pumpReplies makes, for the same reason:
 // Emulator.Close races a parked Read (see vtview.pumpReplies). One parked
-// goroutine per harness spawn, not a frozen production agent.
-func (h *ptyHistory) drainReplies() {
+// goroutine per emulator, not a frozen production agent.
+//
+// The emulator is a parameter, not h.term: feedLocked replaces that field
+// when it recovers from a panic, and reading it here would race that write
+// (h.mu guards the field, and a pump that took the lock would hold it for
+// the whole harness's lifetime). Binding each pump to the emulator it was
+// started for keeps the field's only reads under the lock.
+func (h *ptyHistory) drainReplies(term *vt.Emulator) {
 	buf := make([]byte, 1024)
 	for {
-		if _, err := h.term.Read(buf); err != nil {
+		if _, err := term.Read(buf); err != nil {
 			return
 		}
 	}
@@ -134,9 +141,10 @@ func (h *ptyHistory) feedLocked(chunk []byte) {
 			if cols < 1 || rows < 1 {
 				cols, rows = defaultPTYCols, defaultPTYRows
 			}
-			h.term = vt.NewEmulator(cols, rows)
+			term := vt.NewEmulator(cols, rows)
+			h.term = term
 			h.prev = blankScreen(cols, rows)
-			go h.drainReplies()
+			go h.drainReplies(term)
 			_, _ = io.WriteString(h.out, fmt.Sprintf("[harness] dropped a frame the terminal emulator could not render (%v); emulator reset\n", r))
 		}
 	}()
