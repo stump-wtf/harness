@@ -132,11 +132,40 @@ func (h *ptyHistory) Write(p []byte) (int, error) {
 // "index out of range [24] with length 24". Unrecovered, that panic is on
 // the PTY reader goroutine and takes the whole daemon — and every harness
 // it supervises — down with it (2026-09-12, stump-wtf/harness#1's cousin).
-// The frame is dropped, the emulator is rebuilt at the same size, and the
-// guest keeps running; the durable log loses at most one screen of context.
+//
+// Recovery is reset-first, rebuild-fallback: ESC[r resets DECSTBM to the
+// default scroll region (1;height), which heals the poisoned margins. A
+// rebuild leaks one goroutine per panic (the old emulator's drainReplies
+// pump parks forever), so we try reset first and only rebuild when reset
+// cannot heal the state. The frame is dropped in either case; the durable
+// log loses at most one screen of context.
 func (h *ptyHistory) feedLocked(chunk []byte) {
 	defer func() {
 		if r := recover(); r != nil {
+			// Try a reset-first recovery: ESC[r restores the default scroll region
+			// (1;height) without creating a new emulator or leaking a goroutine.
+			// The screen content is unchanged; only the margin state resets.
+			healed := false
+			func() {
+				defer func() {
+					_ = recover()
+				}()
+				_, _ = h.term.Write([]byte("\x1b[r"))
+				healed = true
+			}()
+			if healed {
+				// The screen shifted during the panicked write: diffLocked compares
+				// the post-panic screen against a prev that reflected the half-scroll
+				// state from before the panic. Resync prev to the current screen so
+				// the next write diffs cleanly.
+				h.prev = screenText(h.term)
+				_, _ = io.WriteString(h.out, fmt.Sprintf("[harness] recovered from a terminal rendering panic (%v) by resetting scroll region\n", r))
+				return
+			}
+			// Reset itself panicked or did not heal the state. Fall back to a
+			// full rebuild. This leaks one drainReplies goroutine (the old pump
+			// parks forever), but it keeps the guest running when reset cannot
+			// fix whatever caused the original panic.
 			cols, rows := h.term.Width(), h.term.Height()
 			if cols < 1 || rows < 1 {
 				cols, rows = defaultPTYCols, defaultPTYRows
