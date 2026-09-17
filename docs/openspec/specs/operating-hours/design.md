@@ -21,11 +21,12 @@ ADR-0014 (reload intent for new harnesses).
 - Suspend, daemon outages, clock steps and DST are handled by the evaluation
   model itself, not by special cases.
 - A late-night override is one command and ends by itself.
+- By default a close lets the agent finish its turn, and it is always bounded.
 
 ### Non-Goals
 
 - Seeing or metering tokens.
-- Knowing whether an agent is mid-turn.
+- Detecting turns without agent-trace (PTY heuristics).
 - Queueing, holding or replaying work that arrives while a harness is held.
 - Project-scoped hours, holidays, per-profile or daemon-wide defaults.
 
@@ -91,6 +92,12 @@ firings (#159). Operating hours needs a third pair:
 - **`Release(name)`** asks the actor loop to clear `Held` and start the
   harness, again without writing `Enabled`.
 
+`Hold` takes the close's mode and deadline. Under `graceful` the actor loop
+marks the supervisor `Closing` with the deadline and returns. The scheduler
+tick then calls `Manager.CloseStep(name, now)`, which asks the loop to stop the
+harness once the turn state (below) says so, or the deadline passes. `Release`
+and a lease clear `Closing`. `Manager.Stop` clears it too, and stops at once.
+
 Both go through the actor loop because it is the one goroutine that sees spawn,
 exit, stop and shutdown in order. Doing the check and the action there makes
 "still up? then hold" atomic, the same reason ADR-0013 moved `on_overlap` onto
@@ -99,6 +106,42 @@ the loop.
 `Held` is derived state and is not persisted. On boot `Autostart` computes it:
 an enabled gated harness that is out of hours and has no valid lease starts
 held.
+
+### Turn state from a daemon-side watcher
+
+Today only the TUI follows agent-trace live (`internal/tui/watcher.go`), and
+`internal/runtrace` answers on demand for `harness logs`. Graceful shutdown adds
+a daemon-owned watcher in `internal/runtrace`:
+
+```go
+type TurnState struct {
+    LastEventAt time.Time
+    TurnMarkers bool // the reader reports turn boundaries for this agent
+    TurnEnded   bool // meaningful only when TurnMarkers
+}
+
+// Turn returns the live turn state of name's current run, or ok=false when no
+// session is attributed to it.
+func (w *Watcher) Turn(name string) (TurnState, bool)
+```
+
+The watcher follows only harnesses that are closing, or about to close within a
+minute, so the daemon does no trace I/O the rest of the day. It applies the
+same `Attribute` rule as `harness logs`, extended to resumed sessions
+(SPEC-0006 REQ "Run Correlation"), so turn state can never come from a session
+`logs` would refuse to show.
+
+It needs three things from agent-trace
+([github.com/stump-wtf/agent-trace](https://github.com/stump-wtf/agent-trace)):
+
+- **claude-code:** turn-end events from `stop_reason`, which the transcripts
+  already carry on every assistant record;
+- **codex:** turn-end events from `task_complete`;
+- **crush:** turn-end events from the finish part it writes at every turn end,
+  not only failed ones.
+
+Until a reader ships its markers, it reports `TurnMarkers = false` and closes
+fall back to the quiet period.
 
 ### Leases in `state.json`
 
@@ -113,16 +156,18 @@ hours:
 
 Writing before starting means a crash between the two leaves a lease with a
 stopped harness, which boot resolves by starting it, never an unbounded
-run. `stop` on a leased harness clears `lease_until` and calls `Hold` rather
-than `Stop`.
+run. `stop` on any gated harness clears `lease_until` and calls `Manager.Stop`,
+which clears `enabled` exactly as it does for an ungated harness.
 
 ### Presentation reuses the schedule machinery
 
 `internal/schedfmt` already renders armed/next for scheduled harnesses, and
 #331 moved the cadence into the SCHEDULE/NEXT columns. Operating hours adds:
 
-- a state label `off-hours` for `Held`, styled like `armed`;
-- NEXT: `opens Mon 09:00` / `closes 13:00` / `lease until 21:00`;
+- a state label `off-hours` for `Held`, styled like `armed`, and `closing`
+  for a close in progress, in the transient-state styling;
+- NEXT: `opens Mon 09:00` / `closes 13:00` / `lease until 21:00` /
+  `stops by 13:15`;
 - SCHEDULE: the expression, with the zone prefix trimmed when it equals the
   daemon's zone.
 
@@ -157,9 +202,16 @@ sequenceDiagram
 
 ## Risks / Trade-offs
 
-- **A turn in flight at the close is killed.** Accepted for v1. Agent CLIs
-  persist sessions, and `--continue` in `args` resumes them. Drain on idle
-  waits for an adapter idle signal.
+- **Graceful shutdown depends on unbuilt agent-trace markers.** Until they ship,
+  every close is a quiet-period or immediate close. The decision table in
+  SPEC-0012 REQ "Graceful Shutdown" makes that degradation explicit and logged,
+  never silent.
+- **The quiet period is a heuristic.** A long model call or tool run writes
+  nothing until it finishes, so a quiet agent may be mid-turn. The cap bounds
+  the cost of being wrong in either direction.
+- **A close can overrun the window.** By up to `hours_shutdown_timeout` (15
+  minutes by default), and a doorbell arriving during the close can use all of
+  it. The sender-side fix is Switchboard endpoint presence.
 - **The hold exit races a real crash.** A process that dies of its own accord
   in the instant the hold starts must not be counted as a crash and then
   respawned. Mitigated by deciding on the actor loop: once `hold` is accepted,
@@ -184,5 +236,7 @@ rejects it as unknown, so rolling back requires removing the key.
 
 - Should the default lease length be configurable per harness
   (`after_hours_lease = "2h"`), or is `--for` enough?
-- Should a hold send a softer signal first (for example SIGINT, which many agent
-  TUIs treat as "finish up") before the SIGTERM sequence?
+- Should the settle (10s) and quiet (2m) periods be configurable, or stay
+  constants until a real agent proves them wrong?
+- Should the watcher follow a closing harness's sessions only, or keep turn state
+  warm for every adapter-backed harness so `harness describe` can show it?

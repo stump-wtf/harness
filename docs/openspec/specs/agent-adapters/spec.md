@@ -342,9 +342,17 @@ unknown, so a session older than a sibling's latest start is credited to no one.
 **Event scope.** Only the events of attributed sessions whose own timestamps fall
 inside the window are reported, so a session that continues past its run — for
 example one a later run resumes — reports none of that later activity under the
-run that started it. The later run is not credited with the resumed session
-either, because the session started outside its window; that activity is not
-shown by this view.
+run that started it.
+
+**Resumed sessions.** A session that started before a run SHALL be credited to
+that run for its events inside the run's window when rules 1, 2 and 4 hold,
+applied to those events rather than to the session's start: the session is in
+the harness's own store, its cwd is the harness's workdir, and no other harness
+could have written events at those times. This is how an agent started with
+`--continue` (or crush resuming its stored session) keeps its activity. It adds
+no new way to be ambiguous: an event another harness could have written is
+still credited to no one. *(Added by ADR-0019; previously a resumed session was
+credited to no run.)*
 
 **Threat model and residual gaps.** No supported transcript records the process
 that wrote it (the `HARNESS_RUN_ID` environment-stamping idea has nothing to
@@ -441,6 +449,54 @@ to a harness.
 - **WHEN** a consumer holding only each harness's latest run sees a session that
   started before a same-workdir sibling's latest run began
 - **THEN** the session is credited to no harness
+
+### Requirement: Live Turn State
+
+The daemon SHALL be able to report, for each running harness whose adapter has
+a trace reader, a live **turn state** derived from the sessions REQ "Run
+Correlation" attributes to its current run:
+
+* `last_event_at`: the time of the latest attributed event;
+* `turn_markers`: whether the reader reports turn boundaries for this agent;
+* `turn_ended`: when `turn_markers` is true, whether the latest turn has ended
+  and no user message or tool activity has followed it.
+
+The daemon SHALL follow attributed sessions itself, not through a client. The
+state SHALL be kept fresh enough for a consumer polling once per second to
+decide within a few seconds of the event. A harness whose run has no attributed
+session SHALL report no turn state, and a consumer SHALL treat that as unknown,
+never as idle.
+
+Turn boundaries SHALL come from agent-trace, per reader:
+
+| Adapter | Turn end is |
+| --- | --- |
+| `claude-code` | An assistant message whose `stop_reason` is neither `tool_use` nor `pause_turn` (in practice `end_turn`, `stop_sequence`, `max_tokens` or `refusal`) |
+| `codex` | A `task_complete` event |
+| `crush` | A finish part on the latest assistant message, whatever its reason |
+| `generic` | None; no turn state |
+
+A reader that cannot yet report turn boundaries SHALL set `turn_markers` to
+false rather than guess. ADR-0019 graceful shutdown is the first consumer.
+
+#### Scenario: Claude Code finishes a turn
+
+- **WHEN** a claude-code harness's attributed session writes an assistant
+  message with `stop_reason = "end_turn"` and nothing follows
+- **THEN** its turn state reports `turn_markers = true`, `turn_ended = true`, and
+  `last_event_at` equal to that message's time
+
+#### Scenario: Tool call in progress
+
+- **WHEN** a claude-code agent has issued a tool call whose result has not been
+  written yet
+- **THEN** `turn_ended` is false
+
+#### Scenario: Unattributable session
+
+- **WHEN** a harness shares its workdir and adapter with another running
+  harness
+- **THEN** it reports no turn state
 
 ### Requirement: Harvest Opt-In
 
