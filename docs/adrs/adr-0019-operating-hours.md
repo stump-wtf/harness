@@ -78,9 +78,10 @@ How should a resident harness get operating hours without changing what
 
 **Axis 3 — what happens when the window closes on a busy agent:**
 
-* **3A. Graceful stop at close**: SIGTERM, the stop grace, then SIGKILL — the
+* **3A. Immediate stop at close**: SIGTERM, the stop grace, then SIGKILL — the
   SPEC-0003 stop path, except that `enabled` is left alone.
-* **3B. Drain**: wait until the agent is idle, capped, then stop.
+* **3B. Graceful shutdown**: let the agent finish its current turn, as reported
+  by agent-trace, then stop it, with a cap.
 * **3C. Don't stop, just don't restart** after the next exit.
 
 **Axis 4 — `harness start` outside hours:**
@@ -91,7 +92,12 @@ How should a resident harness get operating hours without changing what
 
 ## Decision Outcome
 
-Chosen: **1A + 2A + 3A + 4A**.
+Chosen: **1A + 2A + 4A**, with **3B as the default and 3A one key away**.
+
+> **Revision note (2026-09-17, review of #371).** The first draft chose 3A
+> (stop mid-turn) and had `harness stop` on a leased harness keep `enabled`.
+> Review reversed both: graceful shutdown is the configurable default, built on
+> agent-trace, and `harness stop` always stops and clears `enabled`.
 
 ### The schema
 
@@ -128,9 +134,9 @@ monotonic reading stripped) the daemon asks one question per gated harness:
 *is the wall clock, in this zone, inside a window?*
 
 * **Out of hours:** a harness that is `starting`, `running`, `degraded` or
-  `restarting` is stopped (a pending respawn is cancelled), unless an
-  after-hours lease covers it. **`enabled` is not touched.** The harness is now
-  *held*.
+  `restarting` is shut down (graceful by default; see below), unless an
+  after-hours lease covers it. **`enabled` is not touched.** Once down, the
+  harness is *held*.
 * **Into hours:** a held harness (`enabled`, `stopped`, and down because of
   hours) is started. A `failed` harness stays failed, and a harness whose
   `enabled` is false stays down. Opening hours never overrides a human.
@@ -148,20 +154,77 @@ time, so on the spring-forward day a window spanning 02:00–03:00 is an hour
 shorter, and on the fall-back day it is an hour longer. Nothing runs twice and
 nothing is skipped.
 
-### Closing is a stop that leaves intent alone
+### Closing: graceful by default
 
-The close runs the SPEC-0003 graceful-stop sequence, and the exit it causes is
-not a crash: it does not trigger the restart policy, does not count toward
-crash-loop detection, and resets the backoff. The only difference from
-`harness stop` is that `enabled` survives. That keeps the two kinds of down
-distinguishable everywhere: `harness list` shows a held harness as
-`off-hours`, with the time it opens in the NEXT column, instead of `stopped`.
+```toml
+hours_shutdown = "graceful"          # default; or "immediate"
+hours_shutdown_timeout = "15m"       # default; the most a close may overrun
+```
 
-An agent mid-turn at the close is cut off. That is the honest behavior for a
-daemon that cannot see turns, and agent sessions persist on disk, so `--continue`
-(or the adapter's equivalent) picks the conversation back up when the window
-opens. Draining until idle (3B) waits for an idle signal the daemon does not
-have yet; see *Deferred*.
+* **`"graceful"`** (the default). At the close the harness enters **closing**.
+  It keeps running until it is between turns, then stops. If it is still busy
+  when `hours_shutdown_timeout` runs out, it is stopped anyway and the log
+  records a forced stop.
+* **`"immediate"`** stops at the close.
+
+Either way the stop itself is the SPEC-0003 graceful-stop sequence (SIGTERM,
+stop grace, SIGKILL), and the exit it causes is not a crash: it does not
+trigger the restart policy, does not count toward crash-loop detection, and
+resets the backoff. `enabled` survives, which keeps the two kinds of down
+distinguishable everywhere: `harness list` shows a held harness as `off-hours`,
+with the time it opens in the NEXT column, and a closing one as `closing`, with
+its deadline.
+
+**What "between turns" means.** The agent's latest turn has ended (an
+end-of-turn record after the latest user message), and nothing new has
+happened for a short settle period, so a follow-up prompt already queued is not
+cut off. The daemon learns this from agent-trace, the library it already uses
+to read claude-code, codex and crush transcripts (ADR-0011, SPEC-0006).
+
+**What has to be built first.** agent-trace records tool calls and messages
+today, but it has no end-of-turn marker for any agent:
+
+* claude-code's `stop_reason` is not parsed, even though the transcripts carry
+  it on every assistant record (`end_turn` when a turn ends, `tool_use` mid-turn);
+* codex's `task_complete` event is ignored;
+* crush writes a finish part at every turn end, but agent-trace only surfaces
+  it when the turn failed.
+
+Harness also follows trace events live only in the TUI, not in the daemon.
+Run correlation doesn't credit a resumed session to the run it is resumed in:
+a `--continue` session started before the run, so it is excluded. Graceful
+shutdown therefore depends on three pieces of work:
+
+1. agent-trace emits a turn-end marker for claude-code, codex and crush;
+2. the daemon keeps a live, per-harness turn state;
+3. run correlation credits a resumed session to the run whose process is
+   writing it, without giving up its fail-closed rule.
+
+**When the signal isn't there, graceful degrades one step at a time:**
+
+| The harness has | Graceful waits for |
+| --- | --- |
+| An attributed session whose reader reports turn ends | The turn to end, plus the settle period |
+| An attributed session with no turn markers | No trace events for a quiet period (default `2m`) |
+| No attributable trace (a generic `cmd`, no workdir, an ambiguous session) | Nothing: it stops immediately, logs that graceful was unavailable, and `harness doctor` warns |
+
+The quiet-period step is a heuristic. A long model call or tool run writes
+nothing until it finishes, so silence does not prove the agent is idle. The cap
+is what bounds it.
+
+**While closing:**
+
+* hours open again: closing is cancelled and the harness keeps running;
+* `harness start`: an after-hours lease starts and closing is cancelled;
+* `harness stop`: stops it now and clears `enabled`, as always;
+* the agent exits on its own: the harness is held, with no restart;
+* the daemon shuts down: normal daemon shutdown, and a boot out of hours
+  starts nothing.
+
+**New work during a close.** The daemon cannot stop prompts from arriving. A
+doorbell that starts a new turn pushes the stop out to the cap. The fix is on
+the sender's side: a Switchboard endpoint whose agent has clocked out gets no
+doorbells, so a close can finish (see *More Information*).
 
 ### Overrides: a bounded lease
 
@@ -172,10 +235,11 @@ the lease simply ends and the harness keeps running as in-hours. The lease's
 end time is written to `state.json` before the start (extending ADR-0007), so a
 daemon restart neither loses nor extends it.
 
-`harness stop NAME` on a leased harness **ends the lease** and returns it to
-held. `enabled` stays true, and tomorrow's window starts it as usual. Inside
-hours, `stop` means what it always has: it clears `enabled`, and the harness
-stays down across windows until someone starts it.
+`harness stop NAME` means the same thing in every case: in hours, out of
+hours, under a lease, closing, or already held. It stops the harness now if it
+is up, ends any lease, and clears `enabled`, so no window starts it again until
+someone runs `harness start`. The operator's word is final. Operating hours
+never read a stop as "just for tonight".
 
 Leases are bounded on purpose. "Run until the next close" (4B) makes a 20:00
 `start` run straight through the night into the next day's window — the exact
@@ -212,8 +276,14 @@ harness loses `operating_hours`, which leaves the lease with nothing to extend.
   jumps and DST fall out of one comparison instead of four special cases.
 * Good, because it reuses the ADR-0013 tick, clock seam and zone handling, so
   the source-scan invariant (only `clock.go` reads time) covers it too.
-* Bad, because a turn in flight at the close is killed. Mitigated by persistent
-  agent sessions and by leases, not solved until drain lands.
+* Good, because the default close lets the agent finish what it is doing, so
+  the saving doesn't cost half-done work.
+* Bad, because graceful shutdown depends on agent-trace work that doesn't exist
+  yet (turn-end markers, live turn state, resumed-session credit). Until it
+  lands, every harness falls back to the quiet period or an immediate stop.
+* Bad, because a graceful close can overrun the window by up to
+  `hours_shutdown_timeout`. Those minutes are the price of not losing work, and
+  `"immediate"` is one key away.
 * Bad, because push events that arrive while an agent is held are not received
   by it. Harness doesn't queue them, and it shouldn't: the daemon is agnostic.
   Whether they are lost depends on the sender. Switchboard keeps the todo but
@@ -242,7 +312,11 @@ the real supervisor path:
   hours autostarts normally.
 * `start` out of hours runs for the lease and stops at its end. `--for`
   overrides the length. A restart mid-lease resumes the same end time. `stop`
-  ends the lease without clearing `enabled`.
+  ends the lease and clears `enabled` in every case.
+* A graceful close stops at the first turn end after the close. It stops at the
+  cap when the turn never ends, and falls back to the quiet period or an
+  immediate stop exactly as the table above says. Reopening hours or starting a
+  lease cancels a close in progress.
 * Overnight windows, day ranges that wrap (`Fri-Mon`), overlapping windows, and
   both DST transition days evaluate correctly in a non-local zone.
 * Each exclusion fails parsing with an error naming the harness and the key.
@@ -251,8 +325,6 @@ the real supervisor path:
 
 ### Deferred
 
-* **Drain on idle** (3B), once an adapter can report that an agent is between
-  turns (ADR-0011). Until then there is no signal that works for every harness.
 * **Project-scoped operating hours.**
 * **A daemon-wide default** (`[daemon] operating_hours`), and hours on a
   profile rather than on each harness.
@@ -326,16 +398,22 @@ the real supervisor path:
   suspend, and two expressions can drift apart (a `stop_at` with no matching
   `start_at`).
 
-### 3A — Graceful stop at close (chosen)
+### 3A — Immediate stop at close (configurable)
 
-* Good, because the close is the moment spend stops, and it is deterministic.
+* Good, because the close is exactly when spending stops, every time.
+* Good, because it needs no signal from the agent, so it works for every harness.
 * Bad, because a turn in flight is cut off.
 
-### 3B — Drain until idle
+### 3B — Graceful shutdown (default)
 
-* Good, because no work is lost at the boundary.
-* Bad, because the daemon has no agnostic idle signal. PTY quiescence misreads
-  TUI agents that repaint while thinking and idle agents that animate a cursor.
+* Good, because no work is lost at the boundary. The agent finishes the turn it
+  started.
+* Good, because agent-trace already reads the transcripts that hold the answer.
+* Bad, because the turn-end signal has to be built in agent-trace, and it can be
+  missing (generic harnesses, ambiguous sessions). Graceful needs a fallback
+  and a cap.
+* Bad, because a doorbell during the close can start another turn. Only the
+  sender can prevent that.
 
 ### 3C — Don't restart after the next exit
 
@@ -365,7 +443,10 @@ flowchart TD
     IN -->|no| LEASE{"after-hours lease<br/>still valid?"}
     LEASE -->|yes| NOOP
     LEASE -->|no| UP{"starting / running /<br/>degraded / restarting?"}
-    UP -->|yes| HOLD["graceful stop<br/>enabled unchanged · no restart · backoff reset<br/>shown as off-hours"]
+    UP -->|yes| MODE{"hours_shutdown"}
+    MODE -->|immediate| HOLD["stop<br/>enabled unchanged · no restart · backoff reset<br/>shown as off-hours"]
+    MODE -->|graceful| CLOSING["closing<br/>wait for turn end (agent-trace)<br/>or quiet period · capped by timeout"]
+    CLOSING -->|"turn ended · quiet · cap reached · no trace"| HOLD
     UP -->|no| NOOP
 
     IN -->|yes| HELD{"held?<br/>enabled · stopped · down for hours"}
@@ -373,7 +454,7 @@ flowchart TD
     HELD -->|no| NOOP
 
     OP["harness start NAME [--for D]<br/>out of hours"] --> WRITE["persist lease end in state.json"] --> START2["start"]
-    OPSTOP["harness stop NAME<br/>on a leased harness"] --> END["end lease → held"]
+    OPSTOP["harness stop NAME<br/>(any state)"] --> END["stop · end lease · clear enabled"]
 ```
 
 ## More Information
@@ -394,15 +475,19 @@ flowchart TD
 * **Related [ADR-0002](adr-0002-daemon-client-architecture.md)**: the `start`
   control op gains an optional `for`, the harness projection gains the gate
   fields, and a `harness_hours_changed` event is added (SPEC-0012).
-* **Related [ADR-0011](adr-0011-agent-adapters.md)**: the idle signal that
-  drain on idle waits for.
+* **Related [ADR-0011](adr-0011-agent-adapters.md)**: the adapters whose
+  agent-trace readers supply turn state. SPEC-0006 gains REQ "Live Turn State",
+  and its REQ "Run Correlation" gains credit for resumed sessions.
+* **Depends on [agent-trace](https://github.com/stump-wtf/agent-trace)**:
+  turn-end markers for claude-code (`stop_reason`), codex (`task_complete`) and
+  crush (finish parts).
 * **Complement, not dependency: Switchboard presence.** Harness decides
   whether the process exists. It does not decide what happens to the work that
   arrives while it doesn't. Holding an agent's doorbells while it is off shift
   and handing them over when it clocks back in belongs in
-  [Switchboard](https://switchboard.stump.wtf/docs/). Switchboard has no
-  presence concept today. Its nearest relative is a proposal (Switchboard issue
-  160) for sessions to report whether they are ready or busy.
+  [Switchboard](https://switchboard.stump.wtf/docs/), through endpoint
+  presence (clock in / clock out, and optional shifts). Switchboard's own ADR
+  records that design.
   Harness stays agnostic: it will not call Switchboard at open or close. An
   agent that clocks in when its session starts gets both behaviors with no
   coupling.

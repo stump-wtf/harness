@@ -10,8 +10,9 @@ requires: [SPEC-0002, SPEC-0003, SPEC-0008]
 ## Overview
 
 A resident harness may carry `operating_hours`: weekly windows during which it
-is allowed to run. Outside them the daemon holds the harness down: it stops the
-process without clearing `enabled`, and starts it again when a window opens.
+is allowed to run. Outside them the daemon holds the harness down: it shuts the
+process down without clearing `enabled` (by default letting the agent finish its
+turn first), and starts it again when a window opens.
 The purpose is cost. An agent that is not running does not spend tokens. See
 ADR-0019 for the decision and `design.md` for the implementation shape.
 
@@ -27,6 +28,10 @@ Terms used throughout:
   least one window.
 * **Held**: a gated harness that is `enabled`, `stopped`, and down because it
   is out of hours rather than because of an operator stop or a restart policy.
+* **Closing**: a gated harness that is out of hours, still running, and being
+  shut down gracefully (REQ "Graceful Shutdown").
+* **Turn state**: whether the agent inside a harness is mid-turn or between
+  turns, as read from agent-trace (SPEC-0006 REQ "Live Turn State").
 * **Lease**: an after-hours permission to run, created by a manual start outside
   hours, with a persisted end time.
 
@@ -107,6 +112,7 @@ harness and the offending key.
 | --- | --- |
 | `operating_hours` with `schedule` | A scheduled one-shot is already time-gated by its cron expression |
 | `operating_hours` in a project `harness.toml` | Reload reconciliation and lease persistence are defined only for the config of record (ADR-0019 *Deferred*) |
+| `hours_shutdown` or `hours_shutdown_timeout` without `operating_hours` | A shutdown mode with no hours to close does nothing |
 
 `operating_hours` SHALL be accepted alongside `enabled`, profile membership, any
 `restart` policy, `cmd`, and a prompt harness without `schedule`.
@@ -141,8 +147,8 @@ skips one.
 
 - **WHEN** a gated harness is running at 12:50 inside a window ending 13:00, the
   host suspends, and it resumes at 15:00
-- **THEN** the first tick after resume finds the harness out of hours and holds
-  it
+- **THEN** the first tick after resume finds the harness out of hours with its
+  close deadline (13:15 by default) already past, and stops it at once
 
 #### Scenario: Waking inside a window
 
@@ -169,12 +175,17 @@ When a tick finds a gated harness out of hours and not covered by a valid lease
 or `restarting`, the daemon SHALL hold it:
 
 1. cancel any pending respawn;
-2. run the SPEC-0003 REQ "Graceful Stop" sequence (SIGTERM, stop grace, SIGKILL,
+2. under `hours_shutdown = "graceful"` with a running process, enter closing and
+   wait as REQ "Graceful Shutdown" specifies; otherwise proceed at once;
+3. run the SPEC-0003 REQ "Graceful Stop" sequence (SIGTERM, stop grace, SIGKILL,
    PTY teardown) and transition to `stopped`;
-3. leave `enabled` unchanged;
-4. treat the resulting exit as neither a crash nor a policy exit: no restart
+4. leave `enabled` unchanged;
+5. treat the resulting exit as neither a crash nor a policy exit: no restart
    (overriding SPEC-0003 REQ "Restart On Exit"), no restart-count increment, and
    crash-loop bookkeeping reset.
+
+A harness that is `starting` or `restarting` has no turn to finish, so it SHALL
+be stopped at once whatever the shutdown mode.
 
 When a tick finds a gated harness in hours and the harness is held, the daemon
 SHALL start it without modifying `enabled`. The daemon SHALL NOT start a gated
@@ -187,7 +198,7 @@ harness SHALL begin held.
 #### Scenario: Close
 
 - **WHEN** a running, enabled harness with `operating_hours = "09:00-13:00"`
-  reaches 13:00
+  and `hours_shutdown = "immediate"` reaches 13:00
 - **THEN** it transitions through `stopping` to `stopped`, `enabled` is still
   true, its restart count is unchanged, and it is not respawned
 
@@ -219,6 +230,124 @@ harness SHALL begin held.
   `operating_hours = "09:00-13:00"` and no lease
 - **THEN** the harness is not started and begins held
 
+### Requirement: Shutdown Mode
+
+A gated harness MAY set `hours_shutdown` to `"graceful"` or `"immediate"`. An
+omitted key SHALL mean `"graceful"`. It MAY set `hours_shutdown_timeout`, a
+positive duration string, default `"15m"`, bounding how long a graceful close
+may run past the close. Any other `hours_shutdown` value, and a zero, negative
+or unparseable timeout, SHALL be a parse error naming the harness and the key.
+Both keys are supervision keys: a change SHALL apply to the next close, and to a
+close in progress, without restarting the harness.
+
+#### Scenario: Default mode
+
+- **WHEN** a harness sets `operating_hours` and no `hours_shutdown`
+- **THEN** its closes are graceful with a 15-minute cap
+
+#### Scenario: Immediate mode
+
+- **WHEN** a harness sets `hours_shutdown = "immediate"`
+- **THEN** a close stops it without waiting for its turn state
+
+#### Scenario: Invalid timeout
+
+- **WHEN** a harness sets `hours_shutdown_timeout = "0"`
+- **THEN** config parsing fails naming the harness and `hours_shutdown_timeout`
+
+### Requirement: Graceful Shutdown
+
+When a graceful close begins, the daemon SHALL mark the harness closing, record
+its deadline, and on each tick stop it (REQ "Gate Enforcement" steps 3–5) at
+the first of:
+
+1. **Turn ended.** The harness's turn state is available and reports the
+   agent between turns: its latest turn has ended, and no trace event has
+   arrived for the settle period (10 seconds).
+2. **Quiet.** A trace is attributed to the run but its reader reports no turn
+   boundaries, and no trace event has arrived for the quiet period (2 minutes).
+3. **Cap.** The deadline has passed.
+
+The deadline SHALL be the instant the harness went out of hours (the window's
+end, or the lease's end) plus `hours_shutdown_timeout`, measured from that
+instant and not from when the daemon noticed it. A host that wakes after the
+deadline has passed therefore stops the harness on its first tick.
+
+When no trace can be attributed to the run at all (a `generic` harness, a
+harness with no workdir, or a session SPEC-0006 excludes as ambiguous), the
+daemon SHALL stop the harness at once and log that graceful shutdown was
+unavailable, with the reason.
+
+The daemon SHALL cancel a close in progress, and leave the harness running,
+when hours open again or a lease starts (REQ "After-Hours Lease"). A process
+that exits on its own while closing SHALL be held without a restart. The
+durable log SHALL record which of the conditions above ended each close.
+
+A closing harness keeps receiving whatever its agent receives. A prompt that
+starts a new turn during a close SHALL NOT extend the deadline.
+
+#### Scenario: Turn finishes after the close
+
+- **WHEN** a graceful harness is mid-turn at 13:00, its turn state reports the
+  turn ended at 13:04, and nothing arrives for the settle period
+- **THEN** it is stopped at about 13:04:10, `enabled` is still true, and the log
+  says the close ended on a turn end
+
+#### Scenario: Turn never finishes
+
+- **WHEN** a graceful harness with `hours_shutdown_timeout = "15m"` is still
+  mid-turn at 13:15
+- **THEN** it is stopped at 13:15 and the log records a forced stop at the cap
+
+#### Scenario: No turn markers
+
+- **WHEN** a graceful harness's attributed session has no turn boundaries and
+  its last trace event was at 13:01
+- **THEN** it is stopped at 13:03
+
+#### Scenario: Generic harness
+
+- **WHEN** a harness with no adapter and `hours_shutdown = "graceful"` reaches
+  its close
+- **THEN** it is stopped at once and the log says graceful shutdown was
+  unavailable because nothing can be attributed to it
+
+#### Scenario: Reopened during a close
+
+- **WHEN** `operating_hours = "Mon-Fri 09:00-12:00; Mon-Fri 12:05-17:00"` and a
+  close that began at 12:00 is still waiting at 12:05
+- **THEN** the close is cancelled and the harness keeps running
+
+#### Scenario: A new prompt during a close
+
+- **WHEN** a doorbell starts a new turn at 13:08 during a close that began at
+  13:00 with a 15-minute cap
+- **THEN** the harness is stopped no later than 13:15
+
+### Requirement: Turn State Signal
+
+For graceful shutdown the daemon SHALL keep a live turn state for every running
+gated harness whose adapter has a trace reader: the time of the latest attributed
+trace event, whether the reader reports turn boundaries for this agent, and,
+when it does, whether the latest turn has ended. The state SHALL come from the
+daemon's own live watch of the harness's attributed sessions (SPEC-0006 REQ
+"Live Turn State"), not from the TUI, and SHALL follow SPEC-0006 REQ "Run
+Correlation": a session that correlation would exclude SHALL contribute no turn
+state.
+
+#### Scenario: Resumed session
+
+- **WHEN** a claude-code harness runs with `--continue` and resumes a session
+  that started before the current run
+- **THEN** that session's new events contribute turn state to the current run,
+  as SPEC-0006 REQ "Run Correlation" credits a resumed session
+
+#### Scenario: Ambiguous session
+
+- **WHEN** two harnesses share a workdir and the same adapter
+- **THEN** neither gets turn state from the shared session, and a graceful
+  close of either falls back as REQ "Graceful Shutdown" specifies
+
 ### Requirement: After-Hours Lease
 
 A `start` control op (SPEC-0002) on a gated harness that is out of hours SHALL
@@ -239,9 +368,11 @@ A `start` on a harness that already holds a valid lease SHALL replace the lease
 end with a new one computed from the current time and the given (or default)
 `for`.
 
-A `stop` control op on a harness running under a valid lease SHALL end the lease
-and hold the harness, leaving `enabled` unchanged. A `stop` on a gated harness
-without a lease keeps its SPEC-0003 meaning and clears `enabled`.
+A `stop` control op on a gated harness SHALL keep its SPEC-0003 meaning in
+every case, whether in hours, out of hours, under a lease, closing, or held: it
+SHALL stop the harness at once if it is up, discard any lease, and clear
+`enabled`. A stopped gated harness SHALL NOT be started by a later window until
+an operator starts it.
 
 #### Scenario: Late-night start
 
@@ -262,8 +393,19 @@ without a lease keeps its SPEC-0003 meaning and clears `enabled`.
 #### Scenario: Stopping a leased harness
 
 - **WHEN** the operator runs `harness stop claude-src` at 20:15 during a lease
-- **THEN** the lease ends, the harness is held with `enabled` still true, and
-  it starts when the next window opens
+- **THEN** it stops, the lease is discarded, `enabled` becomes false, and the
+  next window does not start it
+
+#### Scenario: Stopping a held harness
+
+- **WHEN** the operator runs `harness stop claude-src` at 20:00 while it is held
+- **THEN** `enabled` becomes false, and the next window does not start it
+
+#### Scenario: Stopping a closing harness
+
+- **WHEN** the operator runs `harness stop claude-src` during a graceful close
+- **THEN** it stops at once without waiting for its turn state, and `enabled`
+  becomes false
 
 #### Scenario: Lease runs into hours
 
@@ -315,23 +457,28 @@ carry, for a gated harness:
 * `hours_next`: the next open (out of hours) or close (in hours), RFC 3339,
   omitted when the expression covers the whole week;
 * `held`: whether the harness is held;
+* `closing_until`: the close deadline, RFC 3339, while a graceful close is in
+  progress;
+* `hours_shutdown`: the effective shutdown mode;
 * `lease_until`: the lease end, RFC 3339, when a lease is valid.
 
 The daemon SHALL emit `harness_hours_changed { name, in_hours, hours_next }`
 when a gated harness's `in_hours` changes. It SHALL write a lifecycle line to
-the harness's durable log (ADR-0007) for each hold, open, lease start, and
-lease end, stating the reason and the next transition.
+the harness's durable log (ADR-0007) for each close start, hold, open, lease
+start, and lease end, stating the reason and the next transition.
 
 Every listing surface (`harness list`, `describe`, the TUI) SHALL show a held
 harness as `off-hours` rather than `stopped`, in the not-failed styling used for
 an armed scheduled harness (SPEC-0008 REQ "Schedule Visibility"). The NEXT
 column SHALL show when it opens, so no new column is added. A gated harness
-running in hours SHALL show when it closes, and one under a lease SHALL show the
-lease end.
+running in hours SHALL show when it closes, one under a lease SHALL show the
+lease end, and a closing harness SHALL read `closing` with its deadline.
 
 `harness doctor` SHALL warn when a gated harness has `enabled = false` (hours
-will never start it) and when an expression covers the whole week (it gates
-nothing).
+will never start it), when an expression covers the whole week (it gates
+nothing), and when a harness uses graceful shutdown but nothing can ever be
+attributed to it (a `generic` adapter or no workdir), so every close would be
+immediate.
 
 #### Scenario: Listing a held harness
 
@@ -349,10 +496,11 @@ nothing).
 
 Tracked in ADR-0019 *Deferred*:
 
-* Drain on idle before a close.
 * Project-scoped operating hours.
 * A daemon-wide or per-profile default.
 * Holidays and one-off closures.
 * Token or cost budgets.
 * Holding or replaying push events and doorbells that arrive while a harness is
-  held. That belongs to the sender (for example Switchboard), not the daemon.
+  held or closing. That belongs to the sender (for example Switchboard endpoint
+  presence), not the daemon.
+* Turn detection without agent-trace (PTY heuristics).
