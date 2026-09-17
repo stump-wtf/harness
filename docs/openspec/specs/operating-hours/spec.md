@@ -16,10 +16,12 @@ turn first), and starts it again when a window opens.
 The purpose is cost. An agent that is not running does not spend tokens. See
 ADR-0019 for the decision and `design.md` for the implementation shape.
 
-This spec amends SPEC-0003 REQ "Autostart" and REQ "Restart On Exit". Both now
-defer to REQ "Gate Enforcement" below. It reuses the SPEC-0008 scheduler tick
-and zone handling (REQ "Suspend-Safe Schedule Evaluation", REQ "Schedule Time
-Zone").
+This spec amends SPEC-0003 REQ "Autostart", REQ "Restart On Exit" and REQ
+"Graceful Stop" (the last so that an hours stop leaves `enabled` alone, while an
+operator stop still clears it), and SPEC-0002 REQ "Control Operations" and REQ
+"Event Subscription" (the `start` op's `for`, and the `harness_hours_changed`
+event). It reuses the SPEC-0008 scheduler tick and zone handling (REQ
+"Suspend-Safe Schedule Evaluation", REQ "Schedule Time Zone").
 
 Terms used throughout:
 

@@ -476,13 +476,15 @@ flowchart TD
   started. Its intent is still recorded as true.
 * **Related [ADR-0002](adr-0002-daemon-client-architecture.md)**: the `start`
   control op gains an optional `for`, the harness projection gains the gate
-  fields, and a `harness_hours_changed` event is added (SPEC-0012).
+  fields, and a `harness_hours_changed` event is added (SPEC-0012). SPEC-0002's
+  REQ "Control Operations" and REQ "Event Subscription" are amended to name
+  them, since both enumerate their ops and events closed.
 * **Related [ADR-0011](adr-0011-agent-adapters.md)**: the adapters whose
   agent-trace readers supply turn state. SPEC-0006 gains REQ "Live Turn State",
   and its REQ "Run Correlation" gains credit for resumed sessions.
 * **Depends on [agent-trace](https://github.com/stump-wtf/agent-trace)**:
-  turn-end markers for claude-code (`stop_reason`), codex (`task_complete`) and
-  crush (finish parts).
+  turn-end markers for claude-code (`stop_reason`), codex (`task_complete`,
+  unverified) and crush (finish parts).
 * **Complement, not dependency: Switchboard presence.** Harness decides
   whether the process exists. It does not decide what happens to the work that
   arrives while it doesn't. Holding an agent's doorbells while it is off shift
