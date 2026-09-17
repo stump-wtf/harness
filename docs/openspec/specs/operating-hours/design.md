@@ -92,6 +92,14 @@ firings (#159). Operating hours needs a third pair:
 - **`Release(name)`** asks the actor loop to clear `Held` and start the
   harness, again without writing `Enabled`.
 
+A `cmdHold` case in `handleCommand` is the shape. The "stop the process, leave
+intent alone" half already exists: `gracefulStopKeepEnabled`
+(`internal/supervisor/supervisor.go:822`) is the manual-restart path, which
+saves `s.enabled`, clears it so the exit path does not respawn, runs
+`gracefulStop`, and restores it. `Hold` needs the same guard plus the flap-reset
+and `Held` bookkeeping, and it must suppress `publishChangeUnchanged` so a hold
+never rewrites `state.json` with `enabled = false`.
+
 `Hold` takes the close's mode and deadline. Under `graceful` the actor loop
 marks the supervisor `Closing` with the deadline and returns. The scheduler
 tick then calls `Manager.CloseStep(name, now)`, which asks the loop to stop the
