@@ -389,6 +389,20 @@ to a harness.
   during the run is in a different working directory
 - **THEN** it is not attributed
 
+#### Scenario: A resumed session is credited to the run that resumes it
+
+- **WHEN** a harness started with `--continue` resumes a session that began
+  before the run, whose own store and workdir are the harness's, and no
+  same-workdir sibling that could have written it is running
+- **THEN** the session's events inside the run's window are credited to that run
+
+#### Scenario: A resumed session with a sibling is still excluded
+
+- **WHEN** a harness resumes a session while a same-workdir sibling of the same
+  adapter is running and could have written events at those times
+- **THEN** the session is credited to no harness, exactly as a fresh session in
+  the same position would be
+
 #### Scenario: Overlapping runs in a shared workdir exclude the session
 
 - **WHEN** two harnesses of the same adapter share a workdir and a store, and a
@@ -472,9 +486,17 @@ Turn boundaries SHALL come from agent-trace, per reader:
 | Adapter | Turn end is |
 | --- | --- |
 | `claude-code` | An assistant message whose `stop_reason` is neither `tool_use` nor `pause_turn` (in practice `end_turn`, `stop_sequence`, `max_tokens` or `refusal`) |
-| `codex` | A `task_complete` event |
+| `codex` | A `task_complete` event (unverified — see below) |
 | `crush` | A finish part on the latest assistant message, whatever its reason |
 | `generic` | None; no turn state |
+
+The codex row is **unverified**: no codex session was available to confirm that
+the event carries `task_complete` as its `type`, and agent-trace's codex reader
+today handles only `context_compacted` and `patch_apply_end` in `event_msg`
+(`tail/codex.go`, pinned `v0.2.1-0.20260911172145`). Whoever implements turn
+markers for codex SHALL confirm the event name against a real transcript before
+relying on it, and SHALL report `turn_markers = false` until then rather than
+guess.
 
 A reader that cannot yet report turn boundaries SHALL set `turn_markers` to
 false rather than guess. ADR-0019 graceful shutdown is the first consumer.

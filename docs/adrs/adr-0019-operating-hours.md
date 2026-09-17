@@ -186,7 +186,9 @@ today, but it has no end-of-turn marker for any agent:
 
 * claude-code's `stop_reason` is not parsed, even though the transcripts carry
   it on every assistant record (`end_turn` when a turn ends, `tool_use` mid-turn);
-* codex's `task_complete` event is ignored;
+* codex's `task_complete` event is ignored — and, unlike the other two, the
+  event's name is asserted rather than verified, because no codex session was
+  available to check a real transcript (see SPEC-0006 REQ "Live Turn State");
 * crush writes a finish part at every turn end, but agent-trace only surfaces
   it when the turn failed.
 
