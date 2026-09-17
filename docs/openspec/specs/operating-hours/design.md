@@ -54,8 +54,12 @@ the next eight local days) and returning the first where membership flips. The
 walk is bounded because every valid expression repeats weekly.
 
 Keeping it pure means every grammar case, DST day and overnight wrap is a table
-test in microseconds, and the scheduler's source-scan test ("only `clock.go`
-reads time") keeps holding.
+test in microseconds, and the scheduler's clock seam stays the only time source:
+the gate calls `In(now)` with the tick's own reading rather than asking for the
+time itself. Note that `TestNoWallClockReadsOutsideClock`
+(`internal/scheduler/scheduler_test.go:1000`) globs `*.go` in its own package,
+so it does not reach `internal/hours`; that package must carry the same guard
+(an identical scan, and no `time.Now`) for the invariant to hold there.
 
 ### Evaluate on the existing scheduler tick
 

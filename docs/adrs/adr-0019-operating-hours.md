@@ -277,7 +277,11 @@ harness loses `operating_hours`, which leaves the lease with nothing to extend.
 * Good, because a level-triggered gate makes suspend, daemon outages, clock
   jumps and DST fall out of one comparison instead of four special cases.
 * Good, because it reuses the ADR-0013 tick, clock seam and zone handling, so
-  the source-scan invariant (only `clock.go` reads time) covers it too.
+  the gate needs no new time source. (The source-scan invariant — only
+  `clock.go` reads time — is enforced by a test that globs `*.go` inside
+  `internal/scheduler`, so it covers the tick the gate hangs off, not the new
+  `internal/hours` package; that package is kept time-free by design and needs
+  its own guard if the invariant is to be enforced there too.)
 * Good, because the default close lets the agent finish what it is doing, so
   the saving doesn't cost half-done work.
 * Bad, because graceful shutdown depends on agent-trace work that doesn't exist
