@@ -84,6 +84,11 @@ which a key on `[harness.*]` remains unambiguous (ADR-0013).
 | `catch_up` without `schedule`, or in a project `harness.toml` | A missed-window policy with no schedule to apply to does nothing |
 | `timeout`, `on_overlap` or `keep_runs` without `schedule`, or in a project `harness.toml` | Run keys shape scheduled runs; without a schedule there are none |
 
+`operating_hours` alongside `schedule` is rejected for the same reason (SPEC-0012
+REQ "Operating Hours Exclusions"): a cron expression already gates when the
+one-shot fires, and two time gates on one harness would disagree. That exclusion
+is stated and validated by SPEC-0012 rather than duplicated here.
+
 `enabled` SHALL retain its SPEC-0003 meaning of *autostart intent*; this spec
 SHALL NOT redefine it to mean *armed*.
 
