@@ -33,7 +33,9 @@ its state file (ADR-0007). `enabled` is intent; `state` is reality.
 ### Requirement: Autostart
 
 On daemon start, every harness that is `enabled` — directly or via an
-`autostart` profile (ADR-0006) — SHALL transition to `starting`.
+`autostart` profile (ADR-0006) — SHALL transition to `starting`, except a
+harness with `operating_hours` that is out of hours and holds no valid lease,
+which SHALL begin held (SPEC-0012 REQ "Gate Enforcement").
 
 #### Scenario: Daemon boot
 
@@ -46,7 +48,10 @@ While a harness is `enabled` and its restart policy permits it (REQ "Restart
 Policy"; the always-restart default), any exit — including a clean exit code
 0 — SHALL be followed by a restart (`restarting`, wait `restart_delay`, then
 `starting`), incrementing the restart count (`↻`). If the harness is not
-`enabled`, an exit SHALL transition it to `stopped`.
+`enabled`, an exit SHALL transition it to `stopped`. An exit the daemon caused
+to enforce operating hours is not a restart-eligible exit: it SHALL transition
+the harness to `stopped` with `enabled` unchanged (SPEC-0012 REQ "Gate
+Enforcement").
 
 #### Scenario: Clean exit while enabled
 
