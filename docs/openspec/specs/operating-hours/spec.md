@@ -2,7 +2,7 @@
 status: draft
 date: 2026-09-17
 implements: [ADR-0019]
-requires: [SPEC-0002, SPEC-0003, SPEC-0008]
+requires: [SPEC-0002, SPEC-0003, SPEC-0006, SPEC-0008]
 ---
 
 # SPEC-0012: Operating Hours
@@ -26,10 +26,12 @@ Terms used throughout:
 * **Gated harness**: a harness whose `operating_hours` is set.
 * **In hours**: the wall clock, read in the expression's zone, falls inside at
   least one window.
-* **Held**: a gated harness that is `enabled`, `stopped`, and down because it
-  is out of hours rather than because of an operator stop or a restart policy.
-* **Closing**: a gated harness that is out of hours, still running, and being
-  shut down gracefully (REQ "Graceful Shutdown").
+* **Held**: a gated harness that is out of hours, `enabled`, and down because of
+  its hours rather than an operator stop or a restart policy — that is, a
+  harness the daemon shut down under REQ "Gate Enforcement" and has not yet
+  started again. It is `stopped` once the hold has completed.
+* **Closing**: a gated harness that is out of hours, still running (or
+  `degraded`), and being shut down gracefully (REQ "Graceful Shutdown").
 * **Turn state**: whether the agent inside a harness is mid-turn or between
   turns, as read from agent-trace (SPEC-0006 REQ "Live Turn State").
 * **Lease**: an after-hours permission to run, created by a manual start outside
@@ -122,11 +124,23 @@ harness and the offending key.
 - **WHEN** a harness sets both `schedule` and `operating_hours`
 - **THEN** config parsing fails naming the harness and `operating_hours`
 
+#### Scenario: Hours on a project harness
+
+- **WHEN** a project `harness.toml` gives a harness `operating_hours`
+- **THEN** that project fails to load with an error naming the harness and
+  `operating_hours`
+
 #### Scenario: Hours on a profile member
 
 - **WHEN** a harness with `operating_hours` is a member of an autostart profile
 - **THEN** the config loads, and the profile decides `enabled` while the hours
   decide when it runs
+
+#### Scenario: Shutdown mode with no hours
+
+- **WHEN** a harness sets `hours_shutdown = "immediate"` without
+  `operating_hours`
+- **THEN** config parsing fails naming the harness and `hours_shutdown`
 
 ### Requirement: Gate Evaluation
 
@@ -175,17 +189,20 @@ When a tick finds a gated harness out of hours and not covered by a valid lease
 or `restarting`, the daemon SHALL hold it:
 
 1. cancel any pending respawn;
-2. under `hours_shutdown = "graceful"` with a running process, enter closing and
+2. under `hours_shutdown = "graceful"` on a `running` harness, enter closing and
    wait as REQ "Graceful Shutdown" specifies; otherwise proceed at once;
 3. run the SPEC-0003 REQ "Graceful Stop" sequence (SIGTERM, stop grace, SIGKILL,
-   PTY teardown) and transition to `stopped`;
+   PTY teardown) and transition to `stopped`, leaving `enabled` as that
+   requirement's operating-hours carve-out specifies;
 4. leave `enabled` unchanged;
 5. treat the resulting exit as neither a crash nor a policy exit: no restart
    (overriding SPEC-0003 REQ "Restart On Exit"), no restart-count increment, and
    crash-loop bookkeeping reset.
 
-A harness that is `starting` or `restarting` has no turn to finish, so it SHALL
-be stopped at once whatever the shutdown mode.
+A harness that is `starting` or `restarting` has no live process to finish a
+turn in, so it SHALL be stopped at once whatever the shutdown mode. A `degraded`
+harness has a live process but is waiting out a backoff rather than running a
+turn, so it SHALL also be stopped at once rather than enter closing.
 
 When a tick finds a gated harness in hours and the harness is held, the daemon
 SHALL start it without modifying `enabled`. The daemon SHALL NOT start a gated
@@ -212,6 +229,13 @@ harness SHALL begin held.
 - **WHEN** a gated harness is `restarting` (waiting out `restart_delay`) at the
   close
 - **THEN** the pending respawn is cancelled and the harness is held
+
+#### Scenario: Close a degraded harness
+
+- **WHEN** a gated harness is `degraded` (crash-looping with backoff pending)
+  when its window closes
+- **THEN** it is stopped at once whatever the shutdown mode, its backoff is
+  reset, and it is held
 
 #### Scenario: Failed harness at open
 
@@ -254,6 +278,18 @@ close in progress, without restarting the harness.
 
 - **WHEN** a harness sets `hours_shutdown_timeout = "0"`
 - **THEN** config parsing fails naming the harness and `hours_shutdown_timeout`
+
+#### Scenario: Mode changes during a close
+
+- **WHEN** a reload changes `hours_shutdown` to `"immediate"` while the harness
+  is closing, or shortens `hours_shutdown_timeout` to a deadline already past
+- **THEN** the close stops the harness on the next tick without restarting it
+
+#### Scenario: Timeout lengthened during a close
+
+- **WHEN** a reload lengthens `hours_shutdown_timeout` while the harness is
+  closing, leaving the new deadline in the future
+- **THEN** the close keeps waiting, bounded by the new deadline
 
 ### Requirement: Graceful Shutdown
 
@@ -323,6 +359,20 @@ starts a new turn during a close SHALL NOT extend the deadline.
 - **WHEN** a doorbell starts a new turn at 13:08 during a close that began at
   13:00 with a 15-minute cap
 - **THEN** the harness is stopped no later than 13:15
+
+#### Scenario: A DST change inside a close window
+
+- **WHEN** a close begins at 01:30 in a zone whose clocks fall back at 02:00
+  within its 15-minute cap
+- **THEN** the deadline is 01:45 on the real timeline the close began on, and
+  the harness stops by then rather than an hour later
+
+#### Scenario: Hours reopen on a DST transition
+
+- **WHEN** a close is in progress and a window opens at a wall-clock time that
+  the transition repeats or skips
+- **THEN** the close is cancelled on the first tick that evaluates in hours,
+  and no window is counted twice or missed
 
 ### Requirement: Turn State Signal
 
@@ -446,6 +496,26 @@ incremental model: an unchanged value keeps its state.
 
 - **WHEN** a reload removes `operating_hours` from a held harness
 - **THEN** on the next tick it starts
+
+#### Scenario: A profile switch targets a held harness
+
+- **WHEN** `harness use-profile` makes a gated, held harness a member of the
+  active profile while it is still out of hours
+- **THEN** its `enabled` intent becomes true, and the gate keeps it held: a
+  profile sets intent, and hours still decide whether the process exists
+
+#### Scenario: A profile switch at the close
+
+- **WHEN** `harness use-profile` enables a gated harness that is already running
+  in hours
+- **THEN** it keeps running and closes at the window's end as usual
+
+#### Scenario: A new harness introduced out of hours
+
+- **WHEN** a reload introduces an `enabled` harness carrying
+  `operating_hours = "09:00-13:00"` at 20:00
+- **THEN** ADR-0014 records its intent as true and it begins held rather than
+  started
 
 ### Requirement: Operating Hours Visibility
 
