@@ -140,12 +140,20 @@ state and begin a fresh start cycle.
 A stop request on a `running`, `degraded`, or `restarting` harness SHALL
 transition it to `stopping`: send SIGTERM, wait a grace period, SIGKILL if
 needed, tear down the PTY session, then transition to `stopped` and set
-`enabled=false`.
+`enabled=false`. An operator stop clears intent; a stop the daemon applies to
+enforce operating hours runs the same sequence but leaves `enabled` unchanged
+(SPEC-0012 REQ "Gate Enforcement").
 
 #### Scenario: Process ignores SIGTERM
 
 - **WHEN** a stop-requested process is still alive after the grace period
 - **THEN** the daemon sends SIGKILL, reaps the PTY, and records `stopped`
+
+#### Scenario: Hours stop leaves intent alone
+
+- **WHEN** the daemon stops a harness to enforce its operating hours
+- **THEN** the harness transitions through `stopping` to `stopped` and
+  `enabled` is unchanged, so the next window starts it again
 
 ### Requirement: Config Change Application
 
