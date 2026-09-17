@@ -51,7 +51,9 @@ a clear `ERROR` ("client too old/new; daemon proto vN") rather than garbling.
 The control plane SHALL mirror the CLI verbs and the TUI 1:1 (ADR-0002):
 `list`, `describe`, `start`, `stop`, `restart`, `logs`, `profiles`,
 `use_profile`, `reload`, `daemon_info`, and the scheduled-run ops `jobs`,
-`trigger` and `runs` (SPEC-0008 REQ "Protocol Operations"). Operations SHALL be idempotent
+`trigger` and `runs` (SPEC-0008 REQ "Protocol Operations"). `start` SHALL accept
+an optional `for` duration carrying an after-hours lease (SPEC-0012 REQ
+"After-Hours Lease"). Operations SHALL be idempotent
 where that makes sense (double-`start` is a no-op). Errors SHALL come back as
 structured `ERROR` frames with a code and a human message. A response that
 carries raw terminal output SHALL also carry the viewport that output was drawn
@@ -62,6 +64,13 @@ of reflowing it.
 
 - **WHEN** `start` is issued for a harness already `running`
 - **THEN** the daemon replies success without disturbing the process
+
+#### Scenario: Start with an after-hours lease
+
+- **WHEN** `start` carries a `for` duration for a gated harness that is out of
+  hours
+- **THEN** the daemon replies success and the harness's projection carries the
+  lease end as `lease_until`
 
 #### Scenario: Structured failure
 
@@ -111,10 +120,11 @@ of reflowing it.
 
 After a `HELLO` that includes `wants: ["events"]`, the daemon SHALL push
 `EVENT` frames on state changes (`harness_state_changed`, `harness_exited`,
-`harness_flapping`, `config_reloaded`, `profile_changed`, and the scheduled-run
+`harness_flapping`, `config_reloaded`, `profile_changed`, the scheduled-run
 events `job_run_started`, `job_run_finished` and `job_schedule_changed` of
-SPEC-0008 REQ "Lifecycle Events") so the TUI re-renders
-reactively without polling. One-shot CLI invocations MAY skip the
+SPEC-0008 REQ "Lifecycle Events", and the operating-hours event
+`harness_hours_changed` of SPEC-0012 REQ "Operating Hours Visibility") so the
+TUI re-renders reactively without polling. One-shot CLI invocations MAY skip the
 subscription entirely.
 
 #### Scenario: Reactive dashboard
@@ -122,6 +132,12 @@ subscription entirely.
 - **WHEN** a harness crashes while a subscribed TUI is on the dashboard
 - **THEN** the TUI receives `harness_exited` and `harness_state_changed`
   without issuing any request
+
+#### Scenario: A gated harness crosses its window
+
+- **WHEN** a subscribed client is connected as a gated harness goes out of hours
+- **THEN** it receives `harness_hours_changed` carrying the new `in_hours` and
+  the next transition
 
 ### Requirement: Attach Session
 
