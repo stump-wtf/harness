@@ -122,7 +122,7 @@ test set for the emulator.
 ### The ecosystem de-risks this more than it first appears
 
 The native backend is *assembling first-party Charm packages*, not writing a
-terminal stack from scratch (see [charm-ecosystem-map.md](#file-charm-ecosystem-map-md)):
+terminal stack from scratch (see [charm-ecosystem-map.md](https://github.com/stump-wtf/harness/blob/main/docs/charm-ecosystem-map.md)):
 
 - **PTY:** `x/xpty` (+ `x/conpty` for eventual Windows).
 - **Emulation:** `x/vt` (screen+scrollback+`InputPipe`), `x/ansi` (sequences),

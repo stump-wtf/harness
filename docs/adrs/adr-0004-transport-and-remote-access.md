@@ -70,7 +70,7 @@ list every box's daemon and let you hop across hosts, which is the literal
 daemon; wishlist is the sketched path to multi-host without new protocol work.
 [`promwish`](https://github.com/charmbracelet/promwish) (Prometheus middleware for
 Wish) can expose attach/session metrics into Joe's existing monitoring. Both are
-noted as ◑/○ in [charm-ecosystem-map.md](#file-charm-ecosystem-map-md), not v1
+noted as ◑/○ in [charm-ecosystem-map.md](https://github.com/stump-wtf/harness/blob/main/docs/charm-ecosystem-map.md), not v1
 commitments. [`soft-serve`](https://github.com/charmbracelet/soft-serve) is the
 reference for how a real Wish-based multi-user SSH TUI daemon does auth + access
 levels — worth reading before we build ours.
