@@ -78,7 +78,7 @@ of what we want has a maintained, idiomatic library from one coherent ecosystem:
   compositing the embedded terminal pane into our UI (ADR-0003).
 
 A fuller inventory of the whole ecosystem — every library we'd use now, defer, or
-just reference — lives in [charm-ecosystem-map.md](#file-charm-ecosystem-map-md).
+just reference — lives in [charm-ecosystem-map.md](https://github.com/stump-wtf/harness/blob/main/docs/charm-ecosystem-map.md).
 The short version: **every box in the ADR-0002 architecture maps to a maintained
 Charm package**, from PTY up to SSH directory. That coherence *is* the argument
 for this ADR.

@@ -36,7 +36,10 @@ const config: Config = {
   url: SITE_URL,
   baseUrl: BASE_URL,
 
-  onBrokenLinks: 'warn',
+  // 'throw' (the Docusaurus default) so a broken link or anchor fails the
+  // build instead of passing as a console warning (#365).
+  onBrokenLinks: 'throw',
+  onBrokenAnchors: 'throw',
 
   markdown: {
     format: 'detect',
@@ -45,7 +48,7 @@ const config: Config = {
       // Moved out of the top-level `onBrokenMarkdownLinks`, which is deprecated
       // and printed a migration warning on every build (twice, once per SSG
       // pass). Same behaviour, current location.
-      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownLinks: 'throw',
     },
   },
 
