@@ -33,7 +33,9 @@ its state file (ADR-0007). `enabled` is intent; `state` is reality.
 ### Requirement: Autostart
 
 On daemon start, every harness that is `enabled` — directly or via an
-`autostart` profile (ADR-0006) — SHALL transition to `starting`.
+`autostart` profile (ADR-0006) — SHALL transition to `starting`, except a
+harness with `operating_hours` that is out of hours and holds no valid lease,
+which SHALL begin held (SPEC-0012 REQ "Gate Enforcement").
 
 #### Scenario: Daemon boot
 
@@ -46,7 +48,10 @@ While a harness is `enabled` and its restart policy permits it (REQ "Restart
 Policy"; the always-restart default), any exit — including a clean exit code
 0 — SHALL be followed by a restart (`restarting`, wait `restart_delay`, then
 `starting`), incrementing the restart count (`↻`). If the harness is not
-`enabled`, an exit SHALL transition it to `stopped`.
+`enabled`, an exit SHALL transition it to `stopped`. An exit the daemon caused
+to enforce operating hours is not a restart-eligible exit: it SHALL transition
+the harness to `stopped` with `enabled` unchanged (SPEC-0012 REQ "Gate
+Enforcement").
 
 #### Scenario: Clean exit while enabled
 
@@ -135,12 +140,20 @@ state and begin a fresh start cycle.
 A stop request on a `running`, `degraded`, or `restarting` harness SHALL
 transition it to `stopping`: send SIGTERM, wait a grace period, SIGKILL if
 needed, tear down the PTY session, then transition to `stopped` and set
-`enabled=false`.
+`enabled=false`. An operator stop clears intent; a stop the daemon applies to
+enforce operating hours runs the same sequence but leaves `enabled` unchanged
+(SPEC-0012 REQ "Gate Enforcement").
 
 #### Scenario: Process ignores SIGTERM
 
 - **WHEN** a stop-requested process is still alive after the grace period
 - **THEN** the daemon sends SIGKILL, reaps the PTY, and records `stopped`
+
+#### Scenario: Hours stop leaves intent alone
+
+- **WHEN** the daemon stops a harness to enforce its operating hours
+- **THEN** the harness transitions through `stopping` to `stopped` and
+  `enabled` is unchanged, so the next window starts it again
 
 ### Requirement: Config Change Application
 
