@@ -142,12 +142,15 @@ type Supervisor struct {
 	lastStarted    time.Time
 	nextRetryIn    time.Duration
 
-	restartTimer  *time.Timer
-	log           *rotatingLog
-	hist          *ptyHistory   // sanitizer between the PTY stream and log (#279)
-	readerDone    chan struct{} // closed by readOutput when the final flush has landed
-	evlog         *clog.Logger  // structured lifecycle events into log (#279)
-	configChanged bool          // staged config awaiting restart (SPEC-0003)
+	restartTimer *time.Timer
+	log          *rotatingLog
+	hist         *ptyHistory   // sanitizer between the PTY stream and log (#279)
+	readerDone   chan struct{} // closed by readOutput when the final flush has landed
+	// readerWait overrides closeLog's reader-drain bound for tests; zero derives
+	// the bound from Policy.StopGrace (#368). Never set outside tests.
+	readerWait    time.Duration
+	evlog         *clog.Logger // structured lifecycle events into log (#279)
+	configChanged bool         // staged config awaiting restart (SPEC-0003)
 
 	// suppressPersist temporarily blocks markDirty during a transient start
 	// (issue #159): the state transitions publish snapshots, but those must
@@ -980,6 +983,21 @@ func (s *Supervisor) logEvent(msg string, kv ...any) {
 	}
 }
 
+// readerDrainBound is how long closeLog waits for the PTY reader goroutine:
+// the same budget the policy grants the process itself on SIGTERM, so the
+// supervisor never waits longer for the drain than for the process, and a
+// wedged reader still cannot block shutdown indefinitely (#368). A
+// test-only override on Supervisor.readerWait wins when set.
+func (s *Supervisor) readerDrainBound() time.Duration {
+	if s.readerWait > 0 {
+		return s.readerWait
+	}
+	if s.policy.StopGrace > 0 {
+		return s.policy.StopGrace
+	}
+	return 10 * time.Second
+}
+
 func (s *Supervisor) closeLog() {
 	// The PTY reader goroutine may still be draining the last bytes and
 	// flushing the final screen (#279) when an exit is processed — closing
@@ -989,7 +1007,14 @@ func (s *Supervisor) closeLog() {
 	if s.readerDone != nil {
 		select {
 		case <-s.readerDone:
-		case <-time.After(2 * time.Second):
+		case <-time.After(s.readerDrainBound()):
+			// The reader outlived the bound, so the close below drops
+			// whatever it still holds. Say so in the log itself — the same
+			// shape as the sanitizer's dropped-frame marker (#360) — instead
+			// of a durable log that silently ends. Written through the event
+			// logger, whose lock is the rotating log's own: the history's
+			// mutex may still be held by the very reader we gave up on.
+			s.logEvent("log truncated", "reason", "pty reader outlived the shutdown wait; the final output may be missing")
 		}
 		s.readerDone = nil
 	}

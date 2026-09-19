@@ -8,6 +8,7 @@ package supervisor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -411,5 +412,36 @@ func TestRestartPolicyChangeAppliesWithoutRestart(t *testing.T) {
 	waitState(t, s, core.StateStopped)
 	if got := s.Snapshot().RestartCount; got != 0 {
 		t.Fatalf("restart count = %d, want 0 (restart=no adopted live must suppress the respawn)", got)
+	}
+}
+
+// ---- durable-log teardown (#368) -----------------------------------------
+
+// TestCloseLogMarksTruncationWhenReaderOutlivesWait pins the #368 timeout
+// path: when the PTY reader has not finished within closeLog's bound, the
+// durable log must say so instead of silently ending (the flaky
+// "log missing DONE" failure was this data loss observed from CI). The
+// reader's channel never closes, so only the bound can let closeLog return;
+// readerWait makes that bound deterministic instead of polling.
+func TestCloseLogMarksTruncationWhenReaderOutlivesWait(t *testing.T) {
+	dir := t.TempDir()
+	s := New(shHarness("trunc-marker", "true", 0), Options{
+		Policy: fastPolicy(), Bus: NewBus(), LogCfg: LogConfig{Dir: dir},
+	})
+	s.ensureLog()
+	s.readerDone = make(chan struct{}) // a reader that never finishes
+	s.readerWait = 5 * time.Millisecond
+	began := time.Now()
+	s.closeLog()
+	if took := time.Since(began); took > 100*time.Millisecond {
+		t.Fatalf("closeLog waited %v for a reader that never finishes; the bound did not apply", took)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "trunc-marker.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "log truncated") {
+		t.Fatalf("log lacks the truncation marker; got:\n%s", data)
 	}
 }
