@@ -49,7 +49,7 @@ when you save. Run `harness reload` if you'd rather be explicit.
 | `workdir` | The directory the agent starts in. Set it: agents are project-scoped, and `harness logs` uses it to find the agent's sessions. `~` expands. |
 | `env_file` | A `KEY=VALUE` file layered onto this harness's environment at start. Credentials go here rather than in `harness.toml` — though on macOS a Keychain-backed agent login needs no `env_file` at all (see below). A missing file is silently skipped. |
 | `description` | Free text shown in `harness list` and the dashboard. |
-| `enabled` | `true` means "keep this running": it starts now, and again every time the daemon starts. `false` means defined but idle until you `harness start` it. |
+| `enabled` | `true` means "keep this running": it starts now, and again every time the daemon starts. `false` means defined but idle until you `harness start` it. Note the profile interaction: a harness the daemon does not yet know (new at boot, or new via `harness reload`) takes an autostart-profile membership as `enabled = true`; a harness the daemon already tracks keeps its persisted intent, and a stop is never undone by a reload (see Profiles). |
 | `restart` | What to do when the process exits. See [Restart policy](#restart-policy-and-what-it-costs). |
 | `restart_delay` | Seconds to wait before a restart. Default `0`. |
 
@@ -166,6 +166,15 @@ harness use-profile full      # switch
 
 Only one profile is active at a time. With `autostart = true`, its harnesses
 come up whenever the daemon starts.
+
+:::caution Profile membership only autostarts harnesses the daemon does not know yet
+A member that is new at boot, or new to the daemon via `harness reload`, starts
+even when `enabled = false` (ADR-0014): for it, the profile is its autostart
+intent. A harness the daemon already tracks keeps its persisted intent instead
+— a member left down with `enabled = false`, or one you `harness stop`ped, stays
+down across reloads and restarts. The daemon lists such dormant members in
+`harness list` and `doctor` so they are never silently lost.
+:::
 
 ## Restart policy, and what it costs
 
