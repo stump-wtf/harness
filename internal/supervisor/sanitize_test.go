@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -215,23 +216,51 @@ func TestPtyHistoryQueriesDoNotBlock(t *testing.T) {
 // past ultraviolet's buffer: "index out of range [24] with length 24". That
 // panic was on the PTY reader goroutine and took the daemon down; crush does
 // exactly this when it renders a channel doorbell on the default 80×24.
+//
+// The reset-first recovery sends ESC[r to restore the default scroll region
+// without creating a new emulator or leaking a goroutine.
 func TestPtyHistorySurvivesEmulatorPanic(t *testing.T) {
 	var out bytes.Buffer
 	h := newPtyHistory(&out, 80, 24)
 	for i := 1; i <= 3; i++ {
 		_, _ = h.Write([]byte(fmt.Sprintf("before %d\r\n", i)))
 	}
-	// Must not panic. (Without the recover, this call kills the process.)
+	// Must not panic. The reset-first recovery heals the poisoned scroll region.
 	_, _ = h.Write([]byte("\x1b[1;30r\x1b[9S\r\n"))
-	if !strings.Contains(out.String(), "dropped a frame") {
-		t.Fatalf("expected the dropped-frame marker in the log, got:\n%s", out.String())
+	if !strings.Contains(out.String(), "recovered from a terminal rendering panic") {
+		t.Fatalf("expected the recovery marker in the log, got:\n%s", out.String())
 	}
-	// The sanitizer keeps working on a fresh emulator: enough lines to scroll
+	// The sanitizer keeps working on the same emulator: enough lines to scroll
 	// the 24-row screen must still land in the log.
 	for i := 1; i <= 30; i++ {
 		_, _ = h.Write([]byte(fmt.Sprintf("after %02d\r\n", i)))
 	}
 	if !strings.Contains(out.String(), "after 01") {
 		t.Fatalf("scrolled lines after the recovery did not reach the log:\n%s", out.String())
+	}
+}
+
+// TestPtyHistoryNoGoroutineLeakOnPanic verifies that repeated panics do not
+// leak drainReplies goroutines. The reset-first recovery heals the state
+// without creating new emulators, so the pump count stays constant.
+func TestPtyHistoryNoGoroutineLeakOnPanic(t *testing.T) {
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 80, 24)
+
+	// Baseline: one pump (the drainReplies started in newPtyHistory).
+	before := runtime.NumGoroutine()
+
+	// Induce 50 panics. Without reset-first, each creates a new pump.
+	for i := 0; i < 50; i++ {
+		_, _ = h.Write([]byte("\x1b[1;30r\x1b[9S\r\n"))
+	}
+
+	// Allow goroutines to settle.
+	time.Sleep(100 * time.Millisecond)
+
+	after := runtime.NumGoroutine()
+	// Allow some jitter, but not 50 leaked pumps.
+	if after-before > 5 {
+		t.Fatalf("goroutine count grew by %d (before=%d, after=%d); expected reset-first recovery to avoid leaks", after-before, before, after)
 	}
 }
