@@ -30,6 +30,9 @@
 // @joestump-agent 09/21/2026 - Rewritten for harness#391: logs alongside
 // traces, a full-URL endpoint, gzip, a per-request timeout, a typed Result,
 // integer enums and single-field AnyValues. Export keeps its old contract.
+//
+// @joestump-agent 09/21/2026 - review: redirects are no longer followed, so a
+// collector credential never reaches a URL the operator did not configure.
 package otlpexport
 
 import (
@@ -56,6 +59,16 @@ const DefaultTimeout = 30 * time.Second
 
 // maxResponseBody bounds how much of a collector's reply is read.
 const maxResponseBody = 1 << 20
+
+// defaultClient is http.DefaultClient's transport without redirects. Go
+// follows a 307/308 by re-sending the body with every custom header — an
+// api-key header included — so a redirecting endpoint would get the batch
+// and the collector credential delivered to a URL nobody configured. A 3xx
+// is instead returned as it is, a permanent failure the operator sees in the
+// daemon log.
+var defaultClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 // Endpoint is where, and how, one request is sent.
 type Endpoint struct {
@@ -241,7 +254,7 @@ func post(ctx context.Context, ep Endpoint, body []byte, rejectedField string) R
 
 	client := ep.Client
 	if client == nil {
-		client = http.DefaultClient
+		client = defaultClient
 	}
 	resp, err := client.Do(req)
 	if err != nil {
