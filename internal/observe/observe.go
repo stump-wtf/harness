@@ -219,6 +219,7 @@ type Observer struct {
 	sessions   map[string]*session
 	tombstones map[string]time.Time
 	summaries  *tail.SummaryCache
+	lastSweep  time.Time // when summaries was last swept
 
 	// mu guards everything below. Sends to subscribers happen under it; they
 	// never block (select with default), so holding it across a fan-out is
@@ -249,6 +250,7 @@ func New(src Source, opts Options) *Observer {
 		sessions:   make(map[string]*session),
 		tombstones: make(map[string]time.Time),
 		summaries:  tail.NewSummaryCache(),
+		lastSweep:  opts.Now(),
 		subs:       make(map[*subscriber]struct{}),
 		stats: Stats{
 			Dropped:     make(map[string]uint64),

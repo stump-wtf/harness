@@ -29,6 +29,11 @@ package observe
 // Governing: issue #390; SPEC-0006 REQ "Run Correlation"; ADR-0007.
 //
 // @joestump-agent 09/21/2026 - Added for harness#390.
+//
+// @joestump-agent 09/21/2026 - review: force a summary-cache sweep every
+// ForgetAfter so a store that always fails cannot pin the cache; drop a
+// session whose transcript was deleted instead of counting a parse error
+// every scan; deep-copy target line ranges when redacting.
 
 import (
 	"context"
@@ -161,10 +166,17 @@ func (o *Observer) scan(ctx context.Context) {
 		}
 	}
 	o.forget(now)
-	// Only after every listing ran: an aborted scan has not looked up every
-	// live file, and sweeping would evict entries that are still current.
-	if complete {
+	// Normally only after every listing ran: an aborted scan has not looked up
+	// every live file, and sweeping would evict entries that are still
+	// current. But a store that fails every scan (an unreadable directory)
+	// would then block the sweep for the daemon's lifetime, and the cache
+	// would keep an entry for every transcript ever summarised. Past
+	// ForgetAfter without a sweep, sweep anyway: the cost is re-summarising
+	// the live files once, the alternative is unbounded growth. Sweep is
+	// mark-then-sweep, so a dead entry goes within two such sweeps.
+	if complete || now.Sub(o.lastSweep) > o.opts.ForgetAfter {
 		o.summaries.Sweep()
+		o.lastSweep = now
 	}
 	contested := 0
 	for _, st := range o.sessions {

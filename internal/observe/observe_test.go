@@ -3,6 +3,7 @@ package observe
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -654,6 +655,7 @@ type fakeAdapter struct {
 	id        string
 	cwd       string
 	failParse bool
+	failList  bool
 
 	mu     sync.Mutex
 	items  []fakeItem
@@ -695,6 +697,9 @@ func (a *fakeAdapter) WithRoot(string) tail.Adapter { return a }
 func (a *fakeAdapter) ListSessions(context.Context) ([]tail.SessionMeta, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.failList {
+		return nil, fmt.Errorf("fake: store unreadable")
+	}
 	if len(a.items) == 0 {
 		return nil, nil
 	}
@@ -751,4 +756,58 @@ func (f fullParseOnly) ListSessions(ctx context.Context) ([]tail.SessionMeta, er
 
 func (f fullParseOnly) Parse(ctx context.Context, path string) ([]classify.Event, []classify.Mark, tail.SessionMeta, error) {
 	return f.a.Parse(ctx, path)
+}
+
+// TestSummaryCacheBoundedDespiteFailingStore: the shared summary cache is swept
+// only after a scan in which every listing succeeded. A store that fails every
+// scan must not pin the cache for the daemon's lifetime — here a claude-code
+// transcript is summarised, then deleted, while a second harness's store never
+// lists; the cache entry must still go once ForgetAfter has passed.
+//
+// @joestump-agent 09/21/2026 - review: added with the forced-sweep fix.
+func TestSummaryCacheBoundedDespiteFailingStore(t *testing.T) {
+	broken := &fakeAdapter{kind: tail.HarnessCodex, id: "codex-broken", failList: true}
+	f := newFixture(t, func(o *Options) {
+		o.Sources = broken.sources(true)
+		o.ForgetAfter = time.Minute
+	})
+	broken.cwd = filepath.Join(f.home, "other")
+	f.src.add(core.Harness{Name: "codex", Adapter: "codex", Workdir: broken.cwd}, running(start.Add(-time.Hour)))
+	f.src.add(core.Harness{Name: "claude", Adapter: "claude-code", Workdir: f.work}, running(start.Add(-time.Hour)))
+	if err := os.MkdirAll(f.work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	proj := filepath.Join(f.home, ".claude", "projects", "p")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(proj, "cc-sess.jsonl")
+	line := fmt.Sprintf(`{"type":"user","timestamp":%q,"sessionId":"cc-sess","cwd":%q,"message":{"role":"user","content":"hello"}}`+"\n",
+		start.Add(time.Second).Format(time.RFC3339), f.work)
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, start.Add(time.Second), start.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	f.tick(start.Add(5 * time.Second))
+	if n := f.obs.summaries.Len(); n == 0 {
+		t.Fatalf("summary cache empty after listing a live transcript; the test cannot show eviction (stats %+v)", f.obs.Stats())
+	}
+	if st := f.obs.Stats(); st.ScanErrors == 0 {
+		t.Fatalf("the broken store listed cleanly; the test needs a failing listing (stats %+v)", st)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	// Sweep is mark-then-sweep (an entry survives the first sweep after its
+	// last use), so a forced sweep every ForgetAfter drops a dead entry
+	// within two of them.
+	for at := start.Add(30 * time.Second); !at.After(start.Add(3 * time.Minute)); at = at.Add(30 * time.Second) {
+		f.tick(at)
+	}
+	if n := f.obs.summaries.Len(); n != 0 {
+		t.Fatalf("summary cache holds %d entries for a deleted transcript while another store keeps failing; it is never swept", n)
+	}
 }
