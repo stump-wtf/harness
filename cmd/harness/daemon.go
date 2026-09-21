@@ -171,6 +171,16 @@ func warnTelemetryReload(running, reloaded core.TelemetryConfig) bool {
 	return true
 }
 
+// telemetryReloadWarning is the reload reaction runDaemon hands
+// startDaemonScheduler: after each reload it compares the reloaded
+// [telemetry] table with running, the table the pipeline was built from, and
+// warns when they differ (SPEC-0015 REQ-2). It rides the scheduler's hook
+// because the Manager holds exactly one; a function so a test drives the
+// same pairing the daemon registers.
+func telemetryReloadWarning(mgr *supervisor.Manager, running core.TelemetryConfig) func() {
+	return func() { warnTelemetryReload(running, mgr.Config().Telemetry) }
+}
+
 // runDaemon is the entry point for `harness daemon`. It owns its own flag set
 // (the daemon's flags don't overlap with the client verbs') and parses args
 // after the `daemon` subcommand token.
@@ -250,10 +260,7 @@ func runDaemon(o daemonOpts) {
 	// table waits for a restart, so every reload that changes it says so
 	// (SPEC-0015 REQ-2); it rides the scheduler's reload hook because the
 	// Manager holds exactly one.
-	runningTelemetry := cfg.Telemetry
-	sched := startDaemonScheduler(mgr, cfg, nil, func() {
-		warnTelemetryReload(runningTelemetry, mgr.Config().Telemetry)
-	})
+	sched := startDaemonScheduler(mgr, cfg, nil, telemetryReloadWarning(mgr, cfg.Telemetry))
 
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
