@@ -183,6 +183,11 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 		if len(h.parts) >= 1 && h.parts[0] == "profile" {
 			return nil, forbiddenTableErr(filename, full, h.line)
 		}
+		// Telemetry is consent to publish; a cloned repository does not get
+		// to grant it (SPEC-0014 REQ-2).
+		if len(h.parts) >= 1 && h.parts[0] == "telemetry" {
+			return nil, forbiddenTableErr(filename, full, h.line)
+		}
 	}
 
 	// Reuse the harness-namespace decode for [harness.*] and bare [name] tables.
@@ -309,6 +314,13 @@ func addProjectHarness(cfg *core.Config, filename, name string, line int, rh raw
 	if len(rh.MCPAllow) > 0 {
 		return newError(filename, line,
 			"harness %q: \"mcp_allow\" is not supported in project files (define capability scopes in the daemon's harness.toml)", name)
+	}
+	// export_telemetry may narrow publication from a project file, never
+	// widen it: opting out is always safe, opting in is the operator's call
+	// (SPEC-0014 REQ-2).
+	if rh.ExportTelemetry != nil && *rh.ExportTelemetry {
+		return newError(filename, line,
+			"harness %q: \"export_telemetry = true\" is not allowed in project files — the opt-in to publish transcripts belongs in the daemon's global harness.toml (a project file may set export_telemetry = false)", name)
 	}
 	return registerHarness(cfg, filename, name, line, rh, true,
 		func(p string) string { return resolvePath(p, projectRoot) })

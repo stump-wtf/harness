@@ -14,10 +14,20 @@
 # # and auto-reloads. Default is true (on). Set to false to require an
 # # explicit `harness reload` or SIGHUP after config changes.
 # watch_config = true
+
+# Optional agent telemetry export (ADR-0021, SPEC-0014). Nothing leaves the
+# daemon unless a destination below is on AND a harness is opted in with
+# export_telemetry = true (or export_all = true). Collector credentials never
+# go here: put OTEL_EXPORTER_OTLP_HEADERS in the env_file. Changing this table
+# needs a daemon restart. See docs/usage/production-observability.md.
 #
-# # otel_endpoint is accepted and reserved for OTLP/HTTP trace export, but the
-# # daemon does not export traces yet: setting it has no effect today.
-# otel_endpoint = "https://otel.example.com"
+# [telemetry]
+# logs = true                        # OTLP logs, one record per tool call/mark
+# traces = true                      # OTLP traces, one per agent session
+# events_file = "~/.local/state/harness/events.jsonl"  # local JSONL, no network
+# endpoint = "http://127.0.0.1:4318" # or OTEL_EXPORTER_OTLP_ENDPOINT
+# env_file = "/etc/harness/otel.env" # OTEL_EXPORTER_OTLP_* incl. headers
+# export_all = false
 
 # Each harness is one supervised process. The new-style [harness.<name>]
 # form is preferred; a bare [name] table is supported for backward
