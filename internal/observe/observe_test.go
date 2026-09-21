@@ -3,6 +3,7 @@ package observe
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -656,6 +657,7 @@ type fakeAdapter struct {
 	cwd       string
 	failParse bool
 	failList  bool
+	parseErr  error // returned by ParseSince when set
 
 	mu     sync.Mutex
 	items  []fakeItem
@@ -720,6 +722,9 @@ func (a *fakeAdapter) ParseSince(_ context.Context, _ string, wm int64, seq int)
 	defer a.mu.Unlock()
 	if a.failParse {
 		return nil, nil, tail.SessionMeta{}, 0, fmt.Errorf("fake: corrupt transcript")
+	}
+	if a.parseErr != nil {
+		return nil, nil, tail.SessionMeta{}, 0, a.parseErr
 	}
 	if int(wm) > len(a.items) {
 		return nil, nil, tail.SessionMeta{}, 0, nil
@@ -809,5 +814,49 @@ func TestSummaryCacheBoundedDespiteFailingStore(t *testing.T) {
 	}
 	if n := f.obs.summaries.Len(); n != 0 {
 		t.Fatalf("summary cache holds %d entries for a deleted transcript while another store keeps failing; it is never swept", n)
+	}
+}
+
+// TestDeletedTranscriptIsForgottenNotAnError: a transcript that disappears
+// under a tracked session is not a parse failure. It must not raise
+// ParseErrors on every scan (consumers report those as collection errors,
+// SPEC-0013 REQ-6); the session is dropped with a tombstone at once. The
+// control half shows a genuine parse failure still counts.
+//
+// @joestump-agent 09/21/2026 - review: added with the gone-session fix.
+func TestDeletedTranscriptIsForgottenNotAnError(t *testing.T) {
+	fa := &fakeAdapter{kind: tail.HarnessClaudeCode, id: "cc-1"}
+	f := newFixture(t, func(o *Options) { o.Sources = fa.sources(true) })
+	fa.cwd = f.work
+	f.src.add(core.Harness{Name: "claude", Adapter: "claude-code", Workdir: f.work}, running(start.Add(-time.Hour)))
+	fa.append(start, fakeItem{tool: "Bash"})
+	f.tick(start.Add(time.Second))
+	if st := f.obs.Stats(); st.Sessions != 1 {
+		t.Fatalf("Sessions = %d, want the session tracked", st.Sessions)
+	}
+
+	fa.mu.Lock()
+	fa.parseErr = fmt.Errorf("open transcript: %w", fs.ErrNotExist)
+	fa.mu.Unlock()
+	for i := 2; i < 6; i++ {
+		f.tick(start.Add(time.Duration(i) * time.Second))
+	}
+	st := f.obs.Stats()
+	if st.ParseErrors["claude-code"] != 0 {
+		t.Errorf("ParseErrors[claude-code] = %d for a deleted transcript, want 0", st.ParseErrors["claude-code"])
+	}
+	if st.Sessions != 0 {
+		t.Errorf("Sessions = %d, want the deleted session dropped", st.Sessions)
+	}
+	if _, ok := f.obs.tombstones["claude-code/cc-1"]; !ok {
+		t.Error("no tombstone for the dropped session: a reappearance could replay")
+	}
+
+	fa.mu.Lock()
+	fa.parseErr = fmt.Errorf("fake: corrupt transcript")
+	fa.mu.Unlock()
+	f.tick(start.Add(10 * time.Second))
+	if n := f.obs.Stats().ParseErrors["claude-code"]; n != 1 {
+		t.Errorf("ParseErrors[claude-code] = %d after a real parse failure, want 1", n)
 	}
 }

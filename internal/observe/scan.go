@@ -37,7 +37,10 @@ package observe
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"sort"
 	"time"
@@ -354,6 +357,17 @@ func (o *Observer) read(ctx context.Context, st *session, scopes []runtrace.Scop
 		if ctx.Err() != nil {
 			return // shutting down, not a parse failure
 		}
+		if gone(err) {
+			// The transcript was deleted (a removed JSONL, a session deleted
+			// in crush). That is not a broken collector: counting it would
+			// raise ParseErrors every scan until ForgetAfter, which a
+			// consumer reports as collection errors (SPEC-0013 REQ-6). Forget
+			// it now, with a tombstone, so a reappearance cannot replay.
+			o.log.Debug("agent observer: session gone", "session", st.id)
+			o.tombstones[st.id] = now
+			delete(o.sessions, st.id)
+			return
+		}
 		o.count(func(s *Stats) { s.ParseErrors[string(st.meta.Harness)]++ })
 		o.log.Debug("agent observer: read failed", "session", st.id, "err", err)
 		return
@@ -566,6 +580,12 @@ func redactTool(ev classify.Event) classify.Event {
 func redactMark(m classify.Mark) classify.Mark {
 	m.Note = redact.String(m.Note)
 	return m
+}
+
+// gone reports a read that failed because the session no longer exists,
+// rather than because it could not be parsed.
+func gone(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, sql.ErrNoRows)
 }
 
 // parseTime parses an agent-trace timestamp (RFC 3339, nanoseconds optional).
