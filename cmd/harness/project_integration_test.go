@@ -903,3 +903,21 @@ func TestCmdRmProjectScoped(t *testing.T) {
 		t.Errorf("error %q has %d %q prefixes, want exactly 1", err, n, "harness rm:")
 	}
 }
+
+// TestWireHarnessesCarriesTelemetryOptOut: a project file's
+// export_telemetry = false reaches the daemon, so [telemetry] export_all
+// cannot publish a harness its own project excluded (SPEC-0014 REQ-2).
+func TestWireHarnessesCarriesTelemetryOptOut(t *testing.T) {
+	dir := writeProjectDir(t, `[harness.private]
+harness = "crush"
+export_telemetry = false
+`)
+	proj, err := config.LoadProject(filepath.Join(dir, "harness.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := wireHarnesses(proj)
+	if len(wire) != 1 || wire[0].ExportTelemetry == nil || *wire[0].ExportTelemetry {
+		t.Fatalf("export_telemetry = false not carried onto the wire: %+v", wire)
+	}
+}
