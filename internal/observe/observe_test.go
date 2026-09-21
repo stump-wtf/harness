@@ -625,7 +625,7 @@ func TestCancelUnsubscribes(t *testing.T) {
 func TestRedactToolCopies(t *testing.T) {
 	in := classify.Event{
 		Summary: "curl -H token=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-		Targets: []classify.Target{{Path: "GITEA_TOKEN=abc123"}},
+		Targets: []classify.Target{{Path: "GITEA_TOKEN=abc123", Lines: [][2]int{{1, 2}}}},
 		Outside: []classify.OutsideTouch{{Path: "/tmp/password=hunter2"}},
 	}
 	out := redactTool(in)
@@ -636,6 +636,12 @@ func TestRedactToolCopies(t *testing.T) {
 	}
 	if in.Targets[0].Path != "GITEA_TOKEN=abc123" || in.Outside[0].Path != "/tmp/password=hunter2" {
 		t.Error("redactTool edited the input's slices in place")
+	}
+	// Target.Lines is a slice inside a slice element: a shallow copy of
+	// Targets would still share it between every subscriber's event.
+	out.Targets[0].Lines[0][0] = 99
+	if in.Targets[0].Lines[0][0] != 1 {
+		t.Error("redactTool shares Target.Lines with its input")
 	}
 }
 

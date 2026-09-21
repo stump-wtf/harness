@@ -561,6 +561,9 @@ func redactTool(ev classify.Event) classify.Event {
 		copy(ts, ev.Targets)
 		for i := range ts {
 			ts[i].Path = redact.String(ts[i].Path)
+			if ts[i].Lines != nil {
+				ts[i].Lines = append([][2]int(nil), ts[i].Lines...)
+			}
 		}
 		ev.Targets = ts
 	}
