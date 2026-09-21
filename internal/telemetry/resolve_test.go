@@ -199,7 +199,7 @@ func TestResolveWarningsAndSDKDisabled(t *testing.T) {
 func TestResolveResourceAttributes(t *testing.T) {
 	cfg := otlpCfg(func(c *core.TelemetryConfig) { c.Endpoint = "http://127.0.0.1:1" })
 	res, err := Resolve(cfg, Env{
-		Getenv:   envOf(map[string]string{"OTEL_RESOURCE_ATTRIBUTES": "deployment.environment=prod,service.name=evil,team=a%20b"}),
+		Getenv:   envOf(map[string]string{"OTEL_RESOURCE_ATTRIBUTES": "deployment.environment=prod,service.name=evil,team=a%20b,k8s.pod.Name=Web-1"}),
 		Hostname: func() (string, error) { return "box", nil },
 		Version:  "v2",
 	})
@@ -211,7 +211,8 @@ func TestResolveResourceAttributes(t *testing.T) {
 		got[kv.Key] = kv.Value
 	}
 	if got["service.name"] != "harness" || got["service.version"] != "v2" || got["host.name"] != "box" ||
-		got["deployment.environment"] != "prod" || got["team"] != "a b" {
+		got["deployment.environment"] != "prod" || got["team"] != "a b" ||
+		got["k8s.pod.Name"] != "Web-1" { // attribute keys are case-sensitive; values untouched
 		t.Fatalf("resource %v", got)
 	}
 }

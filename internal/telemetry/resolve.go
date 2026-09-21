@@ -27,6 +27,9 @@ package telemetry
 // Governing: ADR-0021; SPEC-0014 REQ-3, REQ-5, REQ-14; ADR-0008.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
+//
+// @joestump-agent 09/21/2026 - review: OTEL_RESOURCE_ATTRIBUTES keys keep
+// their case; only header names are lowercased.
 
 import (
 	"crypto/sha256"
@@ -318,7 +321,7 @@ func resolveSignal(name string, cfg core.TelemetryConfig, lookup func(string) (s
 		if v == "" {
 			continue
 		}
-		hs, bad := parseHeaders(v)
+		hs, bad := parseKVList(v, true)
 		for _, i := range bad {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("%s: entry %d is not name=value and was skipped", key, i+1))
 		}
@@ -385,7 +388,8 @@ func resourceAttrs(env Env, lookup func(string) (string, string), res *Resolved)
 	if v == "" {
 		return out
 	}
-	extra, bad := parseHeaders(v)
+	// Attribute keys are case-sensitive in OTel, unlike header names.
+	extra, bad := parseKVList(v, false)
 	for _, i := range bad {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("OTEL_RESOURCE_ATTRIBUTES: entry %d is not key=value and was skipped", i+1))
 	}
@@ -403,9 +407,11 @@ func resourceAttrs(env Env, lookup func(string) (string, string), res *Resolved)
 	return out
 }
 
-// parseHeaders parses the OTel "k=v,k2=v2" list with percent-decoded values,
-// keys lowercased. bad lists the indexes of malformed entries.
-func parseHeaders(s string) (map[string]string, []int) {
+// parseKVList parses the OTel "k=v,k2=v2" list with percent-decoded values,
+// lowercasing keys when lowerKeys (header names are case-insensitive;
+// resource attribute keys are not). bad lists the indexes of malformed
+// entries.
+func parseKVList(s string, lowerKeys bool) (map[string]string, []int) {
 	out := map[string]string{}
 	var bad []int
 	for i, part := range strings.Split(s, ",") {
@@ -423,7 +429,10 @@ func parseHeaders(s string) (map[string]string, []int) {
 		if dec, err := url.PathUnescape(v); err == nil {
 			v = dec
 		}
-		out[strings.ToLower(k)] = v
+		if lowerKeys {
+			k = strings.ToLower(k)
+		}
+		out[k] = v
 	}
 	return out, bad
 }
