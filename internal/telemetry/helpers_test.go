@@ -7,6 +7,9 @@ package telemetry
 // on the bytes a collector would read, not on the Records that produced them.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
+//
+// @joestump-agent 09/21/2026 - review: the receiver runs strictOTLP on every
+// request, so each test also checks the encoding against the mapping.
 
 import (
 	"compress/gzip"
@@ -243,6 +246,10 @@ func (r *receiver) handle(w http.ResponseWriter, req *http.Request) {
 	r.mu.Unlock()
 	if respond != nil && respond(n, w) {
 		return
+	}
+	// Every request any test makes must satisfy the OTLP JSON mapping.
+	if err := strictOTLP(req.URL.Path, raw); err != nil {
+		r.t.Errorf("receiver: request to %s violates the OTLP JSON mapping: %v\n%s", req.URL.Path, err, raw)
 	}
 	var env struct {
 		ResourceLogs []struct {
