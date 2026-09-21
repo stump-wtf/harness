@@ -374,3 +374,69 @@ func TestJSONLRecordsAfter(t *testing.T) {
 		t.Fatalf("records after the last complete line = %v, %v; want none", got, err)
 	}
 }
+
+// TestOrphanAndResumeInsideOnePoll: crush crashes mid-call, the supervisor
+// restarts it and it resumes and fails within one poll interval, so the read
+// that stops at the orphan is not held (it returns the completed call before
+// the orphan) and already sees every write after it. Those writes must not be
+// taken as "seen while held": the error must still be delivered without the
+// session writing again.
+func TestOrphanAndResumeInsideOnePoll(t *testing.T) {
+	f := newFixture(t, nil)
+	f.src.add(core.Harness{Name: "worker", Adapter: "crush", Workdir: f.work}, running(start.Add(-time.Hour)))
+	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{ID: "s", Created: start, Updated: start.Add(time.Second), Messages: []rt.CrushMessage{userSays("go", start.Add(time.Second))}})
+	ch, cancel := f.obs.Subscribe("test", 64)
+	defer cancel()
+	f.tick(start.Add(5 * time.Second))
+	if got, want := describe(drain(ch)), []string{"worker:mark:user-message@0"}; !equal(got, want) {
+		t.Fatalf("first scan delivered %v, want %v", got, want)
+	}
+	msgs := crushRead("c1", start.Add(6*time.Second))
+	msgs = append(msgs, crushCall("orphan", "grep", map[string]any{"pattern": "x"}, start.Add(7*time.Second)))
+	msgs = append(msgs, userSays("resume", start.Add(8*time.Second)), providerError("429", start.Add(9*time.Second)))
+	rt.AppendCrushMessages(t, f.crushDB(), "s", msgs...)
+	f.tick(start.Add(10 * time.Second))
+	f.tick(start.Add(15 * time.Second))
+	want := []string{"worker:tool:view@0", "worker:mark:user-message@1", "worker:mark:error@1"}
+	if got := describe(drain(ch)); !equal(got, want) {
+		t.Fatalf("delivered %v, want %v (stats %+v)", got, want, f.obs.Stats())
+	}
+}
+
+// TestManyOrphansRecoverAcrossChecks: more orphaned calls than one check may
+// skip. The first check stops at maxStallSkips; the session then writes
+// nothing, and the next check (one StallCheckInterval later) must still run
+// and finish the job rather than wait for a write that may never come.
+func TestManyOrphansRecoverAcrossChecks(t *testing.T) {
+	f := newFixture(t, nil)
+	f.src.add(core.Harness{Name: "worker", Adapter: "crush", Workdir: f.work}, running(start.Add(-time.Hour)))
+	orphanedSession(t, f)
+	ch, cancel := f.obs.Subscribe("test", 64)
+	defer cancel()
+	f.tick(start.Add(5 * time.Second))
+	drain(ch)
+	n := maxStallSkips + 3
+	var msgs []rt.CrushMessage
+	for i := 0; i < n; i++ {
+		at := start.Add(time.Duration(10+2*i) * time.Second)
+		msgs = append(msgs, userSays("resume", at), crushCall("o"+string(rune('a'+i)), "grep", map[string]any{"pattern": "x"}, at.Add(time.Second)))
+	}
+	msgs = append(msgs, providerError("still failing", start.Add(time.Duration(10+2*n)*time.Second)))
+	rt.AppendCrushMessages(t, f.crushDB(), "s", msgs...)
+	at := start.Add(time.Duration(15+2*n) * time.Second)
+	f.tick(at)
+	if got := len(drain(ch)); got != maxStallSkips {
+		t.Fatalf("first check delivered %d marks, want %d (one per skipped orphan)", got, maxStallSkips)
+	}
+	for i := 0; i < 8; i++ {
+		at = at.Add(5 * time.Second)
+		f.tick(at)
+	}
+	got := describe(drain(ch))
+	if len(got) != n+1-maxStallSkips || got[len(got)-1] != "worker:mark:error@1" {
+		t.Fatalf("later checks delivered %v, want the remaining %d marks, the error last (stats %+v)", got, n+1-maxStallSkips, f.obs.Stats())
+	}
+	if s := f.obs.Stats(); s.OrphansSkipped != uint64(n+1) {
+		t.Errorf("OrphansSkipped = %d, want %d", s.OrphansSkipped, n+1)
+	}
+}

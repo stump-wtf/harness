@@ -17,7 +17,9 @@ package observe
 //  1. A read is "held" when ParseSince returns the watermark it was given and
 //     nothing else. Every idle session is held, so this alone means nothing.
 //  2. It is suspect only if the session's EndedAt moved since the watermark
-//     was last seen held — something was written. That is free: it is the
+//     was last seen held — something was written — or if the read before it
+//     returned something, since that read may have stopped at an orphan with
+//     the session's later writes already behind it. That is free: it is the
 //     metadata ParseSince already returned.
 //  3. A suspect session is checked cheaply: are there two or more records
 //     past the watermark? A tool call legitimately in flight, and a row crush
@@ -46,7 +48,12 @@ package observe
 // since crush writes a call's row and its results' row separately and a killed
 // turn's row ends in the call. A call whose record precedes the orphan's and
 // whose result lands after it is dropped too; crush never writes that
-// interleaving.
+// interleaving, but Claude Code and Codex do for parallel tool calls (one
+// JSONL line per call, the results after all of them), so there an orphan
+// killed among parallel calls costs the completed calls beside it too. Only
+// the crush path is covered end to end. On JSONL the cheap count in step 3 is
+// also weaker: progress and event lines can pile up behind a call that is
+// still running, so a long call there may cost a rate-limited full Parse.
 //
 // Once agent-trace releases superseded calls itself, ParseSince returns those
 // marks and advances, so step 4 never finds a mark newer than what it
@@ -58,6 +65,10 @@ package observe
 //
 // @joestump-agent 09/21/2026 - Added: orphaned tool calls pinned a resumed
 // session's watermark forever.
+//
+// @joestump-agent 09/21/2026 - review: a read that returns items, and a
+// recovery that stops short, no longer record EndedAt as "seen while held";
+// either hid a pending stall until the session wrote again.
 
 import (
 	"bufio"
@@ -119,7 +130,7 @@ func (o *Observer) unstick(ctx context.Context, st *session, ip tail.Incremental
 		if err != nil || len(next) == 0 {
 			break
 		}
-		events, mks, meta, wm, err := ip.ParseSince(ctx, st.path, next[0], st.nextSeq)
+		events, mks, _, wm, err := ip.ParseSince(ctx, st.path, next[0], st.nextSeq)
 		if err != nil || wm < next[0] {
 			break // a rewrite or a failed read; the normal path deals with it
 		}
@@ -129,10 +140,12 @@ func (o *Observer) unstick(ctx context.Context, st *session, ip tail.Incremental
 		got := merge(events, mks)
 		st.note(got)
 		out = append(out, got...)
-		if t, ok := parseTime(meta.EndedAt); ok {
-			st.pinEnded = t
-		}
 	}
+	// Recovery may stop short: maxStallSkips reached, or the resumed read
+	// pinned again behind a further orphan. EndedAt has not moved since the
+	// check, so recording it would keep the next held read from looking until
+	// the session writes again; zero makes it look (cheaply, then rate-limited).
+	st.pinEnded = time.Time{}
 	return out
 }
 

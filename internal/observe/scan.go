@@ -39,6 +39,10 @@ package observe
 // fallback (stall.go). A forgotten session's tombstone now keeps its read
 // cursor, so a session rediscovered while a tool call was open delivers that
 // call instead of dropping it under the forget-time floor.
+//
+// @joestump-agent 09/21/2026 - review: a read that returns items leaves the
+// stall check armed, so an orphan and a resume landing in one poll interval
+// are recovered without waiting for the session to write again.
 
 import (
 	"context"
@@ -518,17 +522,18 @@ func (o *Observer) fetch(ctx context.Context, st *session, now time.Time) ([]ite
 		}
 		items := merge(events, marks)
 		st.note(items)
-		ended, _ := parseTime(meta.EndedAt)
-		switch {
-		case held:
+		if held {
+			ended, _ := parseTime(meta.EndedAt)
 			items = o.unstick(ctx, st, ip, ended, now)
-		case st.baseline:
-			// A first read may already stop at an orphaned call with the
-			// session's later writes behind it; leaving pinEnded zero makes
-			// the next held read look once, with a cheap record count.
+		} else {
+			// A read that returned something may already stop at an orphaned
+			// call with the session's later writes behind it — a crush that
+			// crashed, was restarted and resumed inside one poll interval
+			// writes the resume and its error before this read runs. Recording
+			// this read's EndedAt would hide those writes from every held read
+			// after it; leaving pinEnded zero makes the next held read look
+			// once, with a cheap record count.
 			st.pinEnded = time.Time{}
-		default:
-			st.pinEnded = ended
 		}
 		return items, false, nil
 	}
