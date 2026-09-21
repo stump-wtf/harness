@@ -172,3 +172,20 @@ func TestArchive(t *testing.T) {
 		}
 	}
 }
+
+// IsContextError is the guard's list exposed to the metrics classifier
+// (SPEC-0013 REQ-3). It must recognise an agent error note — plain text, not
+// a parts blob — case-insensitively, and nothing else.
+func TestIsContextErrorOnNotes(t *testing.T) {
+	for note, want := range map[string]bool{
+		"Bad Request: litellm.ContextWindowExceededError: prompt contains at least 196609 input tokens": true,
+		"prompt is too long: 213000 tokens > 200000 maximum":                                            true,
+		"This model's maximum context length is 128000 tokens":                                          true,
+		"Too Many Requests: rate_limit_error":                                                           false,
+		"":                                                                                              false,
+	} {
+		if got := IsContextError(note); got != want {
+			t.Errorf("IsContextError(%q) = %v, want %v", note, got, want)
+		}
+	}
+}
