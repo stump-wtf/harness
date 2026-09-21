@@ -100,16 +100,19 @@ the exporter stays a pure "send this request, tell me what happened" function
 that is trivial to test against `httptest`, and the policy that needs a clock
 lives where the clock is injected.
 
-## Item IDs are assigned once, for every sink
+## Item IDs are a function of the item
 
 Each signal takes its own observer subscription, so under pressure the logs
-sink may lose an item the traces sink kept. A per-sink ordinal counter would
-then disagree about every later item sharing a `seq`, and the log record and
-span for one item would carry different IDs. `internal/telemetry` therefore
-keeps one ordinal registry shared by all three sinks, keyed by the item's
-content (kind, seq, mark type and note, tool and summary, timestamp), and
-bounded like the trace context (sessions forgotten after 24h, at most 4096
-kept). SPEC-0014 REQ-7 was tightened to say so.
+sink may lose an item the traces sink kept, and the observer does not replay
+history across a restart. Any ID built from a count of items seen — per sink or
+per daemon — would therefore disagree between sinks or between lifetimes, and
+the second is not hypothetical: during a provider outage every retry's marks
+share one `seq`, so a restart mid-outage would hand new marks old IDs. The item
+ID is instead hashed from a content key (tool, summary and timestamp; or mark
+type, timestamp and note), which every sink and every lifetime compute alike
+with no shared state. SPEC-0014 REQ-7 defines it. An earlier draft used a
+shared first-seen ordinal registry; review replaced it because it restarted at
+zero with the daemon.
 
 ## Configuration resolution
 
