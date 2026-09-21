@@ -30,6 +30,7 @@ import (
 	"github.com/stump-wtf/harness/internal/config"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/daemon"
+	"github.com/stump-wtf/harness/internal/observe"
 	"github.com/stump-wtf/harness/internal/remote"
 	"github.com/stump-wtf/harness/internal/scheduler"
 	"github.com/stump-wtf/harness/internal/supervisor"
@@ -63,6 +64,25 @@ func daemonManagerOptions(reg *attach.Registry) supervisor.ManagerOptions {
 		// the size of that client's viewport, not 80×24 (ADR-0003).
 		SizeFor: reg.SizeFor,
 	}
+}
+
+// daemonObserverOptions is the agent event observer configuration the daemon
+// runs with: production defaults throughout. It is a function, like
+// daemonManagerOptions, so the wiring test drives the observer the daemon
+// builds and shrinks only its poll interval.
+//
+// Governing: issue #390.
+func daemonObserverOptions() observe.Options {
+	return observe.Options{}
+}
+
+// startDaemonObserver builds the agent event observer over the daemon's own
+// Manager and starts it. The daemon stops it on shutdown, before the Manager
+// closes.
+func startDaemonObserver(mgr *supervisor.Manager, opts observe.Options) *observe.Observer {
+	obs := observe.New(mgr, opts)
+	obs.Start()
+	return obs
 }
 
 // runDaemon is the entry point for `harness daemon`. It owns its own flag set
@@ -184,6 +204,14 @@ func runDaemon(o daemonOpts) {
 	sessionGuard.Start()
 	log.Info("session guard active", "interval", supervisor.DefaultSessionGuardInterval, "lookback", supervisor.DefaultSessionGuardLookback)
 
+	// Issue #390: read what the supervised agents write — tool calls, and the
+	// provider errors a running process never surfaces — for the metrics and
+	// telemetry consumers that subscribe to it. Built after Autostart, so its
+	// history floor is this daemon's start and nothing from before it is
+	// reported as live.
+	observer := startDaemonObserver(mgr, daemonObserverOptions())
+	log.Info("agent event observer active", "interval", observe.DefaultPollInterval)
+
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
 	// tear down connections, stop harnesses, flush state. SIGHUP triggers a
 	// graceful config reload (hot-reload harness.toml without stopping running
@@ -217,6 +245,8 @@ func runDaemon(o daemonOpts) {
 	}
 
 	log.Info("shutting down")
+	// Before the Manager closes: the observer reads its snapshots.
+	observer.Stop()
 	sessionGuard.Close()
 	mgr.SetSessionGuard(nil)
 	if cfgWatcher != nil {
