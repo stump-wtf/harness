@@ -6,7 +6,7 @@ extends: [adr-0003, adr-0005]
 related: [adr-0013]
 ---
 
-# ADR-0019: Harness Exposes Prometheus Metrics, Led by Model Reachability
+# ADR-0020: Harness Exposes Prometheus Metrics, Led by Model Reachability
 
 ## Context and Problem Statement
 
@@ -94,7 +94,7 @@ Binding to loopback by default is deliberate. Harness runs on personal machines
 as well as agent boxes, and an always-on listener exposing which agents exist and
 how they are faring should be opted into per host, not shipped on.
 
-SPEC-0012 defines names, labels and types.
+SPEC-0013 defines names, labels and types.
 
 ### Consequences
 
@@ -106,7 +106,7 @@ SPEC-0012 defines names, labels and types.
   budget on failing launches is visible before the budget is gone.
 * Bad: a new dependency and a listener that did not previously exist.
 * Bad: harness names are operator-chosen labels. They are bounded in practice
-  (single digits per host) but the cap in SPEC-0012 exists because "in practice"
+  (single digits per host) but the cap in SPEC-0013 exists because "in practice"
   is not a guarantee.
 * Neutral: loopback-by-default means remote scraping requires a deliberate
   config change per host, which is the intent.
@@ -115,7 +115,7 @@ SPEC-0012 defines names, labels and types.
 
 * The incident: four supervised agents down ~20h on a provider quota, reported
   `running` throughout.
-* SPEC-0012 (metrics).
+* SPEC-0013 (metrics).
 * Related and complementary: making `harness list` itself distinguish a degraded
   harness. Metrics give history and alerting; the CLI gives the human answer at a
   glance. Neither replaces the other.
