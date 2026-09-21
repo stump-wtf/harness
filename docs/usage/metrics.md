@@ -64,7 +64,9 @@ readable by group or others, the daemon logs a warning.
 machine, because any local account can connect to `127.0.0.1`.
 
 Changing either key **requires a daemon restart**. `harness reload` re-reads
-harness definitions but does not rebind listeners.
+harness definitions but does not rebind listeners. The token file is also read
+once, at startup, so rotating the token means rewriting the file and then
+restarting the daemon.
 
 If the port is already in use, the daemon logs an error and keeps supervising
 without the listener. Your scraper then sees the target as down (`up == 0`),
@@ -175,9 +177,9 @@ match provider wording:
   `503`, and provider overload (`529 overloaded_error`). Overload counts as
   transport, not quota. It reflects the provider's capacity, has no reset
   time, and clears on its own.
-- **other**: everything else. This includes context-window rejections, which
-  the daemon recognises and handles separately (see the session guard in
-  [Supervision](./supervision)).
+- **other**: everything else. This includes context-window rejections. The
+  daemon recognises those (its session guard rotates a Crush session that is
+  wedged on them), so they are counted as `other` but never as unclassified.
 
 If the unclassified counter starts rising, a provider has probably changed its
 error wording.
