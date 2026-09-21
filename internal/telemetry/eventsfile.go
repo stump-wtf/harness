@@ -29,6 +29,10 @@ package telemetry
 // @joestump-agent 09/21/2026 - Truncate a failed write back to the pre-write
 // size, and open the file through an EventsFileHandle seam so tests can
 // inject a short write or a hung one.
+//
+// @joestump-agent 09/21/2026 - review: cut at the file's current size minus
+// the bytes written, not the tracked size, so a copy-truncate between
+// batches cannot turn the cut into a NUL-filled extension.
 
 import (
 	"errors"
@@ -121,7 +125,7 @@ func (w *eventsFile) write(data []byte) error {
 		// Part of the batch may be on disk; cut it off so the file still
 		// ends on a line boundary (REQ-8). O_APPEND puts the next write at
 		// the new end.
-		if terr := w.f.Truncate(w.size); terr != nil {
+		if terr := w.cutPartial(n); terr != nil {
 			w.close()
 			return fmt.Errorf("write events file: %w (%d bytes written; truncating the partial line failed: %v)", err, n, terr)
 		}
@@ -130,6 +134,27 @@ func (w *eventsFile) write(data []byte) error {
 	}
 	w.size += int64(n)
 	return nil
+}
+
+// cutPartial removes the n bytes a failed append landed. The cut point comes
+// from the file's size now, not w.size: an external copy-truncate (logrotate's
+// copytruncate) shrinks the file under us, and truncating to a stale, larger
+// w.size would EXTEND the file with NUL bytes behind the partial line — a
+// corrupt record where there should be none. w.size is only the fallback when
+// stat fails, and the cut never grows the file.
+func (w *eventsFile) cutPartial(n int) error {
+	if n <= 0 {
+		return nil
+	}
+	info, err := w.f.Stat()
+	if err != nil {
+		return w.f.Truncate(w.size)
+	}
+	pre := max(info.Size()-int64(n), 0)
+	if info.Size() <= pre {
+		return nil
+	}
+	return w.f.Truncate(pre)
 }
 
 // rotate shifts events.jsonl → .1 → … → .keep, dropping what falls off.
