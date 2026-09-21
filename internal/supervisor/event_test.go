@@ -62,3 +62,44 @@ func TestBusBackpressureNeverBlocks(t *testing.T) {
 		t.Fatal("Publish blocked on a slow subscriber (no backpressure drop)")
 	}
 }
+
+// A stalled subscriber's losses are counted against it alone: a subscriber
+// that keeps up reports zero, and the stalled one reports exactly the events
+// published past its buffer. The count survives cancel, so a consumer that
+// reads it on the way out still sees the whole loss. (harness#356: the
+// metrics collector reports this count so its transition counters cannot
+// undercount silently, SPEC-0013 REQ-6.)
+func TestBusCountsDropsPerSubscriber(t *testing.T) {
+	b := NewBus()
+	_, cancelStalled, stalledDrops := b.SubscribeCounted()
+	live, cancelLive, liveDrops := b.SubscribeCounted()
+	defer cancelLive()
+
+	const extra = 7
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range live {
+		}
+	}()
+	for i := 0; i < subBuffer+extra; i++ {
+		b.Publish(Event{Kind: EventStateChanged, Name: "a"})
+		// Let the live reader keep pace, so only the stalled one overflows.
+		for len(live) > 0 {
+			time.Sleep(time.Microsecond)
+		}
+	}
+	if got := stalledDrops(); got != extra {
+		t.Errorf("stalled subscriber dropped %d, want %d", got, extra)
+	}
+	if got := liveDrops(); got != 0 {
+		t.Errorf("a subscriber that kept up dropped %d, want 0", got)
+	}
+	cancelStalled()
+	b.Publish(Event{Kind: EventStateChanged, Name: "a"})
+	if got := stalledDrops(); got != extra {
+		t.Errorf("after cancel the count moved or reset: %d, want %d", got, extra)
+	}
+	cancelLive()
+	<-done
+}
