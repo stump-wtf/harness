@@ -70,6 +70,16 @@ at that instant). `harness_state_transitions_total{to}` uses the seven core
 state names instead: a transition event carries no crash-loop flag, so mapping
 it to four would miscount.
 
+A harness held by its operating hours (SPEC-0012, `Snapshot.Held`) maps to
+`stopped`, second in priority after `failed`. The gate shuts it down on
+purpose, so crash-loop history caught mid-hold must not read as `flapping`.
+The supervisor never holds a failed harness, so held-and-failed cannot arise;
+were it to, `failed` is the state that needs a human. REQ-2's four values are
+fixed, so held gets no value of its own. **Follow-up:** if operators need to
+tell "held by hours" from "stopped by an operator", add a separate series such
+as `harness_harness_held{harness}` (0|1) instead of extending the `state`
+enum.
+
 ### Where model reachability comes from
 
 The observer (`internal/observe`, #390) reads each agent's own transcript. A
