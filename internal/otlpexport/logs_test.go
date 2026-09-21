@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -211,5 +212,32 @@ func TestSendGzip(t *testing.T) {
 	r := SendLogs(context.Background(), Endpoint{URL: srv.URL, Gzip: true}, Resource{}, Scope{}, []LogRecord{{Body: "zipped"}})
 	if !r.OK() || !strings.Contains(string(plain), "zipped") {
 		t.Fatalf("result %+v body %s", r, plain)
+	}
+}
+
+// Go's default client follows a 307/308 and re-sends the body with every
+// custom header — an api-key header included; it strips only Authorization
+// and Cookie, and only across domains. A collector (or anything answering on
+// its address) that redirects would receive the transcript batch and the
+// collector credential at a URL the operator never configured. The exporter
+// must not follow redirects.
+func TestSendDoesNotFollowRedirectsWithCredentials(t *testing.T) {
+	var elsewhere atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhere.Add(1)
+	}))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/v1/logs", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+
+	res := SendLogs(context.Background(), Endpoint{URL: srv.URL + "/v1/logs", Headers: map[string]string{"x-api-key": "s3cret"}},
+		Resource{}, Scope{Name: "s"}, []LogRecord{{Body: "b"}})
+	if elsewhere.Load() != 0 {
+		t.Fatal("the request, headers and body were re-sent to the redirect target")
+	}
+	if res.OK() || res.Retryable || res.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("result %+v, want a permanent failure carrying the 307", res)
 	}
 }
