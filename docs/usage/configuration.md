@@ -37,6 +37,7 @@ enabled = false
 | `restart_delay` | seconds to wait before restarting a harness that exited |
 | `backend` | hosting strategy: `native` (default) or `tmux` |
 | `tmux_socket` | tmux socket name; only used when `backend = "tmux"` |
+| `export_telemetry` | publish this harness's agent activity to the [telemetry](#telemetry-export-telemetry) destinations: `true` opts in, `false` opts out (and beats `export_all`), unset follows `[telemetry] export_all`. A project file may set only `false`. Applies on reload |
 
 An **agent one-shot** replaces `args` with a `prompt` (or a `prompt_file`) —
 see the next section.
@@ -340,9 +341,11 @@ risk.
 
 :::note Reserved, not yet active
 
-The daemon does not run the MCP facade (ADR-0010) or any trajectory export
-today. These keys are validated and kept in config — the TUI edit form
-round-trips them — but setting them changes nothing at runtime yet.
+The daemon does not run the MCP facade (ADR-0010) today. These keys are
+validated and kept in config — the TUI edit form round-trips them — but setting
+them changes nothing at runtime yet. They are **not** the telemetry opt-in:
+exporting to a collector is a different audience, gated by `export_telemetry`
+(see [Telemetry export](#telemetry-export-telemetry)).
 
 :::
 
@@ -363,9 +366,127 @@ round-trips them — but setting them changes nothing at runtime yet.
 watch_config = true   # auto-reload on config file changes (default true)
 ```
 
-`watch_config` is the only daemon setting with a runtime effect today.
-`otel_endpoint` is also accepted (an OTLP/HTTP URL for trace export), but
-nothing in the daemon exports traces yet, so setting it does nothing.
+`watch_config` is the only daemon setting.
+
+`otel_endpoint` has been **removed**: it was accepted but never exported
+anything. A config that still sets it fails to load, with an error pointing
+here. To export agent telemetry, add a [`[telemetry]`](#telemetry-export-telemetry)
+table with `traces = true` (and/or `logs = true`) and set `endpoint` there or
+`OTEL_EXPORTER_OTLP_ENDPOINT` in the daemon's environment. It is deliberately
+not an alias: an inert line in an old config must not start publishing agent
+transcripts on upgrade.
+
+## Telemetry export (`[telemetry]`)
+
+The daemon can export what its supervised agents do — every tool call and every
+mark (user message, compaction, subagent launch, provider error) — as **OTLP
+logs**, **OTLP traces**, and a **local JSONL events file**. The
+[production observability guide](./production-observability) shows collector,
+Grafana (Loki/Tempo), Honeycomb and Vector/Fluent Bit setups; this is the key
+reference (ADR-0021, SPEC-0014).
+
+Nothing is exported without **two** consents: a destination in this table, and a
+harness that opted in (`export_telemetry = true` on the harness, or
+`export_all = true` here). Environment variables alone never enable export — an
+`OTEL_EXPORTER_OTLP_ENDPOINT` inherited from your shell is only mentioned in the
+daemon log. With no destination configured the daemon opens no socket, creates
+no file and subscribes to nothing.
+
+```toml
+[telemetry]
+logs   = true                     # OTLP logs: one record per tool call or mark
+traces = true                     # OTLP traces: one trace per agent session
+events_file = "~/.local/state/harness/events.jsonl"  # local JSONL; empty = off
+
+export_all   = false              # every harness without export_telemetry contributes
+omit_prompts = false              # replace prompt text with "[prompt omitted]"
+
+endpoint    = "http://127.0.0.1:4318"   # OTLP/HTTP base; /v1/logs and /v1/traces are appended
+env_file    = "/etc/harness/otel.env"   # OTEL_EXPORTER_OTLP_* (headers/credentials go here)
+compression = "none"              # "none" | "gzip"
+timeout     = "10s"               # per request
+
+queue_size       = 2048           # per signal (records, spans or lines); oldest dropped when full
+batch_size       = 512            # max per request; must not exceed queue_size
+batch_interval   = "5s"           # flush a partial batch after this long
+idle_flush       = "5m"           # export a session's trace after this long without items
+shutdown_timeout = "5s"           # total budget for the shutdown flush
+events_file_max_mb = 100          # rotate the events file (by rename) at this size
+events_file_keep   = 5            # rotated files kept: events.jsonl.1 … .5
+```
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `logs` | `false` | enable the OTLP logs signal |
+| `traces` | `false` | enable the OTLP traces signal |
+| `events_file` | `""` (off) | path of the JSONL sink; `~` expands, relative paths resolve against the config file's directory. File `0600`, created directories `0700` |
+| `export_all` | `false` | harnesses with no `export_telemetry` contribute |
+| `omit_prompts` | `false` | replace user-message text with `[prompt omitted]` and drop the session title |
+| `endpoint` | `""` | absolute `http`/`https` base URL with a host and **no userinfo** |
+| `env_file` | `""` | file supplying the `OTEL_EXPORTER_OTLP_*` variables below; only those keys are read, and none are put into the daemon's environment, so supervised harnesses never inherit the credential. Missing or unreadable fails startup when an OTLP signal is on; group/world-readable is a warning |
+| `compression` | `"none"` | `none` or `gzip` |
+| `timeout` | `"10s"` | per-request timeout |
+| `queue_size` | `2048` | per-signal bounded queue |
+| `batch_size` | `512` | units per request (or per events-file write) |
+| `batch_interval` | `"5s"` | partial-batch flush interval |
+| `idle_flush` | `"5m"` | trace export after a quiet session; at least `batch_interval` |
+| `shutdown_timeout` | `"5s"` | shutdown flush budget |
+| `events_file_max_mb` | `100` | rotation size |
+| `events_file_keep` | `5` | rotated files kept |
+
+Durations must be positive; integers must be positive. A **`headers` key is
+rejected** — OTLP headers carry credentials, and `harness.toml` carries none
+(ADR-0008). Put them in `OTEL_EXPORTER_OTLP_HEADERS`, preferably via `env_file`.
+
+**Scope.** The table belongs to the daemon's global `harness.toml` only: a
+project `harness.toml` and a `harness_d` drop-in both reject it. A project file
+may set `export_telemetry = false` on its harnesses but not `true` — a cloned
+repository does not get to publish its transcripts to your collector.
+
+**Changes need a restart.** The exporters hold queues, connections and an open
+file, so an edited `[telemetry]` table takes effect on the next daemon start; a
+reload logs a warning saying so. Per-harness `export_telemetry` changes apply on
+reload, from the next item.
+
+### The OpenTelemetry environment
+
+The standard OTLP exporter variables are honoured, from the daemon's process
+environment first and then from `env_file`:
+
+| Variable | Meaning |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | base URL; `/v1/logs` and `/v1/traces` are appended |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | full signal URL, used as-is |
+| `OTEL_EXPORTER_OTLP_HEADERS` (+ `_LOGS_` / `_TRACES_`) | `name=value,name2=value2`, values percent-decoded; merged, signal-specific wins per name |
+| `OTEL_EXPORTER_OTLP_COMPRESSION` (+ `_LOGS_` / `_TRACES_`) | `none` or `gzip` |
+| `OTEL_EXPORTER_OTLP_TIMEOUT` (+ `_LOGS_` / `_TRACES_`) | milliseconds |
+| `OTEL_RESOURCE_ATTRIBUTES` | extra resource attributes (cannot override `service.name`) |
+| `OTEL_SDK_DISABLED=true` | turns both OTLP signals off |
+
+Precedence, per setting and per signal: **signal-specific variable > generic
+variable > `[telemetry]` > default**. An exported-but-empty variable counts as
+unset. `OTEL_EXPORTER_OTLP_PROTOCOL` set to anything but `http/json` is ignored
+with a warning: Harness speaks only OTLP/HTTP JSON. An enabled OTLP signal with
+no endpoint anywhere refuses to start.
+
+At startup the daemon logs one line per signal with the resolved endpoint, the
+source of each setting (`env`, `env_file`, `file`, `default`), and each header
+as its name plus a SHA-256 fingerprint — never a value.
+
+### What is exported
+
+Every string is redacted with the same rules as `harness logs` before it is
+queued, and capped (a record body at 4 KiB, a span name at 256 bytes, other
+attributes at 1 KiB, at most 32 targets). Tool output and file contents are
+never read, so never exported. A failed tool call is `WARN`; a provider or model
+error mark is `ERROR`, so an alert on `ERROR` means a turn failed. Log records
+and spans for the same item share `traceId`/`spanId`, and every item carries
+`agent.item.id` as a deduplication key.
+
+A dead collector costs counted, dropped telemetry and nothing else: failed
+requests retry with backoff (429/502/503/504 and network errors, honouring
+`Retry-After`) for up to five minutes per batch, queues drop their oldest units
+when full, and failures reach the daemon log at most once a minute per signal.
 
 ## Restart policy
 
