@@ -93,7 +93,7 @@ func startDaemonObserver(mgr *supervisor.Manager, opts observe.Options) *observe
 // error — an enabled OTLP signal with no endpoint, a missing env_file — must
 // refuse the start, so the daemon calls this before Autostart.
 //
-// Governing: ADR-0021; SPEC-0014 REQ-1, REQ-3, REQ-14.
+// Governing: ADR-0022; SPEC-0015 REQ-1, REQ-3, REQ-14.
 func resolveDaemonTelemetry(tc core.TelemetryConfig, env telemetry.Env) (*telemetry.Resolved, error) {
 	if note := telemetry.IgnoredEnvNote(tc, env.Getenv); note != "" {
 		log.Info(note)
@@ -117,7 +117,7 @@ func resolveDaemonTelemetry(tc core.TelemetryConfig, env telemetry.Env) (*teleme
 // It is a function, like daemonManagerOptions, so the wiring test drives the
 // pipeline the daemon builds.
 //
-// Governing: ADR-0021; SPEC-0014 REQ-9, REQ-14.
+// Governing: ADR-0022; SPEC-0015 REQ-9, REQ-14.
 func startDaemonTelemetry(res *telemetry.Resolved, obs telemetry.Subscriber, src telemetry.Source, opts telemetry.Options) *telemetry.Pipeline {
 	if !res.Enabled() {
 		return nil
@@ -135,7 +135,7 @@ func startDaemonTelemetry(res *telemetry.Resolved, obs telemetry.Subscriber, src
 
 // warnTelemetryReload logs, once per reload, that a changed [telemetry] table
 // waits for a restart: the exporters hold queues, connections and an open
-// file (SPEC-0014 REQ-2). Per-harness export_telemetry needs no warning; the
+// file (SPEC-0015 REQ-2). Per-harness export_telemetry needs no warning; the
 // gate reads the current definition for every item.
 func warnTelemetryReload(running, reloaded core.TelemetryConfig) bool {
 	if running == reloaded {
@@ -181,7 +181,7 @@ func runDaemon(o daemonOpts) {
 		cfg = &core.Config{}
 	}
 
-	// Telemetry export (ADR-0021): resolved before any harness starts, so a
+	// Telemetry export (ADR-0022): resolved before any harness starts, so a
 	// signal that is consented to but cannot be delivered refuses the start.
 	telemetryRes, err := resolveDaemonTelemetry(cfg.Telemetry, telemetry.ProcessEnv(buildinfo.Version))
 	if err != nil {
@@ -223,7 +223,7 @@ func runDaemon(o daemonOpts) {
 	// Scheduled harnesses and the operating-hours gate share one wall-clock
 	// tick (ADR-0013, ADR-0019). nil is the real clock. A changed [telemetry]
 	// table waits for a restart, so every reload that changes it says so
-	// (SPEC-0014 REQ-2); it rides the scheduler's reload hook because the
+	// (SPEC-0015 REQ-2); it rides the scheduler's reload hook because the
 	// Manager holds exactly one.
 	runningTelemetry := cfg.Telemetry
 	sched := startDaemonScheduler(mgr, cfg, nil, func() {
@@ -287,7 +287,7 @@ func runDaemon(o daemonOpts) {
 	log.Info("agent event observer active", "interval", observe.DefaultPollInterval)
 
 	// Issue #391: export that stream, only when [telemetry] names a
-	// destination and only for opted-in harnesses (SPEC-0014 REQ-1).
+	// destination and only for opted-in harnesses (SPEC-0015 REQ-1).
 	telemetryPipeline := startDaemonTelemetry(telemetryRes, observer, mgr, telemetry.Options{})
 
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
@@ -324,7 +324,7 @@ func runDaemon(o daemonOpts) {
 
 	log.Info("shutting down")
 	// Telemetry first: it stops taking items, then flushes within
-	// shutdown_timeout (SPEC-0014 REQ-11). The flush runs alongside the rest
+	// shutdown_timeout (SPEC-0015 REQ-11). The flush runs alongside the rest
 	// of shutdown rather than ahead of it, so it never delays the harnesses'
 	// own stop; the daemon waits for it only at the very end.
 	telemetryDone := make(chan struct{})

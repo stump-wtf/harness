@@ -124,7 +124,7 @@ type HarnessForm struct {
 	// OperatingHours (Validate mirrors the parser).
 	HoursShutdown        string
 	HoursShutdownTimeout string
-	// ExportTelemetry is the tri-state telemetry opt-in (SPEC-0014 REQ-1):
+	// ExportTelemetry is the tri-state telemetry opt-in (SPEC-0015 REQ-1):
 	// "" leaves the key out (follow [telemetry] export_all), "true"/"false"
 	// write it. A string rather than a bool because "unset" and "false" mean
 	// different things once export_all is on. Round-trip field (issue #161):

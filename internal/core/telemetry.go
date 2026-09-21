@@ -15,13 +15,13 @@ package core
 // their zero value when the table does not set them, so the resolver can say
 // whether a setting came from the file or from its default.
 //
-// Governing: ADR-0021; SPEC-0014 REQ-1, REQ-2.
+// Governing: ADR-0022; SPEC-0015 REQ-1, REQ-2.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
 
 import "time"
 
-// Telemetry defaults (SPEC-0014 REQ-2).
+// Telemetry defaults (SPEC-0015 REQ-2).
 const (
 	DefaultTelemetryTimeout         = 10 * time.Second
 	DefaultTelemetryQueueSize       = 2048
@@ -37,7 +37,7 @@ const (
 type TelemetryConfig struct {
 	// Logs, Traces and EventsFile are the three destinations. At least one
 	// must be on for anything to be exported; environment variables alone
-	// never enable a signal (SPEC-0014 REQ-1).
+	// never enable a signal (SPEC-0015 REQ-1).
 	Logs   bool
 	Traces bool
 	// EventsFile is the resolved path of the local JSONL sink; empty is off.
@@ -118,7 +118,7 @@ func (t TelemetryConfig) WithDefaults() TelemetryConfig {
 }
 
 // Enabled reports whether any destination is configured — the first of the
-// two consents SPEC-0014 REQ-1 requires.
+// two consents SPEC-0015 REQ-1 requires.
 func (t TelemetryConfig) Enabled() bool {
 	return t.Logs || t.Traces || t.EventsFile != ""
 }
@@ -135,7 +135,7 @@ func (t TelemetryConfig) OTLPEnabled() bool { return t.Logs || t.Traces }
 //	unset            | true       | yes
 //	unset            | false      | no
 //
-// Governing: SPEC-0014 REQ-1.
+// Governing: SPEC-0015 REQ-1.
 func ContributesTelemetry(h Harness, exportAll bool) bool {
 	if h.ExportTelemetry != nil {
 		return *h.ExportTelemetry

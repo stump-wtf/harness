@@ -52,7 +52,7 @@ type rawHarness struct {
 	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
 	MCPAllow          []string `toml:"mcp_allow"`
 	// ExportTelemetry is the per-harness telemetry opt-in; nil follows
-	// [telemetry] export_all (SPEC-0014 REQ-1).
+	// [telemetry] export_all (SPEC-0015 REQ-1).
 	ExportTelemetry *bool `toml:"export_telemetry"`
 
 	// OperatingHours gates a resident harness to weekly windows (ADR-0019).
@@ -89,7 +89,7 @@ type rawProfile struct {
 type rawDaemon struct {
 	WatchConfig *bool `toml:"watch_config"`
 	// RemovedOTelEndpoint is decoded only so its presence can be REJECTED
-	// with a migration error (SPEC-0014 REQ-13), like rawHarness's removed
+	// with a migration error (SPEC-0015 REQ-13), like rawHarness's removed
 	// keys: unknown keys fail anyway, but this one deserves the way forward.
 	RemovedOTelEndpoint *string `toml:"otel_endpoint"`
 }
@@ -238,7 +238,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 			cfg.Daemon = core.DaemonConfig{WatchConfig: rd.WatchConfig}
 
 		case len(h.parts) == 1 && h.parts[0] == "telemetry":
-			// The global telemetry export table (ADR-0021, SPEC-0014 REQ-2).
+			// The global telemetry export table (ADR-0022, SPEC-0015 REQ-2).
 			if telemetrySeen {
 				return nil, newError(filename, h.line, "duplicate [telemetry] table")
 			}
