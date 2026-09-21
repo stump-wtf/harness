@@ -26,9 +26,7 @@
 // a stall is proven only by a mark (a user message, a provider error) written
 // after the orphan, which every resume writes; the orphaned call is never
 // delivered; and adapters other than crush, Claude Code and Codex get no
-// fallback. A session whose tool call stays open longer than the listing
-// window plus ForgetAfter is forgotten meanwhile, and the call is dropped by
-// the tombstone's floor when it finally completes.
+// fallback.
 //
 // Governing: issue #390; SPEC-0006 REQ "Run Correlation"; SPEC-0013 REQ-3
 // (model reachability is observed here); ADR-0007; ADR-0008 (every string
@@ -36,7 +34,9 @@
 //
 // @joestump-agent 09/21/2026 - Added for harness#390.
 //
-// @joestump-agent 09/21/2026 - Orphaned-tool-call fallback (stall.go).
+// @joestump-agent 09/21/2026 - Orphaned-tool-call fallback (stall.go), and a
+// forgotten session now resumes from its read cursor, so a tool call open
+// longer than the listing window plus ForgetAfter is delivered, not dropped.
 package observe
 
 import (
@@ -107,8 +107,9 @@ const (
 	DefaultForgetAfter = time.Hour
 	// DefaultTombstoneLimit caps how many forgotten sessions are remembered
 	// well enough not to replay what was already delivered if they wake up
-	// again. A tombstone is a key and a time; ten thousand is well under a
-	// megabyte and far more sessions than one daemon lifetime produces.
+	// again. A tombstone is a key, a time and a read cursor (a path and a few
+	// integers); ten thousand is a few megabytes at most and far more sessions
+	// than one daemon lifetime produces.
 	DefaultTombstoneLimit = 10000
 	// DefaultSourceTimeout bounds one store's listing, and one session's read,
 	// so a store locked by a wedged writer cannot starve the others.
@@ -246,7 +247,7 @@ type Observer struct {
 	// Scan state, touched only by the loop goroutine (or by a test driving
 	// scan directly without Start).
 	sessions   map[string]*session
-	tombstones map[string]time.Time
+	tombstones map[string]tombstone
 	summaries  *tail.SummaryCache
 	lastSweep  time.Time // when summaries was last swept
 
@@ -277,7 +278,7 @@ func New(src Source, opts Options) *Observer {
 		opts:       opts,
 		log:        opts.Logger,
 		sessions:   make(map[string]*session),
-		tombstones: make(map[string]time.Time),
+		tombstones: make(map[string]tombstone),
 		summaries:  tail.NewSummaryCache(),
 		lastSweep:  opts.Now(),
 		subs:       make(map[*subscriber]struct{}),

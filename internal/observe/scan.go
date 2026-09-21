@@ -36,7 +36,9 @@ package observe
 // every scan; deep-copy target line ranges when redacting.
 //
 // @joestump-agent 09/21/2026 - A held read runs the orphaned-tool-call
-// fallback (stall.go).
+// fallback (stall.go). A forgotten session's tombstone now keeps its read
+// cursor, so a session rediscovered while a tool call was open delivers that
+// call instead of dropping it under the forget-time floor.
 
 import (
 	"context"
@@ -89,6 +91,26 @@ type session struct {
 	lastTS    time.Time // newest item timestamp read from the session
 	pinEnded  time.Time // the session's EndedAt when its watermark last held
 	checkedAt time.Time // when a full-parse stall check last ran
+}
+
+// tombstone remembers a forgotten session. cursor is where its reads had got
+// to; a session rediscovered under the same path resumes from it, which
+// delivers exactly what it gained while forgotten — including a tool call that
+// was open when it was forgotten, whose items are dated before the forget. at
+// is the fallback floor when there is no cursor to trust: the transcript was
+// deleted, or the session reappears under another path.
+type tombstone struct {
+	at     time.Time
+	cursor *cursor
+}
+
+// cursor is a session's read position.
+type cursor struct {
+	path      string
+	watermark int64
+	nextSeq   int
+	marksSeen int
+	lastTS    time.Time
 }
 
 // target is one declared harness as a scan sees it.
@@ -346,9 +368,16 @@ func (o *Observer) discover(a tail.Adapter, m tail.SessionMeta, scopes []runtrac
 		meta:     m,
 		baseline: true,
 	}
-	if t, ok := o.tombstones[st.id]; ok {
-		st.floor = t
+	if tb, ok := o.tombstones[st.id]; ok {
 		delete(o.tombstones, st.id)
+		if c := tb.cursor; c != nil && c.path == st.path {
+			// Everything up to the cursor was read in this daemon; what lies
+			// past it was written since, so it is live and needs no baseline.
+			st.watermark, st.nextSeq, st.marksSeen, st.lastTS = c.watermark, c.nextSeq, c.marksSeen, c.lastTS
+			st.baseline = false
+		} else {
+			st.floor = tb.at
+		}
 	}
 	o.sessions[st.id] = st
 	return st
@@ -372,7 +401,7 @@ func (o *Observer) read(ctx context.Context, st *session, scopes []runtrace.Scop
 			// consumer reports as collection errors (SPEC-0013 REQ-6). Forget
 			// it now, with a tombstone, so a reappearance cannot replay.
 			o.log.Debug("agent observer: session gone", "session", st.id)
-			o.tombstones[st.id] = now
+			o.tombstones[st.id] = tombstone{at: now}
 			delete(o.sessions, st.id)
 			return
 		}
@@ -557,7 +586,16 @@ func merge(events []classify.Event, marks []classify.Mark) []item {
 func (o *Observer) forget(now time.Time) {
 	for id, st := range o.sessions {
 		if now.Sub(st.lastSeen) > o.opts.ForgetAfter {
-			o.tombstones[id] = now
+			tb := tombstone{at: now}
+			if !st.baseline {
+				// A session never read successfully, or rewritten and not yet
+				// re-read, has no cursor worth resuming from.
+				tb.cursor = &cursor{
+					path: st.path, watermark: st.watermark, nextSeq: st.nextSeq,
+					marksSeen: st.marksSeen, lastTS: st.lastTS,
+				}
+			}
+			o.tombstones[id] = tb
 			delete(o.sessions, id)
 		}
 	}
@@ -567,8 +605,8 @@ func (o *Observer) forget(now time.Time) {
 			at time.Time
 		}
 		all := make([]tomb, 0, len(o.tombstones))
-		for id, at := range o.tombstones {
-			all = append(all, tomb{id, at})
+		for id, tb := range o.tombstones {
+			all = append(all, tomb{id, tb.at})
 		}
 		sort.Slice(all, func(i, j int) bool { return all[i].at.Before(all[j].at) })
 		for _, t := range all[:excess] {

@@ -2,13 +2,16 @@ package observe
 
 // Orphaned Tool Call Fallback Tests
 //
-// Every test here runs the real crush adapter over a real crush store
+// Every observer test here runs the real crush adapter over a real crush store
 // (runtracetest), resolved through runtrace.Sources as the daemon resolves it.
 // The first test also shows agent-trace's own ParseSince pinned on the same
 // store, so that its passing half is a test of the fallback and not of a
 // fixture that happens not to stall.
 //
 // @joestump-agent 09/21/2026 - Added with the orphaned-tool-call fallback.
+//
+// @joestump-agent 09/21/2026 - TestLongOpenToolCallSurvivesForget, for the
+// tombstone cursor.
 
 import (
 	"context"
@@ -300,6 +303,42 @@ func TestStallRecoverySurvivesDaemonRestart(t *testing.T) {
 	}
 	if s := second.Stats(); s.Stalls != 1 || s.OrphansSkipped != 1 {
 		t.Errorf("second daemon stats = %+v, want one stall recovered", s)
+	}
+}
+
+// TestLongOpenToolCallSurvivesForget: a tool call open longer than the listing
+// window plus ForgetAfter used to be dropped — the session was forgotten, and
+// on rediscovery the forget-time floor discarded the call, dated hours
+// earlier. The tombstone's cursor resumes the read instead.
+func TestLongOpenToolCallSurvivesForget(t *testing.T) {
+	f := newFixture(t, nil) // ForgetAfter: the one-hour default
+	f.src.add(core.Harness{Name: "worker", Adapter: "crush", Workdir: f.work}, running(start.Add(-time.Hour)))
+	msgs := crushRead("c1", start.Add(10*time.Second))
+	msgs = append(msgs, crushCall("long", "bash", map[string]any{"command": "make soak"}, start.Add(20*time.Second)))
+	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{ID: "s", Created: start, Updated: start.Add(20 * time.Second), Messages: msgs})
+	ch, cancel := f.obs.Subscribe("test", 64)
+	defer cancel()
+
+	f.tick(start.Add(25 * time.Second))
+	if got, want := describe(drain(ch)), []string{"worker:tool:view@0"}; !equal(got, want) {
+		t.Fatalf("first scan delivered %v, want %v", got, want)
+	}
+	f.tick(start.Add(3 * time.Hour))
+	if s := f.obs.Stats(); s.Sessions != 0 {
+		t.Fatalf("Sessions = %d, want the quiet session forgotten", s.Sessions)
+	}
+	rt.AppendCrushMessages(t, f.crushDB(), "s", crushResult("long", start.Add(3*time.Hour+10*time.Second)))
+	f.tick(start.Add(3*time.Hour + 15*time.Second))
+	got := drain(ch)
+	if want := []string{"worker:tool:bash@1"}; !equal(describe(got), want) {
+		t.Fatalf("after the call finished delivered %v, want %v", describe(got), want)
+	}
+	if !got[0].Time.Equal(start.Add(20 * time.Second)) {
+		t.Errorf("Time = %v, want the call's own timestamp", got[0].Time)
+	}
+	f.tick(start.Add(3*time.Hour + 20*time.Second))
+	if got := describe(drain(ch)); len(got) != 0 {
+		t.Fatalf("redelivered %v", got)
 	}
 }
 
