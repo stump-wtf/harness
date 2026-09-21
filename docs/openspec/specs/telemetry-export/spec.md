@@ -510,7 +510,10 @@ total (default 5s):
 Units still undelivered at the deadline MUST be counted (`dropped_queue` for
 queued units, `failed` for an abandoned in-flight batch) and the totals logged in
 one line. The flush MUST NOT extend shutdown past `shutdown_timeout`, and MUST
-NOT delay the supervisor's own shutdown handling of harnesses.
+NOT delay the supervisor's own shutdown handling of harnesses. This holds even
+for a delivery that cannot be cancelled — an events-file write or sync blocked
+on a hung network mount: at the deadline the flush abandons it, counts its
+batch `failed`, and returns without it.
 
 ### REQ-12: Self-telemetry
 

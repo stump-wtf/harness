@@ -195,6 +195,10 @@ named failure it guards against.
   `events_file_keep`, deletes beyond it, and every line in every file parses as
   one JSON object. File mode is `0600`.
 * **Shutdown.** Shutdown with an unreachable collector returns within
-  `shutdown_timeout`, and the lost counts are reported.
+  `shutdown_timeout`, and the lost counts are reported. So does the daemon's
+  own shutdown path with an events-file write that never returns: the flush
+  phases stop a little early (a tenth of the budget, at most 250ms) so
+  cancellable loops can count their batches, and a loop still stuck at the
+  deadline is abandoned and counted rather than waited for.
 * **Removed key.** A config with `[daemon] otel_endpoint` fails to load with the
   migration message.
