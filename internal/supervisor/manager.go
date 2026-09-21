@@ -215,6 +215,13 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 // Events"). The daemon later relays these over the control socket (SPEC-0002).
 func (m *Manager) Events() (<-chan Event, func()) { return m.bus.Subscribe() }
 
+// EventsCounted is Events plus this subscriber's running count of events lost
+// to a full buffer (Bus.SubscribeCounted), for a consumer that must report
+// its own undercount — the metrics collector (SPEC-0013 REQ-6).
+func (m *Manager) EventsCounted() (<-chan Event, func(), func() uint64) {
+	return m.bus.SubscribeCounted()
+}
+
 // addSupervisor constructs and registers a global-config supervisor for h,
 // appending it to the render order. Only called single-threaded from
 // NewManager.
