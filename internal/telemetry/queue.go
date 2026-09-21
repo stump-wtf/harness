@@ -130,6 +130,30 @@ type batchLoop[T any] struct {
 	done chan struct{}
 	// deadline is closed when the shutdown budget is spent.
 	deadline <-chan struct{}
+	// inflight is the size of the batch inside deliver, 0 between batches;
+	// what abandon counts as failed.
+	inflight atomic.Int64
+}
+
+func (b *batchLoop[T]) stopCh() chan struct{} { return b.stop }
+func (b *batchLoop[T]) doneCh() chan struct{} { return b.done }
+
+// abandon gives up on a loop stuck inside deliver at the shutdown deadline:
+// its queue is counted dropped_queue and its in-flight batch failed. It
+// returns the units lost. If the stuck delivery returns later it counts its
+// own outcome as well; by then the daemon is exiting.
+func (b *batchLoop[T]) abandon() uint64 {
+	queued := uint64(b.q.discard())
+	inflight := uint64(b.inflight.Load())
+	b.q.stats.failed.Add(inflight)
+	return queued + inflight
+}
+
+// send delivers one batch, recording its size while it is in flight.
+func (b *batchLoop[T]) send(batch []T, final bool) {
+	b.inflight.Store(int64(len(batch)))
+	b.deliver(batch, final)
+	b.inflight.Store(0)
 }
 
 func (b *batchLoop[T]) run() {
@@ -167,7 +191,7 @@ func (b *batchLoop[T]) run() {
 			}
 		}
 		if batch := b.q.take(b.size); len(batch) > 0 {
-			b.deliver(batch, false)
+			b.send(batch, false)
 		}
 	}
 }
@@ -182,7 +206,7 @@ func (b *batchLoop[T]) flush() {
 			return
 		default:
 		}
-		b.deliver(b.q.take(b.size), true)
+		b.send(b.q.take(b.size), true)
 	}
 }
 
