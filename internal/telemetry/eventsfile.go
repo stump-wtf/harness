@@ -16,32 +16,64 @@ package telemetry
 //
 // A write failure never stops the daemon or another signal: the batch counts
 // as failed, the error is logged (rate-limited), the file is closed, and the
-// next batch tries to open it again.
+// next batch tries to open it again. A failed write can still have landed
+// part of the batch (ENOSPC mid-write), so the file is first truncated back to
+// its size before the write: a partial line followed by the next batch's first
+// line would be one unparseable record, which REQ-8's whole-line promise rules
+// out.
 //
 // Governing: ADR-0022; SPEC-0015 REQ-8, REQ-11.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
+//
+// @joestump-agent 09/21/2026 - Truncate a failed write back to the pre-write
+// size, and open the file through an EventsFileHandle seam so tests can
+// inject a short write or a hung one.
 
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 )
+
+// EventsFileHandle is the open events file. *os.File satisfies it; it exists
+// as a seam (Options.OpenEventsFile) so a test can fail a write halfway or
+// hang it, which a real disk will not do on cue.
+type EventsFileHandle interface {
+	io.Writer
+	Truncate(size int64) error
+	Stat() (fs.FileInfo, error)
+	Chmod(mode fs.FileMode) error
+	Sync() error
+	Close() error
+}
+
+// openEventsFile opens path for append, creating it 0600: the production
+// Options.OpenEventsFile.
+func openEventsFile(path string) (EventsFileHandle, error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, err // not a typed-nil *os.File in the interface
+	}
+	return f, nil
+}
 
 // eventsFile is the rotating writer. It is used from one goroutine only.
 type eventsFile struct {
 	path     string
 	maxBytes int64
 	keep     int
+	openFile func(path string) (EventsFileHandle, error)
 
-	f    *os.File
+	f    EventsFileHandle
 	size int64
 }
 
 func newEventsFile(path string, maxMB, keep int) *eventsFile {
-	return &eventsFile{path: path, maxBytes: int64(maxMB) << 20, keep: keep}
+	return &eventsFile{path: path, maxBytes: int64(maxMB) << 20, keep: keep, openFile: openEventsFile}
 }
 
 // open opens (creating) the file for append.
@@ -55,7 +87,7 @@ func (w *eventsFile) open() error {
 			return fmt.Errorf("create events file directory: %w", err)
 		}
 	}
-	f, err := os.OpenFile(w.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	f, err := w.openFile(w.path)
 	if err != nil {
 		return fmt.Errorf("open events file: %w", err)
 	}
@@ -85,11 +117,18 @@ func (w *eventsFile) write(data []byte) error {
 		}
 	}
 	n, err := w.f.Write(data)
-	w.size += int64(n)
 	if err != nil {
+		// Part of the batch may be on disk; cut it off so the file still
+		// ends on a line boundary (REQ-8). O_APPEND puts the next write at
+		// the new end.
+		if terr := w.f.Truncate(w.size); terr != nil {
+			w.close()
+			return fmt.Errorf("write events file: %w (%d bytes written; truncating the partial line failed: %v)", err, n, terr)
+		}
 		w.close()
 		return fmt.Errorf("write events file: %w", err)
 	}
+	w.size += int64(n)
 	return nil
 }
 
