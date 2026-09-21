@@ -162,15 +162,29 @@ var stateValues = []string{stateRunning, stateStopped, stateFailed, stateFlappin
 //     happens to be in at the instant of the scrape.
 //   - running:  core running or starting. Starting is the spawn in progress,
 //     a moment long; calling it anything else would make every start blip.
-//   - stopped:  core stopped, stopping, or restarting outside a crash loop —
-//     no process is up at this instant (restarting is the restart_delay wait
-//     before a respawn). A harness failing too slowly to trip the crash
-//     window shows here, alternating with running, while
+//   - stopped:  a harness held by its operating hours (SPEC-0012), whatever
+//     else the snapshot carries; then core stopped, stopping, or restarting
+//     outside a crash loop — no process is up at this instant (restarting is
+//     the restart_delay wait before a respawn). A harness failing too slowly
+//     to trip the crash window shows here, alternating with running, while
 //     harness_consecutive_failures climbs toward give-up.
+//
+// Held sits below failed and above everything else. The gate shuts a held
+// harness down on purpose, so a crash-loop flag or a degraded state caught
+// mid-hold is history, not a fault, and must not read as flapping. The
+// supervisor never holds a failed harness (hold refuses one, and every start
+// clears the hold), so held-and-failed cannot arise; were it to, failed is
+// the one that needs a human. Held is not a fifth state value: REQ-2's enum is
+// fixed, so held reads as stopped here.
+//
+// @joestump-agent 09/21/2026 - Held (SPEC-0012, arrived on rebase) maps to
+// stopped explicitly (review, harness#356).
 func StateValue(s supervisor.Snapshot) string {
 	switch {
 	case s.State == core.StateFailed:
 		return stateFailed
+	case s.Held:
+		return stateStopped
 	case s.Flapping || s.State == core.StateDegraded:
 		return stateFlapping
 	case s.State == core.StateRunning || s.State == core.StateStarting:

@@ -138,9 +138,14 @@ The supervisor has seven states and the metric has four:
 | Supervisor state | `state` label |
 |---|---|
 | `failed` | `failed` |
+| held by its `operating_hours` (any state other than `failed`) | `stopped` |
 | `degraded`, or any state while the crash-loop flag is set | `flapping` |
 | `running`, `starting` | `running` |
 | `stopped`, `stopping`, `restarting` (not in a crash loop) | `stopped` |
+
+A harness held outside its operating hours is down on purpose, so it reads
+`stopped`, never `failed` or `flapping`. The metric does not tell a held
+harness apart from one an operator stopped.
 
 ### Where the model-call numbers come from
 

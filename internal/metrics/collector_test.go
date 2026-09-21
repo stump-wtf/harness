@@ -53,6 +53,14 @@ func TestEveryDeclaredHarnessReportsAllFourStates(t *testing.T) {
 		{"restarting-flapping", supervisor.Snapshot{State: core.StateRestarting, Flapping: true}, stateFlapping},
 		{"running-flapping", supervisor.Snapshot{State: core.StateRunning, Flapping: true, PID: 1}, stateFlapping},
 		{"is-failed", supervisor.Snapshot{State: core.StateFailed, Flapping: true}, stateFailed},
+		// Held by operating hours (SPEC-0012): shut down by the gate, not by
+		// a fault, so stopped — even with crash-loop history caught mid-hold.
+		{"held", supervisor.Snapshot{State: core.StateStopped, Gated: true, Held: true}, stateStopped},
+		{"held-stopping", supervisor.Snapshot{State: core.StateStopping, Gated: true, Held: true, PID: 1}, stateStopped},
+		{"held-was-flapping", supervisor.Snapshot{State: core.StateRestarting, Gated: true, Held: true, Flapping: true}, stateStopped},
+		{"held-was-degraded", supervisor.Snapshot{State: core.StateDegraded, Gated: true, Held: true}, stateStopped},
+		// Gated but in hours is an ordinary running harness.
+		{"gated-running", supervisor.Snapshot{State: core.StateRunning, Gated: true, PID: 1}, stateRunning},
 	}
 	for _, c := range cases {
 		src.add(core.Harness{Name: c.name, Adapter: "generic"}, c.snap)
