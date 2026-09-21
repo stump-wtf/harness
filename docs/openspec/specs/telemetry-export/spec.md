@@ -435,7 +435,10 @@ record followed by another record.
 
 A write failure (disk full, permission revoked, directory removed) MUST NOT stop
 the daemon or any other signal. The batch counts as `failed`, the error is
-logged (rate-limited, REQ-10), and the next batch retries opening the file.
+logged (rate-limited, REQ-10), and the next batch retries opening the file. A
+write that fails partway (a disk filling mid-batch) MUST NOT leave a partial
+line behind: the daemon truncates the file back to its size before the write,
+so the next batch starts on a line boundary.
 
 ### REQ-9: Queues never block
 
