@@ -188,7 +188,11 @@ const nodeId = (id) => id.replace(/[^A-Za-z0-9_]/g, '_');
 const nodeLabel = (n) =>
   (n.title || n.id)
     .replace(/^(?:ADR|SPEC)-\d+:\s*/, '')
-    .replace(/"/g, '\\"');
+    // Mermaid ends a quoted ["..."] label at the first `"` no matter how it is
+    // escaped; `\"` still reads as a terminator. `#quot;` is Mermaid's own
+    // entity syntax and the documented way to embed one (issue #393: any title
+    // carrying quotes broke every graph that included it).
+    .replace(/"/g, '#quot;');
 
 function extractTitle(text) {
   const m = text.match(/^#\s+(.+?)\s*$/m);

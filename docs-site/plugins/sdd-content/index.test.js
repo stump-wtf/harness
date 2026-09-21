@@ -44,6 +44,13 @@ function writeFixture() {
     path.join(adrs, 'ADR-0001-example.md'),
     '---\nstatus: accepted\ndate: 2026-01-01\n---\n\n# ADR-0001: Example\n\n## Context\n\nSomething.\n'
   );
+  // A title carrying double quotes, the shape ADR-0006 ships with. Its node
+  // label lands inside a mermaid ["..."] string, where an unescaped or
+  // backslash-escaped quote terminates the label and breaks the diagram.
+  fs.writeFileSync(
+    path.join(adrs, 'ADR-0002-quoted.md'),
+    '---\nstatus: accepted\ndate: 2026-01-01\nextends: [ADR-0001]\n---\n\n# ADR-0002: Quoted ("configuration of harnesses")\n\n## Context\n\nSomething.\n'
+  );
 
   const body = (id, title, text) =>
     `---\nstatus: active\ndate: 2026-01-01\n---\n\n# ${id}: ${title}\n\n## Overview\n\n${text}\n`;
@@ -222,4 +229,22 @@ test('an unprotected reference on the same line still linkifies', async (t) => {
   const epsilon = read('specs/epsilon/spec.mdx');
   assert.match(epsilon, /`SPEC-0002` against bare <a href="\/harness\/specs\/alpha\/spec"[^>]*>SPEC-0001</);
   assert.match(epsilon, /`ADR-0001` against bare <a href="\/harness\/decisions\/ADR-0001-example"[^>]*>[^<]*ADR-0001</);
+});
+
+test('a quoted title still parses as a mermaid node label', async (t) => {
+  const { read } = await build(t);
+
+  // Issue #393: nodeLabel escaped `"` as `\"`, but Mermaid ends a quoted
+  // ["..."] label at the first `"` either way, so any page whose graph
+  // included a quoted-title ADR (ADR-0006) rendered a broken diagram. The
+  // label must carry Mermaid's own `#quot;` entity instead.
+  const quoted = read('decisions/ADR-0002-quoted.mdx');
+  assert.match(quoted, /\["Quoted \(#quot;configuration of harnesses#quot;\)"\]/);
+  // The label itself must carry no backslash-escaped quote (the page
+  // frontmatter legitimately escapes quotes for YAML; only the mermaid label
+  // cannot honour `\"`). Old-code shape inside the fence:
+  // ["Quoted (\"configuration of harnesses\")"], which never parsed.
+  const dag = quoted.slice(quoted.indexOf('```mermaid'));
+  assert.ok(dag.length > 0, 'page carries a mermaid block');
+  assert.ok(!dag.includes('\\"'), 'mermaid label carries a backslash-escaped quote');
 });
