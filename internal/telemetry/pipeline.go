@@ -66,7 +66,8 @@ type Options struct {
 	Sleep func(ctx context.Context, d time.Duration) error
 	// Jitter picks a delay in [0, max] (default: uniform random).
 	Jitter func(max time.Duration) time.Duration
-	// Client sends OTLP requests (default http.DefaultClient).
+	// Client sends OTLP requests (default: otlpexport's client, which
+	// does not follow redirects).
 	Client *http.Client
 }
 
