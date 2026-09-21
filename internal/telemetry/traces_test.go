@@ -11,6 +11,7 @@ package telemetry
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -335,5 +336,35 @@ func TestRestartDuringAnOutageKeepsItemIDsDistinct(t *testing.T) {
 	_, b := life2.conv.itemIDs(life1Items[3])
 	if a != b {
 		t.Fatalf("the same item got %s and %s in two lifetimes", a, b)
+	}
+}
+
+// BuildTrace truncates a user-message span name to 128 runes. Redacting only
+// its output, after the cut, would miss a credential the cut shortened below
+// the pattern's minimum length and export the head of it. Every source string
+// must be redacted before the build (REQ-4).
+func TestSpanSourcesAreRedactedBeforeBuildTraceTruncates(t *testing.T) {
+	now := t0
+	acc, sink := newAcc(&now, nil)
+	// 110 runes of padding leave "ghp_" plus 13 characters inside the cut.
+	note := strings.Repeat("a ", 55) + plantedToken
+	ev := markEv("w", "k", 0, "user-message", note, t0)
+	acc.add(ev)
+	tool := toolEv("w", "k", 0, "curl -H 'Authorization: token "+plantedToken+"'", true, t0)
+	acc.add(tool)
+	acc.flushAll()
+	head := plantedToken[:12]
+	for _, sp := range sink.all() {
+		if strings.Contains(sp.Name, head) || strings.Contains(sp.StatusMsg, head) {
+			t.Fatalf("span %q (status %q) carries the head of a credential", sp.Name, sp.StatusMsg)
+		}
+		for k, v := range sp.Attributes {
+			if s, ok := v.(string); ok && strings.Contains(s, head) {
+				t.Fatalf("span attribute %s = %q carries the head of a credential", k, s)
+			}
+		}
+	}
+	if len(sink.all()) != 2 {
+		t.Fatalf("spans %d, want the turn and the tool", len(sink.all()))
 	}
 }
