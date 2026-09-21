@@ -532,7 +532,7 @@ func TestEventsFileLinesAndMode(t *testing.T) {
 }
 
 func TestLogAttributesAndJSONLKeysAgree(t *testing.T) {
-	c := &converter{ids: newIDRegistry(time.Now)}
+	c := &converter{}
 	r := c.record(toolEv("w", "k", 3, "x", true, t0))
 	line, err := r.JSONLine(nil)
 	if err != nil {
@@ -585,7 +585,7 @@ func TestSubscriptionsAreNamedPerSignal(t *testing.T) {
 }
 
 func TestOmitPrompts(t *testing.T) {
-	c := &converter{omitPrompts: true, ids: newIDRegistry(time.Now)}
+	c := &converter{omitPrompts: true}
 	r := c.record(markEv("w", "k", 0, "user-message", "customer SSN is in here", t0))
 	if r.Body != PromptOmitted {
 		t.Fatalf("body %q", r.Body)
@@ -606,7 +606,7 @@ func TestOmitPrompts(t *testing.T) {
 }
 
 func TestCaps(t *testing.T) {
-	c := &converter{ids: newIDRegistry(time.Now)}
+	c := &converter{}
 	ev := toolEv("w", "k", 0, strings.Repeat("é", 5000), false, t0)
 	for i := range 40 {
 		ev.Tool.Targets = append(ev.Tool.Targets, ev.Tool.Targets[0])
