@@ -866,3 +866,98 @@ func TestDeletedTranscriptIsForgottenNotAnError(t *testing.T) {
 		t.Errorf("ParseErrors[claude-code] = %d after a real parse failure, want 1", n)
 	}
 }
+
+// TestDaemonRestartWithLongLivedSession is a daemon restart under a crush
+// worker whose one session outlives it. What the previous daemon saw, and what
+// was written while no daemon ran, is history; only what lands after this
+// daemon started is delivered. A second harness in the same workdir, restored
+// from state.json with a run that never recorded an exit and not autostarted,
+// must not contest the live items: runWindow closes such a run at the
+// observer's start. Were it left open, the session would read as contested and
+// nothing would be delivered at all.
+//
+// @joestump-agent 09/21/2026 - review: added; runWindow's restored-run
+// branches had no test.
+func TestDaemonRestartWithLongLivedSession(t *testing.T) {
+	f := newFixture(t, nil)
+	// Autostarted a moment before the observer was built.
+	f.src.add(core.Harness{Name: "worker", Adapter: "crush", Workdir: f.work}, running(start.Add(-time.Second)))
+	// Restored: last started hours ago in the previous daemon, no exit
+	// recorded after it, not running now.
+	f.src.add(core.Harness{Name: "restored", Adapter: "crush", Workdir: f.work},
+		supervisor.Snapshot{State: core.StateStopped, LastStarted: start.Add(-3 * time.Hour), LastExitAt: start.Add(-4 * time.Hour)})
+	var msgs []rt.CrushMessage
+	msgs = append(msgs, crushRead("seen-by-old-daemon", start.Add(-10*time.Minute))...)
+	msgs = append(msgs, providerError("while no daemon ran", start.Add(-5*time.Second)))
+	msgs = append(msgs, crushRead("live", start.Add(10*time.Second))...)
+	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{ID: "long", Created: start.Add(-6 * time.Hour), Updated: start.Add(10 * time.Second), Messages: msgs})
+	ch, cancel := f.obs.Subscribe("test", 64)
+	defer cancel()
+
+	f.tick(start.Add(15 * time.Second))
+	if got := describe(drain(ch)); !equal(got, []string{"worker:tool:view@1"}) {
+		t.Fatalf("after restart delivered %v, want only the live call, attributed to worker (stats %+v)", got, f.obs.Stats())
+	}
+	if st := f.obs.Stats(); st.Ambiguous != 0 || st.Contested != 0 {
+		t.Errorf("stats = %+v: the restored, stopped peer contested live items", st)
+	}
+}
+
+// TestRunWindow pins how a snapshot becomes a run window, the input every
+// attribution decision rests on.
+//
+// @joestump-agent 09/21/2026 - review: added.
+func TestRunWindow(t *testing.T) {
+	since := start
+	cases := []struct {
+		name    string
+		snap    supervisor.Snapshot
+		ok      bool
+		wantEnd time.Time
+	}{
+		{"never ran", supervisor.Snapshot{}, false, time.Time{}},
+		{"running is open", supervisor.Snapshot{LastStarted: since.Add(-time.Hour), PID: 1}, true, time.Time{}},
+		{"exited closes at the exit", supervisor.Snapshot{LastStarted: since.Add(-time.Hour), LastExitAt: since.Add(-time.Minute)}, true, since.Add(-time.Minute)},
+		{"restored without an exit closes at since", supervisor.Snapshot{LastStarted: since.Add(-time.Hour), LastExitAt: since.Add(-2 * time.Hour)}, true, since},
+		{"restored without any exit closes at since", supervisor.Snapshot{LastStarted: since.Add(-time.Hour)}, true, since},
+		{"not running, started after since, no exit", supervisor.Snapshot{LastStarted: since.Add(time.Minute)}, true, since.Add(time.Minute)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w, ok := runWindow(c.snap, since)
+			if ok != c.ok {
+				t.Fatalf("ok = %v, want %v", ok, c.ok)
+			}
+			if ok && (!w.Start.Equal(c.snap.LastStarted) || !w.End.Equal(c.wantEnd)) {
+				t.Errorf("window = [%v, %v], want [%v, %v]", w.Start, w.End, c.snap.LastStarted, c.wantEnd)
+			}
+		})
+	}
+}
+
+// TestTombstonesAreCapped: forgotten sessions leave tombstones, and the cap
+// drops the oldest first, so days of churn cannot grow the map without bound.
+//
+// @joestump-agent 09/21/2026 - review: added; the cap had no test.
+func TestTombstonesAreCapped(t *testing.T) {
+	f := newFixture(t, func(o *Options) {
+		o.ForgetAfter = time.Minute
+		o.TombstoneLimit = 3
+	})
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("crush/s%d", i)
+		f.obs.sessions[id] = &session{id: id, lastSeen: start}
+		f.obs.forget(start.Add(time.Duration(i+2) * time.Minute))
+	}
+	if n := len(f.obs.tombstones); n != 3 {
+		t.Fatalf("%d tombstones, want the cap of 3", n)
+	}
+	for _, id := range []string{"crush/s2", "crush/s3", "crush/s4"} {
+		if _, ok := f.obs.tombstones[id]; !ok {
+			t.Errorf("tombstone %s missing: the cap dropped a newer one", id)
+		}
+	}
+	if len(f.obs.sessions) != 0 {
+		t.Errorf("%d sessions still tracked after ForgetAfter", len(f.obs.sessions))
+	}
+}
