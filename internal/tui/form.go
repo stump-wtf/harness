@@ -28,6 +28,7 @@ import (
 
 	"github.com/stump-wtf/harness/internal/config"
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/hours"
 	"github.com/stump-wtf/harness/internal/protocol"
 )
 
@@ -111,6 +112,18 @@ type HarnessForm struct {
 	// silently revokes a harness's write authority — or, worse on the way back,
 	// would re-grant it.
 	MCPAllow []string
+	// OperatingHours gates a resident harness to weekly windows (ADR-0019):
+	// requires the harness NOT be scheduled (Validate mirrors the parser's
+	// mutual exclusion with Schedule). Carried through the form for the same
+	// round-trip reason as Schedule.
+	OperatingHours string
+	// HoursShutdown/HoursShutdownTimeout are operating hours' close-mode keys
+	// (SPEC-0012 REQ "Shutdown Mode"), same "blank means the parser default"
+	// convention as Timeout/OnOverlap above: each holds only a value that
+	// differs from its default ("graceful" / "15m"). Both require
+	// OperatingHours (Validate mirrors the parser).
+	HoursShutdown        string
+	HoursShutdownTimeout string
 }
 
 // NewHarnessForm is a blank form for `n` with sane defaults (native backend).
@@ -213,6 +226,34 @@ func (f HarnessForm) Validate() error {
 	}
 	if f.KeepRuns > 0 && f.KeepRuns != core.DefaultKeepRuns && !scheduled {
 		return fmt.Errorf("keep_runs requires schedule")
+	}
+	// Mirror the parser's operating_hours rules (ADR-0019, config.registerHarness):
+	// same reasoning as schedule above — a combination the parser rejects would
+	// leave the file unparseable on disk until hand-edited.
+	operatingHours := strings.TrimSpace(f.OperatingHours)
+	if operatingHours != "" {
+		if scheduled {
+			return fmt.Errorf("operating_hours and schedule are mutually exclusive")
+		}
+		if _, err := hours.Parse(operatingHours); err != nil {
+			return fmt.Errorf("invalid operating_hours %q: %v", operatingHours, err)
+		}
+	}
+	if hs := strings.TrimSpace(f.HoursShutdown); hs != "" {
+		if operatingHours == "" {
+			return fmt.Errorf("hours_shutdown requires operating_hours")
+		}
+		if !core.HoursShutdownMode(hs).Valid() {
+			return fmt.Errorf("hours_shutdown must be graceful or immediate")
+		}
+	}
+	if hst := strings.TrimSpace(f.HoursShutdownTimeout); hst != "" {
+		if operatingHours == "" {
+			return fmt.Errorf("hours_shutdown_timeout requires operating_hours")
+		}
+		if d, err := time.ParseDuration(hst); err != nil || d <= 0 {
+			return fmt.Errorf("invalid hours_shutdown_timeout %q (want a positive duration such as 15m)", hst)
+		}
 	}
 	return nil
 }
@@ -349,6 +390,18 @@ func (f HarnessForm) TOML() string {
 		}
 		fmt.Fprintf(&b, "mcp_allow = [%s]\n", strings.Join(parts, ", "))
 	}
+	if operatingHours := strings.TrimSpace(f.OperatingHours); operatingHours != "" {
+		// A resident harness's weekly time gate (ADR-0019). Unlike schedule's
+		// run keys, not confined to a prompt/cmd branch — operating_hours
+		// applies to either kind of harness.
+		fmt.Fprintf(&b, "operating_hours = %s\n", strconv.Quote(operatingHours))
+		if hs := strings.TrimSpace(f.HoursShutdown); hs != "" && hs != string(core.HoursShutdownGraceful) {
+			fmt.Fprintf(&b, "hours_shutdown = %s\n", strconv.Quote(hs))
+		}
+		if hst := strings.TrimSpace(f.HoursShutdownTimeout); hst != "" {
+			fmt.Fprintf(&b, "hours_shutdown_timeout = %s\n", strconv.Quote(hst))
+		}
+	}
 	return b.String()
 }
 
@@ -451,6 +504,17 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.enabled = h.Enabled
 	fi.harvestTrajectory = h.HarvestTrajectory
 	fi.mcpAllow = strings.Join(h.MCPAllow, " ")
+	fi.operatingHours = h.OperatingHours
+	if h.OperatingHours != "" {
+		// Same "blank means the parser default" convention as the schedule
+		// run keys above (issue #119).
+		if h.HoursShutdown != core.HoursShutdownGraceful {
+			fi.hoursShutdown = string(h.HoursShutdown)
+		}
+		if h.HoursShutdownTimeout != core.DefaultHoursShutdownTimeout {
+			fi.hoursShutdownTimeout = formatRunTimeout(h.HoursShutdownTimeout)
+		}
+	}
 	return fi
 }
 
@@ -477,7 +541,10 @@ func (fi formInputs) toForm() HarnessForm {
 		Description: strings.TrimSpace(fi.description),
 		Enabled:     fi.enabled,
 
-		HarvestTrajectory: fi.harvestTrajectory,
+		HarvestTrajectory:    fi.harvestTrajectory,
+		OperatingHours:       strings.TrimSpace(fi.operatingHours),
+		HoursShutdown:        strings.TrimSpace(fi.hoursShutdown),
+		HoursShutdownTimeout: strings.TrimSpace(fi.hoursShutdownTimeout),
 	}
 	if args, err := shlex.Split(fi.args, true); err == nil && len(args) > 0 {
 		f.Args = args

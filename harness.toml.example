@@ -87,6 +87,30 @@ enabled = false
 # schedule = "CRON_TZ=UTC 0 */6 * * *"   # every 6 hours, pinned to UTC
 # description = "fleet health sweep"   # say what it does; the cadence is its own column
 
+# Operating hours (ADR-0019): weekly windows a RESIDENT harness is allowed to
+# run in. Outside them the daemon holds it down (stops the process without
+# touching `enabled`) and starts it again when a window opens — the same
+# distinction the TUI shows as "off-hours", never "stopped". Global config
+# only (like `schedule`, not supported in a project harness.toml) and
+# mutually exclusive with `schedule` (a scheduled one-shot is already
+# time-gated by its own cron expression). Grammar: an optional TZ=/CRON_TZ=
+# zone prefix (same resolution as `schedule`'s), then ";"-separated windows of
+# "[days] HH:MM-HH:MM" — a day-less window applies every day, a day range
+# wraps the week ("Fri-Mon" is Fri/Sat/Sun/Mon), and an end at or before its
+# start (other than the explicit end-of-day 24:00) runs into the next day.
+#
+# hours_shutdown decides how a close runs: "graceful" (the default) waits for
+# the agent to finish its current turn, capped by hours_shutdown_timeout
+# (default 15m); "immediate" stops it at once. Both require operating_hours.
+#
+# [harness.night-owl]
+# harness = "claude-code"
+# args = ["--remote-control", "--continue"]
+# enabled = true
+# operating_hours = "TZ=America/Los_Angeles Mon-Fri 09:00-13:00"
+# hours_shutdown = "graceful"           # or "immediate"; default "graceful"
+# hours_shutdown_timeout = "15m"        # default "15m"; must be a positive duration
+
 # Harness kinds (ADR-0011, SPEC-0006): the `harness` key is an enum selecting
 # the adapter, which owns the executable a long-running harness runs (args are
 # appended after it) and the CLI-specific argv synthesized for a prompt

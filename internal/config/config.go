@@ -21,6 +21,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/hours"
 )
 
 // rawHarness mirrors a harness TOML table before validation/normalization.
@@ -50,6 +51,19 @@ type rawHarness struct {
 	KeepRuns          *int     `toml:"keep_runs"`
 	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
 	MCPAllow          []string `toml:"mcp_allow"`
+
+	// OperatingHours gates a resident harness to weekly windows (ADR-0019).
+	// Plain string like Schedule: blank-vs-absent is checked the same way
+	// (rh.OperatingHours != "" && trimmed == "" is the blank-value error).
+	OperatingHours string `toml:"operating_hours"`
+	// HoursShutdown and HoursShutdownTimeout are pointers, like CatchUp/
+	// OnOverlap: the "requires operating_hours" exclusion (SPEC-0012 REQ
+	// "Operating Hours Exclusions") is checked on PRESENCE, not value — an
+	// explicit `hours_shutdown = "graceful"` (the same as the default) must
+	// still be rejected without operating_hours, exactly as an explicit
+	// `catch_up = false` is rejected without schedule.
+	HoursShutdown        *string `toml:"hours_shutdown"`
+	HoursShutdownTimeout *string `toml:"hours_shutdown_timeout"`
 
 	// Removed keys, still decoded so their presence can be REJECTED with a
 	// migration error. TOML decoding here ignores unknown keys, so deleting
@@ -649,6 +663,81 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		}
 	}
 
+	// operating_hours gates a resident harness to weekly windows during which
+	// it is allowed to run (ADR-0019): outside them the daemon holds it down
+	// without touching `enabled`. Mutually exclusive with `schedule` — a
+	// scheduled one-shot is already time-gated by its own cron expression, so
+	// stacking a second time gate on it would be redundant at best and
+	// contradictory at worst. Governing: ADR-0019; SPEC-0012 REQ "Operating
+	// Hours Key", REQ "Operating Hours Exclusions".
+	operatingHours := strings.TrimSpace(rh.OperatingHours)
+	switch {
+	case rh.OperatingHours != "" && operatingHours == "":
+		return newError(filename, line,
+			"harness %q: \"operating_hours\" must not be blank", name)
+	case operatingHours != "" && schedule != "":
+		return newError(filename, line,
+			"harness %q: \"schedule\" and \"operating_hours\" are mutually exclusive (a scheduled one-shot is already time-gated by its cron expression)", name)
+	}
+	var hoursExpr hours.Expr
+	if operatingHours != "" {
+		// Validate (and parse) the expression eagerly, like schedule's cron
+		// expression above: a typo must fail the load with a located error,
+		// not silently gate nothing.
+		expr, err := hours.Parse(operatingHours)
+		if err != nil {
+			return newError(filename, line,
+				"harness %q: invalid \"operating_hours\" %q: %v", name, operatingHours, err)
+		}
+		hoursExpr = expr
+	}
+
+	// hours_shutdown/hours_shutdown_timeout decide how a gated harness's close
+	// runs and mean nothing without operating_hours — rejected on presence,
+	// not only on a non-default value, for the same reason catch_up is
+	// rejected without schedule above: a key that silently does nothing is a
+	// mistake the operator should hear about at load. Both are *supervision*
+	// keys (core.Harness doc), never consulted at spawn, so neither forces a
+	// restart when it changes on reload (internal/supervisor's runAffecting
+	// only lists spawn-affecting fields; leaving these two off that list is
+	// what keeps that promise). Governing: ADR-0019; SPEC-0012 REQ "Shutdown
+	// Mode".
+	// Like timeout/on_overlap/keep_runs above, the defaults below apply only
+	// alongside the key they belong to: an ungated harness keeps the zero
+	// value for both (never consulted, since nothing ever reads them without
+	// OperatingHours set first).
+	var (
+		shutdownMode    core.HoursShutdownMode
+		shutdownTimeout time.Duration
+	)
+	if rh.HoursShutdown != nil && operatingHours == "" {
+		return newError(filename, line,
+			"harness %q: \"hours_shutdown\" requires \"operating_hours\" (a shutdown mode with no hours to close does nothing)", name)
+	}
+	if rh.HoursShutdownTimeout != nil && operatingHours == "" {
+		return newError(filename, line,
+			"harness %q: \"hours_shutdown_timeout\" requires \"operating_hours\" (a shutdown mode with no hours to close does nothing)", name)
+	}
+	if operatingHours != "" {
+		shutdownMode = core.HoursShutdownGraceful
+		if rh.HoursShutdown != nil {
+			shutdownMode = core.HoursShutdownMode(strings.TrimSpace(*rh.HoursShutdown))
+			if !shutdownMode.Valid() {
+				return newError(filename, line,
+					"harness %q: invalid \"hours_shutdown\" %q (want \"graceful\" or \"immediate\")", name, *rh.HoursShutdown)
+			}
+		}
+		shutdownTimeout = core.DefaultHoursShutdownTimeout
+		if rh.HoursShutdownTimeout != nil {
+			d, err := time.ParseDuration(strings.TrimSpace(*rh.HoursShutdownTimeout))
+			if err != nil || d <= 0 {
+				return newError(filename, line,
+					"harness %q: invalid \"hours_shutdown_timeout\" %q (want a positive duration such as \"15m\")", name, *rh.HoursShutdownTimeout)
+			}
+			shutdownTimeout = d
+		}
+	}
+
 	if resolve == nil {
 		resolve = func(p string) string { return p }
 	}
@@ -676,6 +765,11 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		Timeout:      timeout,
 		OnOverlap:    overlap,
 		KeepRuns:     keepRuns,
+
+		OperatingHours:       operatingHours,
+		HoursExpr:            hoursExpr,
+		HoursShutdown:        shutdownMode,
+		HoursShutdownTimeout: shutdownTimeout,
 	}
 	if isAgent {
 		// Args stay EMPTY for a prompt harness (spawn-time synthesis,

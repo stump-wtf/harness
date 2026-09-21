@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/stump-wtf/harness/internal/hours"
 )
 
 // Backend selects how a harness's process is hosted: natively under the
@@ -103,6 +105,32 @@ func (p OverlapPolicy) Valid() bool {
 	return false
 }
 
+// HoursShutdownMode decides how a gated harness (one with OperatingHours set)
+// is stopped when its window closes: let the agent finish its turn first, or
+// stop it at once. Unlike RestartPolicy/OverlapPolicy, the empty string is NOT
+// a valid HoursShutdownMode — the config parser resolves an omitted
+// `hours_shutdown` key to HoursShutdownGraceful itself (SPEC-0012 REQ
+// "Shutdown Mode" default), rather than letting "" stand for it here, because
+// presence (not value) is what the "requires operating_hours" exclusion
+// checks.
+// Governing: ADR-0019; SPEC-0012 REQ "Shutdown Mode".
+type HoursShutdownMode string
+
+const (
+	// HoursShutdownGraceful lets the harness finish its current turn (bounded
+	// by HoursShutdownTimeout) before stopping it. The default.
+	HoursShutdownGraceful HoursShutdownMode = "graceful"
+	// HoursShutdownImmediate stops the harness at the close without waiting
+	// for its turn state.
+	HoursShutdownImmediate HoursShutdownMode = "immediate"
+)
+
+// Valid reports whether m is a known shutdown mode. "" is deliberately not
+// valid here — see the type doc.
+func (m HoursShutdownMode) Valid() bool {
+	return m == HoursShutdownGraceful || m == HoursShutdownImmediate
+}
+
 const (
 	// DefaultRunTimeout bounds a scheduled run whose `timeout` is omitted. A
 	// hung agent must not own its schedule forever: an hour is well past any
@@ -111,6 +139,10 @@ const (
 	// DefaultKeepRuns is how many run records (and their logs) a scheduled
 	// harness keeps when `keep_runs` is omitted.
 	DefaultKeepRuns = 20
+	// DefaultHoursShutdownTimeout bounds how long a graceful close may run
+	// past its window's end before the harness is stopped anyway (SPEC-0012
+	// REQ "Shutdown Mode").
+	DefaultHoursShutdownTimeout = 15 * time.Minute
 )
 
 // Harness is one supervised process definition: a command + args + working
@@ -279,6 +311,38 @@ type Harness struct {
 	// repository cannot grant its own harnesses write authority over the
 	// fleet. Governing: SPEC-0005 REQ "Capability Scoping".
 	MCPAllow []string
+	// OperatingHours is the raw operating_hours expression (SPEC-0012 REQ
+	// "Operating Hours Key"): the weekly windows this resident harness is
+	// allowed to run in. Empty means "not gated" — always allowed to run, the
+	// behaviour every harness had before ADR-0019. Mutually exclusive with
+	// Schedule (a scheduled one-shot is already time-gated by its cron
+	// expression) and rejected outright in a project harness.toml: reload
+	// reconciliation and lease persistence (ADR-0019 *Deferred*) are defined
+	// only for the config of record, so a project harness could never
+	// actually be gated. Governing: ADR-0019; SPEC-0012 REQ "Operating Hours
+	// Key", REQ "Operating Hours Exclusions".
+	OperatingHours string
+	// HoursExpr is OperatingHours parsed (internal/hours), ready for a caller
+	// to evaluate against a clock reading — the scheduler's own tick, per
+	// design.md § "Evaluate on the existing scheduler tick", never a fresh
+	// time.Now() read here. The zero Expr when OperatingHours == "".
+	// Governing: ADR-0019; SPEC-0012 REQ "Operating Hours Key".
+	HoursExpr hours.Expr
+	// HoursShutdown is the effective close mode for a gated harness:
+	// HoursShutdownGraceful (the default) lets the agent finish its turn,
+	// HoursShutdownImmediate stops it at once. Meaningless when
+	// OperatingHours == "". Both this and HoursShutdownTimeout are
+	// *supervision* keys — read only when a close happens, never at spawn —
+	// so changing either applies to the next close, and to one already in
+	// progress, without restarting the harness (contrast Schedule, which
+	// governs a one-shot's own firing). Governing: ADR-0019; SPEC-0012 REQ
+	// "Shutdown Mode".
+	HoursShutdown HoursShutdownMode
+	// HoursShutdownTimeout bounds how long a graceful close may run past the
+	// window's end before the harness is stopped anyway. Meaningless when
+	// OperatingHours == "". Same supervision-key contract as HoursShutdown.
+	// Governing: ADR-0019; SPEC-0012 REQ "Shutdown Mode".
+	HoursShutdownTimeout time.Duration
 }
 
 // ReadPromptFile reads the instruction text a PromptFile names. It is the one

@@ -817,6 +817,13 @@ var harnessFormFields = []string{
 	"Quiet", "MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart",
 	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule", "CatchUp",
 	"Timeout", "OnOverlap", "KeepRuns", "HarvestTrajectory", "MCPAllow",
+	"OperatingHours", "HoursShutdown", "HoursShutdownTimeout",
+	// HoursExpr is OperatingHours parsed (internal/hours), not a config key of
+	// its own — config.Parse derives it fresh from OperatingHours on every
+	// load, so there is nothing for the form's save path to carry or drop; it
+	// is listed here only so the census below (which walks every
+	// core.Harness field) doesn't flag it as unaccounted for.
+	"HoursExpr",
 }
 
 // TestHarnessFormCoversEveryHarnessField is the census half of the issue #161
@@ -944,6 +951,23 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				`mcp_allow = ["read", "write"]`,
 			},
 			promptFileBody: "Draft the studio blog post and open a PR.\n",
+		},
+		{
+			// A gated resident harness (ADR-0019): operating_hours excludes
+			// schedule, so this needs its own fixture rather than folding
+			// into one of the scheduled cases above.
+			name: "gated resident harness",
+			table: []string{
+				"[harness.night-owl]",
+				`harness = "claude-code"`,
+				`args = ["--remote-control", "--continue"]`,
+				`workdir = "~/src/night-owl"`,
+				"enabled = true",
+				`operating_hours = "TZ=America/Los_Angeles Mon-Fri 09:00-13:00"`,
+				`hours_shutdown = "immediate"`,
+				`hours_shutdown_timeout = "30m"`,
+				`description = "gated agent"`,
+			},
 		},
 	}
 	for _, tc := range tests {

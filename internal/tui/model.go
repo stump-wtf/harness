@@ -119,6 +119,12 @@ type formInputs struct {
 	// timeout/onOverlap/keepRuns are the schedule's run keys (issue #119);
 	// blank means the parser default.
 	timeout, onOverlap, keepRuns string
+	// operatingHours/hoursShutdown/hoursShutdownTimeout are the ADR-0019
+	// operating-hours gate: operatingHours is the weekly-window expression;
+	// hoursShutdown/hoursShutdownTimeout blank mean the parser defaults
+	// (graceful, 15m), same convention as timeout/onOverlap/keepRuns above.
+	// Carried for the same round-trip reason as schedule (issue #161).
+	operatingHours, hoursShutdown, hoursShutdownTimeout string
 }
 
 // Model is the root Bubble Tea model.

@@ -288,6 +288,21 @@ func addProjectHarness(cfg *core.Config, filename, name string, line int, rh raw
 				"harness %q: %q is not supported in project files (define scheduled harnesses in the daemon's harness.toml)", name, k.key)
 		}
 	}
+	// operating_hours (and its two shutdown-mode keys) is daemon-owned, like
+	// schedule above: reload reconciliation and lease persistence (ADR-0019
+	// *Deferred*) are defined only for the config of record, so a project
+	// harness could never actually be gated — reject it loudly rather than
+	// letting it validate and then silently do nothing. Governing: ADR-0019;
+	// SPEC-0012 REQ "Operating Hours Exclusions".
+	for _, k := range []struct {
+		key string
+		set bool
+	}{{"operating_hours", strings.TrimSpace(rh.OperatingHours) != ""}, {"hours_shutdown", rh.HoursShutdown != nil}, {"hours_shutdown_timeout", rh.HoursShutdownTimeout != nil}} {
+		if k.set {
+			return newError(filename, line,
+				"harness %q: %q is not supported in project files (operating hours are daemon-owned; define them in the daemon's harness.toml)", name, k.key)
+		}
+	}
 	// mcp_allow is a global-only concern (SPEC-0005 REQ "Capability Scoping"):
 	// a cloned repository granting its own harnesses write authority over the
 	// fleet is a privilege-escalation vector. Reject it loudly.

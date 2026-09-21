@@ -353,10 +353,11 @@ func (m *Model) onConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // buildHarnessForm constructs the Huh form bound to fi (SPEC-0001 REQ "Harness
 // Form" schema: harness/prompt/model/auto_accept/max_turns/quiet/args/workdir/
 // env_file/restart_delay/restart/backend/tmux_socket/description/enabled/
-// harvest_trajectory/mcp_allow; schedule for a cron one-shot). Every config key
-// core.Harness carries has a widget here — an unbound key is one the `e` save
-// path silently deletes from harness.toml (issue #161), which
-// TestEditPreservesEveryConfigKey pins.
+// harvest_trajectory/mcp_allow; schedule for a cron one-shot; operating_hours/
+// hours_shutdown/hours_shutdown_timeout for a resident harness's weekly time
+// gate, ADR-0019). Every config key core.Harness carries has a widget here —
+// an unbound key is one the `e` save path silently deletes from harness.toml
+// (issue #161), which TestEditPreservesEveryConfigKey pins.
 func buildHarnessForm(fi *formInputs) *huh.Form {
 	return huh.NewForm(
 		huh.NewGroup(
@@ -393,6 +394,9 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 			huh.NewConfirm().Title("enabled (autostart)").Value(&fi.enabled),
 			huh.NewConfirm().Title("harvest_trajectory (expose the trajectory read-only over MCP)").Value(&fi.harvestTrajectory),
 			huh.NewInput().Title("mcp_allow (space-separated; read write; blank = no capabilities)").Value(&fi.mcpAllow),
+			huh.NewInput().Title("operating_hours (weekly windows this resident harness may run in; excludes schedule)").Value(&fi.operatingHours),
+			huh.NewInput().Title("hours_shutdown (graceful/immediate; blank = graceful; requires operating_hours)").Value(&fi.hoursShutdown),
+			huh.NewInput().Title("hours_shutdown_timeout (e.g. 15m; blank = 15m; requires operating_hours)").Value(&fi.hoursShutdownTimeout),
 		),
 	).WithShowHelp(false)
 }
