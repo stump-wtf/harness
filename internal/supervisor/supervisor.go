@@ -135,6 +135,16 @@ type Snapshot struct {
 	// REQ "Graceful Shutdown"); CloseAt is zero unless Closing.
 	Closing bool
 	CloseAt time.Time
+	// ConsecutiveFailures is the loop's give-up accounting (consecFailures):
+	// failed exits since the last run that came up successfully. Give-up
+	// parks the harness in `failed` once it exceeds Policy.MaxRestarts, so a
+	// climbing value is the warning before that terminal state. It is not
+	// persisted — a daemon restart begins every harness at zero, exactly as
+	// the loop itself does.
+	//
+	// Governing: SPEC-0013 REQ-2 (harness_consecutive_failures mirrors the
+	// daemon's own give-up accounting); SPEC-0003 REQ "Backoff Give-Up".
+	ConsecutiveFailures int
 }
 
 // Supervisor owns the lifecycle of exactly one harness. It runs a single actor
@@ -1171,6 +1181,8 @@ func (s *Supervisor) publishSnapshot() {
 		Held:          s.held,
 		Closing:       s.closing,
 		CloseAt:       s.closeAt,
+
+		ConsecutiveFailures: s.consecFailures,
 	}
 	s.mu.Unlock()
 	if s.onChange != nil && !s.suppressPersist {
