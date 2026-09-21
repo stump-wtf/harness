@@ -23,6 +23,12 @@ of capability still deferred. Suspend-safe evaluation, missed-window handling,
 timeouts, and the overlap policy by #119; the protocol and CLI surface that
 reads and triggers them by #120.
 
+SPEC-0014 extends this machinery to *triggered* harnesses, which fire on MCP
+channel notifications and webhooks as well as on a schedule. Where this spec
+says "scheduled harness" of run keys, run history, overlap or `trigger`, SPEC-0014
+REQ "Triggered Harness Exclusions" and REQ "Manual Trigger With Event" widen it
+to any triggered harness.
+
 This spec does **not** amend SPEC-0003. The restart-policy axis ADR-0013
 originally called for shipped independently as the `restart` key, and SPEC-0003
 REQ "Restart On Exit" is already conditional on it.
@@ -81,8 +87,8 @@ which a key on `[harness.*]` remains unambiguous (ADR-0013).
 | `schedule` on a harness that is a `[profile.*]` member | Profile autostart would fire the one-shot off-schedule |
 | `schedule` with `restart = "always"` or `"unless-stopped"` | A respawning policy restarts the one-shot after a clean exit |
 | `schedule` in a project `harness.toml` | Project harnesses never enter the daemon's config view, so the schedule could never fire |
-| `catch_up` without `schedule`, or in a project `harness.toml` | A missed-window policy with no schedule to apply to does nothing |
-| `timeout`, `on_overlap` or `keep_runs` without `schedule`, or in a project `harness.toml` | Run keys shape scheduled runs; without a schedule there are none |
+| `catch_up` without `schedule`, a channel trigger or `operating_hours` (SPEC-0014), or in a project `harness.toml` | A missed-window policy with nothing that can miss a firing does nothing |
+| `timeout`, `on_overlap` or `keep_runs` without `schedule` or `triggers` (SPEC-0014), or in a project `harness.toml` | Run keys shape triggered runs; without a trigger there are none |
 
 `operating_hours` alongside `schedule` is rejected for the same reason (SPEC-0012
 REQ "Operating Hours Exclusions"): a cron expression already gates when the
@@ -380,7 +386,9 @@ not only what executed:
 | `interrupted` | A run, or a held firing, the daemon went down under | Yes, or held |
 
 A record SHALL read `running` while its run is in flight. `trigger` SHALL be
-`schedule` (on time), `manual` (an operator start or restart), or `catch_up`.
+`schedule` (on time), `manual` (an operator start or restart), or `catch_up`, or
+one of SPEC-0014's `channel` and `webhook`. SPEC-0014 REQ "Run Record Fields"
+adds `source`, `event_id`, a skip `reason`, and a `coalesced` count.
 
 `run_id` SHALL be a per-harness integer that increases monotonically and is
 never reused — across daemon restarts, and even after a history is lost, for as
@@ -491,10 +499,12 @@ run `timed_out`, and SHALL leave the harness `failed`.
 The `on_overlap` key on a scheduled harness SHALL decide what a firing does
 while a run is in flight:
 
-- `skip` (default): the firing is recorded `skipped` and starts nothing.
+- `skip` (default; SPEC-0014 defaults `queue` on a harness that sets
+  `triggers`): the firing is recorded `skipped` and starts nothing.
 - `queue`: the firing is held, and starts when the run in flight ends by
   success, failure, or timeout. At most one firing SHALL be held; a further
-  firing is recorded `skipped`. A held firing dropped by an operator stop is
+  firing is recorded `skipped`, and successive skips during one run coalesce
+  into a single record (SPEC-0014 REQ "Overlap Skip Coalescing"). A held firing dropped by an operator stop is
   recorded `cancelled`, and by a daemon shutdown `interrupted`.
 - `replace`: the run in flight is stopped gracefully and recorded `replaced`,
   and the new run starts.
@@ -528,7 +538,7 @@ client never evaluates a cron expression or guesses at a run:
 
 | Op | Request | Reply |
 | --- | --- | --- |
-| `jobs` | — | Every scheduled harness: schedule, state, next window (from the live scheduler), `catch_up`, `timeout`, `on_overlap`, `keep_runs`, the run in flight, the newest finished record, and consecutive failures |
+| `jobs` | — | Every triggered harness (SPEC-0014): schedule, state, next window (from the live scheduler), `catch_up`, `timeout`, `on_overlap`, `keep_runs`, the run in flight, the newest finished record, and consecutive failures |
 | `trigger` | `name` | The decision — `started`, `queued` or `skipped` — and the run record it made (none while queued) |
 | `runs` | `name`, `limit` | The harness's run records, newest first, at most `limit` (default 20) |
 
@@ -541,7 +551,7 @@ job (`running`, `skipped`, `missed`, `replaced`, `cancelled`, `interrupted`)
 SHALL neither count nor reset the count.
 
 Errors SHALL be distinguishable: an unknown name is `unknown_harness`, a
-`trigger` for a harness with no schedule is `not_scheduled`, and a run id the
+`trigger` for a harness with neither `schedule` nor `triggers` is `not_scheduled`, and a run id the
 history does not hold is `unknown_run`. Replies SHALL carry outcomes, times,
 exit codes and whether a run has a log — never environment, `env_file` contents,
 prompt text or output (ADR-0008).
@@ -553,7 +563,8 @@ documented alongside the constant.
 
 - **WHEN** a client requests `jobs`
 - **THEN** each scheduled harness carries its next window as an RFC 3339 time
-  resolved by the running scheduler, and harnesses without a schedule are absent
+  resolved by the running scheduler, and harnesses that are neither scheduled nor
+  triggered are absent
 
 #### Scenario: Failure streak
 
@@ -568,15 +579,17 @@ documented alongside the constant.
 
 #### Scenario: Distinguishable errors
 
-- **WHEN** `trigger` names a harness with no schedule, or one that does not exist
+- **WHEN** `trigger` names a harness with neither `schedule` nor `triggers`, or
+  one that does not exist
 - **THEN** the replies are `not_scheduled` and `unknown_harness` respectively
 
 ### Requirement: Manual Trigger
 
-`trigger` SHALL start a run of a scheduled harness with trigger `manual` through
-the same path a schedule firing takes, so the harness's `on_overlap` policy,
-`timeout`, run history and per-run log apply exactly as they would at the
-scheduled time.
+`trigger` SHALL start a run of a triggered harness (SPEC-0014) with trigger
+`manual`, optionally carrying an event (SPEC-0014 REQ "Manual Trigger With
+Event"), through the same path a schedule firing takes, so the harness's
+`on_overlap` policy, `timeout`, run history and per-run log apply exactly as
+they would at the scheduled time.
 
 The CLI verb SHALL be `harness trigger <name>`, since `harness run` starts a
 scratchpad (ADR-0017). `harness trigger <name> --wait` SHALL stream the run's log

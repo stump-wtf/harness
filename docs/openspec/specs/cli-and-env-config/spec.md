@@ -49,6 +49,7 @@ The following variables SHALL be recognized:
 | `HARNESS_SCROLLBACK` | `--scrollback` | int | `attach.DefaultRingLines` |
 | `HARNESS_SSH` | `--ssh` | bool | `false` |
 | `HARNESS_SSH_LISTEN` | `--ssh-listen` | host:port | *(unset)* |
+| `HARNESS_WEBHOOK_LISTEN` | `--webhook-listen` | host:port | *(unset)* |
 | `HARNESS_WATCH_CONFIG` | *(none)* | bool | `true` |
 
 Harness MUST NOT read harness or profile definitions from the environment. No
@@ -58,6 +59,12 @@ Harness MUST NOT read harness or profile definitions from the environment. No
 `HARNESS_DETACH_READY_FD` is RESERVED. It predates this spec as internal IPC
 between `harness daemon --detach` and its forked child, it is not operator
 configuration, and it MUST NOT be reassigned or documented as a setting.
+
+`HARNESS_RUN_ID`, `HARNESS_RUN_TRIGGER`, `HARNESS_RUN_SOURCE` and
+`HARNESS_EVENT_FILE` are RESERVED. The daemon sets them in the environment of a
+triggered run (SPEC-0014 REQ "Event Delivery To The Run"). They are not
+settings, Harness SHALL NOT read them as configuration, and no flag SHALL be
+named so that it maps onto them.
 
 #### Scenario: Environment supplies the socket
 

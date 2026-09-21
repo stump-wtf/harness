@@ -234,6 +234,9 @@ sequenceDiagram
 - **Doorbells while held.** An agent that is held misses push notifications.
   Harness can't fix this and shouldn't try. An agent should reconcile its queue
   at startup, and holding doorbells for an off-shift agent is a sender feature.
+  A triggered harness (SPEC-0014) is the exception that proves the rule. There
+  the daemon holds the channel, so it hears an out-of-hours doorbell and records
+  it `skipped`, and `catch_up` runs once at opening. It still holds nothing.
 - **More listing branches.** Held versus stopped is one more case in every
   renderer, on top of `Schedule != ""`. `schedfmt` keeps the wording in one
   place.

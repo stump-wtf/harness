@@ -49,6 +49,8 @@ and logs), ADR-0008 (secrets and file modes), ADR-0011 (prompt harness).
 - **Notification delivery.** No Signal, no webhooks, no `on_failure` exec hook.
   The daemon knowing how to reach an external service contradicts the one thing
   it is designed not to know. Events are the seam; a notifier is a client.
+  (This is about *outbound* delivery. Inbound webhooks and MCP channel
+  notifications that *fire* a run are SPEC-0014, which keeps this non-goal.)
 - **Retry within a window.** A failed run is a failed run; the next firing is the
   next attempt.
 - **Backoff between firings.** The schedule *is* the rate limiter.
