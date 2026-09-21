@@ -219,6 +219,16 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			m.droppedSeen = d
 		}
 	}
+	if m.lifecycleDrops != nil {
+		// Every lifecycle event this subscriber lost is a transition or run
+		// outcome the counters above will never see. The bus counts the loss
+		// atomically; it is read here, like the observer's, and published
+		// under the collector it undercounts.
+		if d := m.lifecycleDrops(); d > m.lifecycleSeen {
+			m.collErrs[collectorLifecycle] += d - m.lifecycleSeen
+			m.lifecycleSeen = d
+		}
+	}
 	reachable := m.opts.Observer != nil && !m.observerDead
 	collErrs := make(map[string]uint64, len(m.collErrs))
 	for k, v := range m.collErrs {

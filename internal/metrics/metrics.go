@@ -27,7 +27,7 @@
 //     state transitions, scheduled-run outcomes — are counted as the events
 //     arrive: agent items from the observer (internal/observe), lifecycle
 //     events from the Manager's bus. Both feeds are lossy fan-outs that never
-//     block the supervisor (ADR-0007); loss on the observer feed is counted in
+//     block the supervisor (ADR-0007); loss on either feed is counted in
 //     harness_metrics_collection_errors_total rather than hidden.
 //
 // Honest absence (SPEC-0013 REQ-6) runs through all of it: a value the daemon
@@ -63,7 +63,10 @@ import (
 type Source interface {
 	Snapshots() []supervisor.Snapshot
 	HarnessDef(name string) (core.Harness, bool)
-	Events() (<-chan supervisor.Event, func())
+	// EventsCounted subscribes to the lifecycle bus and reports how many
+	// events this subscriber has lost to a full buffer, so the loss can be
+	// published instead of silently undercounting transitions (REQ-6).
+	EventsCounted() (<-chan supervisor.Event, func(), func() uint64)
 }
 
 // EventSource is the agent event feed. *observe.Observer satisfies it.
@@ -250,6 +253,12 @@ type Metrics struct {
 	// droppedSeen is the observer's drop count for this subscriber as of the
 	// previous scrape; the delta becomes collection errors.
 	droppedSeen uint64
+	// lifecycleDrops reads the lifecycle bus's drop count for this
+	// subscriber (nil before Start); lifecycleSeen is its value as of the
+	// previous scrape. The delta becomes collection errors, as for the
+	// observer.
+	lifecycleDrops func() uint64
+	lifecycleSeen  uint64
 
 	started bool
 	closed  bool
@@ -312,7 +321,8 @@ func (m *Metrics) Start() {
 	}
 	m.started = true
 
-	evs, cancelEvs := m.src.Events()
+	evs, cancelEvs, drops := m.src.EventsCounted()
+	m.lifecycleDrops = drops
 	m.cancels = append(m.cancels, cancelEvs)
 	m.wg.Add(1)
 	go m.consumeLifecycle(evs)
