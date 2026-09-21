@@ -631,3 +631,38 @@ func TestCaps(t *testing.T) {
 		t.Fatalf("capString = %q", got)
 	}
 }
+
+// omit_prompts, end to end: the prompt text and the prompt-derived session
+// title reach neither the collector (logs or spans) nor the events file, and
+// the placeholder does. TestOmitPrompts checks the converter; this checks the
+// bytes, so a sink that bypassed the converter would fail here.
+func TestOmitPromptsReachesEverySink(t *testing.T) {
+	rx := newReceiver(t)
+	file := filepath.Join(t.TempDir(), "events.jsonl")
+	res := testResolved(rx.srv.URL, func(c *core.TelemetryConfig) {
+		c.OmitPrompts = true
+		c.EventsFile = file
+		c.IdleFlush = 30 * time.Millisecond
+	})
+	_, obs := startPipeline(t, res, newFakeSource(optIn("w")), Options{})
+	const prompt = "customer ACME-4417 wants a refund"
+	obs.publish(
+		markEv("w", "k", 0, "user-message", prompt, t0),
+		toolEv("w", "k", 0, "ls", false, t0.Add(time.Second)),
+	)
+	waitFor(t, "logs, spans and lines", func() bool {
+		return len(rx.snapshotLogs()) == 2 && len(rx.snapshotSpans()) == 2 && countLines(file) == 2
+	})
+	data, _ := os.ReadFile(file)
+	for name, got := range map[string]string{"OTLP requests": rx.allRaw(), "events file": string(data)} {
+		if strings.Contains(got, "ACME-4417") {
+			t.Errorf("%s carry the prompt text", name)
+		}
+		if strings.Contains(got, session("k").Title) {
+			t.Errorf("%s carry the prompt-derived session title", name)
+		}
+		if !strings.Contains(got, PromptOmitted) {
+			t.Errorf("%s lack the %q placeholder — was the prompt ever there?", name, PromptOmitted)
+		}
+	}
+}
