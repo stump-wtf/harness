@@ -313,6 +313,7 @@ func TestCollectorDownIsBoundedAndRecovers(t *testing.T) {
 	up.Store(true)
 	once.Do(func() { close(release) })
 	waitFor(t, "recovery", func() bool { return len(rx.snapshotLogs()) == batch+queueSize })
+	waitFor(t, "the recovery to be counted", func() bool { return p.Stats()[SignalLogs].Exported == batch+queueSize })
 	logs := rx.snapshotLogs()
 	// The stuck first batch, then the NEWEST queue_size items.
 	for i, l := range logs {
@@ -355,6 +356,9 @@ func TestRetryAfterIsHonoured(t *testing.T) {
 	p, obs := startPipeline(t, res, newFakeSource(optIn("w")), Options{Sleep: record, Jitter: func(time.Duration) time.Duration { return time.Hour }})
 	obs.publish(toolEv("w", "k", 0, "x", false, t0))
 	waitFor(t, "delivery after the retry", func() bool { return len(rx.snapshotLogs()) == 1 })
+	// The receiver records the body before its reply reaches the sender, so
+	// wait for the sender to count the success rather than racing it.
+	waitFor(t, "the success to be counted", func() bool { return p.Stats()[SignalLogs].RequestsSuccess == 1 })
 	mu.Lock()
 	defer mu.Unlock()
 	if len(waits) != 1 || waits[0] != 7*time.Second {
