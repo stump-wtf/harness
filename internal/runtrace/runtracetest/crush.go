@@ -46,7 +46,7 @@ func WriteCrushDB(tb testing.TB, path string, sessions ...CrushSession) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		tb.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", writerDSN(path))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func WriteCrushDB(tb testing.TB, path string, sessions ...CrushSession) {
 // its updated_at trigger. That is what discovery's activity filter reads.
 func AppendCrushMessages(tb testing.TB, path, sessionID string, msgs ...CrushMessage) {
 	tb.Helper()
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", writerDSN(path))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func AppendCrushMessages(tb testing.TB, path, sessionID string, msgs ...CrushMes
 // re-inserted, so neither its rowid nor the session's updated_at moves.
 func RewriteLastCrushMessage(tb testing.TB, path, sessionID, parts string) {
 	tb.Helper()
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", writerDSN(path))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -145,6 +145,13 @@ func RewriteLastCrushMessage(tb testing.TB, path, sessionID, parts string) {
 		parts, sessionID); err != nil {
 		tb.Fatal(err)
 	}
+}
+
+// writerDSN opens a store for writing with a busy timeout, as crush does: a
+// test that grows a session while an observer is polling it must wait out the
+// reader's shared lock rather than fail with SQLITE_BUSY.
+func writerDSN(path string) string {
+	return "file:" + path + "?_pragma=busy_timeout(5000)"
 }
 
 // ToolCall is an assistant message's tool_call part.
