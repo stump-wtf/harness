@@ -24,7 +24,7 @@
 // its fields — including a false bool or an empty string, which a plain
 // omitempty encoding would turn into an empty, invalid AnyValue.
 //
-// Governing: ADR-0021; SPEC-0014 REQ-6, REQ-7, REQ-10; ADR-0008 (header values
+// Governing: ADR-0022; SPEC-0015 REQ-6, REQ-7, REQ-10; ADR-0008 (header values
 // are never put into an error or a log line).
 //
 // @joestump-agent 09/21/2026 - Rewritten for harness#391: logs alongside

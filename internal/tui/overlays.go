@@ -355,7 +355,7 @@ func (m *Model) onConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // env_file/restart_delay/restart/backend/tmux_socket/description/enabled/
 // harvest_trajectory/mcp_allow; schedule for a cron one-shot; operating_hours/
 // hours_shutdown/hours_shutdown_timeout for a resident harness's weekly time
-// gate, ADR-0019; export_telemetry, the SPEC-0014 opt-in). Every config key core.Harness carries has a widget here —
+// gate, ADR-0019; export_telemetry, the SPEC-0015 opt-in). Every config key core.Harness carries has a widget here —
 // an unbound key is one the `e` save path silently deletes from harness.toml
 // (issue #161), which TestEditPreservesEveryConfigKey pins.
 func buildHarnessForm(fi *formInputs) *huh.Form {

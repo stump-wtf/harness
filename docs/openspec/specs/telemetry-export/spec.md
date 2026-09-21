@@ -1,11 +1,11 @@
 ---
 status: draft
 date: 2026-09-21
-implements: [adr-0021]
+implements: [adr-0022]
 related: [adr-0007, adr-0008, adr-0011, adr-0020]
 ---
 
-# SPEC-0014: Telemetry Export
+# SPEC-0015: Telemetry Export
 
 ## Overview
 

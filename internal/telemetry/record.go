@@ -3,7 +3,7 @@ package telemetry
 // Records and Identity
 //
 // Every observed item is described once, as a signal-neutral Record: the
-// SPEC-0014 REQ-5 field set, redacted and capped, plus the item's trace ID,
+// SPEC-0015 REQ-5 field set, redacted and capped, plus the item's trace ID,
 // item ID and — when the item maps to a span — its span ID. The logs sink turns
 // a Record into an OTLP LogRecord and the events file sink marshals the same
 // Record to a line, which is what keeps the JSONL keys and the log attributes
@@ -25,7 +25,7 @@ package telemetry
 // sink, and every daemon lifetime, computes the same ID for the same item
 // without sharing any state.
 //
-// Governing: ADR-0021; SPEC-0014 REQ-4, REQ-5, REQ-6, REQ-7, REQ-8; ADR-0008.
+// Governing: ADR-0022; SPEC-0015 REQ-4, REQ-5, REQ-6, REQ-7, REQ-8; ADR-0008.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
 //
@@ -46,7 +46,7 @@ import (
 	"github.com/stump-wtf/harness/internal/redact"
 )
 
-// Wire constants (SPEC-0014 REQ-4, REQ-6, REQ-8).
+// Wire constants (SPEC-0015 REQ-4, REQ-6, REQ-8).
 const (
 	// ScopeName is the instrumentation scope of every log record and span.
 	ScopeName = "github.com/stump-wtf/harness/telemetry"
@@ -93,7 +93,7 @@ func ItemID(traceID string, kind observe.Kind, seq int, content string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// ContentKey is what tells apart items of one kind sharing a seq (SPEC-0014
+// ContentKey is what tells apart items of one kind sharing a seq (SPEC-0015
 // REQ-7): the fields the transcript recorded for the item, joined with NUL.
 // A tool event is keyed by its tool, summary and timestamp; a mark by its
 // type, timestamp and note. Under omit_prompts a user-message's note is left

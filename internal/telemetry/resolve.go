@@ -8,7 +8,7 @@ package telemetry
 // any harness is started, so a signal that is consented to but cannot be
 // delivered refuses the start rather than being discovered later.
 //
-// Precedence per setting, per signal (SPEC-0014 REQ-3):
+// Precedence per setting, per signal (SPEC-0015 REQ-3):
 //
 //	signal-specific env  >  generic env  >  [telemetry] in harness.toml  >  default
 //
@@ -24,7 +24,7 @@ package telemetry
 // userinfo: headers are reported as a name and a truncated SHA-256
 // fingerprint, endpoints with userinfo and query stripped.
 //
-// Governing: ADR-0021; SPEC-0014 REQ-3, REQ-5, REQ-14; ADR-0008.
+// Governing: ADR-0022; SPEC-0015 REQ-3, REQ-5, REQ-14; ADR-0008.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
 //

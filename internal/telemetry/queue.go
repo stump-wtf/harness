@@ -6,7 +6,7 @@ package telemetry
 // queue_size units (log records, spans or lines). When it is full the OLDEST
 // unit is dropped and counted — during an outage the newest data is the data
 // most likely to explain what is happening now — so memory is bounded by
-// configuration and never grows with collector downtime (SPEC-0014 REQ-9).
+// configuration and never grows with collector downtime (SPEC-0015 REQ-9).
 //
 // batchLoop drains a queue in batches of at most batch_size, flushing a partial
 // batch once batch_interval has passed since its oldest unit was queued, with
@@ -19,7 +19,7 @@ package telemetry
 // to one warn line per signal per failure kind per minute, with a running
 // count (REQ-10).
 //
-// Governing: ADR-0021; SPEC-0014 REQ-9, REQ-10, REQ-11, REQ-12; ADR-0007.
+// Governing: ADR-0022; SPEC-0015 REQ-9, REQ-10, REQ-11, REQ-12; ADR-0007.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
 
@@ -202,7 +202,7 @@ func (s *signalStats) setError(msg string) {
 	s.mu.Unlock()
 }
 
-// SignalStats is one signal's self-telemetry snapshot (SPEC-0014 REQ-12).
+// SignalStats is one signal's self-telemetry snapshot (SPEC-0015 REQ-12).
 // Units are log records, spans or lines.
 type SignalStats struct {
 	Exported        uint64

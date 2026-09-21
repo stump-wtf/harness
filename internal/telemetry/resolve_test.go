@@ -2,7 +2,7 @@ package telemetry
 
 // Resolution and Events File Tests
 //
-// Governing tests: SPEC-0014 REQ-1 (env alone never enables), REQ-3
+// Governing tests: SPEC-0015 REQ-1 (env alone never enables), REQ-3
 // (precedence, header merge, env_file isolation, refusals), REQ-5 (resource),
 // REQ-8 (rotation), REQ-14 (value-free log fields).
 //

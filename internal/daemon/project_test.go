@@ -543,7 +543,7 @@ func TestScratchRunRoundTrip(t *testing.T) {
 // TestHarnessFromWireTelemetryOptOutOnly: only a project's opt-out survives
 // the wire. A hand-built client sending export_telemetry = true must not opt
 // a project harness in — the parser refuses it in the file, and the daemon
-// does not trust the client to have parsed (SPEC-0014 REQ-2).
+// does not trust the client to have parsed (SPEC-0015 REQ-2).
 func TestHarnessFromWireTelemetryOptOutOnly(t *testing.T) {
 	yes, no := true, false
 	for _, tc := range []struct {
