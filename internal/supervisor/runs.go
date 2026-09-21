@@ -392,9 +392,10 @@ func (s *Supervisor) finishRun(outcome RunOutcome, code *int) {
 	}
 	s.logEvent("run finished", kv...)
 	if run.file != nil {
-		// The PTY reader lands the run's final screenful after the exit is
-		// processed (#279); wait for it so the log holds the whole run and the
-		// finish line comes last.
+		// The PTY reader lands the run's final screenful at EOF (#279),
+		// normally before the exit is even reported (wait) but after it when
+		// the drain gave up and reapProcess's close ended the read; wait for
+		// it so the log holds the whole run and the finish line comes last.
 		s.awaitReader()
 		run.evlog.Info("run finished", kv...)
 		_ = run.file.Close()
@@ -450,10 +451,7 @@ func (s *Supervisor) awaitReader() {
 	if s.readerDone == nil {
 		return
 	}
-	select {
-	case <-s.readerDone:
-	case <-time.After(2 * time.Second):
-	}
+	drainReader(s.readerDone)
 }
 
 // historyOut is where the sanitized output history of the next spawn goes: the

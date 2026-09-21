@@ -550,8 +550,12 @@ func (s *Supervisor) beginStart() {
 			sink = io.MultiWriter(sink, s.extraOut)
 		}
 	}
-	go s.readOutput(proc, sink, s.hist, readerDone)
-	go s.wait(proc, gen)
+	var src io.Reader = proc.pty
+	if lagPTYReader != nil {
+		src = lagPTYReader(src)
+	}
+	go s.readOutput(src, sink, s.hist, readerDone)
+	go s.wait(proc, gen, readerDone)
 
 	s.transition(core.StateRunning)
 
@@ -573,29 +577,65 @@ func (s *Supervisor) spawnSize() (int, int) {
 	return cols, rows
 }
 
-// readOutput copies the raw PTY stream to the sanitized log/tee until the PTY
-// closes, then flushes the final screenful into the log — a short run's output
-// never scrolls, so EOF is the only moment it can be landed (#279).
-func (s *Supervisor) readOutput(proc *process, sink io.Writer, hist *ptyHistory, done chan struct{}) {
+// readOutput copies the raw PTY stream to the sanitized log/tee until EOF —
+// the last holder of the terminal exiting, or the PTY closing — then flushes
+// the final screenful into the log. A short run's output never scrolls, so
+// EOF is the only moment it can be landed (#279).
+func (s *Supervisor) readOutput(src io.Reader, sink io.Writer, hist *ptyHistory, done chan struct{}) {
 	defer close(done)
-	_, _ = io.Copy(sink, proc.pty)
+	_, _ = io.Copy(sink, src)
 	if hist != nil {
 		hist.Flush()
 	}
 }
 
-// wait reaps the process and reports its exit to the loop.
-func (s *Supervisor) wait(proc *process, gen uint64) {
+// wait reaps the process and reports its exit to the loop, once the PTY
+// reader has drained what the process wrote. The loop's first act on an exit
+// is to close the PTY (reapProcess), and Linux, unlike macOS, does not hold a
+// session leader's exit until its terminal output has been read. An exit
+// reported the moment Wait returned could therefore close the master ahead of
+// a reader the scheduler had not run yet, and a run that printed one line and
+// exited kept none of it in its log (SPEC-0008 REQ "Per-Run Logs").
+func (s *Supervisor) wait(proc *process, gen uint64, readerDone <-chan struct{}) {
 	_ = proc.cmd.Wait()
 	code := -1
 	if proc.cmd.ProcessState != nil {
 		code = proc.cmd.ProcessState.ExitCode()
 	}
+	drainReader(readerDone)
 	select {
 	case s.exitCh <- exitResult{gen: gen, code: code}:
 	case <-s.done:
 	}
 }
+
+// exitDrainBound caps how long a finished process's reader gets to reach EOF
+// before the PTY is closed anyway. EOF arrives once nothing holds the
+// terminal, so the bound only runs out when something does: a descendant that
+// survived the session leader's SIGHUP, or a wedged reader.
+const exitDrainBound = 2 * time.Second
+
+// drainReader waits, bounded, for a spawn's PTY reader to reach EOF and land
+// its final flush.
+func drainReader(done <-chan struct{}) {
+	if onReaderDrain != nil {
+		onReaderDrain()
+	}
+	select {
+	case <-done:
+	case <-time.After(exitDrainBound):
+	}
+}
+
+// Test seams for the PTY reader, nil outside tests. lagPTYReader wraps the
+// stream a spawn's reader drains, and onReaderDrain runs whenever the
+// supervisor starts waiting on a reader. Holding the reader until something
+// waits on it is the furthest it can lag an exit on a loaded Linux host
+// (TestRunLogKeepsOutputOfLaggingReader).
+var (
+	lagPTYReader  func(io.Reader) io.Reader
+	onReaderDrain func()
+)
 
 // handleExit processes a natural (unsolicited) process exit.
 func (s *Supervisor) handleExit(ex exitResult) {
@@ -857,7 +897,9 @@ func (s *Supervisor) gracefulStopKeepEnabled() {
 
 func (s *Supervisor) hasProcess() bool { return s.proc != nil }
 
-// reapProcess closes the PTY (unblocking the reader) and drops the process.
+// reapProcess closes the PTY and drops the process. Every exit reaches here
+// through wait, which has already given the reader its drain; the close
+// unblocks one that the bound gave up on.
 func (s *Supervisor) reapProcess() {
 	if s.proc != nil {
 		_ = s.proc.pty.Close()

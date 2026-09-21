@@ -340,6 +340,18 @@ func spawn(h core.Harness, cols, rows int) (*process, error) {
 		_ = pty.Close()
 		return nil, fmt.Errorf("supervisor: start %q: %w", name, err)
 	}
+	// The child holds the slave now, so drop the daemon's copy. xpty keeps
+	// one open for the PTY's lifetime, and while the daemon holds it a Linux
+	// master never reads EOF: the reader could only be stopped by closing the
+	// master under it, which throws away whatever the child wrote that the
+	// reader had not read yet. On a loaded host that was a short run's whole
+	// output. With the child's session the only holder, the master hands over
+	// that tail and then EOF once the last holder exits, so the exit path can
+	// wait for the reader instead of cutting it off (wait, supervisor.go).
+	// Resize and input go through the master and are unaffected.
+	if sl, ok := pty.(interface{ Slave() *os.File }); ok {
+		_ = sl.Slave().Close()
+	}
 	return &process{pty: pty, cmd: cmd, pid: cmd.Process.Pid}, nil
 }
 
