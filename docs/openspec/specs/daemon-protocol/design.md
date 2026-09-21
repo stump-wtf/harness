@@ -62,11 +62,11 @@ sequenceDiagram
     D->>C: scrollback tail (bounded)
     H-->>D: PTY output (never blocks on C)
     D-->>C: ATTACH_DATA (live, coalesced under backpressure)
-    C->>D: ATTACH_DATA (keystrokes; dropped if ro)
+    C->>D: ATTACH_DATA (keystrokes, dropped if ro)
     C->>D: ATTACH_RESIZE {cols, rows}
     Note over D: smallest attached client wins (ADR-0003)
     C->>D: ATTACH_CLOSE
-    Note over D,H: harness untouched; other sessions continue
+    Note over D,H: harness untouched, other sessions continue
 ```
 
 Frame layout: `uint32 length (BE) | uint8 type | payload`. Attach frames carry

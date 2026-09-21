@@ -44,6 +44,17 @@ function writeFixture() {
     path.join(adrs, 'ADR-0001-example.md'),
     '---\nstatus: accepted\ndate: 2026-01-01\n---\n\n# ADR-0001: Example\n\n## Context\n\nSomething.\n'
   );
+  // Titles Mermaid cannot take verbatim in a quoted label: double quotes, and a
+  // leading backtick (plus a `#name;` that must not decode as an entity). Both
+  // relate to ADR-0001, so every ADR page and the ADR index draw their nodes.
+  fs.writeFileSync(
+    path.join(adrs, 'ADR-0002-quoted.md'),
+    '---\nstatus: accepted\ndate: 2026-01-01\nrelated: [ADR-0001]\n---\n\n# ADR-0002 — Profiles ("configurations of harnesses")\n\n## Context\n\nSomething.\n'
+  );
+  fs.writeFileSync(
+    path.join(adrs, 'ADR-0003-backtick.md'),
+    '---\nstatus: accepted\ndate: 2026-01-01\nrelated: [ADR-0001]\n---\n\n# ADR-0003: `prompt_file` — issue #42; source\n\n## Context\n\nSomething.\n'
+  );
 
   const body = (id, title, text) =>
     `---\nstatus: active\ndate: 2026-01-01\n---\n\n# ${id}: ${title}\n\n## Overview\n\n${text}\n`;
@@ -222,4 +233,43 @@ test('an unprotected reference on the same line still linkifies', async (t) => {
   const epsilon = read('specs/epsilon/spec.mdx');
   assert.match(epsilon, /`SPEC-0002` against bare <a href="\/harness\/specs\/alpha\/spec"[^>]*>SPEC-0001</);
   assert.match(epsilon, /`ADR-0001` against bare <a href="\/harness\/decisions\/ADR-0001-example"[^>]*>[^<]*ADR-0001</);
+});
+
+// --- Mermaid node labels -----------------------------------------------------
+//
+// A node label is a quoted Mermaid string, and a title dropped into it verbatim
+// can break the whole diagram: a double quote closes it early ("Parse error ...
+// Expecting 'SQE', got 'STR'"), and a leading backtick opens a markdown string
+// ("Lexical error ... Unrecognized text"). ADR-0006 and ADR-0018 hit one each,
+// and each took down the graph on every page that drew its node.
+
+const mermaidBlocks = (mdx) =>
+  [...mdx.matchAll(/```mermaid\n([\s\S]*?)```/g)].map((m) => m[1]);
+
+// Every node definition, `  ID["label"]`, captured up to the closing `"]`.
+const nodeLabels = (block) =>
+  [...block.matchAll(/^\s+\w+\["(.*)"\]\s*$/gm)].map((m) => m[1]);
+
+test('titles Mermaid cannot quote verbatim are entity-escaped in node labels', async (t) => {
+  const { read } = await build(t);
+
+  const quoted = 'ADR-0002 — Profiles (#quot;configurations of harnesses#quot;)';
+  const backtick = '#96;prompt_file#96; — issue #35;42; source';
+
+  // A mini-DAG draws the page's direct neighbours; the ADR index draws the
+  // hierarchy graph of every ADR.
+  const pages = {
+    'decisions/ADR-0001-example.mdx': [quoted, backtick],
+    'decisions/ADR-0002-quoted.mdx': [quoted],
+    'decisions/ADR-0003-backtick.mdx': [backtick],
+    'decisions/index.mdx': [quoted, backtick],
+  };
+
+  for (const [rel, want] of Object.entries(pages)) {
+    const blocks = mermaidBlocks(read(rel));
+    assert.ok(blocks.length > 0, `${rel} has no mermaid block`);
+    const labels = blocks.flatMap(nodeLabels);
+    for (const label of want) assert.ok(labels.includes(label), `${rel}: no node labelled ${label}`);
+    for (const label of labels) assert.doesNotMatch(label, /["`]/, `${rel}: unescaped ${label}`);
+  }
 });

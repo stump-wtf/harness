@@ -185,10 +185,23 @@ function isKnownTag(tagName) {
 
 const nodeId = (id) => id.replace(/[^A-Za-z0-9_]/g, '_');
 
+// A title is not safe to drop into a Mermaid quoted label as-is, and when it
+// breaks, it takes down the whole diagram on every page that draws its node:
+//
+//   "  the label is a STR token, `"[^"]*"`, with no backslash escape — `\"`
+//      ends it early ("Expecting 'SQE', got 'STR'"; ADR-0006's title).
+//   `  "` opens a markdown string, so a label *starting* with a backtick is a
+//      lexical error ("Unrecognized text"; ADR-0018's `prompt_file` title).
+//
+// Both go through Mermaid's own entity syntax, `#name;`, which it decodes back
+// to the literal character when it renders. `#` is escaped first because it is
+// the escape character: left alone, a title containing `#42;` would decode.
 const nodeLabel = (n) =>
   (n.title || n.id)
     .replace(/^(?:ADR|SPEC)-\d+:\s*/, '')
-    .replace(/"/g, '\\"');
+    .replace(/#/g, '#35;')
+    .replace(/"/g, '#quot;')
+    .replace(/`/g, '#96;');
 
 function extractTitle(text) {
   const m = text.match(/^#\s+(.+?)\s*$/m);
