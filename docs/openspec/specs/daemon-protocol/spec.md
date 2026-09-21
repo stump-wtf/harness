@@ -50,8 +50,11 @@ a clear `ERROR` ("client too old/new; daemon proto vN") rather than garbling.
 
 The control plane SHALL mirror the CLI verbs and the TUI 1:1 (ADR-0002):
 `list`, `describe`, `start`, `stop`, `restart`, `logs`, `profiles`,
-`use_profile`, `reload`, `daemon_info`, and the scheduled-run ops `jobs`,
-`trigger` and `runs` (SPEC-0008 REQ "Protocol Operations"). `start` SHALL accept
+`use_profile`, `reload`, `daemon_info`, the scheduled-run ops `jobs`,
+`trigger` and `runs` (SPEC-0008 REQ "Protocol Operations"), and the trigger
+source op `triggers` (SPEC-0014 REQ "Trigger Visibility"). `trigger` SHALL
+accept an optional event envelope (SPEC-0014 REQ "Manual Trigger With Event").
+`start` SHALL accept
 an optional `for` duration carrying an after-hours lease (SPEC-0012 REQ
 "After-Hours Lease"). Operations SHALL be idempotent
 where that makes sense (double-`start` is a no-op). Errors SHALL come back as
@@ -122,8 +125,10 @@ After a `HELLO` that includes `wants: ["events"]`, the daemon SHALL push
 `EVENT` frames on state changes (`harness_state_changed`, `harness_exited`,
 `harness_flapping`, `config_reloaded`, `profile_changed`, the scheduled-run
 events `job_run_started`, `job_run_finished` and `job_schedule_changed` of
-SPEC-0008 REQ "Lifecycle Events", and the operating-hours event
-`harness_hours_changed` of SPEC-0012 REQ "Operating Hours Visibility") so the
+SPEC-0008 REQ "Lifecycle Events", the operating-hours event
+`harness_hours_changed` of SPEC-0012 REQ "Operating Hours Visibility", and the
+trigger-source event `trigger_source_changed` of SPEC-0014 REQ "Trigger
+Visibility") so the
 TUI re-renders reactively without polling. One-shot CLI invocations MAY skip the
 subscription entirely.
 

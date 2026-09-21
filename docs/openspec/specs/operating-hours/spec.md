@@ -117,9 +117,13 @@ harness and the offending key.
 | `operating_hours` with `schedule` | A scheduled one-shot is already time-gated by its cron expression |
 | `operating_hours` in a project `harness.toml` | Reload reconciliation and lease persistence are defined only for the config of record (ADR-0019 *Deferred*) |
 | `hours_shutdown` or `hours_shutdown_timeout` without `operating_hours` | A shutdown mode with no hours to close does nothing |
+| `hours_shutdown` or `hours_shutdown_timeout` on a harness with `triggers` | A triggered run is bounded by `timeout`, not closed at the window's end (SPEC-0014) |
 
 `operating_hours` SHALL be accepted alongside `enabled`, profile membership, any
-`restart` policy, `cmd`, and a prompt harness without `schedule`.
+`restart` policy, `cmd`, and a prompt harness without `schedule`. On a harness
+that sets `triggers`, the gate decides whether a *firing* may start a run, not
+whether a process is held (SPEC-0014 REQ "Operating Hours On Triggered
+Harnesses").
 
 #### Scenario: Hours on a scheduled harness
 
