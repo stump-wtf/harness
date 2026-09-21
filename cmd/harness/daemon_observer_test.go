@@ -87,8 +87,10 @@ func TestDaemonObserverDeliversForTheRealManager(t *testing.T) {
 
 	db := filepath.Join(work, ".crush", "crush.db")
 	now := time.Now()
-	rt.WriteCrushDB(t, db, rt.CrushSession{ID: "live", Created: now, Updated: now,
-		Messages: []rt.CrushMessage{{Role: "user", At: now, Parts: `[{"type":"text","data":{"text":"go"}}]`}}})
+	rt.WriteCrushDB(t, db, rt.CrushSession{
+		ID: "live", Created: now, Updated: now,
+		Messages: []rt.CrushMessage{{Role: "user", At: now, Parts: `[{"type":"text","data":{"text":"go"}}]`}},
+	})
 
 	obsOpts := daemonObserverOptions()
 	obsOpts.PollInterval = 10 * time.Millisecond

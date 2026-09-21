@@ -323,8 +323,10 @@ func TestUntimestampedBaseline(t *testing.T) {
 func TestOrderingAndExactlyOnce(t *testing.T) {
 	f := newFixture(t, nil)
 	f.src.add(core.Harness{Name: "worker", Adapter: "crush", Workdir: f.work}, running(start.Add(-time.Hour)))
-	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{ID: "s", Created: start, Updated: start.Add(time.Second),
-		Messages: []rt.CrushMessage{userSays("go", start.Add(time.Second))}})
+	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{
+		ID: "s", Created: start, Updated: start.Add(time.Second),
+		Messages: []rt.CrushMessage{userSays("go", start.Add(time.Second))},
+	})
 	ch, cancel := f.obs.Subscribe("test", 256)
 	defer cancel()
 
@@ -407,8 +409,10 @@ func TestStreamedRowIsReadWhileUnlisted(t *testing.T) {
 	f := newFixture(t, func(o *Options) { o.ForgetAfter = 10 * time.Second })
 	f.src.add(core.Harness{Name: "worker", Adapter: "crush", Workdir: f.work}, running(start.Add(-time.Hour)))
 	streaming := rt.CrushMessage{Role: "assistant", At: start.Add(10 * time.Second), Parts: `[{"type":"text","data":{"text":"thinking"}}]`}
-	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{ID: "s", Created: start, Updated: start.Add(10 * time.Second),
-		Messages: []rt.CrushMessage{userSays("go", start.Add(time.Second)), streaming}})
+	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{
+		ID: "s", Created: start, Updated: start.Add(10 * time.Second),
+		Messages: []rt.CrushMessage{userSays("go", start.Add(time.Second)), streaming},
+	})
 	ch, cancel := f.obs.Subscribe("test", 64)
 	defer cancel()
 
@@ -470,8 +474,10 @@ func TestSlowSubscriberDropsFastOneDoesNot(t *testing.T) {
 func TestForgottenSessionDoesNotReplay(t *testing.T) {
 	f := newFixture(t, func(o *Options) { o.ForgetAfter = time.Hour })
 	f.src.add(core.Harness{Name: "worker", Adapter: "crush", Workdir: f.work}, running(start.Add(-time.Hour)))
-	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{ID: "s", Created: start, Updated: start.Add(10 * time.Second),
-		Messages: crushRead("early", start.Add(10*time.Second))})
+	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{
+		ID: "s", Created: start, Updated: start.Add(10 * time.Second),
+		Messages: crushRead("early", start.Add(10*time.Second)),
+	})
 	ch, cancel := f.obs.Subscribe("test", 64)
 	defer cancel()
 
@@ -528,8 +534,10 @@ func TestParseErrorsAreCountedAndDoNotStarveOthers(t *testing.T) {
 	f.src.add(core.Harness{Name: "claude", Adapter: "claude-code", Workdir: broken.cwd}, running(start.Add(-time.Hour)))
 	f.src.add(core.Harness{Name: "worker", Adapter: "crush", Workdir: f.work}, running(start.Add(-time.Hour)))
 	broken.append(start.Add(time.Second), fakeItem{tool: "Bash"})
-	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{ID: "s", Created: start, Updated: start.Add(time.Second),
-		Messages: crushRead("ok", start.Add(time.Second))})
+	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{
+		ID: "s", Created: start, Updated: start.Add(time.Second),
+		Messages: crushRead("ok", start.Add(time.Second)),
+	})
 	ch, cancel := f.obs.Subscribe("test", 64)
 	defer cancel()
 
