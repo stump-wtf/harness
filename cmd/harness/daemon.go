@@ -120,6 +120,15 @@ func runDaemon(o daemonOpts) {
 		cfg = &core.Config{}
 	}
 
+	// SPEC-0013 REQ-1: a metrics listener off loopback without a bearer
+	// token is refused here, before any harness is started.
+	metricsListener, err := daemonMetricsListener(cfg.Server)
+	if err != nil {
+		log.Error("refusing to start", "err", err)
+		signalDetached('e')
+		os.Exit(1)
+	}
+
 	// The attach data plane: one Mux (x/vt emulator + scrollback ring) per
 	// harness, lazily created. The Manager tees each harness's raw PTY output
 	// into its Mux via the ExtraOut hook, alongside the durable log (ADR-0003/
@@ -212,6 +221,10 @@ func runDaemon(o daemonOpts) {
 	observer := startDaemonObserver(mgr, daemonObserverOptions())
 	log.Info("agent event observer active", "interval", observe.DefaultPollInterval)
 
+	// Issue #356: GET /metrics (SPEC-0013), fed by the observer and the
+	// Manager, on its own listener.
+	daemonMet := startDaemonMetrics(mgr, observer, sched.NextFire, metricsListener)
+
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
 	// tear down connections, stop harnesses, flush state. SIGHUP triggers a
 	// graceful config reload (hot-reload harness.toml without stopping running
@@ -245,6 +258,8 @@ func runDaemon(o daemonOpts) {
 	}
 
 	log.Info("shutting down")
+	// Before the observer and the Manager: metrics reads both.
+	daemonMet.Stop()
 	// Before the Manager closes: the observer reads its snapshots.
 	observer.Stop()
 	sessionGuard.Close()
