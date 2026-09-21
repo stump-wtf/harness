@@ -69,6 +69,9 @@ type Options struct {
 	// Client sends OTLP requests (default: otlpexport's client, which
 	// does not follow redirects).
 	Client *http.Client
+	// OpenEventsFile opens the events file for append (default: os.OpenFile,
+	// O_APPEND|O_CREATE, 0600). A test seam for writes that fail or hang.
+	OpenEventsFile func(path string) (EventsFileHandle, error)
 }
 
 // Pipeline is a running telemetry export.
@@ -184,6 +187,9 @@ func New(res *Resolved, sub Subscriber, src Source, opts Options) *Pipeline {
 		st := &signalStats{}
 		q := newQueue[[]byte](cfg.QueueSize, st)
 		p.evFile = newEventsFile(path, cfg.EventsFileMaxMB, cfg.EventsFileKeep)
+		if opts.OpenEventsFile != nil {
+			p.evFile.openFile = opts.OpenEventsFile
+		}
 		w := p.evFile
 		deliver := func(batch [][]byte, _ bool) {
 			var buf []byte
