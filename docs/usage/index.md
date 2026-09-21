@@ -40,6 +40,7 @@ re-attachable — an agent CLI, a REPL, a watcher, a background service.
 | The TUI dashboard | [Cockpit TUI](./tui) |
 | Project-scoped compose (`up` / `down` / `ps`) | [Projects](./projects) |
 | Remote access over SSH | [Remote access](./remote) |
+| Prometheus metrics (`/metrics`) | [Metrics](./metrics) |
 
 ## Where the architecture comes from
 

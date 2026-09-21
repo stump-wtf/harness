@@ -197,3 +197,13 @@ autostart = true
 #   [[server.key]]
 #   key = "ssh-ed25519 AAAA…"
 #   read_only = true
+#
+# Prometheus metrics (ADR-0020, SPEC-0013). GET /metrics is served on
+# 127.0.0.1:10229 whether or not the SSH server above is enabled. A change to
+# either key needs a DAEMON RESTART — `harness reload` does not rebind the
+# listener. Binding anything but loopback requires metrics_token_file (a path
+# to a 0600 file holding the bearer token; never the token itself), or the
+# daemon refuses to start. "off" disables the listener.
+#
+# metrics_listen = "127.0.0.1:10229"
+# metrics_token_file = "~/.config/harness/metrics.token"

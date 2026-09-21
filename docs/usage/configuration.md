@@ -538,6 +538,26 @@ read_only = true
 
 See [Remote access](./remote) for setup and security notes.
 
+### Metrics listener
+
+The daemon serves Prometheus metrics on `127.0.0.1:10229` by default,
+independent of `enabled` above. The two keys below live in `[server]`:
+
+```toml
+[server]
+# Changing either key needs a daemon restart: `harness reload` re-reads
+# harness definitions and never rebinds a listener.
+metrics_listen = "0.0.0.0:10229"                          # default 127.0.0.1:10229; "off" disables
+metrics_token_file = "~/.config/harness/metrics.token"    # required off loopback
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `metrics_listen` | `127.0.0.1:10229` | `host:port` for `GET /metrics`, or `"off"`. A non-loopback address without a token makes the daemon refuse to start. |
+| `metrics_token_file` | none | A file holding the bearer token scrapers must send. harness.toml holds its path, never the token (ADR-0008). |
+
+See [Metrics](./metrics) for the series, alert rules and scrape config.
+
 ## Environment variables
 
 Process-level settings — where the socket lives, how loud the log is, whether

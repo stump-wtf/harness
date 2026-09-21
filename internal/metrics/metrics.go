@@ -10,7 +10,11 @@
 // facts on one scrape so an alert can join them (ADR-0020):
 //
 //	time() - harness_last_successful_call_timestamp > 900
-//	  and on(harness) harness_harness_state{state="running"} == 1
+//	  and on(instance, harness) harness_harness_state{state="running"} == 1
+//
+// The on() clause is not optional: the state series carries an extra `state`
+// label, and a bare `and` matches only identical label sets, so without it the
+// expression never fires.
 //
 // Two families, two mechanisms (design.md "Where the numbers come from"):
 //
