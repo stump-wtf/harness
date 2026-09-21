@@ -122,7 +122,7 @@ func New(res *Resolved, sub Subscriber, src Source, opts Options) *Pipeline {
 	sendCtx, sendCancel := context.WithCancel(context.Background())
 	p := &Pipeline{
 		res: res, sub: sub, src: src, log: opts.Logger, now: opts.Now,
-		conv:       &converter{omitPrompts: cfg.OmitPrompts, ids: newIDRegistry(opts.Now)},
+		conv:       &converter{omitPrompts: cfg.OmitPrompts},
 		stats:      map[string]*signalStats{},
 		queues:     map[string]interface{ length() int }{},
 		stopCancel: stopCancel, sendCancel: sendCancel,
