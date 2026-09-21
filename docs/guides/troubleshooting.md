@@ -61,10 +61,12 @@ Usual causes, most likely first:
     after about 5 minutes, then 20 minutes, 1 hour and 6 hours, and it stops
     after a fixed number of attempts. The worker's instructions should call
     `claim_next` until empty when it starts.
-- **It's a headless Claude Code channel consumer.** That setup isn't verified
-  to act on doorbells, and the development-channels flag waits for an
-  interactive confirmation. See
-  [the Claude Code status](./push-events#claude-code-what-is-and-isnt-verified).
+- **It's a Claude Code channel consumer that was never loaded as a channel, or
+  is parked at a prompt.** Without `--dangerously-load-development-channels
+  server:switchboard`, Claude Code drops every doorbell silently while
+  Switchboard logs it as delivered. With the flag, it waits for an interactive
+  confirmation at every startup until someone attaches and answers. See
+  [the Claude Code status](./push-events#claude-code-verified-with-one-obstacle).
 
 ## It keeps restarting
 

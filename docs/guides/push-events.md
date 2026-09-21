@@ -59,8 +59,9 @@ Two properties shape everything below:
 1. **A Switchboard endpoint** for the agent: its URL and `sbk_…` token. See
    [Connect an agent](https://switchboard.stump.wtf/docs/getting-started/connect-an-agent)
    and [Vend an endpoint](https://switchboard.stump.wtf/docs/guides/vend-an-endpoint).
-2. **An agent CLI that turns channel notifications into turns.** Today that
-   means Crush, built from the fork described next.
+2. **An agent CLI that turns channel notifications into turns.** Crush, built
+   from the fork described next, is the path that restarts unattended. Claude
+   Code does it too, with a startup confirmation someone has to answer.
 3. **Harness running as a service** ([guide](./run-as-a-service)).
 
 ## Crush: the verified path
@@ -274,29 +275,48 @@ A pool is not fan-out:
 See [Drain the queue](https://switchboard.stump.wtf/docs/guides/draining-the-queue)
 and [Routing rules](https://switchboard.stump.wtf/docs/guides/routing-rules).
 
-## Claude Code: what is and isn't verified
+## Claude Code: verified, with one obstacle
 
-Claude Code defines the Channels protocol Switchboard speaks. Running it as an
-**unattended** channel consumer under Harness is not a verified setup yet. Here
-is what is known:
+Claude Code defines the Channels protocol Switchboard speaks, and it wakes on a
+Switchboard doorbell. Measured against Claude Code 2.1.270 over Switchboard's
+HTTP endpoint, with a real webhook delivery each time:
+
+| Session | What happened |
+|---|---|
+| Interactive, idle, **no** channels flag | Switchboard logged the doorbell as delivered. Claude Code dropped it silently. |
+| Interactive, idle, with the flag | Started a turn on its own, claimed the todo, completed it. |
+| Same session, a further 45s idle after that turn | Woke again, claimed, completed. |
+| `claude -p` | Answered and exited. Nothing is left running to wake. |
+
+Read the first row twice. Claude Code keeps the notification stream open whether
+or not the server is loaded as a channel, so **a delivered doorbell proves
+nothing about whether the agent heard it**. Listing the server in `.mcp.json` is
+not enough.
+
+What stands between this and a hands-off worker:
 
 - **Channels are a Claude Code research preview.** They require Claude Code
   authenticated through claude.ai or a Console API key, not Bedrock, Vertex or
   Foundry. On Team and Enterprise plans an admin must enable them. See
-  [Channels](https://code.claude.com/docs/en/channels).
+  [Channels](https://code.claude.com/docs/en/channels) and the
+  [Channels reference](https://code.claude.com/docs/en/channels-reference) for
+  how events queue, what the model sees, and permission relay.
 - **A custom server like Switchboard is not on the preview's allowlist.**
   Loading it needs `claude --dangerously-load-development-channels
   server:switchboard`, and that flag asks for **interactive confirmation** at
-  startup. A supervised session sits at that prompt until someone runs
-  `harness attach` and confirms it. It is not a hands-off restart.
-- **No one has yet shown a headless Claude Code worker draining a Switchboard
-  queue.** The one field attempt had workers whose logins had quietly expired.
-  They received doorbells and could not act on them, so the experiment never
-  answered whether a working session would. That pool was retired rather than
-  re-tested.
+  every startup. A supervised session sits at that prompt until someone runs
+  `harness attach` and confirms it, so a restart is not hands-off. This is the
+  one real obstacle, and it is why Crush remains the recommendation for workers
+  that must survive restarts unattended.
+- **The woken session needs permission to use the tools.** Allow Switchboard's
+  tools up front (`--allowedTools mcp__switchboard`), or the session is rung and
+  then stops on a permission prompt.
+- **Not yet run under Harness itself.** The measurements above used an
+  interactive `claude` on a terminal, which is what Harness supervises, but
+  nobody has left one running under the daemon for days.
 
-If you want to try it interactively, register the endpoint and start Claude Code
-with the development flag in a harness you attach to:
+Register the endpoint and start Claude Code with the development flag in a
+harness you attach to:
 
 ```sh
 claude mcp add --transport http switchboard \
