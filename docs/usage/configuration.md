@@ -426,15 +426,17 @@ events_file_keep   = 5            # rotated files kept: events.jsonl.1 … .5
 | `env_file` | `""` | file supplying the `OTEL_EXPORTER_OTLP_*` variables below; only those keys are read, and none are put into the daemon's environment, so supervised harnesses never inherit the credential. Missing or unreadable fails startup when an OTLP signal is on; group/world-readable is a warning |
 | `compression` | `"none"` | `none` or `gzip` |
 | `timeout` | `"10s"` | per-request timeout |
-| `queue_size` | `2048` | per-signal bounded queue |
-| `batch_size` | `512` | units per request (or per events-file write) |
+| `queue_size` | `2048` | per-signal bounded queue; at most `16384` |
+| `batch_size` | `512` | units per request (or per events-file write); at most `4096` and at most `queue_size` |
 | `batch_interval` | `"5s"` | partial-batch flush interval |
 | `idle_flush` | `"5m"` | trace export after a quiet session; at least `batch_interval` |
 | `shutdown_timeout` | `"5s"` | shutdown flush budget |
-| `events_file_max_mb` | `100` | rotation size |
-| `events_file_keep` | `5` | rotated files kept |
+| `events_file_max_mb` | `100` | rotation size; at most `10240` |
+| `events_file_keep` | `5` | rotated files kept; at most `100` |
 
-Durations must be positive; integers must be positive. A **`headers` key is
+Durations must be positive; integers must be positive and under their ceiling —
+the queues are allocated at startup, so the ceiling is what stops a typo from
+exhausting memory before the first item arrives. A **`headers` key is
 rejected** — OTLP headers carry credentials, and `harness.toml` carries none
 (ADR-0008). Put them in `OTEL_EXPORTER_OTLP_HEADERS`, preferably via `env_file`.
 
