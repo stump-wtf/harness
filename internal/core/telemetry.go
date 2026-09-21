@@ -33,6 +33,27 @@ const (
 	DefaultTelemetryEventsFileKeep  = 5
 )
 
+// Telemetry ceilings (SPEC-0015 REQ-2). Each queue's ring and each observer
+// subscription channel are allocated whole at startup, so these bound what a
+// typo can cost before a single item arrives, not just in steady state.
+//
+// A queue slot is ~200 bytes and a subscription slot ~470, so the queue
+// ceiling preallocates ~11 MiB per signal; filled at the REQ-4 caps the queue
+// stays in the hundreds of MiB worst case. 16384 is 8x the default: several
+// times more buffering than a collector restart needs. The batch ceiling
+// (also 8x) bounds one in-flight request, which collectors cap at a few tens
+// of MiB of body. The events-file ceilings bound the disk the sink may take,
+// max_mb x (keep + 1), at about 1 TiB: a typo'd max_mb of 1000000 would
+// otherwise fill the disk before the first rotation.
+//
+// @joestump-agent 09/21/2026 - Added ceilings so a typo cannot OOM the daemon.
+const (
+	MaxTelemetryQueueSize       = 16384
+	MaxTelemetryBatchSize       = 4096
+	MaxTelemetryEventsFileMaxMB = 10240
+	MaxTelemetryEventsFileKeep  = 100
+)
+
 // TelemetryConfig is the global [telemetry] table.
 type TelemetryConfig struct {
 	// Logs, Traces and EventsFile are the three destinations. At least one

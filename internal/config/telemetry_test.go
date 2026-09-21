@@ -8,6 +8,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,6 +101,11 @@ func TestTelemetryValidation(t *testing.T) {
 		{"zero duration", `batch_interval = "0s"`, "positive duration", 3},
 		{"negative int", `queue_size = -1`, "positive integer", 3},
 		{"zero keep", `events_file_keep = 0`, "positive integer", 3},
+		{"queue over ceiling", `queue_size = 16385`, "at most 16384", 3},
+		{"queue typo", `queue_size = 20480000`, "allocated at startup", 3},
+		{"batch over ceiling", "queue_size = 16384\nbatch_size = 4097", "at most 4096", 4},
+		{"max_mb over ceiling", `events_file_max_mb = 10241`, "at most 10240", 3},
+		{"keep over ceiling", `events_file_keep = 101`, "at most 100", 3},
 		{"batch over queue", "queue_size = 10\nbatch_size = 20", "must not exceed queue_size", 4},
 		{"idle under interval", "batch_interval = \"10s\"\nidle_flush = \"5s\"", "at least batch_interval", 4},
 		{"blank events file", `events_file = "  "`, "must not be blank", 3},
@@ -122,6 +128,27 @@ func TestTelemetryValidation(t *testing.T) {
 				t.Fatalf("error echoes the credential: %v", err)
 			}
 		})
+	}
+}
+
+// TestTelemetryCeilingsAreInclusive pins that each ceiling is itself
+// accepted, and that the defaults sit under it — the rejection cases above
+// only prove the bound is not too loose.
+func TestTelemetryCeilingsAreInclusive(t *testing.T) {
+	src := fmt.Sprintf("[telemetry]\nqueue_size = %d\nbatch_size = %d\nevents_file_max_mb = %d\nevents_file_keep = %d\n",
+		core.MaxTelemetryQueueSize, core.MaxTelemetryBatchSize, core.MaxTelemetryEventsFileMaxMB, core.MaxTelemetryEventsFileKeep)
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatalf("ceilings rejected: %v", err)
+	}
+	if got := cfg.Telemetry; got.QueueSize != core.MaxTelemetryQueueSize || got.BatchSize != core.MaxTelemetryBatchSize ||
+		got.EventsFileMaxMB != core.MaxTelemetryEventsFileMaxMB || got.EventsFileKeep != core.MaxTelemetryEventsFileKeep {
+		t.Fatalf("ceilings not applied: %+v", got)
+	}
+	d := core.DefaultTelemetryConfig()
+	if d.QueueSize > core.MaxTelemetryQueueSize || d.BatchSize > core.MaxTelemetryBatchSize ||
+		d.EventsFileMaxMB > core.MaxTelemetryEventsFileMaxMB || d.EventsFileKeep > core.MaxTelemetryEventsFileKeep {
+		t.Fatalf("a default exceeds its ceiling: %+v", d)
 	}
 }
 
