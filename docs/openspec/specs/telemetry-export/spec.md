@@ -321,16 +321,25 @@ and a test MUST pin the two derivations equal.
 lowercase hex characters, of
 
 ```
-SHA-256("harness-item:" + traceID + ":" + kind + ":" + seq + ":" + ordinal)
+SHA-256("harness-item:" + traceID + ":" + kind + ":" + seq + ":" + content)
 ```
 
 where `kind` is `tool` or `mark`, `seq` is the item's session-positional
-sequence, and `ordinal` is its index among items of the same kind sharing that
-`seq`, in first-seen order (almost always `0`). The ordinal MUST be assigned
-once per item for all three signals — keyed by the item's content, not counted
-per sink — because each signal has its own observer subscription and may lose
-a different item to a full buffer; a per-sink count would then give one item
-two IDs and break the log-to-span correlation this ID exists for. An item *maps to a span* exactly
+sequence, and `content` is the item's content key: for a tool event its tool
+name, summary and timestamp; for a mark its type, timestamp and note, each
+joined by a NUL byte, and with a `user-message` note left out when
+`omit_prompts` is on (the ID is exported; a hash over a short prompt would
+confirm a guess of the text the operator chose to hide). The ID MUST be a pure
+function of the item as the transcript records it — never a count of items
+seen — for two reasons. Each signal has its own observer subscription and may
+lose a different item to a full buffer, so a count kept per sink would give one
+item two IDs and break the log-to-span correlation this ID exists for. And the
+observer does not replay history, so a count kept per daemon lifetime restarts
+at zero: marks carry the seq of the tool call that follows them, a provider
+outage piles every retry's `user-message` and `error` mark onto one seq, and a
+daemon restarted mid-outage would hand the next retry the IDs of earlier ones.
+Two items identical in every keyed field share an ID; that is the accepted
+cost of an ID no restart can reassign. An item *maps to a span* exactly
 when `otel.BuildTrace` produces a span for it — today tool events and marks of
 type `user-message`, `compaction` and `subagent` — and that span's ID MUST be
 the item's ID, with `parentSpanId` rewritten to match.
