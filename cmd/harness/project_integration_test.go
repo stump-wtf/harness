@@ -906,7 +906,7 @@ func TestCmdRmProjectScoped(t *testing.T) {
 
 // TestWireHarnessesCarriesTelemetryOptOut: a project file's
 // export_telemetry = false reaches the daemon, so [telemetry] export_all
-// cannot publish a harness its own project excluded (SPEC-0014 REQ-2).
+// cannot publish a harness its own project excluded (SPEC-0015 REQ-2).
 func TestWireHarnessesCarriesTelemetryOptOut(t *testing.T) {
 	dir := writeProjectDir(t, `[harness.private]
 harness = "crush"

@@ -6,7 +6,7 @@ extends: [adr-0008, adr-0011]
 related: [adr-0007, adr-0020]
 ---
 
-# ADR-0021: Harness Exports Agent Telemetry as OTLP Logs, OTLP Traces and a Local JSONL Stream
+# ADR-0022: Harness Exports Agent Telemetry as OTLP Logs, OTLP Traces and a Local JSONL Stream
 
 ## Context and Problem Statement
 
@@ -188,7 +188,7 @@ whose prompts carry customer data.
 
 `[daemon] otel_endpoint` is removed and rejected with a migration error.
 
-SPEC-0014 defines the configuration surface, the record and span mapping, the
+SPEC-0015 defines the configuration surface, the record and span mapping, the
 queueing and retry behaviour, and the self-telemetry contract.
 
 ### Consequences
@@ -221,10 +221,10 @@ queueing and retry behaviour, and the self-telemetry contract.
 
 ## More Information
 
-* SPEC-0014 (telemetry export) and its design notes.
+* SPEC-0015 (telemetry export) and its design notes.
 * Issue #390 — the daemon-side agent-event observer this builds on.
 * Issue #391 — this work. Issue #94 — publication consent.
 * ADR-0020 / SPEC-0013 — the metrics endpoint that publishes the self-telemetry.
 * ADR-0008 — secrets stay out of `harness.toml` and out of our output.
 * The OTLP specification's JSON encoding and exporter environment variables are
-  the external contracts SPEC-0014 follows.
+  the external contracts SPEC-0015 follows.

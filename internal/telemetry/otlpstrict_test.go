@@ -13,7 +13,7 @@ package telemetry
 // keys unique — and the receiver runs it on every request any test makes.
 // TestStrictOTLPRejectsWhatACollectorWould shows each check can fire.
 //
-// Governing tests: SPEC-0014 REQ-6, REQ-7; the OTLP specification's JSON
+// Governing tests: SPEC-0015 REQ-6, REQ-7; the OTLP specification's JSON
 // Protobuf Encoding.
 //
 // @joestump-agent 09/21/2026 - review: added so the pipeline's wire format is

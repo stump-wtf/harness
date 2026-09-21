@@ -2,7 +2,7 @@ package config
 
 // Telemetry Table
 //
-// Parses and validates the global [telemetry] table (SPEC-0014 REQ-2) into
+// Parses and validates the global [telemetry] table (SPEC-0015 REQ-2) into
 // core.TelemetryConfig. Everything static is checked here, at load, with the
 // offending key's line: durations, sizes, the compression enum, the endpoint's
 // shape. What depends on the running daemon — the OTEL_EXPORTER_OTLP_*
@@ -16,7 +16,7 @@ package config
 // for the same reason. The table is global-only; project files and harness_d
 // drop-ins reject it where they reject other fleet-wide tables.
 //
-// Governing: ADR-0021; SPEC-0014 REQ-2, REQ-13.
+// Governing: ADR-0022; SPEC-0015 REQ-2, REQ-13.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
 
@@ -61,7 +61,7 @@ func telemetryHeadersErr(filename string, line int) *Error {
 }
 
 // removedOTelEndpointErr is the migration error for [daemon] otel_endpoint
-// (SPEC-0014 REQ-13). It is refused, not aliased: the key never did anything,
+// (SPEC-0015 REQ-13). It is refused, not aliased: the key never did anything,
 // and aliasing it would turn an inert line into live publication on upgrade.
 func removedOTelEndpointErr(filename string, line int) *Error {
 	return newError(filename, line,

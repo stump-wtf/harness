@@ -89,7 +89,7 @@ type persistedProjectHarness struct {
 	Enabled        bool   `json:"enabled,omitempty"`
 	TmuxSocket     string `json:"tmux_socket,omitempty"`
 	// ExportTelemetry is a project's telemetry opt-out, kept so a daemon
-	// restart does not quietly re-include the harness (SPEC-0014 REQ-2).
+	// restart does not quietly re-include the harness (SPEC-0015 REQ-2).
 	ExportTelemetry *bool `json:"export_telemetry,omitempty"`
 }
 

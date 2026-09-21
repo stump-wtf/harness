@@ -1,6 +1,6 @@
 package supervisor
 
-// Governing tests: SPEC-0014 REQ-2 — a project harness's telemetry opt-out
+// Governing tests: SPEC-0015 REQ-2 — a project harness's telemetry opt-out
 // survives a daemon restart.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.

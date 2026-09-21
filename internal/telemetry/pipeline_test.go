@@ -2,7 +2,7 @@ package telemetry
 
 // Pipeline Tests
 //
-// Governing tests: ADR-0021; SPEC-0014 REQ-1 (consent), REQ-4 (redaction on
+// Governing tests: ADR-0022; SPEC-0015 REQ-1 (consent), REQ-4 (redaction on
 // the wire), REQ-5/REQ-6 (the log record), REQ-8 (events file), REQ-9
 // (bounded, never blocking), REQ-10 (retry policy), REQ-11 (shutdown),
 // REQ-12 (stats). Each asserts on what reached the httptest receiver or the

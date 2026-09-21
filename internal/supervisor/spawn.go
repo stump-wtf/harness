@@ -122,7 +122,7 @@ func DiscoveryEnv(h core.Harness, keys []string) (map[string]string, error) {
 // file yields an empty map; callers that require the file check for it
 // themselves. Nothing is exported into the process environment.
 //
-// Governing: ADR-0008; SPEC-0014 REQ-3 ([telemetry] env_file shares this
+// Governing: ADR-0008; SPEC-0015 REQ-3 ([telemetry] env_file shares this
 // parser).
 func EnvFileValues(path string, keys []string) (map[string]string, error) {
 	kvs, err := parseEnvFile(path)

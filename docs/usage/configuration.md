@@ -383,7 +383,7 @@ mark (user message, compaction, subagent launch, provider error) — as **OTLP
 logs**, **OTLP traces**, and a **local JSONL events file**. The
 [production observability guide](./production-observability) shows collector,
 Grafana (Loki/Tempo), Honeycomb and Vector/Fluent Bit setups; this is the key
-reference (ADR-0021, SPEC-0014).
+reference (ADR-0022, SPEC-0015).
 
 Nothing is exported without **two** consents: a destination in this table, and a
 harness that opted in (`export_telemetry = true` on the harness, or

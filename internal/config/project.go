@@ -184,7 +184,7 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 			return nil, forbiddenTableErr(filename, full, h.line)
 		}
 		// Telemetry is consent to publish; a cloned repository does not get
-		// to grant it (SPEC-0014 REQ-2).
+		// to grant it (SPEC-0015 REQ-2).
 		if len(h.parts) >= 1 && h.parts[0] == "telemetry" {
 			return nil, forbiddenTableErr(filename, full, h.line)
 		}
@@ -317,7 +317,7 @@ func addProjectHarness(cfg *core.Config, filename, name string, line int, rh raw
 	}
 	// export_telemetry may narrow publication from a project file, never
 	// widen it: opting out is always safe, opting in is the operator's call
-	// (SPEC-0014 REQ-2).
+	// (SPEC-0015 REQ-2).
 	if rh.ExportTelemetry != nil && *rh.ExportTelemetry {
 		return newError(filename, line,
 			"harness %q: \"export_telemetry = true\" is not allowed in project files — the opt-in to publish transcripts belongs in the daemon's global harness.toml (a project file may set export_telemetry = false)", name)

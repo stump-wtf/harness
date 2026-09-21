@@ -349,7 +349,7 @@ type Harness struct {
 	// set it false but never true — a cloned repository does not get to
 	// publish its transcripts to the operator's collector. Read per item, so a
 	// reload applies without a restart; it never affects the spawn. Governing:
-	// ADR-0021; SPEC-0014 REQ-1, REQ-2.
+	// ADR-0022; SPEC-0015 REQ-1, REQ-2.
 	ExportTelemetry *bool
 }
 
@@ -480,7 +480,7 @@ type Config struct {
 	Server ServerConfig
 	// Daemon is the optional [daemon] configuration (issue #98).
 	Daemon DaemonConfig
-	// Telemetry is the optional global [telemetry] table (SPEC-0014 REQ-2).
+	// Telemetry is the optional global [telemetry] table (SPEC-0015 REQ-2).
 	Telemetry TelemetryConfig
 }
 
