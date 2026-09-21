@@ -13,8 +13,8 @@ flowchart LR
   obs[internal/observe<br/>Observer] -->|Subscribe telemetry.logs| L[logs sink]
   obs -->|Subscribe telemetry.traces| T[trace accumulator]
   obs -->|Subscribe telemetry.events_file| F[events file sink]
-  L --> LQ[(bounded queue)] --> LB[batcher] --> LX[otlpexport.ExportLogs]
-  T --> TQ[(bounded queue)] --> TB[batcher] --> TX[otlpexport.Export]
+  L --> LQ[(bounded queue)] --> LB[batcher] --> LX[otlpexport.SendLogs]
+  T --> TQ[(bounded queue)] --> TB[batcher] --> TX[otlpexport.SendSpans]
   F --> FQ[(bounded queue)] --> FW[rotating writer]
   LX --> C[(collector)]
   TX --> C
@@ -86,7 +86,9 @@ so a thousand quiet sessions cost one wakeup.
 
 `internal/otlpexport` today has a one-shot `Export(ctx, trace, cfg)`. It gains:
 
-* `ExportLogs(ctx, records, cfg)` alongside `Export`, sharing one `post` helper;
+* `SendLogs` and `SendSpans(ctx, endpoint, resource, scope, units)` alongside
+  `Export`, sharing one `post` helper (`Export` keeps its contract for one-shot
+  callers);
 * a full-URL mode for the signal-specific endpoint variables, which are used
   as-is where the base endpoint gets `/v1/<signal>` appended;
 * gzip, and a timeout taken from config rather than the 30s constant;
@@ -98,13 +100,25 @@ the exporter stays a pure "send this request, tell me what happened" function
 that is trivial to test against `httptest`, and the policy that needs a clock
 lives where the clock is injected.
 
+## Item IDs are assigned once, for every sink
+
+Each signal takes its own observer subscription, so under pressure the logs
+sink may lose an item the traces sink kept. A per-sink ordinal counter would
+then disagree about every later item sharing a `seq`, and the log record and
+span for one item would carry different IDs. `internal/telemetry` therefore
+keeps one ordinal registry shared by all three sinks, keyed by the item's
+content (kind, seq, mark type and note, tool and summary, timestamp), and
+bounded like the trace context (sessions forgotten after 24h, at most 4096
+kept). SPEC-0014 REQ-7 was tightened to say so.
+
 ## Configuration resolution
 
 `internal/config` parses `[telemetry]` into `core.TelemetryConfig` and validates
 everything static (REQ-2). Environment resolution happens in the daemon at
 startup, not in config parsing, because `env_file` and the process environment
 belong to the running daemon, not to a file a TUI edit form round-trips. A
-`telemetry.Resolve(cfg, getenv, readEnvFile)` function produces the per-signal
+`telemetry.Resolve(cfg, env)` function (`env` bundles the injected `Getenv`,
+`ReadEnvFile`, `Hostname` and build version) produces the per-signal
 endpoint, headers, compression and timeout with the source of each, which feeds
 both the startup log line and `harness doctor`. Injected `getenv` makes the
 precedence table directly testable.
