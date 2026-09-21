@@ -2,7 +2,7 @@
 // OTLP/HTTP JSON and POSTs it to any OTLP-compatible endpoint.
 //
 // The exporter is endpoint-agnostic: it speaks standard OTLP JSON to whatever
-// URL the daemon's otel_endpoint config names — Honeycomb, Tempo, Jaeger,
+// URL the daemon's [telemetry] config resolves — Honeycomb, Tempo, Jaeger,
 // Grafana, or a Cairn instance that exposes an OTLP endpoint. Harness does not
 // know or care what is on the other end.
 //
