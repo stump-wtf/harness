@@ -133,6 +133,31 @@ func startDaemonTelemetry(res *telemetry.Resolved, obs telemetry.Subscriber, src
 	return telemetry.New(res, obs, src, opts)
 }
 
+// shutdownDaemonTelemetry starts the pipeline's shutdown flush in the
+// background, bounded by [telemetry] shutdown_timeout, and returns a channel
+// closed when it is done — at once when there is no pipeline. runDaemon waits
+// on it only after the Manager has closed, so the flush never delays the
+// harnesses' own stop, and Pipeline.Shutdown keeps the wait itself within
+// the budget even when an events-file write hangs (SPEC-0015 REQ-11). A
+// function, like startDaemonTelemetry, so a test drives the daemon's own
+// timeout wiring.
+//
+// Governing: ADR-0022; SPEC-0015 REQ-11.
+func shutdownDaemonTelemetry(p *telemetry.Pipeline, res *telemetry.Resolved) <-chan struct{} {
+	done := make(chan struct{})
+	if p == nil {
+		close(done)
+		return done
+	}
+	go func() {
+		defer close(done)
+		ctx, cancel := context.WithTimeout(context.Background(), res.Config.ShutdownTimeout)
+		defer cancel()
+		p.Shutdown(ctx)
+	}()
+	return done
+}
+
 // warnTelemetryReload logs, once per reload, that a changed [telemetry] table
 // waits for a restart: the exporters hold queues, connections and an open
 // file (SPEC-0015 REQ-2). Per-harness export_telemetry needs no warning; the
@@ -327,17 +352,7 @@ func runDaemon(o daemonOpts) {
 	// shutdown_timeout (SPEC-0015 REQ-11). The flush runs alongside the rest
 	// of shutdown rather than ahead of it, so it never delays the harnesses'
 	// own stop; the daemon waits for it only at the very end.
-	telemetryDone := make(chan struct{})
-	if telemetryPipeline != nil {
-		go func() {
-			defer close(telemetryDone)
-			ctx, cancel := context.WithTimeout(context.Background(), telemetryRes.Config.ShutdownTimeout)
-			defer cancel()
-			telemetryPipeline.Shutdown(ctx)
-		}()
-	} else {
-		close(telemetryDone)
-	}
+	telemetryDone := shutdownDaemonTelemetry(telemetryPipeline, telemetryRes)
 	// Before the Manager closes: the observer reads its snapshots.
 	observer.Stop()
 	sessionGuard.Close()
