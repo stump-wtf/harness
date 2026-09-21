@@ -263,6 +263,9 @@ func wireHarnesses(proj *config.Project) []protocol.ProjectHarness {
 			Description:    h.Description,
 			TmuxSocket:     h.TmuxSocket,
 			Enabled:        h.Enabled,
+			// A project file can only opt out; carry that, so export_all
+			// cannot publish a harness its project excluded (SPEC-0014).
+			ExportTelemetry: h.ExportTelemetry,
 		})
 	}
 	return out
