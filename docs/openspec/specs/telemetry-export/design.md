@@ -142,6 +142,11 @@ precedence table directly testable.
 * `queue_size = 2048` at the REQ-4 caps is at most a few tens of MiB per signal
   in the worst case and far less in practice; a queue that large holds several
   minutes of a busy fleet, which covers a collector restart without loss.
+* The ceilings (REQ-2) are 8x the queue and batch defaults. A queue slot is
+  about 200 bytes and a subscription slot about 470, so `queue_size = 16384`
+  preallocates about 11 MiB per signal; the batch ceiling bounds one in-flight
+  request body well under a collector's default body limit at typical sizes.
+  The events-file ceilings cap its disk use, `max_mb x (keep + 1)`, near 1 TiB.
 * `batch_interval = 5s` keeps log latency low enough to watch an outage unfold
   and requests infrequent enough not to matter.
 * `idle_flush = 5m` matches how long an agent turn typically goes without a tool

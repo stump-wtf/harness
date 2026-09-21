@@ -19,6 +19,9 @@ package config
 // Governing: ADR-0022; SPEC-0015 REQ-2, REQ-13.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
+//
+// @joestump-agent 09/21/2026 - Capped queue_size, batch_size and the events
+// file's size and keep count, so a typo cannot OOM the daemon or fill a disk.
 
 import (
 	"net/url"
@@ -146,15 +149,20 @@ func buildTelemetry(filename string, data []byte, line int, rt rawTelemetry) (co
 		*d.dst = v
 	}
 
+	// Each int has a ceiling (core.MaxTelemetry*): the queue ring and the
+	// observer subscription are allocated at startup, so an unbounded
+	// queue_size is a typo away from an OOM at daemon start.
 	ints := []struct {
-		key string
-		raw *int
-		dst *int
+		key      string
+		raw      *int
+		dst      *int
+		max      int
+		whyLimit string
 	}{
-		{"queue_size", rt.QueueSize, &tc.QueueSize},
-		{"batch_size", rt.BatchSize, &tc.BatchSize},
-		{"events_file_max_mb", rt.EventsFileMaxMB, &tc.EventsFileMaxMB},
-		{"events_file_keep", rt.EventsFileKeep, &tc.EventsFileKeep},
+		{"queue_size", rt.QueueSize, &tc.QueueSize, core.MaxTelemetryQueueSize, "each signal's queue and observer buffer are allocated at startup"},
+		{"batch_size", rt.BatchSize, &tc.BatchSize, core.MaxTelemetryBatchSize, "one batch is one request body held in memory"},
+		{"events_file_max_mb", rt.EventsFileMaxMB, &tc.EventsFileMaxMB, core.MaxTelemetryEventsFileMaxMB, "the events file may use max_mb x (keep + 1) of disk"},
+		{"events_file_keep", rt.EventsFileKeep, &tc.EventsFileKeep, core.MaxTelemetryEventsFileKeep, "the events file may use max_mb x (keep + 1) of disk"},
 	}
 	for _, n := range ints {
 		if n.raw == nil {
@@ -162,6 +170,9 @@ func buildTelemetry(filename string, data []byte, line int, rt rawTelemetry) (co
 		}
 		if *n.raw <= 0 {
 			return fail(n.key, "must be a positive integer (got %d)", *n.raw)
+		}
+		if *n.raw > n.max {
+			return fail(n.key, "must be at most %d (got %d): %s", n.max, *n.raw, n.whyLimit)
 		}
 		*n.dst = *n.raw
 	}

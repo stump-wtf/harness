@@ -118,6 +118,11 @@ Validation, all at config load, all errors citing the offending key and line:
   `idle_flush` MUST be at least `batch_interval`.
 * `queue_size`, `batch_size`, `events_file_max_mb` and `events_file_keep` MUST be
   positive integers, and `batch_size` MUST NOT exceed `queue_size`.
+* Each MUST also be at most its ceiling: `queue_size` 16384, `batch_size` 4096,
+  `events_file_max_mb` 10240, `events_file_keep` 100. Queues and observer
+  subscription buffers are allocated whole at startup, so without a ceiling a
+  mistyped `queue_size` exhausts memory before the first item arrives, and a
+  mistyped `events_file_max_mb` fills the disk before the first rotation.
 * `compression` MUST be `none` or `gzip`.
 * `endpoint`, when set, MUST be an absolute `http` or `https` URL with a host and
   MUST NOT carry userinfo. `https://user:token@collector` is a credential in
