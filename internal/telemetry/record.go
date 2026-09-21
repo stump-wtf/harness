@@ -14,27 +14,30 @@ package telemetry
 // logs can compute it without building a trace. The item ID is keyed to the
 // item rather than to agent-trace's per-build span counter:
 //
-//	sha256("harness-item:" + traceID + ":" + kind + ":" + seq + ":" + ordinal)[:8]
+//	sha256("harness-item:" + traceID + ":" + kind + ":" + seq + ":" + content)[:8]
 //
 // because the observer does not replay history, and a counter restarted by a
 // daemon restart would hand the first new item the ID of a span the previous
-// daemon already sent (REQ-7). The ordinal separates items of one kind that
-// share a seq (marks carry the seq of the tool call that follows them). It is
-// assigned by one registry shared by all three sinks and keyed by the item's
-// content, so a sink that lost an item to a full buffer still agrees with the
-// others about every item it did get.
+// daemon already sent (REQ-7). The content key separates items of one kind
+// that share a seq — marks carry the seq of the tool call that follows them,
+// so a provider outage piles every retry's user-message and error mark onto
+// one seq. It is a pure function of what the transcript recorded, so every
+// sink, and every daemon lifetime, computes the same ID for the same item
+// without sharing any state.
 //
 // Governing: ADR-0021; SPEC-0014 REQ-4, REQ-5, REQ-6, REQ-7, REQ-8; ADR-0008.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
+//
+// @joestump-agent 09/21/2026 - review: item IDs keyed by content, not by a
+// first-seen ordinal. The ordinal restarted at 0 with the daemon, so a restart
+// mid-outage handed the next retry's marks the IDs of earlier ones.
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"strconv"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -84,9 +87,29 @@ func TraceID(sessionKey string) string {
 }
 
 // ItemID is an item's ID, which is also its span ID when it maps to a span.
-func ItemID(traceID string, kind observe.Kind, seq, ordinal int) string {
-	sum := sha256.Sum256([]byte("harness-item:" + traceID + ":" + string(kind) + ":" + strconv.Itoa(seq) + ":" + strconv.Itoa(ordinal)))
+// content is the item's ContentKey.
+func ItemID(traceID string, kind observe.Kind, seq int, content string) string {
+	sum := sha256.Sum256([]byte("harness-item:" + traceID + ":" + string(kind) + ":" + strconv.Itoa(seq) + ":" + content))
 	return hex.EncodeToString(sum[:8])
+}
+
+// ContentKey is what tells apart items of one kind sharing a seq (SPEC-0014
+// REQ-7): the fields the transcript recorded for the item, joined with NUL.
+// A tool event is keyed by its tool, summary and timestamp; a mark by its
+// type, timestamp and note. Under omit_prompts a user-message's note is left
+// out: the ID is exported, and a hash over a short prompt would let anyone
+// holding the telemetry confirm a guess of the text the operator chose to
+// hide. Two items identical in every keyed field get one ID; that is the
+// price of an ID no restart can reassign.
+func ContentKey(ev observe.Event, omitPrompts bool) string {
+	if ev.Kind == observe.KindTool {
+		return "tool\x00" + ev.Tool.Tool + "\x00" + ev.Tool.Summary + "\x00" + ev.Tool.Timestamp
+	}
+	note := ev.Mark.Note
+	if omitPrompts && isPrompt(ev) {
+		note = ""
+	}
+	return "mark\x00" + ev.Mark.Type + "\x00" + ev.Mark.Timestamp + "\x00" + note
 }
 
 // mapsToSpan reports whether otel.BuildTrace produces a span for ev at the
@@ -164,16 +187,16 @@ func (r Record) JSONLine(resource []otlpexport.KeyValue) ([]byte, error) {
 	return append(b, '\n'), nil
 }
 
-// converter turns observer events into Records.
+// converter turns observer events into Records. It holds no state, so every
+// sink computes the same IDs for the same item.
 type converter struct {
 	omitPrompts bool
-	ids         *idRegistry
 }
 
-// ids returns ev's trace and item IDs.
+// itemIDs returns ev's trace and item IDs.
 func (c *converter) itemIDs(ev observe.Event) (traceID, itemID string) {
 	traceID = TraceID(ev.Session.Key)
-	return traceID, ItemID(traceID, ev.Kind, itemSeq(ev), c.ids.ordinal(ev))
+	return traceID, ItemID(traceID, ev.Kind, itemSeq(ev), ContentKey(ev, c.omitPrompts))
 }
 
 // isPrompt reports whether ev's note is prompt text.
@@ -278,99 +301,4 @@ func capString(s string, max int) string {
 		cut--
 	}
 	return s[:cut] + ell
-}
-
-// idRegistry assigns ordinals: the index of an item among items of the same
-// kind and seq in its session, in first-seen order, keyed by the item's
-// content so every sink computes the same answer for the same item.
-type idRegistry struct {
-	mu       sync.Mutex
-	now      func() time.Time
-	sessions map[string]*idSession
-	calls    int
-}
-
-type idSession struct {
-	last   time.Time
-	maxSeq int
-	slots  map[idSlot][]string
-}
-
-type idSlot struct {
-	kind observe.Kind
-	seq  int
-}
-
-// Registry bounds: sessions idle this long are forgotten, and at most this
-// many are kept; within a session, slots far behind the newest seq go.
-const (
-	idForgetAfter  = 24 * time.Hour
-	idMaxSessions  = 4096
-	idSlotsKeep    = 1024
-	idSweepEveryN  = 1024
-	idSlotsCeiling = 2 * idSlotsKeep
-)
-
-func newIDRegistry(now func() time.Time) *idRegistry {
-	return &idRegistry{now: now, sessions: map[string]*idSession{}}
-}
-
-func (r *idRegistry) ordinal(ev observe.Event) int {
-	seq := itemSeq(ev)
-	fp := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s", ev.Mark.Type, ev.Mark.Note, ev.Mark.Timestamp, ev.Tool.Tool, ev.Tool.Summary, ev.Tool.Timestamp)
-	now := r.now()
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.calls++
-	if r.calls%idSweepEveryN == 0 {
-		r.sweepLocked(now)
-	}
-	s := r.sessions[ev.Session.Key]
-	if s == nil {
-		if len(r.sessions) >= idMaxSessions {
-			r.evictOldestLocked()
-		}
-		s = &idSession{slots: map[idSlot][]string{}}
-		r.sessions[ev.Session.Key] = s
-	}
-	s.last = now
-	if seq > s.maxSeq {
-		s.maxSeq = seq
-	}
-	key := idSlot{ev.Kind, seq}
-	list := s.slots[key]
-	for i, have := range list {
-		if have == fp {
-			return i
-		}
-	}
-	s.slots[key] = append(list, fp)
-	if len(s.slots) > idSlotsCeiling {
-		for k := range s.slots {
-			if k.seq < s.maxSeq-idSlotsKeep {
-				delete(s.slots, k)
-			}
-		}
-	}
-	return len(list)
-}
-
-func (r *idRegistry) sweepLocked(now time.Time) {
-	for k, s := range r.sessions {
-		if now.Sub(s.last) > idForgetAfter {
-			delete(r.sessions, k)
-		}
-	}
-}
-
-func (r *idRegistry) evictOldestLocked() {
-	var oldest string
-	var at time.Time
-	for k, s := range r.sessions {
-		if oldest == "" || s.last.Before(at) {
-			oldest, at = k, s.last
-		}
-	}
-	delete(r.sessions, oldest)
 }
