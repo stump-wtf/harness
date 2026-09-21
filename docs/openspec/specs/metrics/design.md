@@ -130,6 +130,18 @@ early both increment `harness_metrics_collection_errors_total{collector="observe
 Once the feed has closed, the model series are omitted rather than left frozen
 at their last values.
 
+The lifecycle bus is the same kind of lossy fan-out: `Publish` never blocks and
+drops for a full subscriber. `supervisor.Bus` counts each subscriber's drops,
+and `Manager.EventsCounted` returns that count to the collector. Each scrape
+adds whatever is new to `harness_metrics_collection_errors_total{collector="lifecycle"}`,
+and a lifecycle feed that closes early increments the same series. This uses
+the counter REQ-6 names rather than a dedicated one, because a lost event is a
+collection failure: `harness_state_transitions_total` and
+`harness_scheduled_runs_total` read low, and REQ-6 asks that a failure like
+that be visible under the collector it affects. The observer's per-subscriber
+`harness_observer_events_dropped_total` has no lifecycle equivalent, because
+metrics is the only bus subscriber that has a scrape to report through.
+
 ## Testing
 
 * A test asserting the 2026-09-14 shape: state `running` = 1, quota errors
