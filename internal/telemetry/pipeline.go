@@ -23,6 +23,9 @@
 // Governing: ADR-0022; SPEC-0015 (all REQs); ADR-0007; ADR-0008.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
+//
+// @joestump-agent 09/21/2026 - Made the shutdown flush strictly bounded: a
+// loop stuck in an events-file write is abandoned and counted at the deadline.
 package telemetry
 
 import (
@@ -87,10 +90,8 @@ type Pipeline struct {
 	queues  map[string]interface{ length() int }
 	cancels []func()
 	intakes sync.WaitGroup
-	loops   []interface {
-		stopCh() chan struct{}
-		doneCh() chan struct{}
-	}
+	loops   []deliveryLoop
+	evLoop  deliveryLoop // the events file's loop, when enabled
 
 	stopCancel context.CancelFunc // ends retry waits
 	sendCancel context.CancelFunc // abandons in-flight requests
@@ -101,10 +102,12 @@ type Pipeline struct {
 	report       ShutdownReport
 }
 
-type loopHandle struct{ stop, done chan struct{} }
-
-func (l loopHandle) stopCh() chan struct{} { return l.stop }
-func (l loopHandle) doneCh() chan struct{} { return l.done }
+// deliveryLoop is a running batchLoop, whatever its unit type.
+type deliveryLoop interface {
+	stopCh() chan struct{}
+	doneCh() chan struct{}
+	abandon() uint64
+}
 
 // New subscribes to the observer for every enabled signal and starts the
 // pipeline. res must be non-nil and Enabled.
@@ -208,7 +211,7 @@ func New(res *Resolved, sub Subscriber, src Source, opts Options) *Pipeline {
 			st.exported.Add(uint64(len(batch)))
 			st.lastSuccess.Store(p.now().UnixNano())
 		}
-		startLoopFor(p, SignalEventsFile, st, q, deliver)
+		p.evLoop = startLoopFor(p, SignalEventsFile, st, q, deliver)
 		p.startIntake(SignalEventsFile, func(ev observe.Event) {
 			line, err := p.conv.record(ev).JSONLine(res.Resource)
 			if err != nil {
@@ -223,7 +226,7 @@ func New(res *Resolved, sub Subscriber, src Source, opts Options) *Pipeline {
 }
 
 // startLoopFor runs a signal's delivery goroutine.
-func startLoopFor[T any](p *Pipeline, signal string, st *signalStats, q *queue[T], deliver func([]T, bool)) {
+func startLoopFor[T any](p *Pipeline, signal string, st *signalStats, q *queue[T], deliver func([]T, bool)) deliveryLoop {
 	b := &batchLoop[T]{
 		// Batching runs on the wall clock; the injectable clock is for the
 		// retry policy, which tests drive through minutes in microseconds.
@@ -232,8 +235,9 @@ func startLoopFor[T any](p *Pipeline, signal string, st *signalStats, q *queue[T
 	}
 	p.stats[signal] = st
 	p.queues[signal] = q
-	p.loops = append(p.loops, loopHandle{b.stop, b.done})
+	p.loops = append(p.loops, b)
 	go b.run()
+	return b
 }
 
 // startIntake subscribes signal to the observer and runs its intake
@@ -292,12 +296,22 @@ type ShutdownReport struct {
 // Shutdown stops intake, exports every session's unsent spans, gives each
 // queued batch one attempt and closes the events file — all within ctx
 // (SPEC-0015 REQ-11) — then logs what was lost in one line. It is idempotent.
+//
+// The budget is strict even when a delivery ignores cancellation. An OTLP
+// request stops when sendCancel fires, but an events-file write blocked on a
+// hung mount does not return for anything, so the flush phases run against a
+// context that ends a little before ctx (shutdownReserve), and the reserve is
+// spent waiting for the loops to notice. A loop still inside a delivery when
+// ctx ends is abandoned: its queue is counted dropped_queue, its in-flight
+// batch failed, and Shutdown returns without it.
 func (p *Pipeline) Shutdown(ctx context.Context) ShutdownReport {
 	p.shutdownOnce.Do(func() {
 		before := map[string]uint64{}
 		for name, st := range p.stats {
 			before[name] = st.droppedQueue.Load() + st.failed.Load()
 		}
+		flushCtx, cancelFlush := withShutdownReserve(ctx)
+		defer cancelFlush()
 
 		// 1. Stop taking items; intake drains what the observer already
 		// handed it, and the traces intake exports every session.
@@ -309,7 +323,7 @@ func (p *Pipeline) Shutdown(ctx context.Context) ShutdownReport {
 		timedOut := false
 		select {
 		case <-intakeDone:
-		case <-ctx.Done():
+		case <-flushCtx.Done():
 			timedOut = true
 		}
 
@@ -325,24 +339,45 @@ func (p *Pipeline) Shutdown(ctx context.Context) ShutdownReport {
 			}
 			close(allDone)
 		}()
+		abandoned := map[deliveryLoop]bool{}
 		select {
 		case <-allDone:
-		case <-ctx.Done():
+		case <-flushCtx.Done():
 			timedOut = true
 			close(p.deadline)
 			p.sendCancel()
-			<-allDone
+			select {
+			case <-allDone:
+			case <-ctx.Done():
+				for _, l := range p.loops {
+					select {
+					case <-l.doneCh():
+					default:
+						abandoned[l] = true
+						l.abandon()
+					}
+				}
+			}
 		}
 		if !timedOut {
 			close(p.deadline)
 		}
 		p.sendCancel()
 
-		// 4. The events file: flush and close. Its loop has exited, so
-		// nothing else touches it.
-		if p.evFile != nil {
-			if err := p.evFile.flushClose(); err != nil {
-				p.log.Warn("telemetry events file close failed", "err", err)
+		// 4. The events file: flush and close, unless its loop is still
+		// stuck in a write (closing under it would race the write). A sync
+		// on a hung mount can block too, so the close is bounded as well.
+		if p.evFile != nil && !abandoned[p.evLoop] {
+			closed := make(chan error, 1)
+			go func() { closed <- p.evFile.flushClose() }()
+			select {
+			case err := <-closed:
+				if err != nil {
+					p.log.Warn("telemetry events file close failed", "err", err)
+				}
+			case <-ctx.Done():
+				timedOut = true
+				p.log.Warn("telemetry events file close abandoned at the shutdown deadline", "path", p.evFile.path)
 			}
 		}
 
@@ -353,9 +388,28 @@ func (p *Pipeline) Shutdown(ctx context.Context) ShutdownReport {
 			p.report.Lost[name] = lost
 			kv = append(kv, name+"_lost", lost)
 		}
+		if len(abandoned) > 0 {
+			kv = append(kv, "abandoned_writes", len(abandoned))
+		}
 		p.log.Info("telemetry flushed", kv...)
 	})
 	return p.report
+}
+
+// Shutdown reserve bounds: a tenth of the budget, at most 250ms, kept back
+// from the flush phases so a loop has time to see sendCancel and count its
+// batch before Shutdown must return.
+const maxShutdownReserve = 250 * time.Millisecond
+
+// withShutdownReserve returns a context that ends shutdownReserve before
+// ctx's deadline (or with ctx, when it has none).
+func withShutdownReserve(ctx context.Context) (context.Context, context.CancelFunc) {
+	dl, ok := ctx.Deadline()
+	if !ok {
+		return context.WithCancel(ctx)
+	}
+	reserve := min(time.Until(dl)/10, maxShutdownReserve)
+	return context.WithDeadline(ctx, dl.Add(-reserve))
 }
 
 // Stats is a snapshot of every enabled signal's counters (SPEC-0015 REQ-12).
