@@ -23,8 +23,10 @@ flowchart LR
 
 A new package, `internal/telemetry`, owns everything right of the observer.
 `cmd/harness/daemon.go` constructs it after the Manager and the observer, only
-when `[telemetry]` names a destination, and stops it before the observer on
-shutdown. With no destination the constructor is never called, which is how the
+when `[telemetry]` names a destination. On shutdown its flush runs in a
+goroutine alongside the observer's stop and the Manager's close, and the daemon
+waits for it only at the very end, so it cannot delay the harnesses' own stop
+(REQ-11). With no destination the constructor is never called, which is how the
 laptop case stays at zero cost: there is no "disabled" pipeline to reason about.
 
 Each signal is a sink with the same three stages — **convert** (gate, redact,
@@ -40,14 +42,16 @@ non-contributing harness's text is never redacted, copied or counted; checking
 per item rather than caching means `harness reload` changes take effect for the
 next item with no invalidation logic.
 
-A small `Gate` function resolves the tri-state (`*bool` per harness, `bool`
-fleet-wide) and is the one place the precedence table lives. It is table-tested
+`core.ContributesTelemetry` resolves the tri-state (`*bool` per harness,
+`bool` fleet-wide) and is the one place the precedence table lives. A harness
+the daemon no longer has a definition for (removed by a reload after its item
+was read) does not contribute: the gate fails closed. It is table-tested
 directly, and the daemon wiring test (below) proves the daemon passes the real
 config to it.
 
 ## Conversion is one function per signal over one record
 
-`convert.go` builds a signal-neutral `Record` once per item: the REQ-5 field
+`record.go` builds a signal-neutral `Record` once per item: the REQ-5 field
 set, redacted and capped, plus trace ID, item ID and optional span ID. The logs
 sink turns a `Record` into an OTLP LogRecord; the events file sink marshals the
 same `Record` to a line. Sharing the `Record` is what guarantees the JSONL keys
@@ -55,7 +59,11 @@ and the log attributes never drift apart — a test marshals one `Record` both
 ways and compares the key sets.
 
 Redaction runs inside `Record` construction, so nothing downstream can hold an
-unredacted string. `omit_prompts` is applied in the same place.
+unredacted string. `omit_prompts` is applied in the same place. The trace
+accumulator redacts the note and summary it hands `otel.BuildTrace` before the
+build as well as the spans after it, because BuildTrace truncates a
+user-message span name and a credential cut short no longer matches its
+pattern.
 
 ## Traces: accumulate, build, filter, send
 

@@ -367,8 +367,9 @@ matches its log record's time rather than falling back to the session start.
 **Export triggers.** A session's unsent spans MUST be exported when any of:
 
 * no item has arrived for the session for `idle_flush` (default 5m);
-* the session reaches 2048 unsent spans (exported immediately, bounding memory
-  for a long-running session);
+* the session reaches 2048 unsent items (exported immediately, bounding memory
+  for a long-running session; items that map to no span count too, so the
+  bound holds for a session that only fails);
 * its harness exits or leaves `running` (SHOULD, promptly; the idle trigger
   covers it regardless);
 * the daemon shuts down (REQ-11).
@@ -454,7 +455,10 @@ passed since the first unit was queued, whichever comes first.
 
 Worst-case telemetry memory MUST be bounded by configuration: `queue_size` units
 per signal at their capped sizes (REQ-4), plus one in-flight batch per signal,
-plus the trace exporter's per-session context bounded by REQ-7. It MUST NOT grow
+plus the trace exporter's per-session context bounded by REQ-7, plus each
+signal's observer subscription buffer. That buffer holds up to `queue_size`
+observer events per signal; they are not yet capped by REQ-4, so their size is
+whatever the observer delivers, but their count is fixed. None of it MUST grow
 with collector downtime.
 
 ### REQ-10: Delivery, retry and failure
