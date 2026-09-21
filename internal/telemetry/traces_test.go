@@ -37,7 +37,7 @@ func newAcc(now *time.Time, running func(string) bool) (*traceAccumulator, *span
 	sink := &spanSink{}
 	clock := func() time.Time { return *now }
 	return &traceAccumulator{
-		conv: &converter{ids: newIDRegistry(clock)}, idle: 5 * time.Minute, now: clock,
+		conv: &converter{}, idle: 5 * time.Minute, now: clock,
 		running: running, emit: sink.emit, stats: &signalStats{}, log: quietLogger(),
 		sessions: map[string]*traceSession{},
 	}, sink
@@ -55,7 +55,7 @@ func TestTraceIDMatchesBuildTrace(t *testing.T) {
 // timeline order. This pins that against the vendored version with every mark
 // type, including two BuildTrace maps to nothing.
 func TestMapsToSpanMatchesBuildTrace(t *testing.T) {
-	conv := &converter{ids: newIDRegistry(time.Now)}
+	conv := &converter{}
 	var items []traceItem
 	add := func(ev observe.Event) {
 		_, id := conv.itemIDs(ev)
@@ -252,20 +252,88 @@ func TestMissingTimestampIsFilledFromTheObserver(t *testing.T) {
 	}
 }
 
-// Marks sharing a seq get distinct ordinals, and the same item gets the same
-// ID however many sinks ask, in any order.
-func TestOrdinalsAreSharedAndStable(t *testing.T) {
-	reg := newIDRegistry(time.Now)
-	conv := &converter{ids: reg}
+// Items sharing a seq get distinct IDs, the same item gets the same ID from
+// any converter (so every sink and every lifetime agree), and under
+// omit_prompts the prompt text does not feed the exported ID.
+func TestItemIDsAreContentKeyed(t *testing.T) {
 	a := markEv("w", "k", 4, "user-message", "one", t0)
 	b := markEv("w", "k", 4, "error", "two", t0)
-	_, ida := conv.itemIDs(a)
-	_, idb := conv.itemIDs(b)
-	_, ida2 := conv.itemIDs(a)
+	_, ida := (&converter{}).itemIDs(a)
+	_, idb := (&converter{}).itemIDs(b)
+	_, ida2 := (&converter{}).itemIDs(a)
 	if ida == idb || ida != ida2 {
 		t.Fatalf("ids %s %s %s", ida, idb, ida2)
 	}
-	if want := ItemID(TraceID("k"), observe.KindMark, 4, 1); idb != want {
-		t.Fatalf("second mark at a seq id %s, want ordinal 1's %s", idb, want)
+	if want := ItemID(TraceID("k"), observe.KindMark, 4, ContentKey(b, false)); idb != want {
+		t.Fatalf("id %s, want the REQ-7 derivation %s", idb, want)
+	}
+	// omit_prompts: two prompts differing only in text share a key, so the
+	// ID reveals nothing about the text; a timestamp still separates them.
+	p1 := markEv("w", "k", 4, "user-message", "customer 1234", t0)
+	p2 := markEv("w", "k", 4, "user-message", "customer 5678", t0)
+	if ContentKey(p1, true) != ContentKey(p2, true) {
+		t.Fatal("omit_prompts: the prompt text still feeds the item ID")
+	}
+	if ContentKey(p1, false) == ContentKey(p2, false) {
+		t.Fatal("without omit_prompts the note must separate same-seq prompts")
+	}
+}
+
+// A provider outage is exactly when many marks share one seq: every failed
+// turn's user-message and error mark carry the seq of the tool call that never
+// comes. A daemon restarted mid-outage does not replay, so it first sees the
+// NEXT retry's marks. Their IDs must differ from every ID the previous daemon
+// gave the earlier retries — otherwise a consumer deduplicating on
+// agent.item.id (REQ-5) silently drops real error records, and the trace gets
+// two different user-message spans with one span ID. The same item delivered
+// by both lifetimes (the slack window) must still keep one ID.
+func TestRestartDuringAnOutageKeepsItemIDsDistinct(t *testing.T) {
+	now := t0
+	life1, sink1 := newAcc(&now, nil)
+	life1Items := []observe.Event{
+		markEv("w", "k", 7, "user-message", "retry one", t0),
+		markEv("w", "k", 7, "error", "429 quota exhausted", t0.Add(time.Second)),
+		markEv("w", "k", 7, "user-message", "retry two", t0.Add(2*time.Second)),
+		markEv("w", "k", 7, "error", "429 quota exhausted", t0.Add(3*time.Second)),
+	}
+	ids1 := map[string]string{}
+	for _, ev := range life1Items {
+		_, id := life1.conv.itemIDs(ev)
+		ids1[id] = ev.Mark.Note + "@" + ev.Mark.Timestamp
+		life1.add(ev)
+	}
+	life1.flushAll()
+	if len(ids1) != len(life1Items) {
+		t.Fatalf("one lifetime gave %d distinct IDs to %d distinct items", len(ids1), len(life1Items))
+	}
+
+	life2, sink2 := newAcc(&now, nil)
+	life2Items := []observe.Event{
+		markEv("w", "k", 7, "user-message", "retry three", t0.Add(4*time.Second)),
+		markEv("w", "k", 7, "error", "429 quota exhausted", t0.Add(5*time.Second)),
+	}
+	for _, ev := range life2Items {
+		_, id := life2.conv.itemIDs(ev)
+		if was, dup := ids1[id]; dup {
+			t.Fatalf("%q in the second lifetime got the ID the first gave %q", ev.Mark.Note, was)
+		}
+		life2.add(ev)
+	}
+	life2.flushAll()
+	sent := map[string]bool{}
+	for _, sp := range sink1.all() {
+		sent[sp.SpanID] = true
+	}
+	for _, sp := range sink2.all() {
+		if sent[sp.SpanID] {
+			t.Fatalf("span %q reuses span ID %s from the previous daemon", sp.Name, sp.SpanID)
+		}
+	}
+
+	// The slack window: an item both daemons delivered keeps its identity.
+	_, a := life1.conv.itemIDs(life1Items[3])
+	_, b := life2.conv.itemIDs(life1Items[3])
+	if a != b {
+		t.Fatalf("the same item got %s and %s in two lifetimes", a, b)
 	}
 }
