@@ -326,7 +326,11 @@ SHA-256("harness-item:" + traceID + ":" + kind + ":" + seq + ":" + ordinal)
 
 where `kind` is `tool` or `mark`, `seq` is the item's session-positional
 sequence, and `ordinal` is its index among items of the same kind sharing that
-`seq`, in delivery order (almost always `0`). An item *maps to a span* exactly
+`seq`, in first-seen order (almost always `0`). The ordinal MUST be assigned
+once per item for all three signals — keyed by the item's content, not counted
+per sink — because each signal has its own observer subscription and may lose
+a different item to a full buffer; a per-sink count would then give one item
+two IDs and break the log-to-span correlation this ID exists for. An item *maps to a span* exactly
 when `otel.BuildTrace` produces a span for it — today tool events and marks of
 type `user-message`, `compaction` and `subagent` — and that span's ID MUST be
 the item's ID, with `parentSpanId` rewritten to match.
