@@ -173,8 +173,9 @@ func TestDaemonMetricsReportTheRealManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dm := startDaemonMetrics(mgr, obs, nil, l)
+	dm := beginDaemonMetrics(mgr, l)
 	t.Cleanup(dm.Stop)
+	dm.serve(obs, nil)
 	if dm.srv == nil {
 		t.Fatal("metrics listener did not bind")
 	}
@@ -231,7 +232,8 @@ func TestDaemonMetricsSurviveABusyPort(t *testing.T) {
 	mgr := supervisor.NewManager(&core.Config{Harnesses: map[string]core.Harness{}, Profiles: map[string]core.Profile{}}, opts)
 	t.Cleanup(mgr.Close)
 
-	dm := startDaemonMetrics(mgr, nil, nil, metrics.Listener{Addr: held.Addr().String()})
+	dm := beginDaemonMetrics(mgr, metrics.Listener{Addr: held.Addr().String()})
+	dm.serve(nil, nil)
 	if dm.srv != nil {
 		t.Fatal("bound a port another listener holds")
 	}
@@ -575,5 +577,93 @@ metrics_token_file = %q
 	}
 	if _, err := os.Stat(socket); err == nil {
 		t.Error("the control socket was created by a daemon that refused to start")
+	}
+}
+
+// Boot transitions reach the first scrape, through the real runDaemon order.
+//
+// runDaemon used to build the collector after Autostart, so the starting and
+// running transitions Autostart causes were published to a bus nobody from
+// metrics was subscribed to yet, and harness_state_transitions_total read 0
+// for every harness the daemon brought up at boot (SPEC-0013 REQ-2). The
+// collector now subscribes before Autostart; this test fails if that order
+// regresses.
+//
+// The same daemon also boots a gated harness outside its operating hours.
+// Autostart holds it (SPEC-0012), and a held harness is down on purpose: it
+// must read stopped, never failed. (review, harness#356)
+func TestDaemonCountsBootTransitionsAndHeldIsStopped(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary; skipped under -short")
+	}
+	bin := buildHarnessBinary(t)
+	addr := "127.0.0.1:" + freePort(t)
+	// A one-minute window twelve hours away is closed now, whenever now is.
+	open := time.Now().UTC().Add(12 * time.Hour)
+	hours := fmt.Sprintf("TZ=UTC %s-%s", open.Format("15:04"), open.Add(time.Minute).Format("15:04"))
+	cfg := fmt.Sprintf(`[server]
+metrics_listen = %q
+
+[harness.eager]
+harness = "generic"
+args = ["-c", "sleep 600"]
+enabled = true
+
+[harness.afterhours]
+harness = "generic"
+args = ["-c", "sleep 600"]
+enabled = true
+operating_hours = %q
+`, addr, hours)
+	_, out, _ := runDaemonBinary(t, bin, cfg)
+
+	// The first scrape that answers at all is the one under test: the
+	// listener only binds after Autostart has run.
+	var fams map[string]*dto.MetricFamily
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		resp, err := http.Get("http://" + addr + "/metrics")
+		if err == nil {
+			_ = resp.Body.Close()
+			fams = scrapeURL(t, "http://"+addr+"/metrics")
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("metrics listener never came up on %s\n%s", addr, out)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for _, to := range []string{"starting", "running"} {
+		if v, ok := sample(fams, "harness_state_transitions_total", "harness", "eager", "to", to); !ok || v < 1 {
+			t.Errorf("eager transitions to %s = %v (present %v) on the first scrape, want >= 1: Autostart's transitions were not counted\n%s", to, v, ok, out)
+		}
+	}
+	if v, _ := sample(fams, "harness_harness_state", "harness", "eager", "state", "running"); v != 1 {
+		t.Errorf("eager state=running = %v, want 1", v)
+	}
+
+	// The held harness settles as stopped. Poll: the hold is applied on the
+	// supervisor's actor loop, so the first scrape may predate it.
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		stopped, _ := sample(fams, "harness_harness_state", "harness", "afterhours", "state", "stopped")
+		failed, okF := sample(fams, "harness_harness_state", "harness", "afterhours", "state", "failed")
+		if !okF {
+			t.Fatalf("afterhours has no state=failed series\n%s", out)
+		}
+		if failed != 0 {
+			t.Fatalf("held harness reads failed = %v; the gate holding it is not a failure", failed)
+		}
+		if stopped == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("held harness never read stopped; state series %v\n%s", fams["harness_harness_state"], out)
+		}
+		time.Sleep(50 * time.Millisecond)
+		fams = scrapeURL(t, "http://"+addr+"/metrics")
+	}
+	if v, _ := sample(fams, "harness_state_transitions_total", "harness", "afterhours", "to", "running"); v != 0 {
+		t.Errorf("held harness transitioned to running %v times; boot out of hours must begin held, not start", v)
 	}
 }

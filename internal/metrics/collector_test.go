@@ -399,6 +399,38 @@ func TestLifecycleDropsAreCollectionErrors(t *testing.T) {
 	}
 }
 
+// The daemon starts the collector before Autostart with no observer, and
+// attaches the observer and the schedule reader once they exist. Until then
+// the model series are omitted (they cannot be computed); after, they appear
+// and count, and the next-run gauge reads the attached schedule.
+// (review, harness#356)
+func TestAttachAfterStart(t *testing.T) {
+	src := newFakeSource()
+	src.add(crushHarness("worker"), runningSnap())
+	src.add(core.Harness{Name: "sweep", Adapter: "generic", Schedule: "@hourly"}, supervisor.Snapshot{State: core.StateStopped, Scheduled: true})
+	m := newTestMetrics(t, src, Options{})
+
+	fams := scrape(t, m)
+	if _, ok := fams["harness_model_calls_total"]; ok {
+		t.Error("model calls reported before an observer was attached")
+	}
+	if _, ok := fams.get("harness_scheduled_next_run_timestamp", lbls("harness", "sweep")); ok {
+		t.Error("next run reported before a schedule reader was attached")
+	}
+
+	feed := newFakeFeed()
+	next := t0.Add(time.Hour)
+	m.Attach(feed, func(string) (time.Time, bool) { return next, true })
+	feed.ch <- toolEvent("worker", "s1", t0)
+	eventually(t, "the attached feed counted", func() bool {
+		v, _ := scrape(t, m).get("harness_model_calls_total", lbls("harness", "worker", "outcome", "success"))
+		return v == 1
+	})
+	if v := scrape(t, m).must(t, "harness_scheduled_next_run_timestamp", lbls("harness", "sweep")); v != float64(next.Unix()) {
+		t.Errorf("next run = %v, want %v", v, next.Unix())
+	}
+}
+
 // Sessions are counted once each; activity needs both a live process and a
 // recent item.
 func TestSessionsStartedAndActive(t *testing.T) {

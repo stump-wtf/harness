@@ -159,6 +159,10 @@ func runDaemon(o daemonOpts) {
 			"hint", "run `harness start <name>` to re-enable (it persists across restarts)",
 		)
 	}
+	// Issue #356: the metrics collector subscribes to lifecycle events before
+	// Autostart, so the transitions boot causes are counted (SPEC-0013 REQ-2).
+	// Its observer, schedule and listener arrive below.
+	daemonMet := beginDaemonMetrics(mgr, metricsListener)
 	mgr.Autostart()
 
 	// Scheduled harnesses and the operating-hours gate share one wall-clock
@@ -223,7 +227,7 @@ func runDaemon(o daemonOpts) {
 
 	// Issue #356: GET /metrics (SPEC-0013), fed by the observer and the
 	// Manager, on its own listener.
-	daemonMet := startDaemonMetrics(mgr, observer, sched.NextFire, metricsListener)
+	daemonMet.serve(observer, sched.NextFire)
 
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
 	// tear down connections, stop harnesses, flush state. SIGHUP triggers a
