@@ -34,6 +34,7 @@ import (
 	"github.com/stump-wtf/harness/internal/remote"
 	"github.com/stump-wtf/harness/internal/scheduler"
 	"github.com/stump-wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/telemetry"
 )
 
 // daemonManagerOptions is the ManagerOptions the daemon actually runs with.
@@ -85,6 +86,66 @@ func startDaemonObserver(mgr *supervisor.Manager, opts observe.Options) *observe
 	return obs
 }
 
+// resolveDaemonTelemetry resolves the [telemetry] table against the daemon's
+// environment and [telemetry] env_file, logging warnings and notes. It returns
+// nil when no destination is configured: the daemon then builds no pipeline,
+// takes no observer subscription, opens no file and makes no connection. An
+// error — an enabled OTLP signal with no endpoint, a missing env_file — must
+// refuse the start, so the daemon calls this before Autostart.
+//
+// Governing: ADR-0021; SPEC-0014 REQ-1, REQ-3, REQ-14.
+func resolveDaemonTelemetry(tc core.TelemetryConfig, env telemetry.Env) (*telemetry.Resolved, error) {
+	if note := telemetry.IgnoredEnvNote(tc, env.Getenv); note != "" {
+		log.Info(note)
+	}
+	res, err := telemetry.Resolve(tc, env)
+	if err != nil || res == nil {
+		return nil, err
+	}
+	for _, w := range res.Warnings {
+		log.Warn("telemetry: " + w)
+	}
+	for _, n := range res.Notes {
+		log.Info("telemetry: " + n)
+	}
+	return res, nil
+}
+
+// startDaemonTelemetry starts the export pipeline over the daemon's observer
+// and Manager, logging one line per signal with what was resolved and where
+// each setting came from — never a header value. nil when nothing is enabled.
+// It is a function, like daemonManagerOptions, so the wiring test drives the
+// pipeline the daemon builds.
+//
+// Governing: ADR-0021; SPEC-0014 REQ-9, REQ-14.
+func startDaemonTelemetry(res *telemetry.Resolved, obs telemetry.Subscriber, src telemetry.Source, opts telemetry.Options) *telemetry.Pipeline {
+	if !res.Enabled() {
+		return nil
+	}
+	for _, sig := range []*telemetry.Signal{res.Logs, res.Traces} {
+		if sig != nil {
+			log.Info("telemetry export active", sig.LogKeyvals()...)
+		}
+	}
+	if path := res.EventsFile(); path != "" {
+		log.Info("telemetry export active", "signal", telemetry.SignalEventsFile, "path", path, "path_source", telemetry.SourceFile)
+	}
+	return telemetry.New(res, obs, src, opts)
+}
+
+// warnTelemetryReload logs, once per reload, that a changed [telemetry] table
+// waits for a restart: the exporters hold queues, connections and an open
+// file (SPEC-0014 REQ-2). Per-harness export_telemetry needs no warning; the
+// gate reads the current definition for every item.
+func warnTelemetryReload(running, reloaded core.TelemetryConfig) bool {
+	if running == reloaded {
+		return false
+	}
+	log.Warn("[telemetry] changed in harness.toml; the change takes effect after a daemon restart",
+		"hint", "restart the daemon (per-harness export_telemetry changes apply on reload)")
+	return true
+}
+
 // runDaemon is the entry point for `harness daemon`. It owns its own flag set
 // (the daemon's flags don't overlap with the client verbs') and parses args
 // after the `daemon` subcommand token.
@@ -120,6 +181,13 @@ func runDaemon(o daemonOpts) {
 		cfg = &core.Config{}
 	}
 
+	// Telemetry export (ADR-0021): resolved before any harness starts, so a
+	// signal that is consented to but cannot be delivered refuses the start.
+	telemetryRes, err := resolveDaemonTelemetry(cfg.Telemetry, telemetry.ProcessEnv(buildinfo.Version))
+	if err != nil {
+		os.Exit(cliui.Fatal(err))
+	}
+
 	// The attach data plane: one Mux (x/vt emulator + scrollback ring) per
 	// harness, lazily created. The Manager tees each harness's raw PTY output
 	// into its Mux via the ExtraOut hook, alongside the durable log (ADR-0003/
@@ -153,8 +221,14 @@ func runDaemon(o daemonOpts) {
 	mgr.Autostart()
 
 	// Scheduled harnesses and the operating-hours gate share one wall-clock
-	// tick (ADR-0013, ADR-0019). nil is the real clock.
-	sched := startDaemonScheduler(mgr, cfg, nil)
+	// tick (ADR-0013, ADR-0019). nil is the real clock. A changed [telemetry]
+	// table waits for a restart, so every reload that changes it says so
+	// (SPEC-0014 REQ-2); it rides the scheduler's reload hook because the
+	// Manager holds exactly one.
+	runningTelemetry := cfg.Telemetry
+	sched := startDaemonScheduler(mgr, cfg, nil, func() {
+		warnTelemetryReload(runningTelemetry, mgr.Config().Telemetry)
+	})
 
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
@@ -212,6 +286,10 @@ func runDaemon(o daemonOpts) {
 	observer := startDaemonObserver(mgr, daemonObserverOptions())
 	log.Info("agent event observer active", "interval", observe.DefaultPollInterval)
 
+	// Issue #391: export that stream, only when [telemetry] names a
+	// destination and only for opted-in harnesses (SPEC-0014 REQ-1).
+	telemetryPipeline := startDaemonTelemetry(telemetryRes, observer, mgr, telemetry.Options{})
+
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
 	// tear down connections, stop harnesses, flush state. SIGHUP triggers a
 	// graceful config reload (hot-reload harness.toml without stopping running
@@ -245,6 +323,21 @@ func runDaemon(o daemonOpts) {
 	}
 
 	log.Info("shutting down")
+	// Telemetry first: it stops taking items, then flushes within
+	// shutdown_timeout (SPEC-0014 REQ-11). The flush runs alongside the rest
+	// of shutdown rather than ahead of it, so it never delays the harnesses'
+	// own stop; the daemon waits for it only at the very end.
+	telemetryDone := make(chan struct{})
+	if telemetryPipeline != nil {
+		go func() {
+			defer close(telemetryDone)
+			ctx, cancel := context.WithTimeout(context.Background(), telemetryRes.Config.ShutdownTimeout)
+			defer cancel()
+			telemetryPipeline.Shutdown(ctx)
+		}()
+	} else {
+		close(telemetryDone)
+	}
 	// Before the Manager closes: the observer reads its snapshots.
 	observer.Stop()
 	sessionGuard.Close()
@@ -260,6 +353,7 @@ func runDaemon(o daemonOpts) {
 	}
 	srv.Close()
 	mgr.Close()
+	<-telemetryDone
 }
 
 // startDaemonScheduler builds, applies and starts the scheduler the daemon
@@ -271,7 +365,7 @@ func runDaemon(o daemonOpts) {
 //
 // Governing: ADR-0013; SPEC-0008; ADR-0019, SPEC-0012 REQ "Gate Evaluation",
 // REQ "Operating Hours Reload".
-func startDaemonScheduler(mgr *supervisor.Manager, cfg *core.Config, clock scheduler.Clock) *scheduler.Scheduler {
+func startDaemonScheduler(mgr *supervisor.Manager, cfg *core.Config, clock scheduler.Clock, onReload ...func()) *scheduler.Scheduler {
 	// Scheduled harnesses: cron-fired one-shot agent runs owned by the daemon.
 	// Governing: ADR-0013; SPEC-0008 REQ "Firing And Overlap", REQ "Overlap
 	// Policy", REQ "Missed Window Handling", REQ "Run History"; issues #66,
@@ -320,7 +414,15 @@ func startDaemonScheduler(mgr *supervisor.Manager, cfg *core.Config, clock sched
 	// path triggered it: SIGHUP, the config watcher, or the daemon's reload
 	// control op all funnel through Manager.Reload. Registered before any of
 	// those sources is live.
-	mgr.SetReloadHook(func() { sched.Apply(mgr.Config()) })
+	// onReload carries the daemon's other reload reactions: the Manager
+	// holds one hook, so a second SetReloadHook would silently replace this
+	// one and stop schedules re-applying.
+	mgr.SetReloadHook(func() {
+		sched.Apply(mgr.Config())
+		for _, fn := range onReload {
+			fn()
+		}
+	})
 
 	return sched
 }
