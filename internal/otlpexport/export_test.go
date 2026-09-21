@@ -126,14 +126,14 @@ func TestExportSuccess(t *testing.T) {
 	if s0.Name != "user message" {
 		t.Fatalf("name = %q, want 'user message'", s0.Name)
 	}
-	if s0.Kind != "SPAN_KIND_INTERNAL" {
-		t.Fatalf("kind = %q, want SPAN_KIND_INTERNAL", s0.Kind)
+	if s0.Kind != 1 { // SPAN_KIND_INTERNAL; OTLP JSON encodes enums as integers
+		t.Fatalf("kind = %d, want 1 (INTERNAL)", s0.Kind)
 	}
 	if s0.StartTimeUnixNano != "1767261600000000000" {
 		t.Fatalf("startTimeUnixNano = %q, want 1767261600000000000", s0.StartTimeUnixNano)
 	}
-	if s0.Status.Code != "STATUS_CODE_OK" {
-		t.Fatalf("status code = %q, want STATUS_CODE_OK", s0.Status.Code)
+	if s0.Status.Code != 1 {
+		t.Fatalf("status code = %d, want 1 (OK)", s0.Status.Code)
 	}
 
 	// Second span: tool call with error.
@@ -141,8 +141,8 @@ func TestExportSuccess(t *testing.T) {
 	if s1.ParentSpanID != "aaaaaaaaaaaaaaaa" {
 		t.Fatalf("parentSpanId = %q, want aaaaaaaaaaaaaaaa", s1.ParentSpanID)
 	}
-	if s1.Status.Code != "STATUS_CODE_ERROR" {
-		t.Fatalf("status code = %q, want STATUS_CODE_ERROR", s1.Status.Code)
+	if s1.Status.Code != 2 {
+		t.Fatalf("status code = %d, want 2 (ERROR)", s1.Status.Code)
 	}
 	if s1.Status.Message != "exit code 1" {
 		t.Fatalf("status message = %q, want 'exit code 1'", s1.Status.Message)
