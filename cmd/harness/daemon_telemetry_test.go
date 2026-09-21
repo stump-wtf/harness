@@ -2,7 +2,7 @@ package main
 
 // Daemon Telemetry Wiring
 //
-// Governing tests: ADR-0021; SPEC-0014 REQ-1, REQ-2, REQ-3.
+// Governing tests: ADR-0022; SPEC-0015 REQ-1, REQ-2, REQ-3.
 //
 // The telemetry package's tests build their own pipelines over fakes. What
 // they cannot show is that the daemon builds one from a real parsed

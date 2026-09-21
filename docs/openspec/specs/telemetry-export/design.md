@@ -1,7 +1,7 @@
 ---
 status: draft
 date: 2026-09-21
-implements: [adr-0021]
+implements: [adr-0022]
 ---
 
 # Design: Telemetry Export
@@ -36,7 +36,7 @@ destination cannot hold another's items.
 
 ## The gate is applied first
 
-The per-harness opt-in (SPEC-0014 REQ-1) is checked at the top of convert,
+The per-harness opt-in (SPEC-0015 REQ-1) is checked at the top of convert,
 against `Source.HarnessDef(name)` at that moment. Checking first means a
 non-contributing harness's text is never redacted, copied or counted; checking
 per item rather than caching means `harness reload` changes take effect for the
@@ -76,7 +76,7 @@ The trace accumulator keeps, per session key:
 * the time of the last item, for the idle trigger.
 
 On a trigger it calls `otel.BuildTrace` over context plus unsent items, re-keys
-span IDs to item IDs (SPEC-0014 REQ-7), drops spans whose IDs are in the sent
+span IDs to item IDs (SPEC-0015 REQ-7), drops spans whose IDs are in the sent
 set, and queues the rest. Timestamps are filled from the observer's `Time`
 before the build.
 
@@ -118,7 +118,7 @@ the second is not hypothetical: during a provider outage every retry's marks
 share one `seq`, so a restart mid-outage would hand new marks old IDs. The item
 ID is instead hashed from a content key (tool, summary and timestamp; or mark
 type, timestamp and note), which every sink and every lifetime compute alike
-with no shared state. SPEC-0014 REQ-7 defines it. An earlier draft used a
+with no shared state. SPEC-0015 REQ-7 defines it. An earlier draft used a
 shared first-seen ordinal registry; review replaced it because it restarted at
 zero with the daemon.
 

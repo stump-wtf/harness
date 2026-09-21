@@ -156,7 +156,7 @@ func (c *conn) writeProjectError(req protocol.ControlReq, err error) {
 // backend defaults to native (ADR-0003), matching the config parser; anything
 // else is validated by Manager.ProjectUp.
 // projectTelemetryOptOut keeps a project definition's export_telemetry only
-// when it is false. Governing: SPEC-0014 REQ-2.
+// when it is false. Governing: SPEC-0015 REQ-2.
 func projectTelemetryOptOut(v *bool) *bool {
 	if v == nil || *v {
 		return nil
@@ -188,7 +188,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		quiet = *ph.Quiet
 	}
 	return core.Harness{
-		// Only an opt-out crosses the wire (SPEC-0014 REQ-2): a project
+		// Only an opt-out crosses the wire (SPEC-0015 REQ-2): a project
 		// harness is never opted in by its own definition.
 		ExportTelemetry: projectTelemetryOptOut(ph.ExportTelemetry),
 		Name:            ph.Name,

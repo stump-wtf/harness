@@ -2,7 +2,7 @@ package telemetry
 
 // Trace Accumulation
 //
-// The traces signal exports one trace per agent session (SPEC-0014 REQ-7).
+// The traces signal exports one trace per agent session (SPEC-0015 REQ-7).
 // Items arrive one at a time and a session never "ends", so the accumulator
 // keeps each session's unsent items and exports them as spans on a trigger:
 // the session going idle for idle_flush, 2048 unsent items, its harness
@@ -26,7 +26,7 @@ package telemetry
 //
 // The accumulator is owned by the traces intake goroutine; nothing here locks.
 //
-// Governing: ADR-0021; SPEC-0014 REQ-4, REQ-7.
+// Governing: ADR-0022; SPEC-0015 REQ-4, REQ-7.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
 //
@@ -47,7 +47,7 @@ import (
 	"github.com/stump-wtf/harness/internal/redact"
 )
 
-// Accumulator bounds (SPEC-0014 REQ-7).
+// Accumulator bounds (SPEC-0015 REQ-7).
 const (
 	traceMaxUnsent   = 2048
 	traceMaxSessions = 256

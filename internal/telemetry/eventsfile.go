@@ -4,7 +4,7 @@ package telemetry
 //
 // The zero-network path: every contributing item appended to a local JSONL
 // file as one whole line, for Vector, Fluent Bit or Promtail/Alloy to tail
-// (SPEC-0014 REQ-8). The file is 0600 and any directory created for it 0700 —
+// (SPEC-0015 REQ-8). The file is 0600 and any directory created for it 0700 —
 // it is a persistent copy of transcript content.
 //
 // Rotation is by rename, which is what inode-tracking tailers expect
@@ -18,7 +18,7 @@ package telemetry
 // as failed, the error is logged (rate-limited), the file is closed, and the
 // next batch tries to open it again.
 //
-// Governing: ADR-0021; SPEC-0014 REQ-8, REQ-11.
+// Governing: ADR-0022; SPEC-0015 REQ-8, REQ-11.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
 

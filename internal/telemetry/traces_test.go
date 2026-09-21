@@ -2,7 +2,7 @@ package telemetry
 
 // Trace Accumulation Tests
 //
-// Governing tests: SPEC-0014 REQ-7 — trace ID equal to BuildTrace's, item-keyed
+// Governing tests: SPEC-0015 REQ-7 — trace ID equal to BuildTrace's, item-keyed
 // span IDs pinned against the vendored agent-trace, no span ever re-sent across
 // idle exports or a daemon restart, the export triggers and bounds, and no
 // invented span for an error mark.
