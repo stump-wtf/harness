@@ -12,9 +12,13 @@ package main
 // observer, and that runDaemon refuses the bad listener before any harness
 // starts — the gap #315 fell through with a Policy nobody wired. So the first
 // test drives startDaemonMetrics against a real Manager and a stand-in crush
-// process, and the last two exec the real binary.
+// process, and the rest exec the real binary.
 //
 // @joestump-agent 09/21/2026 - Added for harness#356.
+//
+// @joestump-agent 09/21/2026 - Review: added a real-binary scrape asserting
+// every mandated family (scheduler and token file wired from TOML), and the
+// refusal of a named-but-missing token file.
 
 import (
 	"bytes"
@@ -176,8 +180,10 @@ func TestDaemonMetricsReportTheRealManager(t *testing.T) {
 	}
 	url := "http://" + dm.srv.Addr() + "/metrics"
 
-	rt.AppendCrushMessages(t, db, "live", rt.CrushMessage{Role: "assistant", At: time.Now(),
-		Parts: rt.FinishError("Too Many Requests", `{"type":"error","error":{"type":"rate_limit_error"}}`)})
+	rt.AppendCrushMessages(t, db, "live", rt.CrushMessage{
+		Role: "assistant", At: time.Now(),
+		Parts: rt.FinishError("Too Many Requests", `{"type":"error","error":{"type":"rate_limit_error"}}`),
+	})
 
 	deadline = time.Now().Add(10 * time.Second)
 	var fams map[string]*dto.MetricFamily
@@ -237,10 +243,12 @@ func TestDaemonMetricsSurviveABusyPort(t *testing.T) {
 }
 
 // runDaemonBinary execs `harness daemon start` on cfgBody and returns the
-// command, its combined output buffer, and the socket path.
-func runDaemonBinary(t *testing.T, bin, cfgBody string) (*exec.Cmd, *bytes.Buffer, string) {
+// command, its combined output buffer, and the socket path. extraEnv entries
+// are appended last, so they win over the inherited environment.
+func runDaemonBinary(t *testing.T, bin, cfgBody string, extraEnv ...string) (*exec.Cmd, *bytes.Buffer, string) {
 	t.Helper()
 	env, _ := isolatedEnv(t)
+	env = append(env, extraEnv...)
 	dir := shortSockDir(t)
 	socket := filepath.Join(dir, "h.sock")
 	cfg := filepath.Join(dir, "harness.toml")
@@ -365,5 +373,207 @@ enabled = false
 	}
 	if _, ok := fams["go_goroutines"]; !ok {
 		t.Error("go_* collector missing from the daemon's endpoint")
+	}
+}
+
+// Every family SPEC-0013 mandates, scraped from the real binary on a real
+// harness.toml, behind the bearer token the file names.
+//
+// The package tests prove each family against a stand-in Manager and a
+// hand-built NextRun; the tests above prove state through the binary. None of
+// them shows that the daemon hands the collector its real scheduler (a nil
+// NextRun silently omits harness_scheduled_next_run_timestamp, which reads as
+// "no next window"), that metrics_token_file survives the trip from TOML to
+// the listener, or that an observable harness declared in TOML gets its
+// model-call families. A daemon that dropped any of that wiring would pass
+// every other test. (review: harness#356)
+func TestDaemonServesEveryMandatedFamily(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary; skipped under -short")
+	}
+	bin := buildHarnessBinary(t)
+	dir := shortSockDir(t)
+	home := filepath.Join(dir, "home")
+	work := filepath.Join(dir, "work")
+	fakeBin := filepath.Join(dir, "bin")
+	for _, d := range []string{home, work, fakeBin} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(fakeBin, "crush"), []byte("#!/bin/sh\nexec sleep 600\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const token = "review-token-356"
+	tokenFile := filepath.Join(dir, "metrics.token")
+	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	addr := "127.0.0.1:" + freePort(t)
+	cfg := fmt.Sprintf(`[server]
+metrics_listen = %q
+metrics_token_file = %q
+
+[harness.script]
+harness = "generic"
+args = ["-c", "sleep 600"]
+enabled = false
+
+[harness.worker]
+harness = "crush"
+workdir = %q
+enabled = false
+
+[harness.job]
+harness = "crush"
+workdir = %q
+schedule = "*/5 * * * *"
+prompt = "sweep"
+`, addr, tokenFile, work, work)
+	_, out, _ := runDaemonBinary(t, bin, cfg,
+		"HOME="+home,
+		"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"XDG_DATA_HOME=", "CRUSH_GLOBAL_DATA=")
+
+	url := "http://" + addr + "/metrics"
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		resp, err := http.Get(url)
+		if err == nil {
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			// The token from the file is enforced even on loopback.
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated scrape: status %d, want 401\n%s", resp.StatusCode, body)
+			}
+			if strings.Contains(string(body), "harness_") {
+				t.Fatal("unauthenticated scrape leaked metrics")
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("metrics listener never came up on %s\n%s", addr, out)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("authenticated scrape: status %d\n%s", resp.StatusCode, body)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain; version=0.0.4") {
+		t.Errorf("Content-Type = %q, want text/plain; version=0.0.4 (REQ-1)", ct)
+	}
+	parser := expfmt.NewTextParser(model.UTF8Validation)
+	fams, err := parser.TextToMetricFamilies(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("exposition does not parse: %v", err)
+	}
+	if strings.Contains(string(body), token) {
+		t.Error("the bearer token appears in the exposition")
+	}
+
+	// REQ-2 for every declared harness, REQ-3/REQ-4 for the observable ones.
+	for _, h := range []string{"script", "worker", "job"} {
+		for _, st := range []string{"running", "stopped", "failed", "flapping"} {
+			if _, ok := sample(fams, "harness_harness_state", "harness", h, "state", st); !ok {
+				t.Errorf("%s: no harness_harness_state{state=%q}", h, st)
+			}
+		}
+		for _, name := range []string{"harness_restarts_total", "harness_consecutive_failures"} {
+			if _, ok := sample(fams, name, "harness", h); !ok {
+				t.Errorf("%s: no %s", h, name)
+			}
+		}
+		if _, ok := sample(fams, "harness_state_transitions_total", "harness", h, "to", "failed"); !ok {
+			t.Errorf("%s: no harness_state_transitions_total{to=\"failed\"}", h)
+		}
+	}
+	for _, h := range []string{"worker", "job"} {
+		for _, o := range []string{"success", "error"} {
+			if _, ok := sample(fams, "harness_model_calls_total", "harness", h, "outcome", o); !ok {
+				t.Errorf("%s: no harness_model_calls_total{outcome=%q}", h, o)
+			}
+		}
+		for _, c := range metrics.Classes {
+			if _, ok := sample(fams, "harness_model_call_errors_total", "harness", h, "class", string(c)); !ok {
+				t.Errorf("%s: no harness_model_call_errors_total{class=%q}", h, c)
+			}
+		}
+		for _, name := range []string{"harness_model_call_errors_unclassified_total", "harness_sessions_started_total", "harness_session_active"} {
+			if _, ok := sample(fams, name, "harness", h); !ok {
+				t.Errorf("%s: no %s", h, name)
+			}
+		}
+		// Never succeeded in this daemon's lifetime: omitted, not zero.
+		if _, ok := sample(fams, "harness_last_successful_call_timestamp", "harness", h); ok {
+			t.Errorf("%s: last-success timestamp present before any success", h)
+		}
+	}
+	for _, o := range []string{"success", "failure"} {
+		if _, ok := sample(fams, "harness_scheduled_runs_total", "harness", "job", "outcome", o); !ok {
+			t.Errorf("job: no harness_scheduled_runs_total{outcome=%q}", o)
+		}
+	}
+	// The daemon's scheduler, not a stand-in: a real next window, in the
+	// future and within one cron period.
+	next, ok := sample(fams, "harness_scheduled_next_run_timestamp", "harness", "job")
+	if !ok {
+		t.Error("job: no harness_scheduled_next_run_timestamp — the daemon did not wire its scheduler")
+	} else if now := float64(time.Now().Unix()); next < now-1 || next > now+5*60+1 {
+		t.Errorf("job next run = %v, want within the next five minutes of %v", next, now)
+	}
+	if _, ok := fams["harness_scheduled_runs_total"]; ok {
+		if got := len(fams["harness_scheduled_runs_total"].GetMetric()); got != 2 {
+			t.Errorf("harness_scheduled_runs_total has %d series, want 2 (job only)", got)
+		}
+	}
+	for _, c := range []string{"supervisor", "schedule", "observer", "lifecycle"} {
+		if v, ok := sample(fams, "harness_metrics_collection_errors_total", "collector", c); !ok || v != 0 {
+			t.Errorf("collection errors{collector=%q} = %v (present %v), want 0", c, v, ok)
+		}
+	}
+	for _, name := range []string{"go_goroutines", "process_start_time_seconds", "harness_metrics_harnesses_overflowed"} {
+		if _, ok := fams[name]; !ok {
+			t.Errorf("no %s", name)
+		}
+	}
+}
+
+// A token file that is named but unreadable refuses the daemon even on
+// loopback: serving without the auth the operator asked for is the same
+// mistake as a missing token, arrived at by accident. (review: harness#356)
+func TestDaemonRefusesAMissingTokenFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary; skipped under -short")
+	}
+	bin := buildHarnessBinary(t)
+	missing := filepath.Join(shortSockDir(t), "no-such.token")
+	cmd, out, socket := runDaemonBinary(t, bin, fmt.Sprintf(`[server]
+metrics_listen = "127.0.0.1:%s"
+metrics_token_file = %q
+`, freePort(t), missing))
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatalf("daemon exited 0; want a refusal\n%s", out)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatalf("daemon did not refuse to start within 15s\n%s", out)
+	}
+	if !strings.Contains(out.String(), "refusing to start") || !strings.Contains(out.String(), "metrics_token_file") {
+		t.Errorf("refusal does not say why:\n%s", out)
+	}
+	if _, err := os.Stat(socket); err == nil {
+		t.Error("the control socket was created by a daemon that refused to start")
 	}
 }
