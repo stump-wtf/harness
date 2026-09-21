@@ -409,3 +409,32 @@ func bisectFlip(e Expr, lo, hi time.Time, curIn bool) time.Time {
 	}
 	return hi.Round(0)
 }
+
+// PrevEnd reports the most recent instant at or before t at which one of e's
+// windows closed — the in→out flip closest behind t. It is the instant a gated
+// harness went out of hours, which SPEC-0012 REQ "Graceful Shutdown" anchors a
+// close's deadline to ("measured from that instant and not from when the
+// daemon noticed it"), so a suspend across the boundary still yields a
+// deadline on the real timeline.
+//
+// ok is false when no such flip exists within the past eight local days — in
+// practice only when e's windows union to the entire week — or when t is in
+// hours, where the current window's end is still ahead and there is no closed
+// window behind the question. The scan mirrors nextChange's: backward in
+// nextStep increments, then bisected to the second, so a boundary whose label
+// falls in a DST gap resolves to where membership actually flips, exactly as
+// In does.
+func (e Expr) PrevEnd(t time.Time) (time.Time, bool) {
+	if e.member(t) {
+		return time.Time{}, false
+	}
+	floor := t.Add(-nextHorizon)
+	hi := t // member(hi) == false: the loop invariant bisectFlip needs
+	for cur := t.Add(-nextStep); !cur.Before(floor); cur = cur.Add(-nextStep) {
+		if e.member(cur) {
+			return bisectFlip(e, cur, hi, true), true
+		}
+		hi = cur
+	}
+	return time.Time{}, false
+}

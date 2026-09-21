@@ -38,14 +38,25 @@ import (
 // adapter over the supervisor Manager.
 type Gate interface {
 	// Status reports whether name is up (starting, running, degraded or
-	// restarting) and whether it is held. ok is false for an unknown harness.
-	Status(name string) (up, held, ok bool)
+	// restarting), whether it is held, and whether a graceful close is in
+	// flight. ok is false for an unknown harness.
+	Status(name string) (up, held, closing, ok bool)
 	// Lease reports name's after-hours lease end, ok=false when it has none.
 	// A harness covered by a lease that has not ended is never held.
 	Lease(name string) (until time.Time, ok bool)
+	// CloseAt reports the instant name went out of hours — the anchor a
+	// graceful close's deadline is measured from. ok is false when the
+	// boundary cannot be determined and the close anchors to now instead.
+	CloseAt(name string, now time.Time) (time.Time, bool)
 	// Hold shuts name down for its hours without touching enabled intent.
-	// It may block for the length of a graceful stop.
-	Hold(name string, mode core.HoursShutdownMode)
+	// Under a graceful mode it marks the close and returns; closeAt is the
+	// instant the harness went out of hours.
+	Hold(name string, mode core.HoursShutdownMode, closeAt time.Time)
+	// CloseStep advances a graceful close by one observation of the
+	// turn-state watch.
+	CloseStep(name string, now time.Time)
+	// Arm warms the turn-state watch for a close within armLead.
+	Arm(name string, closeAt time.Time)
 	// Release starts a held harness without touching enabled intent.
 	Release(name string)
 }
@@ -57,12 +68,22 @@ type gateEntry struct {
 	mode core.HoursShutdownMode
 }
 
+// armLead is how close a close has to be before the pass warms the
+// turn-state watch for it — the only trace I/O the daemon does outside a
+// close itself (SPEC-0012 REQ "Turn State Signal": none the rest of the day).
+const armLead = time.Minute
+
 // gateAction is one decision the pass made, carried out after the lock drops.
 type gateAction struct {
-	name    string
-	hold    bool // false: release
-	mode    core.HoursShutdownMode
-	ungated bool // a release for a harness whose hours a reload removed
+	name      string
+	hold      bool // false: release
+	mode      core.HoursShutdownMode
+	closeAt   time.Time // the instant the harness went out of hours
+	anchored  bool      // closeAt came from a real boundary, not a fallback
+	stepAt    time.Time // the tick's clock, for a close step (no wall-clock read)
+	closeStep bool      // advance a graceful close in flight
+	arm       bool      // warm the turn-state watch for a close within armLead
+	ungated   bool      // a release for a harness whose hours a reload removed
 }
 
 // applyGates reconciles the gate set against cfg. Caller holds s.mu.
@@ -127,23 +148,41 @@ func (s *Scheduler) gatePass(now time.Time) []gateAction {
 		if s.gating[name] {
 			continue // the last decision is still being carried out
 		}
-		in, _, _ := g.expr.In(now)
-		up, held, ok := s.gate.Status(name)
+		in, next, _ := g.expr.In(now)
+		up, held, closing, ok := s.gate.Status(name)
 		if !ok {
 			continue
 		}
 		switch {
 		case !in && s.leased(name, now):
-			// Covered by an after-hours lease: nothing to do.
+			// Covered by an after-hours lease: nothing to enforce — but if
+			// its end is close, warm the watch a graceful close will need.
+			if until, had := s.gate.Lease(name); had && until.Sub(now) <= armLead {
+				if s.armOnce(name, until) {
+					acts = append(acts, gateAction{name: name, arm: true, closeAt: until})
+				}
+			}
+		case !in && closing:
+			// A graceful close in flight: step it from this tick's clock.
+			acts = append(acts, gateAction{name: name, closeStep: true, stepAt: now})
 		case !in && up:
-			acts = append(acts, gateAction{name: name, hold: true, mode: g.mode})
+			closeAt, anchored := s.gate.CloseAt(name, now)
+			delete(s.armed, name) // the close takes over from the warm-up
+			acts = append(acts, gateAction{name: name, hold: true, mode: g.mode, closeAt: closeAt, anchored: anchored})
 		case in && held:
 			acts = append(acts, gateAction{name: name})
+		case in && next.Sub(now) <= armLead:
+			// The window ends within the minute: warm the watch a graceful
+			// close will need, so its first step already has a sample.
+			if s.armOnce(name, next) {
+				acts = append(acts, gateAction{name: name, arm: true, closeAt: next})
+			}
 		}
 	}
 	for name := range s.ungated {
 		delete(s.ungated, name)
-		if _, held, ok := s.gate.Status(name); ok && held {
+		if _, held, _, ok := s.gate.Status(name); ok && held {
+			delete(s.armed, name)
 			acts = append(acts, gateAction{name: name, ungated: true})
 		}
 	}
@@ -164,6 +203,20 @@ func (s *Scheduler) leased(name string, now time.Time) bool {
 	return ok && now.Before(until)
 }
 
+// armOnce reports whether name's watch still needs warming for closeAt: the
+// pass re-evaluates every tick inside the arm lead, and one arm per close is
+// the point. Caller holds s.mu.
+func (s *Scheduler) armOnce(name string, closeAt time.Time) bool {
+	if s.armed[name].Equal(closeAt) {
+		return false
+	}
+	if s.armed == nil {
+		s.armed = make(map[string]time.Time)
+	}
+	s.armed[name] = closeAt
+	return true
+}
+
 // dispatchGate carries out one decision on its own goroutine, so a hold
 // waiting out a stop grace cannot delay the tick. Close waits for it.
 func (s *Scheduler) dispatchGate(a gateAction) {
@@ -175,25 +228,41 @@ func (s *Scheduler) dispatchGate(a gateAction) {
 			delete(s.gating, a.name)
 			s.mu.Unlock()
 		}()
-		if a.hold {
+		switch {
+		case a.closeStep:
+			s.safely("operating-hours close step", a.name, func() {
+				s.gate.CloseStep(a.name, a.stepAt)
+			})
+		case a.arm:
+			s.safely("operating-hours close arm", a.name, func() {
+				s.gate.Arm(a.name, a.closeAt)
+			})
+		case a.hold:
 			s.safely("operating-hours hold", a.name, func() {
 				if a.mode == core.HoursShutdownGraceful {
-					log.Info("operating hours closed; graceful shutdown is not yet available, stopping now",
-						"harness", a.name, "hours_shutdown", string(a.mode))
+					if a.anchored {
+						log.Info("operating hours closed; closing gracefully",
+							"harness", a.name,
+							"went_out_of_hours", a.closeAt.Format(time.RFC3339))
+					} else {
+						log.Info("operating hours closed; closing gracefully",
+							"harness", a.name,
+							"went_out_of_hours", "unknown, anchoring the deadline to now")
+					}
 				} else {
 					log.Info("operating hours closed; stopping", "harness", a.name)
 				}
-				s.gate.Hold(a.name, a.mode)
+				s.gate.Hold(a.name, a.mode, a.closeAt)
 			})
-			return
+		default:
+			s.safely("operating-hours release", a.name, func() {
+				if a.ungated {
+					log.Info("operating hours removed from a held harness; starting", "harness", a.name)
+				} else {
+					log.Info("operating hours opened; starting", "harness", a.name)
+				}
+				s.gate.Release(a.name)
+			})
 		}
-		s.safely("operating-hours release", a.name, func() {
-			if a.ungated {
-				log.Info("operating hours removed from a held harness; starting", "harness", a.name)
-			} else {
-				log.Info("operating hours opened; starting", "harness", a.name)
-			}
-			s.gate.Release(a.name)
-		})
 	}()
 }

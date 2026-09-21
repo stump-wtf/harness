@@ -23,6 +23,7 @@ import (
 	"charm.land/log/v2"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/runtrace"
 )
 
 // persistDebounce is how long the manager coalesces state-change writes before
@@ -64,6 +65,10 @@ type ManagerOptions struct {
 	// (SPEC-0008 REQ "Per-Run Logs"). Defaults to a "jobs" directory beside
 	// the log directory — $XDG_STATE_HOME/harness/jobs in production.
 	JobsDir string
+	// Watch, if set, is the turn-state bridge graceful closes sample.
+	// Defaults to a real internal/runtrace watcher; tests inject stubs so
+	// the close machinery can be driven without trace stores.
+	Watch TurnBridge
 }
 
 // Manager supervises every harness in a config.
@@ -111,6 +116,19 @@ type Manager struct {
 	// out-of-hours harness — and removed when it ends, when its hours open,
 	// or by a stop. The gate pass consults it through Lease before holding.
 	leases map[string]time.Time
+
+	// expiredLease remembers the end of the lease whose expiry the gate pass
+	// is about to enforce: the instant the harness went out of hours, which
+	// anchors a graceful close's deadline (SPEC-0012 REQ "Graceful
+	// Shutdown"). Written by leaseState when it drops a spent lease,
+	// consumed by Hold, cleared by StartFor and by an in-hours discard.
+	expiredLease map[string]time.Time
+
+	// watch is the turn-state bridge graceful closes sample (SPEC-0012 REQ
+	// "Turn State Signal"); armedCloseAt dedupes the pass's per-tick re-arms
+	// inside the minute before a close. Governing: manager_hours.go.
+	watch        TurnBridge
+	armedCloseAt map[string]time.Time
 
 	// runs is each scheduled harness's run history, and jobsDir the root of
 	// their per-run logs (manager_runs.go; SPEC-0008 REQ "Run History").
@@ -176,8 +194,14 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 		provenance:    make(map[string]string),
 		scheduleMarks: make(map[string]ScheduleMark),
 		leases:        make(map[string]time.Time),
+		expiredLease:  make(map[string]time.Time),
+		armedCloseAt:  make(map[string]time.Time),
+		watch:         opts.Watch,
 		dirty:         make(chan struct{}, 1),
 		closed:        make(chan struct{}),
+	}
+	if m.watch == nil {
+		m.watch = runtrace.NewWatcher(runtrace.DefaultWatchPoll)
 	}
 	for _, name := range cfg.HarnessOrder {
 		m.addSupervisor(cfg.Harnesses[name])
@@ -435,7 +459,7 @@ func (m *Manager) Autostart() {
 				s.Start()
 				continue
 			}
-			s.Hold()
+			s.Hold(core.HoursShutdownImmediate, time.Time{})
 			continue
 		}
 		s.Start()
@@ -468,36 +492,14 @@ func snapUp(st core.State) bool {
 	return false
 }
 
-// GateStatus reports whether name is up (starting, running, degraded or
-// restarting — the states a close holds) and whether it is held, for the
-// scheduler's operating-hours gate pass. ok is false for an unknown harness.
-// Governing: SPEC-0012 REQ "Gate Enforcement".
-func (m *Manager) GateStatus(name string) (up, held, ok bool) {
-	s := m.get(name)
-	if s == nil {
-		return false, false, false
-	}
-	snap := s.Snapshot()
-	return snapUp(snap.State), snap.Held, true
-}
-
-// Hold stops a gated harness for its operating hours without touching its
-// enabled intent (Supervisor.Hold). The close is immediate: graceful closing
-// is a later story. ok=false if unknown. Governing: ADR-0019, SPEC-0012 REQ
-// "Gate Enforcement".
-func (m *Manager) Hold(name string) bool {
-	if s := m.get(name); s != nil {
-		s.Hold()
-		return true
-	}
-	return false
-}
-
 // Release starts a held harness when its hours open, without touching its
-// enabled intent (Supervisor.Release). ok=false if unknown.
+// enabled intent (Supervisor.Release). ok=false if unknown. A graceful close
+// still in flight is cancelled, and its turn-state watch is torn down:
+// hours reopening leaves the harness running as an ordinary in-hours one.
 func (m *Manager) Release(name string) bool {
 	if s := m.get(name); s != nil {
 		s.Release()
+		m.unfollowWatch(name)
 		return true
 	}
 	return false
@@ -527,8 +529,11 @@ func (m *Manager) leaseState(name string, now time.Time) (time.Time, bool) {
 	h := m.cfg.Harnesses[name]
 	if now.After(until) {
 		// Expired: the pass will hold on this very tick. Drop the record so
-		// state.json stops carrying a dead lease.
+		// state.json stops carrying a dead lease, and remember the end — the
+		// instant the harness went out of hours, which anchors the close's
+		// deadline (SPEC-0012 REQ "Graceful Shutdown") — for Hold to consume.
 		delete(m.leases, name)
+		m.expiredLease[name] = until
 		m.mu.Unlock()
 		log.Info("after-hours lease ended", "harness", name, "until", until.Format(time.RFC3339))
 		m.markDirty()
@@ -538,8 +543,11 @@ func (m *Manager) leaseState(name string, now time.Time) (time.Time, bool) {
 		if in, _, _ := h.HoursExpr.In(now); in {
 			// Hours opened before the lease ran out: discard it, and the
 			// harness simply continues as an in-hours harness (SPEC-0012 REQ
-			// "After-Hours Lease").
+			// "After-Hours Lease"). A close whose deadline anchored to an
+			// earlier boundary is not coming — hours are open — so drop any
+			// remembered end with it.
 			delete(m.leases, name)
+			delete(m.expiredLease, name)
 			m.mu.Unlock()
 			log.Info("after-hours lease discarded; hours opened", "harness", name)
 			m.markDirty()
@@ -549,6 +557,7 @@ func (m *Manager) leaseState(name string, now time.Time) (time.Time, bool) {
 		// The harness lost its operating_hours under a live lease: nothing
 		// gates it anymore, so the lease is meaningless.
 		delete(m.leases, name)
+		delete(m.expiredLease, name)
 		m.mu.Unlock()
 		m.markDirty()
 		return time.Time{}, false
@@ -588,6 +597,10 @@ func (m *Manager) StartFor(name string, forDur time.Duration) error {
 	}
 	until := time.Now().Add(forDur)
 	m.leases[name] = until
+	// The lease governs the gate from here: an expired-lease anchor (if one
+	// was remembered) is superseded, and a close waiting on turn state is
+	// cancelled by the start below — no watch needed for it anymore.
+	delete(m.expiredLease, name)
 	m.mu.Unlock()
 
 	// The lease is durable BEFORE the start: the whole point of the ordering
@@ -600,6 +613,7 @@ func (m *Manager) StartFor(name string, forDur time.Duration) error {
 			"harness", name, "until", until.Format(time.RFC3339), "err", err)
 	}
 	log.Info("after-hours lease", "harness", name, "until", until.Format(time.RFC3339))
+	m.unfollowWatch(name) // a lease starting cancels the close (SPEC-0012)
 	m.Start(name)
 	return nil
 }
@@ -679,10 +693,12 @@ func (m *Manager) Stop(name string) bool {
 		m.mu.Lock()
 		_, had := m.leases[name]
 		delete(m.leases, name)
+		delete(m.expiredLease, name)
 		m.mu.Unlock()
 		if had {
 			m.markDirty()
 		}
+		m.unfollowWatch(name) // a stop never waits on turn state (SPEC-0012)
 		s.Stop()
 		return true
 	}

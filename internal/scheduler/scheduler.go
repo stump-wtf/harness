@@ -221,12 +221,15 @@ type Scheduler struct {
 
 	// Operating-hours gate state (gate.go). gates and gateOrder mirror the
 	// config's gated harnesses; ungated names harnesses a reload removed
-	// hours from, each owed one release; gating marks a decision in flight.
+	// hours from, each owed one release; gating marks a decision in flight;
+	// armed remembers the close instant each harness's turn-state watch was
+	// warmed for, so a minute of ticks arms once instead of once per tick.
 	gate      Gate
 	gates     map[string]gateEntry
 	gateOrder []string
 	ungated   map[string]bool
 	gating    map[string]bool
+	armed     map[string]time.Time
 
 	runMu   sync.Mutex
 	stop    chan struct{}

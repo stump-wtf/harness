@@ -115,9 +115,7 @@ func TestHoldKeepsEnabledInStateJSONAndDoesNotRespawn(t *testing.T) {
 	before, _ := m.Snapshot("gated")
 
 	stop := watchEnabled(t, statePath, "gated")
-	if !m.Hold("gated") {
-		t.Fatal("Hold returned false for a known harness")
-	}
+	m.Hold("gated", core.HoursShutdownImmediate, time.Time{})
 	ph := waitPersisted(t, statePath, "gated", core.StateStopped)
 	// Give a (wrong) respawn every chance to happen: many restart delays.
 	time.Sleep(100 * time.Millisecond)
@@ -153,7 +151,7 @@ func TestReleaseStartsHeldHarness(t *testing.T) {
 	m, statePath := newStateManager(t, managerCfg(h), fastPolicy())
 	m.Start("gated")
 	waitFor(t, 3*time.Second, "running", func() bool { s, _ := m.Snapshot("gated"); return s.State == core.StateRunning })
-	m.Hold("gated")
+	m.Hold("gated", core.HoursShutdownImmediate, time.Time{})
 	m.Release("gated")
 	snap, _ := m.Snapshot("gated")
 	if snap.State != core.StateRunning || snap.Held || !snap.Enabled {
@@ -176,7 +174,7 @@ func TestHoldCancelsPendingRespawn(t *testing.T) {
 	waitState(t, s, core.StateRestarting)
 	before := s.Snapshot().RestartCount
 
-	s.Hold()
+	s.Hold(core.HoursShutdownImmediate, time.Time{})
 	time.Sleep(300 * time.Millisecond) // two restart delays
 	snap := s.Snapshot()
 	if snap.State != core.StateStopped || !snap.Held || !snap.Enabled {
@@ -203,7 +201,7 @@ func TestHoldDegradedResetsBackoff(t *testing.T) {
 	waitFor(t, 3*time.Second, "flapping", func() bool { return s.Snapshot().Flapping })
 	before := s.Snapshot().RestartCount
 
-	s.Hold()
+	s.Hold(core.HoursShutdownImmediate, time.Time{})
 	snap := s.Snapshot()
 	if snap.State != core.StateStopped || !snap.Held {
 		t.Fatalf("state=%s held=%v, want stopped/held", snap.State, snap.Held)
@@ -225,7 +223,7 @@ func TestHoldAndReleaseLeaveFailedAndDisabledAlone(t *testing.T) {
 	failed := newTestSupervisor(t, gated(shHarness("f", "exit 1", 0)), p)
 	failed.Start()
 	waitState(t, failed, core.StateFailed)
-	failed.Hold()
+	failed.Hold(core.HoursShutdownImmediate, time.Time{})
 	failed.Release()
 	if snap := failed.Snapshot(); snap.State != core.StateFailed || snap.Held {
 		t.Errorf("failed harness: state=%s held=%v, want failed/not held", snap.State, snap.Held)
@@ -234,13 +232,13 @@ func TestHoldAndReleaseLeaveFailedAndDisabledAlone(t *testing.T) {
 	stopped := newTestSupervisor(t, gated(shHarness("s", "while true; do sleep 0.02; done", 0)), fastPolicy())
 	stopped.Start()
 	waitState(t, stopped, core.StateRunning)
-	stopped.Hold()
+	stopped.Hold(core.HoursShutdownImmediate, time.Time{})
 	stopped.Stop() // operator stop while held: enabled=false, no longer held
 	if snap := stopped.Snapshot(); snap.Held || snap.Enabled {
 		t.Fatalf("after stop: held=%v enabled=%v, want neither", snap.Held, snap.Enabled)
 	}
 	stopped.Release()
-	stopped.Hold()
+	stopped.Hold(core.HoursShutdownImmediate, time.Time{})
 	if snap := stopped.Snapshot(); snap.State != core.StateStopped || snap.Held || snap.Enabled {
 		t.Errorf("operator-stopped harness: state=%s held=%v enabled=%v, want stopped, untouched", snap.State, snap.Held, snap.Enabled)
 	}
@@ -265,8 +263,8 @@ func TestAutostartHoldsGatedHarness(t *testing.T) {
 		t.Fatalf("gated after autostart: state=%s held=%v enabled=%v started=%v, want never-started, held, enabled",
 			snap.State, snap.Held, snap.Enabled, snap.LastStarted)
 	}
-	if up, held, ok := m.GateStatus("gated"); !ok || up || !held {
-		t.Errorf("GateStatus = up %v held %v ok %v, want down, held, known", up, held, ok)
+	if up, held, closing, ok := m.GateStatus("gated"); !ok || up || !held || closing {
+		t.Errorf("GateStatus = up %v held %v closing %v ok %v, want down, held, not closing, known", up, held, closing, ok)
 	}
 	m.Release("gated")
 	waitFor(t, 3*time.Second, "released harness running", func() bool { s, _ := m.Snapshot("gated"); return s.State == core.StateRunning })
@@ -309,7 +307,7 @@ func TestUseProfileRespectsTheGate(t *testing.T) {
 
 	// "held": operator-stopped, then made a member while out of hours.
 	m.Start("held")
-	m.Hold("held")
+	m.Hold("held", core.HoursShutdownImmediate, time.Time{})
 	m.Stop("held")
 	// "up": running in hours.
 	m.Start("up")
@@ -343,7 +341,7 @@ func TestHoldRacesNaturalExit(t *testing.T) {
 		s := newTestSupervisor(t, h, p)
 		s.Start()
 		time.Sleep(time.Duration(5+i%10) * time.Millisecond)
-		s.Hold()
+		s.Hold(core.HoursShutdownImmediate, time.Time{})
 		held := s.Snapshot()
 		time.Sleep(40 * time.Millisecond) // many restart delays
 		snap := s.Snapshot()

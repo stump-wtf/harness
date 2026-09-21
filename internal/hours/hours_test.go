@@ -323,8 +323,72 @@ func TestNextPlain(t *testing.T) {
 	}
 }
 
-// ---- String / round trip ----------------------------------------------------
+// ---- PrevEnd: the instant a window closed ----------------------------------
 
+func TestPrevEndPlain(t *testing.T) {
+	e := mustParse(t, "TZ=UTC Mon-Fri 09:00-13:00")
+
+	// Just after the close, same day. The scan bisects to the second, so the
+	// answer is the first instant past the flip within that tolerance.
+	if end, ok := e.PrevEnd(utc(2026, 9, 21, 13, 0, 1)); !ok ||
+		end.Before(utc(2026, 9, 21, 13, 0, 0)) || end.After(utc(2026, 9, 21, 13, 0, 1)) {
+		t.Errorf("PrevEnd(13:00:01) = %v, %v; want within (13:00:00, 13:00:01]", end, ok)
+	}
+	// Well after, still the same day's window.
+	if end, ok := e.PrevEnd(utc(2026, 9, 21, 20, 0, 0)); !ok || !end.Equal(utc(2026, 9, 21, 13, 0, 0)) {
+		t.Errorf("PrevEnd(20:00) = %v, %v; want 13:00, true", end, ok)
+	}
+	// The next morning: yesterday evening's close, not today's.
+	if end, ok := e.PrevEnd(utc(2026, 9, 22, 8, 0, 0)); !ok || !end.Equal(utc(2026, 9, 21, 13, 0, 0)) {
+		t.Errorf("PrevEnd(Tue 08:00) = %v, %v; want Mon 13:00, true", end, ok)
+	}
+	// A weekend morning reaches back to Friday's close.
+	if end, ok := e.PrevEnd(utc(2026, 9, 26, 10, 0, 0)); !ok || !end.Equal(utc(2026, 9, 25, 13, 0, 0)) {
+		t.Errorf("PrevEnd(Sat 10:00) = %v, %v; want Fri 13:00, true", end, ok)
+	}
+	// In hours there is no closed window behind the question.
+	if end, ok := e.PrevEnd(utc(2026, 9, 21, 10, 0, 0)); ok {
+		t.Errorf("PrevEnd(10:00, in hours) = %v, %v; want ok=false", end, ok)
+	}
+}
+
+// A spring-forward gap ends the window at the gap's own start, not at a
+// wall-clock label the gap erased.
+func TestPrevEndSpringForward(t *testing.T) {
+	e := mustParse(t, "TZ=America/New_York 01:30-02:30")
+	// 2026-03-08: the 02:30 label never occurs; membership ends at 02:00 EST
+	// == 03:00 EDT == 07:00 UTC.
+	if end, ok := e.PrevEnd(utc(2026, 3, 8, 8, 0, 0)); !ok || !end.Equal(utc(2026, 3, 8, 7, 0, 0)) {
+		t.Errorf("PrevEnd = %v, %v; want 07:00 UTC (the gap's start), true", end, ok)
+	}
+}
+
+// A fall-back repeat closes at the second pass's end, and the close that began
+// a window's first pass is anchored to that pass's real end — the anchor a
+// graceful-close deadline is measured from (SPEC-0012 REQ "Graceful
+// Shutdown", DST scenario).
+func TestPrevEndFallBack(t *testing.T) {
+	e := mustParse(t, "TZ=America/New_York 00:30-01:30")
+	// 2026-11-01: the window runs 00:30-01:30 EDT, is out 01:30-02:00 EDT,
+	// runs again through the repeated 01:00-01:30 EST, and closes at 01:30
+	// EST == 06:30 UTC.
+	if end, ok := e.PrevEnd(utc(2026, 11, 1, 6, 31, 0)); !ok || !end.Equal(utc(2026, 11, 1, 6, 30, 0)) {
+		t.Errorf("PrevEnd(after second pass) = %v, %v; want 06:30 UTC, true", end, ok)
+	}
+	// Between the two passes: the first pass's close, 01:30 EDT == 05:30 UTC.
+	if end, ok := e.PrevEnd(utc(2026, 11, 1, 5, 31, 0)); !ok || !end.Equal(utc(2026, 11, 1, 5, 30, 0)) {
+		t.Errorf("PrevEnd(between passes) = %v, %v; want 05:30 UTC, true", end, ok)
+	}
+}
+
+func TestPrevEndAlwaysInHours(t *testing.T) {
+	e := mustParse(t, "TZ=UTC Mon-Sun 00:00-24:00")
+	if end, ok := e.PrevEnd(utc(2026, 9, 21, 10, 0, 0)); ok {
+		t.Errorf("PrevEnd = %v, %v for an all-week expression; want ok=false", end, ok)
+	}
+}
+
+// ---- String / round trip ----------------------------------------------------
 func TestStringRoundTrips(t *testing.T) {
 	for _, s := range []string{
 		"09:00-13:00",

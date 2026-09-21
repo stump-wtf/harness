@@ -296,16 +296,28 @@ func startDaemonScheduler(mgr *supervisor.Manager, cfg *core.Config, clock sched
 }
 
 // hoursGate adapts the Manager to the scheduler's operating-hours Gate seam.
-// Closes are immediate for now: graceful closing is a later story, and the
-// scheduler logs that a "graceful" close ran immediately.
-// Governing: ADR-0019, SPEC-0012 REQ "Gate Enforcement".
+// A graceful close is marked by Hold, stepped by CloseStep from the Manager's
+// turn-state watch, and bounded by a deadline anchored to CloseAt — the
+// instant the harness went out of hours (SPEC-0012 REQ "Graceful Shutdown").
+// Governing: ADR-0019, SPEC-0012 REQ "Gate Enforcement", REQ "Graceful
+// Shutdown", REQ "Turn State Signal".
 type hoursGate struct{ mgr *supervisor.Manager }
 
-func (g hoursGate) Status(name string) (up, held, ok bool) { return g.mgr.GateStatus(name) }
+func (g hoursGate) Status(name string) (up, held, closing, ok bool) { return g.mgr.GateStatus(name) }
 
 func (g hoursGate) Lease(name string) (time.Time, bool) { return g.mgr.Lease(name) }
 
-func (g hoursGate) Hold(name string, _ core.HoursShutdownMode) { g.mgr.Hold(name) }
+func (g hoursGate) CloseAt(name string, now time.Time) (time.Time, bool) {
+	return g.mgr.CloseAt(name, now)
+}
+
+func (g hoursGate) Hold(name string, mode core.HoursShutdownMode, closeAt time.Time) {
+	g.mgr.Hold(name, mode, closeAt)
+}
+
+func (g hoursGate) CloseStep(name string, now time.Time) { g.mgr.CloseStep(name, now) }
+
+func (g hoursGate) Arm(name string, closeAt time.Time) { g.mgr.Arm(name, closeAt) }
 
 func (g hoursGate) Release(name string) { g.mgr.Release(name) }
 

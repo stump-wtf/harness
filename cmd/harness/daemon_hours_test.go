@@ -143,3 +143,77 @@ func TestDaemonSchedulerEnforcesOperatingHours(t *testing.T) {
 		return s.State == core.StateRunning && !s.Held
 	})
 }
+
+// The graceful half of the wiring: the daemon's Gate passes the close instant
+// through Hold, the scheduler's ticks step the close through CloseStep, and
+// the Manager's turn-state watch — with nothing attributable to a generic
+// harness — makes the first step stop at once, logged as unavailable
+// (SPEC-0012 REQ "Graceful Shutdown", "no attributable trace" scenario).
+func TestDaemonSchedulerClosesGracefully(t *testing.T) {
+	tmp := t.TempDir()
+	statePath := filepath.Join(tmp, "state.json")
+	reg := attach.NewRegistry(100)
+	opts := daemonManagerOptions(reg)
+	opts.StatePath = statePath
+	opts.LogDir = filepath.Join(tmp, "logs")
+	opts.Policy.StopGrace = 200 * time.Millisecond
+
+	const expr = "TZ=UTC Mon 09:00-13:00"
+	e, err := hours.Parse(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := core.Harness{
+		Name:                 "graceful",
+		Adapter:              "generic",
+		Args:                 []string{"-c", "while true; do sleep 0.02; done"},
+		Backend:              core.BackendNative,
+		OperatingHours:       expr,
+		HoursExpr:            e,
+		HoursShutdown:        core.HoursShutdownGraceful,
+		HoursShutdownTimeout: 15 * time.Minute,
+	}
+	cfg := &core.Config{Harnesses: map[string]core.Harness{h.Name: h}, HarnessOrder: []string{h.Name}, Profiles: map[string]core.Profile{}}
+
+	mgr := supervisor.NewManager(cfg, opts)
+	reg.SetController(mgr)
+	t.Cleanup(mgr.Close)
+	if !mgr.Start(h.Name) {
+		t.Fatal("Start returned false")
+	}
+	waitUntil(t, "running before the scheduler starts", func() bool {
+		s, _ := mgr.Snapshot(h.Name)
+		return s.State == core.StateRunning
+	})
+
+	// Monday 20:00 UTC: the window closed at 13:00, so the close's deadline
+	// is 13:15 — long past. The hold marks the harness closing; the next
+	// tick's CloseStep stops it.
+	clock := &stubClock{now: time.Date(2026, 9, 21, 20, 0, 0, 0, time.UTC), ticks: make(chan time.Time)}
+	sched := startDaemonScheduler(mgr, cfg, clock)
+	t.Cleanup(sched.Close)
+
+	waitUntil(t, "marked closing by the daemon's gate pass", func() bool {
+		s, _ := mgr.Snapshot(h.Name)
+		return s.Closing && s.Held && s.State == core.StateRunning
+	})
+	snap, _ := mgr.Snapshot(h.Name)
+	if !snap.Enabled {
+		t.Error("the close touched enabled intent")
+	}
+	clock.ticks <- clock.Now().Add(time.Second)
+	waitUntil(t, "stopped by the close step", func() bool {
+		s, _ := mgr.Snapshot(h.Name)
+		return s.State == core.StateStopped && !s.Closing && s.Held
+	})
+	waitUntil(t, "state.json records the close", func() bool {
+		_, st, ok := persistedEnabled(t, statePath, h.Name)
+		return ok && st == string(core.StateStopped)
+	})
+	if enabled, _, _ := persistedEnabled(t, statePath, h.Name); !enabled {
+		t.Error("state.json enabled = false after a graceful close")
+	}
+	if _, err := os.Stat(filepath.Join(opts.LogDir, h.Name+".log")); err != nil {
+		t.Fatalf("durable log missing after the close: %v", err)
+	}
+}

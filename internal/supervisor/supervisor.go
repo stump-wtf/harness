@@ -19,6 +19,7 @@ import (
 	clog "github.com/charmbracelet/log"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/runtrace"
 )
 
 // exitResult carries a finished process's outcome from the waiter goroutine to
@@ -43,8 +44,9 @@ const (
 	cmdResize
 	cmdWriteInput
 	cmdSignal
-	cmdHold    // operating hours closed: stop without touching enabled (hours.go)
-	cmdRelease // operating hours opened: start a held harness (hours.go)
+	cmdHold      // operating hours closed: stop without touching enabled (hours.go)
+	cmdRelease   // operating hours opened: start a held harness (hours.go)
+	cmdCloseStep // operating hours graceful close: advance one step (hours.go)
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -57,6 +59,15 @@ type restoreData struct {
 	// restart still knows when the last run began (SPEC-0006 REQ "Run
 	// Correlation").
 	lastStarted time.Time
+}
+
+// closeStepReq is one sample of the daemon's turn-state watch, delivered to
+// the loop so the close decision runs where the state lives (hours.go).
+type closeStepReq struct {
+	now time.Time
+	ts  runtrace.TurnState
+	ok  bool   // false: nothing attributable to the run (ts is the zero value)
+	why string // when !ok, why nothing was attributable
 }
 
 // command is one request to the loop, with a done channel the caller waits on
@@ -72,6 +83,13 @@ type command struct {
 	run     *RunRequest    // cmdStartRun payload
 	decided *RunDecision   // cmdStartRun result, written before done closes
 	enable  bool           // cmdHold: also record enabled intent (a held autostart)
+	// cmdHold: the close the gate decided. mode selects graceful vs
+	// immediate; closeAt is the instant the harness went out of hours, from
+	// which the graceful deadline is measured (SPEC-0012 REQ "Graceful
+	// Shutdown") — not the instant the daemon noticed.
+	mode    core.HoursShutdownMode
+	closeAt time.Time
+	step    *closeStepReq // cmdCloseStep payload
 	done    chan struct{}
 }
 
@@ -105,10 +123,18 @@ type Snapshot struct {
 	// Gated marks a harness with operating_hours set, and Held one that the
 	// operating-hours gate has shut down (or kept down) while leaving
 	// `enabled` alone. Held is derived runtime state and is never written to
-	// state.json: boot recomputes it (Manager.Autostart). Governing: ADR-0019;
-	// SPEC-0012 REQ "Gate Enforcement".
+	// state.json: boot recomputes it (Manager.Autostart). Closing marks a
+	// graceful close in flight: held, still up, and being stopped as soon as
+	// its agent's turn ends, it goes quiet, or CloseAt plus the configured
+	// shutdown timeout passes — whichever lands first. Both are derived;
+	// neither is persisted. Governing: ADR-0019; SPEC-0012 REQ "Gate
+	// Enforcement", REQ "Graceful Shutdown".
 	Gated bool
 	Held  bool
+	// Closing and CloseAt describe a graceful close in progress (SPEC-0012
+	// REQ "Graceful Shutdown"); CloseAt is zero unless Closing.
+	Closing bool
+	CloseAt time.Time
 }
 
 // Supervisor owns the lifecycle of exactly one harness. It runs a single actor
@@ -165,6 +191,11 @@ type Supervisor struct {
 	// held is set by an operating-hours hold and cleared by any start, stop or
 	// release (hours.go). Derived, never persisted (SPEC-0012).
 	held bool
+	// closing marks a graceful close in flight: held and still up, waiting on
+	// the agent's turn state or the deadline (hours.go). closeAt is the
+	// instant the harness went out of hours, which anchors the deadline.
+	closing bool
+	closeAt time.Time
 
 	// suppressPersist temporarily blocks markDirty during a transient start
 	// (issue #159): the state transitions publish snapshots, but those must
@@ -342,6 +373,7 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 	case cmdStart:
 		s.enabled = true
 		s.held = false             // an operator start overrides the hours hold
+		s.closing = false          // and cancels a graceful close in flight
 		s.publishChangeUnchanged() // persist intent even if already up
 		if !s.hasProcess() && s.state != core.StateStopping {
 			s.clearFailLatch()
@@ -375,7 +407,8 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.suppressPersist = false
 	case cmdStop:
 		s.enabled = false
-		s.held = false // stopped by the operator now, not by its hours (SPEC-0012)
+		s.held = false    // stopped by the operator now, not by its hours (SPEC-0012)
+		s.closing = false // a stop never waits on turn state (SPEC-0012)
 		s.cancelRestartTimer()
 		s.dropQueued(OutcomeCancelled)
 		if s.hasProcess() {
@@ -427,9 +460,11 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 			_, _ = s.proc.pty.Write(c.input)
 		}
 	case cmdHold:
-		s.hold(c.enable)
+		s.hold(c.enable, c.mode, c.closeAt)
 	case cmdRelease:
 		s.release()
+	case cmdCloseStep:
+		s.closeStep(c.step)
 	case cmdSignal:
 		// Governing: stump.wtf/harness#182 — the kernel only raises SIGWINCH on
 		// an actual dimension change, so a resize applied while the guest was
@@ -731,6 +766,21 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		}
 		s.dropQueued(OutcomeSkipped)
 		s.finishRun(outcome, exit)
+	}
+
+	// Exit while held: the gate owns this exit — an operating-hours close
+	// was waiting on the agent's turn state when the process ended on its
+	// own — so it is held without a restart (SPEC-0012 REQ "Graceful
+	// Shutdown") and the restart policy and crash bookkeeping never see
+	// it. Everything below this branch assumes the restart policy is in
+	// charge; a held harness's is not.
+	if s.held {
+		s.closing = false
+		s.resetCrashState()
+		s.consecFailures = 0
+		s.transition(core.StateStopped)
+		s.finishRun(OutcomeCancelled, &s.lastExitCode)
+		return
 	}
 
 	// Exit while disabled → stopped, no respawn (SPEC-0003 REQ "Restart On
@@ -1119,6 +1169,8 @@ func (s *Supervisor) publishSnapshot() {
 		PID:           pid,
 		Gated:         s.gated(),
 		Held:          s.held,
+		Closing:       s.closing,
+		CloseAt:       s.closeAt,
 	}
 	s.mu.Unlock()
 	if s.onChange != nil && !s.suppressPersist {

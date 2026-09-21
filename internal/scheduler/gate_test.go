@@ -24,22 +24,29 @@ import (
 )
 
 type fakeGate struct {
-	mu     sync.Mutex
-	up     map[string]bool
-	held   map[string]bool
-	lease  map[string]time.Time
-	calls  []string // "hold name mode" / "release name"
-	onHold func()
+	mu      sync.Mutex
+	up      map[string]bool
+	held    map[string]bool
+	closing map[string]bool
+	lease   map[string]time.Time
+	// closeAt is what CloseAt answers per name; a name absent from the map
+	// is unanchored (ok=false).
+	closeAt map[string]time.Time
+	calls   []string // "hold name mode" / "clos name" / "arm name" / "release name"
+	onHold  func()
 }
 
 func newFakeGate() *fakeGate {
-	return &fakeGate{up: map[string]bool{}, held: map[string]bool{}, lease: map[string]time.Time{}}
+	return &fakeGate{
+		up: map[string]bool{}, held: map[string]bool{}, closing: map[string]bool{},
+		lease: map[string]time.Time{}, closeAt: map[string]time.Time{},
+	}
 }
 
-func (g *fakeGate) Status(name string) (bool, bool, bool) {
+func (g *fakeGate) Status(name string) (bool, bool, bool, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.up[name], g.held[name], true
+	return g.up[name], g.held[name], g.closing[name], true
 }
 
 func (g *fakeGate) Lease(name string) (time.Time, bool) {
@@ -49,7 +56,14 @@ func (g *fakeGate) Lease(name string) (time.Time, bool) {
 	return t, ok
 }
 
-func (g *fakeGate) Hold(name string, mode core.HoursShutdownMode) {
+func (g *fakeGate) CloseAt(name string, now time.Time) (time.Time, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	t, ok := g.closeAt[name]
+	return t, ok
+}
+
+func (g *fakeGate) Hold(name string, mode core.HoursShutdownMode, closeAt time.Time) {
 	g.mu.Lock()
 	fn := g.onHold
 	g.calls = append(g.calls, "hold "+name+" "+string(mode))
@@ -58,6 +72,18 @@ func (g *fakeGate) Hold(name string, mode core.HoursShutdownMode) {
 	if fn != nil {
 		fn()
 	}
+}
+
+func (g *fakeGate) CloseStep(name string, now time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.calls = append(g.calls, "clos "+name)
+}
+
+func (g *fakeGate) Arm(name string, closeAt time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.calls = append(g.calls, "arm "+name)
 }
 
 func (g *fakeGate) Release(name string) {
@@ -124,8 +150,13 @@ func TestGateClosesAndOpens(t *testing.T) {
 	r.s.Apply(gatedCfg(t, "a", "TZ=UTC 09:00-13:00", core.HoursShutdownImmediate))
 	g.set("a", true, false)
 
-	r.runUntil(mon(12, 59).Add(59*time.Second), time.Second)
+	r.runUntil(mon(12, 59).Add(-time.Second), time.Second)
 	wantCalls(t, g, "inside the window")
+
+	// The window ends within the arm lead: the pass warms the graceful
+	// close's turn-state watch once, not once per tick.
+	r.at(mon(12, 59))
+	wantCalls(t, g, "inside the arm lead", "arm a")
 
 	r.at(mon(13, 0))
 	wantCalls(t, g, "at the close", "hold a immediate")
@@ -174,7 +205,9 @@ func TestGateSpringForward(t *testing.T) {
 	r.s.Apply(gatedCfg(t, "a", "TZ=America/New_York 01:30-02:30", core.HoursShutdownImmediate))
 	g.set("a", true, false)
 	r.tick()
-	wantCalls(t, g, "01:59:59 EST")
+	// The window ends one second out — inside the arm lead — so the close's
+	// watch is warmed here, before the gap.
+	wantCalls(t, g, "01:59:59 EST", "arm a")
 	after := before.Add(time.Second)
 	if after.Hour() != 3 {
 		t.Fatalf("test setup: %v is not the spring-forward instant", after)
@@ -204,8 +237,8 @@ func TestGateFallBack(t *testing.T) {
 		r.clock.advance(time.Minute)
 		r.tick()
 	}
-	wantCalls(t, g, "both 01:00-01:59 occurrences")
-	r.at(end) // 02:00 EST
+	wantCalls(t, g, "both 01:00-01:59 occurrences", "arm a") // warmed once, at 01:59
+	r.at(end)                                                // 02:00 EST
 	wantCalls(t, g, "02:00 EST", "hold a immediate")
 }
 
