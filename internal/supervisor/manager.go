@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"charm.land/log/v2"
+
 	"github.com/stump-wtf/harness/internal/core"
 )
 
@@ -103,6 +105,13 @@ type Manager struct {
 	// saved to state.json with everything else here.
 	scheduleMarks map[string]ScheduleMark
 
+	// leases holds each gated harness's after-hours lease end (SPEC-0012 REQ
+	// "After-Hours Lease"), restored from and saved to state.json. An entry
+	// is created only by StartFor — the start control op on a gated,
+	// out-of-hours harness — and removed when it ends, when its hours open,
+	// or by a stop. The gate pass consults it through Lease before holding.
+	leases map[string]time.Time
+
 	// runs is each scheduled harness's run history, and jobsDir the root of
 	// their per-run logs (manager_runs.go; SPEC-0008 REQ "Run History").
 	runs    map[string]*runHistory
@@ -166,6 +175,7 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 		scratchDefs:   make(map[string]core.Harness),
 		provenance:    make(map[string]string),
 		scheduleMarks: make(map[string]ScheduleMark),
+		leases:        make(map[string]time.Time),
 		dirty:         make(chan struct{}, 1),
 		closed:        make(chan struct{}),
 	}
@@ -291,11 +301,28 @@ func (m *Manager) Restore() error {
 	m.mu.Unlock()
 
 	var dormant []string
+	// Lease restores are collected in the loop and committed under m.mu at
+	// the end (the loop itself runs unlocked — s.Restore blocks on the actor
+	// loop), so the persist loop never sees an unsynchronized map write.
+	restoredLeases := make(map[string]time.Time)
 	for name, s := range sups {
 		pr, inState := ps.Harnesses[name]
 		var last time.Time
 		if inState && pr.LastExitAt != nil {
 			last = *pr.LastExitAt
+		}
+		// After-hours leases (SPEC-0012 REQ "After-Hours Lease") restore only
+		// for a harness that is still gated: the lease borrows its meaning
+		// from the operating hours, and one left behind by a config that
+		// since dropped them (or by a harness that changed shape) is dead
+		// weight — Lease would discard it lazily anyway, but dropping it here
+		// keeps state.json honest from the first save.
+		if inState && pr.LeaseUntil != nil {
+			if s.Snapshot().Gated {
+				restoredLeases[name] = *pr.LeaseUntil
+			} else {
+				log.Info("dropping lease for a harness that is no longer gated", "harness", name)
+			}
 		}
 		// An autostart member restored as disabled will not be started by
 		// Autostart(), and no existing signal says so: `harness list` shows it
@@ -347,6 +374,9 @@ func (m *Manager) Restore() error {
 	slices.Sort(dormant)
 	m.mu.Lock()
 	m.dormantAutostart = dormant
+	for name, until := range restoredLeases {
+		m.leases[name] = until
+	}
 	m.mu.Unlock()
 
 	if len(interrupted) > 0 {
@@ -383,6 +413,7 @@ func preserveMalformedState(path string) (string, error) {
 // that actually holds the invariant, because Start re-persists enabled=true
 // and would make any leak permanent (issue #159).
 func (m *Manager) Autostart() {
+	now := time.Now()
 	for _, s := range m.snapshotSupervisors() {
 		snap := s.Snapshot()
 		if snap.Scheduled {
@@ -392,6 +423,18 @@ func (m *Manager) Autostart() {
 			continue
 		}
 		if snap.Gated {
+			// SPEC-0012 REQ "After-Hours Lease": a gated harness covered by a
+			// lease that has not ended starts on boot and is held by the
+			// gate pass when the lease ends — not later. The lease record
+			// was restored from state.json by Restore; without one, out of
+			// hours begins held as usual.
+			m.mu.Lock()
+			until, leased := m.leases[s.Name()]
+			m.mu.Unlock()
+			if leased && now.Before(until) {
+				s.Start()
+				continue
+			}
 			s.Hold()
 			continue
 		}
@@ -460,12 +503,137 @@ func (m *Manager) Release(name string) bool {
 	return false
 }
 
-// Lease reports name's after-hours lease end. It is the seam the gate pass
-// consults before holding a harness; until the lease story lands no lease
-// exists, so it always answers "none". Governing: SPEC-0012 REQ "After-Hours
-// Lease" (deferred).
+// Lease reports name's after-hours lease end, ok=false when it has none. It
+// is the seam the gate pass consults before holding a harness: a harness
+// covered by a lease that has not ended is never held, and once the lease has
+// ended (or its hours opened first, which discards it) the answer reverts to
+// "none" and the pass enforces the gate as usual. Governing: SPEC-0012 REQ
+// "After-Hours Lease".
 func (m *Manager) Lease(name string) (until time.Time, ok bool) {
-	return time.Time{}, false
+	return m.leaseState(name, time.Now())
+}
+
+// leaseState is Lease against an injectable clock, so the discard rules —
+// expired, hours opened, hours removed — are testable at minute boundaries
+// without waiting on the wall clock. It mutates the lease map (a discard is
+// durable bookkeeping, not a read).
+func (m *Manager) leaseState(name string, now time.Time) (time.Time, bool) {
+	m.mu.Lock()
+	until, ok := m.leases[name]
+	if !ok {
+		m.mu.Unlock()
+		return time.Time{}, false
+	}
+	h := m.cfg.Harnesses[name]
+	if now.After(until) {
+		// Expired: the pass will hold on this very tick. Drop the record so
+		// state.json stops carrying a dead lease.
+		delete(m.leases, name)
+		m.mu.Unlock()
+		log.Info("after-hours lease ended", "harness", name, "until", until.Format(time.RFC3339))
+		m.markDirty()
+		return time.Time{}, false
+	}
+	if h.OperatingHours != "" {
+		if in, _, _ := h.HoursExpr.In(now); in {
+			// Hours opened before the lease ran out: discard it, and the
+			// harness simply continues as an in-hours harness (SPEC-0012 REQ
+			// "After-Hours Lease").
+			delete(m.leases, name)
+			m.mu.Unlock()
+			log.Info("after-hours lease discarded; hours opened", "harness", name)
+			m.markDirty()
+			return time.Time{}, false
+		}
+	} else {
+		// The harness lost its operating_hours under a live lease: nothing
+		// gates it anymore, so the lease is meaningless.
+		delete(m.leases, name)
+		m.mu.Unlock()
+		m.markDirty()
+		return time.Time{}, false
+	}
+	m.mu.Unlock()
+	return until, true
+}
+
+// StartFor starts name under an after-hours lease ending forDur from now
+// (SPEC-0012 REQ "After-Hours Lease"). The lease is persisted to state.json
+// SYNCHRONOUSLY before the start, so a crash between the two leaves a bounded
+// lease on disk — boot resolves it by starting the harness, never an
+// unbounded run.
+//
+// forDur must be positive. A harness that is ungated, or gated and already in
+// hours, fails with ErrNoLease: no lease applies to it. An already-leased
+// harness gets its end replaced with the new one. Enabled intent is persisted
+// as any manual start does.
+func (m *Manager) StartFor(name string, forDur time.Duration) error {
+	if forDur <= 0 {
+		return fmt.Errorf("%w: lease length must be positive", ErrNoLease)
+	}
+	m.mu.Lock()
+	s := m.supervisors[name]
+	h := m.cfg.Harnesses[name]
+	if s == nil {
+		m.mu.Unlock()
+		return ErrUnknownHarness
+	}
+	if h.OperatingHours == "" {
+		m.mu.Unlock()
+		return fmt.Errorf("%w: %s has no operating_hours", ErrNoLease, name)
+	}
+	if in, _, _ := h.HoursExpr.In(time.Now()); in {
+		m.mu.Unlock()
+		return fmt.Errorf("%w: %s is in hours now", ErrNoLease, name)
+	}
+	until := time.Now().Add(forDur)
+	m.leases[name] = until
+	m.mu.Unlock()
+
+	// The lease is durable BEFORE the start: the whole point of the ordering
+	// (design.md § "Leases in state.json"). A failed save still starts the
+	// harness — running matters more than the record — but it is logged here
+	// at the moment the guarantee breaks rather than at the crash that would
+	// have needed it.
+	if err := m.Save(); err != nil {
+		log.Error("could not persist after-hours lease before starting",
+			"harness", name, "until", until.Format(time.RFC3339), "err", err)
+	}
+	log.Info("after-hours lease", "harness", name, "until", until.Format(time.RFC3339))
+	m.Start(name)
+	return nil
+}
+
+// ErrNoLease reports that a requested after-hours lease does not apply: the
+// harness is unknown, ungated, or already in its operating hours. Errors.Is-able.
+var ErrNoLease = errors.New("no lease applies")
+
+// ErrUnknownHarness reports that a lease was requested for a harness the
+// manager does not supervise. Errors.Is-able.
+var ErrUnknownHarness = errors.New("unknown harness")
+
+// DefaultLease is the lease length a start control op applies when a gated,
+// out-of-hours harness is started without an explicit --for (SPEC-0012 REQ
+// "After-Hours Lease": the optional for defaults to 1h).
+const DefaultLease = time.Hour
+
+// LeaseApplies reports whether an after-hours lease applies to name right
+// now: the harness is known, gated, and outside its operating hours — the
+// condition under which a start needs a lease, and under which the daemon's
+// start control op routes a plain start through StartFor with the default
+// length. Governing: SPEC-0012 REQ "After-Hours Lease".
+func (m *Manager) LeaseApplies(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, known := m.supervisors[name]; !known {
+		return false
+	}
+	h := m.cfg.Harnesses[name]
+	if h.OperatingHours == "" {
+		return false
+	}
+	in, _, _ := h.HoursExpr.In(time.Now())
+	return !in
 }
 
 // Start marks a single harness enabled and brings it up.
@@ -504,6 +672,17 @@ func (m *Manager) clearDormant(name string) {
 // Stop gracefully stops a single harness and clears its enabled intent.
 func (m *Manager) Stop(name string) bool {
 	if s := m.get(name); s != nil {
+		// A stop discards any after-hours lease in every gate state — leased,
+		// held, closing, whatever (SPEC-0012 REQ "After-Hours Lease"): the
+		// operator's stop is the final word, and no later window may start
+		// the harness with a lease the operator already killed.
+		m.mu.Lock()
+		_, had := m.leases[name]
+		delete(m.leases, name)
+		m.mu.Unlock()
+		if had {
+			m.markDirty()
+		}
 		s.Stop()
 		return true
 	}
@@ -882,6 +1061,12 @@ func (m *Manager) Save() error {
 		}
 		projects[name] = pp
 	}
+	// Leases snapshot under the same hold: the persist loop calls Save on its
+	// own goroutine, and Stop/StartFor mutate the map from theirs.
+	leases := make(map[string]time.Time, len(m.leases))
+	for name, until := range m.leases {
+		leases[name] = until
+	}
 	m.mu.Unlock()
 
 	ps := persistedState{
@@ -909,6 +1094,14 @@ func (m *Manager) Save() error {
 		if !snap.LastStarted.IsZero() {
 			t := snap.LastStarted
 			ph.LastStarted = &t
+		}
+		// The after-hours lease rides with the rest of the durable state
+		// (SPEC-0012 REQ "After-Hours Lease"): it is what lets a daemon
+		// restarted mid-lease start the harness on boot and hold it at the
+		// lease's end, not at some recomputed later moment.
+		if until, ok := leases[snap.Name]; ok {
+			t := until
+			ph.LeaseUntil = &t
 		}
 		ps.Harnesses[snap.Name] = ph
 	}

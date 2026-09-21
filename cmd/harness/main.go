@@ -56,9 +56,10 @@ type verbOpts struct {
 	ro         bool
 	all        bool // start/restart --all: apply to every harness
 	name       string
-	run        int  // logs --run: one run of a scheduled harness
-	wait       bool // trigger --wait: follow the run and exit with its code
-	limit      int  // runs --limit
+	run        int    // logs --run: one run of a scheduled harness
+	wait       bool   // trigger --wait: follow the run and exit with its code
+	limit      int    // runs --limit
+	forDur     string // start --for: after-hours lease length (SPEC-0012)
 }
 
 // run dispatches one verb. Every verb dials the daemon fresh (thin client,
@@ -161,7 +162,11 @@ func lifecycle(verb string) func(*client.Client, verbOpts) error {
 		)
 		switch verb {
 		case "start":
-			info, err = c.Start(o.name)
+			if o.forDur != "" {
+				info, err = c.StartFor(o.name, o.forDur)
+			} else {
+				info, err = c.Start(o.name)
+			}
 		case "stop":
 			info, err = c.Stop(o.name)
 		case "restart":

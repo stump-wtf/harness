@@ -36,6 +36,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -194,8 +195,14 @@ func newSimpleCmd(g *globalOpts, verb, short string, arity nameArity) *cobra.Com
 
 // newLifecycleCmd builds start/stop/restart, which additionally take --all.
 // With --all the name requirement is lifted, matching the previous dispatch.
+// start additionally takes --for DURATION: an after-hours lease length
+// (SPEC-0012 REQ "After-Hours Lease") — the daemon persists the lease end and
+// rejects the start when no lease applies to the target.
 func newLifecycleCmd(g *globalOpts, verb, short string) *cobra.Command {
-	var all bool
+	var (
+		all    bool
+		forDur string
+	)
 	cmd := &cobra.Command{
 		Use:           verb,
 		Short:         short,
@@ -211,12 +218,27 @@ func newLifecycleCmd(g *globalOpts, verb, short string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if forDur != "" && all {
+				return fmt.Errorf("cannot combine --all and --for")
+			}
+			if forDur != "" {
+				d, err := time.ParseDuration(forDur)
+				if err != nil {
+					return fmt.Errorf("invalid --for duration %q: %w", forDur, err)
+				}
+				if d <= 0 {
+					return fmt.Errorf("invalid --for duration %q: must be positive", forDur)
+				}
+			}
 			o := g.opts()
-			o.name, o.all = name, all
+			o.name, o.all, o.forDur = name, all, forDur
 			return run(verb, o)
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "apply to every harness (name is ignored)")
+	if verb == "start" {
+		cmd.Flags().StringVar(&forDur, "for", "", "run under an after-hours lease for this long (e.g. 2h30m)")
+	}
 	return cmd
 }
 

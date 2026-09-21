@@ -168,6 +168,15 @@ type ControlReq struct {
 	Run int `json:"run,omitempty"`
 	// Limit caps the records runs returns, newest first. Zero means 20.
 	Limit int `json:"limit,omitempty"`
+
+	// For is the optional length of an after-hours lease on start (SPEC-0012
+	// REQ "After-Hours Lease"), a Go duration string ("2h30m"). Additive, so
+	// old clients are unaffected: a start without it leases nothing unless
+	// the target is gated and out of hours, in which case the daemon applies
+	// the one-hour default. The daemon rejects a non-positive or unparseable
+	// value, and For on an ungated or in-hours harness, with "no lease
+	// applies".
+	For string `json:"for,omitempty"`
 }
 
 // ProjectHarness is one project-local harness definition carried by a

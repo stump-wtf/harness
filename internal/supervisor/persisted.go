@@ -172,6 +172,12 @@ type persistedHarness struct {
 	Flapping     bool       `json:"flapping"`
 	Created      time.Time  `json:"created,omitempty"`
 	LastStarted  *time.Time `json:"last_started,omitempty"`
+	// LeaseUntil is the end of an after-hours lease (SPEC-0012 REQ
+	// "After-Hours Lease"): the instant past which the gate holds the harness
+	// again. Omitted when no lease is live. Written synchronously BEFORE the
+	// leased start, so a crash in between leaves a bounded lease on disk
+	// rather than an unbounded run.
+	LeaseUntil *time.Time `json:"lease_until,omitempty"`
 }
 
 // StateHome returns $XDG_STATE_HOME/harness (falling back to ~/.local/state).

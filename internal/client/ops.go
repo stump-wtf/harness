@@ -80,6 +80,19 @@ func (c *Client) Restart(name string) (protocol.HarnessInfo, error) {
 	return c.harnessOp(protocol.OpRestart, name)
 }
 
+// StartFor starts name under an after-hours lease of the given duration
+// (SPEC-0012 REQ "After-Hours Lease"): the daemon persists the lease end
+// before starting and rejects the op when no lease applies to the target
+// (ungated, or gated and in hours). forDur is a Go duration string ("2h30m").
+func (c *Client) StartFor(name, forDur string) (protocol.HarnessInfo, error) {
+	resp, err := c.call(protocol.ControlReq{Op: protocol.OpStart, Name: name, For: forDur})
+	if err != nil {
+		return protocol.HarnessInfo{}, err
+	}
+	var out protocol.HarnessInfo
+	return out, json.Unmarshal(resp.Data, &out)
+}
+
 // Enable sets a harness's enabled intent to true and starts it if stopped.
 func (c *Client) Enable(name string) (protocol.HarnessInfo, error) {
 	return c.harnessOp(protocol.OpEnable, name)

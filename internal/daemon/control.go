@@ -179,10 +179,48 @@ func (c *conn) attachInfoFor(info *protocol.HarnessInfo) {
 
 // opLifecycle handles start/stop/restart. Each is idempotent (SPEC-0002:
 // double-start is a no-op success); an unknown harness is a structured ERROR.
+//
+// start carries the after-hours lease path (SPEC-0012 REQ "After-Hours
+// Lease"): For set is an explicit lease length — validated, then applied
+// through Manager.StartFor, which persists the lease synchronously before
+// starting and rejects a harness to which no lease applies (ungated, or gated
+// and in hours). For unset on a gated, out-of-hours harness applies the
+// one-hour default lease through the same path; anything else starts as
+// before.
 func (c *conn) opLifecycle(req protocol.ControlReq) {
 	var ok bool
 	switch req.Op {
 	case protocol.OpStart:
+		forDur := time.Duration(0)
+		if req.For != "" {
+			d, err := time.ParseDuration(req.For)
+			if err != nil || d <= 0 {
+				_ = c.pc.WriteError(req.ID, protocol.ErrBadRequest,
+					"for must be a positive duration (e.g. 2h30m), got %q", req.For)
+				return
+			}
+			forDur = d
+		} else if c.srv.mgr.LeaseApplies(req.Name) {
+			// A plain start of a gated, out-of-hours harness leases the
+			// default length (SPEC-0012 REQ "After-Hours Lease", scenario
+			// "Late-night start": held at 21:00, not at the next tick).
+			forDur = supervisor.DefaultLease
+		}
+		if forDur > 0 {
+			if err := c.srv.mgr.StartFor(req.Name, forDur); err != nil {
+				switch {
+				case errors.Is(err, supervisor.ErrUnknownHarness):
+					_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
+				case errors.Is(err, supervisor.ErrNoLease):
+					_ = c.pc.WriteError(req.ID, protocol.ErrBadRequest, "%v", err)
+				default:
+					_ = c.pc.WriteError(req.ID, protocol.ErrInternal, "leased start: %v", err)
+				}
+				return
+			}
+			ok = true
+			break
+		}
 		ok = c.srv.mgr.Start(req.Name)
 	case protocol.OpStop:
 		ok = c.srv.mgr.Stop(req.Name)
