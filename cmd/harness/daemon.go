@@ -132,50 +132,9 @@ func runDaemon(o daemonOpts) {
 	}
 	mgr.Autostart()
 
-	// Scheduled harnesses: cron-fired one-shot agent runs owned by the daemon.
-	// Governing: ADR-0013; SPEC-0008 REQ "Firing And Overlap", REQ "Overlap
-	// Policy", REQ "Missed Window Handling", REQ "Run History"; issues #66,
-	// #117, #119.
-	// Every firing — on time or catch-up — becomes a run request. The
-	// harness's supervisor decides it on its actor loop: from idle it starts a
-	// recorded run; with a run in flight it applies on_overlap (skip, queue, or
-	// replace), and every one of those decisions leaves a run record. Deciding
-	// on the loop is what keeps the check and the start from being split by
-	// another start, which a snapshot-then-start guard here could not.
-	sched := scheduler.New(scheduler.Options{
-		Start: func(f scheduler.Firing) {
-			name := f.Name
-			trigger := supervisor.TriggerSchedule
-			if f.Trigger == scheduler.TriggerCatchUp {
-				trigger = supervisor.TriggerCatchUp
-				log.Warn("catching up missed schedule: running once for windows that elapsed while the daemon was not evaluating",
-					"harness", name, "window", f.Window.Format(time.RFC3339), "late", f.Late.Round(time.Second), "missed", f.Missed)
-			} else {
-				log.Info("schedule fired", "harness", name)
-			}
-			req := supervisor.RunRequest{Trigger: trigger, Window: f.Window, Windows: f.Missed}
-			if _, ok := mgr.StartRun(name, req); !ok {
-				log.Warn("schedule fired for unknown harness", "harness", name)
-			}
-		},
-		// Marks ride in state.json (ADR-0007), so a daemon started after a
-		// window it was down for knows it missed one, and a crash right after a
-		// firing does not fire the same window again on restart.
-		Store: scheduleStore{mgr},
-		// A missed window becomes a `missed` run record, and stays loud in the
-		// daemon log too.
-		Recorder: runHistoryRecorder{mgr},
-		// Every move of a next window reaches clients as job_schedule_changed
-		// (SPEC-0008 REQ "Lifecycle Events"; #120).
-		NextChanged: mgr.PublishScheduleChanged,
-	})
-	sched.Apply(cfg)
-	sched.Start()
-	// Re-apply schedules after every successful config reload, whichever
-	// path triggered it: SIGHUP, the config watcher, or the daemon's reload
-	// control op all funnel through Manager.Reload. Registered before any of
-	// those sources is live.
-	mgr.SetReloadHook(func() { sched.Apply(mgr.Config()) })
+	// Scheduled harnesses and the operating-hours gate share one wall-clock
+	// tick (ADR-0013, ADR-0019). nil is the real clock.
+	sched := startDaemonScheduler(mgr, cfg, nil)
 
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
@@ -272,6 +231,83 @@ func runDaemon(o daemonOpts) {
 	srv.Close()
 	mgr.Close()
 }
+
+// startDaemonScheduler builds, applies and starts the scheduler the daemon
+// runs, and registers it to re-apply after every config reload. It is a
+// function rather than inline in runDaemon so a test can drive THE DAEMON'S
+// wiring with a fake clock — the #315 lesson: a test that builds its own
+// scheduler would pass even if the daemon stopped passing the gate. A nil
+// clock is the real wall clock.
+//
+// Governing: ADR-0013; SPEC-0008; ADR-0019, SPEC-0012 REQ "Gate Evaluation",
+// REQ "Operating Hours Reload".
+func startDaemonScheduler(mgr *supervisor.Manager, cfg *core.Config, clock scheduler.Clock) *scheduler.Scheduler {
+	// Scheduled harnesses: cron-fired one-shot agent runs owned by the daemon.
+	// Governing: ADR-0013; SPEC-0008 REQ "Firing And Overlap", REQ "Overlap
+	// Policy", REQ "Missed Window Handling", REQ "Run History"; issues #66,
+	// #117, #119.
+	// Every firing — on time or catch-up — becomes a run request. The
+	// harness's supervisor decides it on its actor loop: from idle it starts a
+	// recorded run; with a run in flight it applies on_overlap (skip, queue, or
+	// replace), and every one of those decisions leaves a run record. Deciding
+	// on the loop is what keeps the check and the start from being split by
+	// another start, which a snapshot-then-start guard here could not.
+	sched := scheduler.New(scheduler.Options{
+		Clock: clock,
+		Start: func(f scheduler.Firing) {
+			name := f.Name
+			trigger := supervisor.TriggerSchedule
+			if f.Trigger == scheduler.TriggerCatchUp {
+				trigger = supervisor.TriggerCatchUp
+				log.Warn("catching up missed schedule: running once for windows that elapsed while the daemon was not evaluating",
+					"harness", name, "window", f.Window.Format(time.RFC3339), "late", f.Late.Round(time.Second), "missed", f.Missed)
+			} else {
+				log.Info("schedule fired", "harness", name)
+			}
+			req := supervisor.RunRequest{Trigger: trigger, Window: f.Window, Windows: f.Missed}
+			if _, ok := mgr.StartRun(name, req); !ok {
+				log.Warn("schedule fired for unknown harness", "harness", name)
+			}
+		},
+		// Marks ride in state.json (ADR-0007), so a daemon started after a
+		// window it was down for knows it missed one, and a crash right after a
+		// firing does not fire the same window again on restart.
+		Store: scheduleStore{mgr},
+		// A missed window becomes a `missed` run record, and stays loud in the
+		// daemon log too.
+		Recorder: runHistoryRecorder{mgr},
+		// Every move of a next window reaches clients as job_schedule_changed
+		// (SPEC-0008 REQ "Lifecycle Events"; #120).
+		NextChanged: mgr.PublishScheduleChanged,
+		// The operating-hours gate pass rides the same tick: it holds a gated
+		// harness out of hours and releases it when they open, both on the
+		// harness's actor loop (SPEC-0012 REQ "Gate Enforcement").
+		Gate: hoursGate{mgr},
+	})
+	sched.Apply(cfg)
+	sched.Start()
+	// Re-apply schedules after every successful config reload, whichever
+	// path triggered it: SIGHUP, the config watcher, or the daemon's reload
+	// control op all funnel through Manager.Reload. Registered before any of
+	// those sources is live.
+	mgr.SetReloadHook(func() { sched.Apply(mgr.Config()) })
+
+	return sched
+}
+
+// hoursGate adapts the Manager to the scheduler's operating-hours Gate seam.
+// Closes are immediate for now: graceful closing is a later story, and the
+// scheduler logs that a "graceful" close ran immediately.
+// Governing: ADR-0019, SPEC-0012 REQ "Gate Enforcement".
+type hoursGate struct{ mgr *supervisor.Manager }
+
+func (g hoursGate) Status(name string) (up, held, ok bool) { return g.mgr.GateStatus(name) }
+
+func (g hoursGate) Lease(name string) (time.Time, bool) { return g.mgr.Lease(name) }
+
+func (g hoursGate) Hold(name string, _ core.HoursShutdownMode) { g.mgr.Hold(name) }
+
+func (g hoursGate) Release(name string) { g.mgr.Release(name) }
 
 // scheduleStore adapts the Manager's state.json schedule marks to the
 // scheduler's Store seam. The two mark types match field for field, so these

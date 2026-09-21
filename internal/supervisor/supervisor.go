@@ -43,6 +43,8 @@ const (
 	cmdResize
 	cmdWriteInput
 	cmdSignal
+	cmdHold    // operating hours closed: stop without touching enabled (hours.go)
+	cmdRelease // operating hours opened: start a held harness (hours.go)
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -69,6 +71,7 @@ type command struct {
 	sig     syscall.Signal // cmdSignal payload (delivered to the process group)
 	run     *RunRequest    // cmdStartRun payload
 	decided *RunDecision   // cmdStartRun result, written before done closes
+	enable  bool           // cmdHold: also record enabled intent (a held autostart)
 	done    chan struct{}
 }
 
@@ -99,6 +102,13 @@ type Snapshot struct {
 	// (issue #347). SessionRotations counts rotations the guard performed.
 	SessionStalled   bool
 	SessionRotations int
+	// Gated marks a harness with operating_hours set, and Held one that the
+	// operating-hours gate has shut down (or kept down) while leaving
+	// `enabled` alone. Held is derived runtime state and is never written to
+	// state.json: boot recomputes it (Manager.Autostart). Governing: ADR-0019;
+	// SPEC-0012 REQ "Gate Enforcement".
+	Gated bool
+	Held  bool
 }
 
 // Supervisor owns the lifecycle of exactly one harness. It runs a single actor
@@ -151,6 +161,10 @@ type Supervisor struct {
 	readerWait    time.Duration
 	evlog         *clog.Logger // structured lifecycle events into log (#279)
 	configChanged bool         // staged config awaiting restart (SPEC-0003)
+
+	// held is set by an operating-hours hold and cleared by any start, stop or
+	// release (hours.go). Derived, never persisted (SPEC-0012).
+	held bool
 
 	// suppressPersist temporarily blocks markDirty during a transient start
 	// (issue #159): the state transitions publish snapshots, but those must
@@ -208,7 +222,7 @@ func New(h core.Harness, opts Options) *Supervisor {
 		created:      now,
 		lastExitCode: 0,
 	}
-	s.snap = Snapshot{Name: h.Name, State: core.StateStopped, Created: now, Scheduled: h.Schedule != ""}
+	s.snap = Snapshot{Name: h.Name, State: core.StateStopped, Created: now, Scheduled: h.Schedule != "", Gated: h.OperatingHours != ""}
 	go s.loop()
 	return s
 }
@@ -327,6 +341,7 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 	switch c.kind {
 	case cmdStart:
 		s.enabled = true
+		s.held = false             // an operator start overrides the hours hold
 		s.publishChangeUnchanged() // persist intent even if already up
 		if !s.hasProcess() && s.state != core.StateStopping {
 			s.clearFailLatch()
@@ -360,6 +375,7 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.suppressPersist = false
 	case cmdStop:
 		s.enabled = false
+		s.held = false // stopped by the operator now, not by its hours (SPEC-0012)
 		s.cancelRestartTimer()
 		s.dropQueued(OutcomeCancelled)
 		if s.hasProcess() {
@@ -373,6 +389,7 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		}
 	case cmdRestart:
 		s.enabled = true
+		s.held = false
 		s.cancelRestartTimer()
 		s.clearFailLatch()
 		s.resetCrashState()
@@ -409,6 +426,10 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		if s.hasProcess() {
 			_, _ = s.proc.pty.Write(c.input)
 		}
+	case cmdHold:
+		s.hold(c.enable)
+	case cmdRelease:
+		s.release()
 	case cmdSignal:
 		// Governing: stump.wtf/harness#182 — the kernel only raises SIGWINCH on
 		// an actual dimension change, so a resize applied while the guest was
@@ -483,6 +504,9 @@ func (s *Supervisor) beginStart() {
 		s.pending = nil
 		s.configChanged = false
 	}
+	// Any process start ends a hold: the harness is no longer down because of
+	// its hours (SPEC-0012 "Held").
+	s.held = false
 	s.transition(core.StateStarting)
 
 	// Born at the attached viewport, not 80×24: a restart (manual, crash, or
@@ -1051,6 +1075,8 @@ func (s *Supervisor) publishSnapshot() {
 		LastStarted:   s.lastStarted,
 		Scheduled:     s.harness.Schedule != "",
 		PID:           pid,
+		Gated:         s.gated(),
+		Held:          s.held,
 	}
 	s.mu.Unlock()
 	if s.onChange != nil && !s.suppressPersist {

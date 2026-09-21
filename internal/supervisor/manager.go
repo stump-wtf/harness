@@ -370,6 +370,13 @@ func preserveMalformedState(path string) (string, error) {
 // Autostart starts every harness whose restored intent is enabled (SPEC-0003
 // REQ "Autostart"). Safe to call once after Restore.
 //
+// A gated harness (operating_hours set) is not started here: it begins held,
+// and the scheduler's gate pass — whose first evaluation runs as soon as the
+// scheduler starts — releases it if it is in hours. That keeps the in-hours
+// decision on the scheduler's clock seam rather than a wall-clock read here,
+// and means a daemon booting at 20:00 never starts a 09:00-13:00 harness just
+// to shut it a second later. Governing: SPEC-0012 REQ "Gate Enforcement".
+//
 // Scheduled harnesses are skipped unconditionally: a cron one-shot is started
 // by the scheduler and by nothing else (ADR-0013). Restore already clamps
 // their persisted intent, so this is defense in depth — but it is the check
@@ -381,10 +388,84 @@ func (m *Manager) Autostart() {
 		if snap.Scheduled {
 			continue
 		}
-		if snap.Enabled {
-			s.Start()
+		if !snap.Enabled {
+			continue
 		}
+		if snap.Gated {
+			s.Hold()
+			continue
+		}
+		s.Start()
 	}
+}
+
+// startOrHold is how intent-setting paths (UseProfile, a reload introducing an
+// autostart harness) bring a harness up: an ungated one starts, and a gated
+// one that is down records enabled intent and begins held, for the gate pass
+// to release if it is in hours. A gated harness already up just gains the
+// intent (it keeps running and closes at its window's end), and a failed one
+// is started as before — Release never starts a failed harness, so holding it
+// would strand it. Governing: SPEC-0012 REQ "Operating Hours Reload", ADR-0014.
+func startOrHold(s *Supervisor) {
+	snap := s.Snapshot()
+	if !snap.Gated || snap.State == core.StateFailed || snapUp(snap.State) {
+		s.Start()
+		return
+	}
+	s.EnableHeld()
+}
+
+// snapUp reports the states the operating-hours gate holds: a harness that is
+// up, or on its way back up (SPEC-0012 REQ "Gate Enforcement").
+func snapUp(st core.State) bool {
+	switch st {
+	case core.StateStarting, core.StateRunning, core.StateDegraded, core.StateRestarting:
+		return true
+	}
+	return false
+}
+
+// GateStatus reports whether name is up (starting, running, degraded or
+// restarting — the states a close holds) and whether it is held, for the
+// scheduler's operating-hours gate pass. ok is false for an unknown harness.
+// Governing: SPEC-0012 REQ "Gate Enforcement".
+func (m *Manager) GateStatus(name string) (up, held, ok bool) {
+	s := m.get(name)
+	if s == nil {
+		return false, false, false
+	}
+	snap := s.Snapshot()
+	return snapUp(snap.State), snap.Held, true
+}
+
+// Hold stops a gated harness for its operating hours without touching its
+// enabled intent (Supervisor.Hold). The close is immediate: graceful closing
+// is a later story. ok=false if unknown. Governing: ADR-0019, SPEC-0012 REQ
+// "Gate Enforcement".
+func (m *Manager) Hold(name string) bool {
+	if s := m.get(name); s != nil {
+		s.Hold()
+		return true
+	}
+	return false
+}
+
+// Release starts a held harness when its hours open, without touching its
+// enabled intent (Supervisor.Release). ok=false if unknown.
+func (m *Manager) Release(name string) bool {
+	if s := m.get(name); s != nil {
+		s.Release()
+		return true
+	}
+	return false
+}
+
+// Lease reports name's after-hours lease end. It is the seam the gate pass
+// consults before holding a harness; until the lease story lands no lease
+// exists, so it always answers "none". Governing: SPEC-0012 REQ "After-Hours
+// Lease" (deferred).
+func (m *Manager) Lease(name string) (until time.Time, ok bool) {
+	return time.Time{}, false
 }
 
 // Start marks a single harness enabled and brings it up.
@@ -544,7 +625,10 @@ func (m *Manager) UseProfile(name string) bool {
 
 	for _, hn := range members {
 		if s := m.get(hn); s != nil {
-			s.Start()
+			// A gated member that is down records intent and stays held; the
+			// gate decides whether its process exists (SPEC-0012 REQ
+			// "Operating Hours Reload").
+			startOrHold(s)
 		}
 	}
 	m.markDirty()
@@ -690,8 +774,10 @@ func (m *Manager) Reload(newCfg *core.Config) {
 		a.s.ApplyConfig(a.h)
 	}
 	// Start newly-introduced autostart harnesses outside the lock (Start blocks).
+	// A gated one records intent true and begins held instead (ADR-0014,
+	// SPEC-0012 REQ "Operating Hours Reload").
 	for _, s := range newAutostart {
-		s.Start()
+		startOrHold(s)
 	}
 	m.markDirty()
 	// Invoked outside m.mu: the hook (scheduler re-apply) reads Config(),

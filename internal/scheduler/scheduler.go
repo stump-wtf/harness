@@ -185,6 +185,10 @@ type Options struct {
 	// zero time). It runs after the scheduler's lock is released, so it may
 	// call back in. The daemon relays it as job_schedule_changed.
 	NextChanged func(name string, next time.Time)
+	// Gate, if set, is driven by the operating-hours pass that runs on every
+	// tick (gate.go). Without it gated harnesses are not enforced.
+	// Governing: ADR-0019, SPEC-0012 REQ "Gate Evaluation".
+	Gate Gate
 }
 
 // entry is one armed schedule.
@@ -215,6 +219,15 @@ type Scheduler struct {
 	order    []string // config order, so evaluation is deterministic
 	lastTick time.Time
 
+	// Operating-hours gate state (gate.go). gates and gateOrder mirror the
+	// config's gated harnesses; ungated names harnesses a reload removed
+	// hours from, each owed one release; gating marks a decision in flight.
+	gate      Gate
+	gates     map[string]gateEntry
+	gateOrder []string
+	ungated   map[string]bool
+	gating    map[string]bool
+
 	runMu   sync.Mutex
 	stop    chan struct{}
 	done    chan struct{}
@@ -234,6 +247,7 @@ func New(opts Options) *Scheduler {
 		entries:  make(map[string]*entry),
 
 		nextChanged: opts.NextChanged,
+		gate:        opts.Gate,
 	}
 	if s.start == nil {
 		s.start = func(Firing) {}
@@ -339,6 +353,7 @@ func (s *Scheduler) Apply(cfg *core.Config) {
 		log.Info("scheduled harness", "harness", name, "schedule", h.Schedule, "catch_up", h.CatchUp, "next", formatNext(e.next))
 	}
 	s.order = order
+	s.applyGates(cfg)
 	gone := make([]string, 0, len(disarmed))
 	for name := range disarmed {
 		gone = append(gone, name)
@@ -451,9 +466,15 @@ func (s *Scheduler) evaluate() {
 	// still under mu so a concurrent Apply cannot forget a mark this write
 	// would then resurrect.
 	s.persist(put, nil)
+	// The operating-hours pass decides on the same reading as the schedules:
+	// no second clock read, no second ticker (SPEC-0012 REQ "Gate Evaluation").
+	gateActs := s.gatePass(now)
 	s.mu.Unlock()
 
 	s.notifyNext(changes)
+	for _, a := range gateActs {
+		s.dispatchGate(a)
+	}
 
 	for _, m := range misses {
 		s.safely("record missed window", m.Name, func() { s.recorder.RecordMissed(m) })
