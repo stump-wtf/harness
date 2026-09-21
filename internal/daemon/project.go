@@ -155,6 +155,16 @@ func (c *conn) writeProjectError(req protocol.ControlReq, err error) {
 // core domain type; the Manager namespaces the name at registration. An empty
 // backend defaults to native (ADR-0003), matching the config parser; anything
 // else is validated by Manager.ProjectUp.
+// projectTelemetryOptOut keeps a project definition's export_telemetry only
+// when it is false. Governing: SPEC-0014 REQ-2.
+func projectTelemetryOptOut(v *bool) *bool {
+	if v == nil || *v {
+		return nil
+	}
+	f := false
+	return &f
+}
+
 func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 	backend := core.Backend(ph.Backend)
 	if ph.Backend == "" {
@@ -178,22 +188,25 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		quiet = *ph.Quiet
 	}
 	return core.Harness{
-		Name:         ph.Name,
-		Adapter:      ph.Harness,
-		Args:         ph.Args,
-		Prompt:       ph.Prompt,
-		PromptFile:   ph.PromptFile,
-		Model:        ph.Model,
-		AutoAccept:   ph.AutoAccept,
-		MaxTurns:     ph.MaxTurns,
-		Quiet:        quiet,
-		Workdir:      ph.Workdir,
-		EnvFile:      ph.EnvFile,
-		RestartDelay: time.Duration(ph.RestartDelayMs) * time.Millisecond,
-		Restart:      restart,
-		Backend:      backend,
-		Description:  ph.Description,
-		Enabled:      ph.Enabled,
-		TmuxSocket:   ph.TmuxSocket,
+		// Only an opt-out crosses the wire (SPEC-0014 REQ-2): a project
+		// harness is never opted in by its own definition.
+		ExportTelemetry: projectTelemetryOptOut(ph.ExportTelemetry),
+		Name:            ph.Name,
+		Adapter:         ph.Harness,
+		Args:            ph.Args,
+		Prompt:          ph.Prompt,
+		PromptFile:      ph.PromptFile,
+		Model:           ph.Model,
+		AutoAccept:      ph.AutoAccept,
+		MaxTurns:        ph.MaxTurns,
+		Quiet:           quiet,
+		Workdir:         ph.Workdir,
+		EnvFile:         ph.EnvFile,
+		RestartDelay:    time.Duration(ph.RestartDelayMs) * time.Millisecond,
+		Restart:         restart,
+		Backend:         backend,
+		Description:     ph.Description,
+		Enabled:         ph.Enabled,
+		TmuxSocket:      ph.TmuxSocket,
 	}
 }
