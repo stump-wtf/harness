@@ -473,7 +473,11 @@ no endpoint anywhere refuses to start.
 
 At startup the daemon logs one line per signal with the resolved endpoint, the
 source of each setting (`env`, `env_file`, `file`, `default`), and each header
-as its name plus a SHA-256 fingerprint — never a value.
+as its name plus a SHA-256 fingerprint — never a value. `harness doctor` reports
+the same under a `TELEMETRY` section (`.telemetry` in `--json`), resolved in the
+shell you run it from: a daemon started by systemd with its own
+`EnvironmentFile`, or as a user who can read an `env_file` you cannot, may
+resolve differently, and the daemon's startup line is the authority.
 
 ### What is exported
 
