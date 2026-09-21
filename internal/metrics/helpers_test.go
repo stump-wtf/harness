@@ -87,7 +87,9 @@ func (f *fakeSource) HarnessDef(name string) (core.Harness, bool) {
 	return h, ok
 }
 
-func (f *fakeSource) Events() (<-chan supervisor.Event, func()) { return f.bus.Subscribe() }
+func (f *fakeSource) EventsCounted() (<-chan supervisor.Event, func(), func() uint64) {
+	return f.bus.SubscribeCounted()
+}
 
 func (f *fakeSource) add(h core.Harness, snap supervisor.Snapshot) {
 	f.mu.Lock()

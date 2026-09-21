@@ -354,6 +354,51 @@ func TestTransitionsAndSchedules(t *testing.T) {
 	}
 }
 
+// REQ-6: lifecycle events the collector's bus subscription lost are
+// transitions and run outcomes it will never count, so the loss is published
+// as harness_metrics_collection_errors_total{collector="lifecycle"}.
+//
+// The subscriber is stalled by holding the collector's lock while a burst is
+// published past the bus buffer. Every published event must then be either
+// counted or reported lost — none may vanish — and the reported loss must be
+// exactly what the bus recorded for this subscriber. (review, harness#356)
+func TestLifecycleDropsAreCollectionErrors(t *testing.T) {
+	src := newFakeSource()
+	src.add(core.Harness{Name: "svc", Adapter: "generic"}, runningSnap())
+	m := newTestMetrics(t, src, Options{})
+
+	lost := func(f families) float64 {
+		return f.must(t, "harness_metrics_collection_errors_total", lbls("collector", "lifecycle"))
+	}
+	if v := lost(scrape(t, m)); v != 0 {
+		t.Fatalf("lifecycle errors = %v before any loss", v)
+	}
+
+	const burst = 400 // well past the bus's per-subscriber buffer
+	m.mu.Lock()
+	for i := 0; i < burst; i++ {
+		src.bus.Publish(supervisor.Event{Kind: supervisor.EventStateChanged, Name: "svc", From: core.StateStarting, To: core.StateRunning})
+	}
+	m.mu.Unlock()
+
+	var counted, dropped float64
+	eventually(t, "every published event counted or reported lost", func() bool {
+		f := scrape(t, m)
+		counted = f.must(t, "harness_state_transitions_total", lbls("harness", "svc", "to", "running"))
+		dropped = lost(f)
+		return counted+dropped == burst
+	})
+	if dropped == 0 {
+		t.Fatalf("no loss reported for a subscriber stalled through %d events (counted %v)", burst, counted)
+	}
+	if want := float64(m.lifecycleDrops()); dropped != want {
+		t.Errorf("lifecycle errors = %v, want the bus's own count %v", dropped, want)
+	}
+	if v := lost(scrape(t, m)); v != dropped {
+		t.Errorf("lifecycle errors = %v on a later scrape, want still %v (counted once)", v, dropped)
+	}
+}
+
 // Sessions are counted once each; activity needs both a live process and a
 // recent item.
 func TestSessionsStartedAndActive(t *testing.T) {
