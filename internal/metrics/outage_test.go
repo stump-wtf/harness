@@ -121,7 +121,7 @@ func TestOutageShapeThroughTheRealObserver(t *testing.T) {
 
 	// Twenty minutes in: the ADR's alert, evaluated on the scraped values.
 	//   time() - harness_last_successful_call_timestamp > 900
-	//     and on(harness) harness_harness_state{state="running"} == 1
+	//     and on(instance, harness) harness_harness_state{state="running"} == 1
 	now := start.Add(20 * time.Minute)
 	c.Set(now)
 	fams = scrape(t, m)
