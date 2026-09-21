@@ -18,11 +18,25 @@
 // never waits on a subscriber: a full subscriber loses the event, and the loss
 // is counted (ADR-0007: never block the supervisor on a slow consumer).
 //
+// agent-trace's incremental reads also never pass a tool call with no result,
+// so a crush killed mid-call and resumed into the same session would pin its
+// watermark there forever. stall.go detects that — cheaply, and only for
+// sessions that wrote something while held — and recovers past the orphaned
+// call until agent-trace releases superseded calls itself. Its known limits:
+// a stall is proven only by a mark (a user message, a provider error) written
+// after the orphan, which every resume writes; the orphaned call is never
+// delivered; and adapters other than crush, Claude Code and Codex get no
+// fallback. A session whose tool call stays open longer than the listing
+// window plus ForgetAfter is forgotten meanwhile, and the call is dropped by
+// the tombstone's floor when it finally completes.
+//
 // Governing: issue #390; SPEC-0006 REQ "Run Correlation"; SPEC-0013 REQ-3
 // (model reachability is observed here); ADR-0007; ADR-0008 (every string
 // that came from a transcript is redacted before it leaves this package).
 //
 // @joestump-agent 09/21/2026 - Added for harness#390.
+//
+// @joestump-agent 09/21/2026 - Orphaned-tool-call fallback (stall.go).
 package observe
 
 import (
@@ -114,6 +128,10 @@ type Options struct {
 	// SourceTimeout bounds each store listing and each session read (default
 	// DefaultSourceTimeout).
 	SourceTimeout time.Duration
+	// StallCheckInterval is the least time between two full parses of one
+	// session suspected of being pinned behind an orphaned tool call (default
+	// DefaultStallCheckInterval; see stall.go).
+	StallCheckInterval time.Duration
 	// Since is the history floor: nothing timestamped before it (less
 	// runtrace.Slack) is delivered. Zero means the moment New is called, which
 	// in the daemon is just after Autostart.
@@ -148,6 +166,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.SourceTimeout <= 0 {
 		o.SourceTimeout = DefaultSourceTimeout
+	}
+	if o.StallCheckInterval <= 0 {
+		o.StallCheckInterval = DefaultStallCheckInterval
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -193,6 +214,14 @@ type Stats struct {
 	ParseErrors map[string]uint64
 	// ScanErrors counts failed store listings.
 	ScanErrors uint64
+	// StallChecks counts full parses spent on sessions suspected of being
+	// pinned behind an orphaned tool call; Stalls counts the checks that found
+	// one; OrphansSkipped counts the orphaned records skipped to recover. On a
+	// healthy store all three stay zero, and once agent-trace releases
+	// superseded calls itself Stalls and OrphansSkipped stay zero everywhere.
+	StallChecks    uint64
+	Stalls         uint64
+	OrphansSkipped uint64
 	// Sessions is how many sessions are currently tracked; Contested is how
 	// many of those were ambiguous at their latest read.
 	Sessions  int

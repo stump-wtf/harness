@@ -34,6 +34,9 @@ package observe
 // ForgetAfter so a store that always fails cannot pin the cache; drop a
 // session whose transcript was deleted instead of counting a parse error
 // every scan; deep-copy target line ranges when redacting.
+//
+// @joestump-agent 09/21/2026 - A held read runs the orphaned-tool-call
+// fallback (stall.go).
 
 import (
 	"context"
@@ -81,6 +84,11 @@ type session struct {
 	// from it; ForgetAfter is measured from it.
 	lastSeen  time.Time
 	contested bool
+
+	// Orphaned-tool-call fallback state (incremental adapters; stall.go).
+	lastTS    time.Time // newest item timestamp read from the session
+	pinEnded  time.Time // the session's EndedAt when its watermark last held
+	checkedAt time.Time // when a full-parse stall check last ran
 }
 
 // target is one declared harness as a scan sees it.
@@ -352,7 +360,7 @@ func (o *Observer) read(ctx context.Context, st *session, scopes []runtrace.Scop
 	rctx, cancel := context.WithTimeout(ctx, o.opts.SourceTimeout)
 	defer cancel()
 	baseline := st.baseline
-	items, rewritten, err := o.fetch(rctx, st)
+	items, rewritten, err := o.fetch(rctx, st, now)
 	if err != nil {
 		if ctx.Err() != nil {
 			return // shutting down, not a parse failure
@@ -458,7 +466,7 @@ func (o *Observer) read(ctx context.Context, st *session, scopes []runtrace.Scop
 // fetch reads what st gained since the last successful fetch, in seq order.
 // rewritten reports a store that moved backwards (a truncated or replaced
 // file); st is then reset to read from the top.
-func (o *Observer) fetch(ctx context.Context, st *session) ([]item, bool, error) {
+func (o *Observer) fetch(ctx context.Context, st *session, now time.Time) ([]item, bool, error) {
 	if ip, ok := st.adapter.(tail.IncrementalParser); ok {
 		// ParseSince's watermark never lands inside an open tool call: it
 		// withholds everything past the last point with no call outstanding,
@@ -470,14 +478,30 @@ func (o *Observer) fetch(ctx context.Context, st *session) ([]item, bool, error)
 		}
 		if wm < st.watermark {
 			st.watermark = 0
+			st.lastTS, st.pinEnded, st.checkedAt = time.Time{}, time.Time{}, time.Time{}
 			return nil, true, nil
 		}
+		held := wm == st.watermark && len(events)+len(marks) == 0
 		st.watermark = wm
 		st.nextSeq += len(events)
 		if meta.Model != "" {
 			st.meta.Model = meta.Model
 		}
-		return merge(events, marks), false, nil
+		items := merge(events, marks)
+		st.note(items)
+		ended, _ := parseTime(meta.EndedAt)
+		switch {
+		case held:
+			items = o.unstick(ctx, st, ip, ended, now)
+		case st.baseline:
+			// A first read may already stop at an orphaned call with the
+			// session's later writes behind it; leaving pinEnded zero makes
+			// the next held read look once, with a cheap record count.
+			st.pinEnded = time.Time{}
+		default:
+			st.pinEnded = ended
+		}
+		return items, false, nil
 	}
 	// No incremental support: re-parse and take what lies past what was
 	// already consumed. Every adapter agent-trace ships is incremental; this
@@ -502,7 +526,9 @@ func (o *Observer) fetch(ctx context.Context, st *session) ([]item, bool, error)
 	if meta.Model != "" {
 		st.meta.Model = meta.Model
 	}
-	return merge(fresh, freshMarks), false, nil
+	items := merge(fresh, freshMarks)
+	st.note(items)
+	return items, false, nil
 }
 
 // merge interleaves events and marks by seq. A mark carries the seq of the
