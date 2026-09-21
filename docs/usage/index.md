@@ -38,6 +38,7 @@ re-attachable — an agent CLI, a REPL, a watcher, a background service.
 | Scheduled agent one-shots (cron) | [Configuration → Scheduled one-shots](./configuration#scheduled-one-shots) |
 | Supervision & restart policy | [Supervision](./supervision) |
 | The TUI dashboard | [Cockpit TUI](./tui) |
+| Exporting agent telemetry (OTLP, JSONL) | [Production observability](./production-observability) |
 | Project-scoped compose (`up` / `down` / `ps`) | [Projects](./projects) |
 | Remote access over SSH | [Remote access](./remote) |
 
