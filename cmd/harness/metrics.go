@@ -14,13 +14,22 @@ package main
 //   - A bind failure is logged and the daemon carries on. The scraper sees the
 //     target down, which it already alerts on; taking every harness down
 //     because a port is taken would be the larger outage.
+//   - The collector subscribes to the Manager's lifecycle bus before
+//     Autostart, so the transitions boot causes — starting, running, an early
+//     crash loop — are counted (SPEC-0013 REQ-2). The observer and the
+//     scheduler do not exist yet at that point; they are attached, and the
+//     listener bound, once they do.
 //
 // These are functions, like daemonManagerOptions, so the tests drive what the
 // daemon itself builds (#315).
 //
-// Governing: ADR-0020, SPEC-0013 REQ-1; design.md "Listener".
+// Governing: ADR-0020, SPEC-0013 REQ-1, REQ-2; design.md "Listener".
 //
 // @joestump-agent 09/21/2026 - Added for harness#356.
+//
+// @joestump-agent 09/21/2026 - Review: split into beginDaemonMetrics (before
+// Autostart) and serve (after the observer and scheduler exist), so boot
+// transitions are no longer missed.
 
 import (
 	"context"
@@ -44,33 +53,45 @@ func daemonMetricsListener(sc core.ServerConfig) (metrics.Listener, error) {
 type daemonMetrics struct {
 	m   *metrics.Metrics
 	srv *metrics.Server
+	l   metrics.Listener
 }
 
-// startDaemonMetrics builds the collector over the daemon's Manager, observer
-// and schedule, and binds l. It returns a daemonMetrics whose srv is nil when
-// the listener is off or could not bind.
-func startDaemonMetrics(mgr *supervisor.Manager, obs *observe.Observer, nextRun func(string) (time.Time, bool), l metrics.Listener) *daemonMetrics {
+// beginDaemonMetrics builds the collector over the daemon's Manager and
+// subscribes it to the lifecycle bus. runDaemon calls it before Autostart. It
+// returns a daemonMetrics with a nil m when the listener is off.
+func beginDaemonMetrics(mgr *supervisor.Manager, l metrics.Listener) *daemonMetrics {
 	if l.Addr == "" {
 		log.Info("metrics listener off", "hint", "[server] metrics_listen = \"off\"")
 		return &daemonMetrics{}
+	}
+	m := metrics.New(mgr, metrics.Options{})
+	m.Start()
+	return &daemonMetrics{m: m, l: l}
+}
+
+// serve attaches the observer and the schedule reader and binds the
+// listener. srv stays nil when the listener is off or could not bind.
+func (d *daemonMetrics) serve(obs *observe.Observer, nextRun func(string) (time.Time, bool)) {
+	if d == nil || d.m == nil {
+		return
 	}
 	var src metrics.EventSource
 	if obs != nil {
 		src = obs
 	}
-	m := metrics.New(mgr, metrics.Options{Observer: src, NextRun: nextRun})
-	m.Start()
+	d.m.Attach(src, nextRun)
+	l := d.l
 	if l.TokenFileLoose {
 		log.Warn("metrics token file is readable by group or others", "hint", "chmod 600 the metrics_token_file")
 	}
-	srv, err := metrics.Listen(l, m.Handler())
+	srv, err := metrics.Listen(l, d.m.Handler())
 	if err != nil {
 		log.Error("metrics listener disabled: bind failed", "addr", l.Addr, "err", err,
 			"hint", "set [server] metrics_listen to a free address and restart the daemon")
-		return &daemonMetrics{m: m}
+		return
 	}
 	log.Info("metrics listening", "addr", srv.Addr(), "path", "/metrics", "auth", l.Token != "")
-	return &daemonMetrics{m: m, srv: srv}
+	d.srv = srv
 }
 
 // Stop shuts the listener down and unsubscribes the collector.

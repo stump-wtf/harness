@@ -142,6 +142,15 @@ that be visible under the collector it affects. The observer's per-subscriber
 `harness_observer_events_dropped_total` has no lifecycle equivalent, because
 metrics is the only bus subscriber that has a scrape to report through.
 
+### Boot order
+
+The collector subscribes to the lifecycle bus before `Manager.Autostart`, so
+the transitions boot causes (`starting`, `running`, an early crash loop) are
+counted. The observer is built after Autostart on purpose, so its history
+starts at the daemon's start. It is attached to the collector later, together
+with the scheduler's `NextFire`, and the listener binds only after that. A
+scrape therefore never sees a collector that is missing its observer.
+
 ## Testing
 
 * A test asserting the 2026-09-14 shape: state `running` = 1, quota errors

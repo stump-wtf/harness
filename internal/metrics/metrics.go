@@ -310,9 +310,17 @@ func (m *Metrics) Handler() http.Handler {
 	return promhttp.HandlerFor(m.reg, promhttp.HandlerOpts{ErrorHandling: promhttp.ContinueOnError})
 }
 
-// Start subscribes to the lifecycle bus and the observer, synchronously — so
-// nothing published after Start returns is missed — and begins counting.
-// Calling it again, or after Close, does nothing.
+// Start subscribes to the lifecycle bus and the observer (if one is set yet),
+// synchronously — so nothing published after Start returns is missed — and
+// begins counting. Calling it again, or after Close, does nothing.
+//
+// The daemon calls Start before Manager.Autostart and hands over the observer
+// and schedule later with Attach: the transitions boot itself causes
+// (starting, running, an early crash loop) are the first ones an operator
+// wants counted, and the observer is deliberately built after Autostart.
+//
+// @joestump-agent 09/21/2026 - Split observer attachment out of Start so the
+// daemon can subscribe before Autostart (review, harness#356).
 func (m *Metrics) Start() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -328,11 +336,38 @@ func (m *Metrics) Start() {
 	go m.consumeLifecycle(evs)
 
 	if m.opts.Observer != nil {
-		items, cancelItems := m.opts.Observer.Subscribe(subscriberName, subscriberBuffer)
-		m.cancels = append(m.cancels, cancelItems)
-		m.wg.Add(1)
-		go m.consumeItems(items)
+		m.subscribeObserverLocked()
 	}
+}
+
+// Attach supplies the agent event feed and the schedule reader after New,
+// for a caller that builds them later than the collector (the daemon builds
+// its observer after Autostart). A nil argument leaves that input as it was;
+// an observer already set is kept. If Start has run, the observer is
+// subscribed at once. After Close it does nothing.
+func (m *Metrics) Attach(obs EventSource, nextRun func(name string) (time.Time, bool)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	if nextRun != nil {
+		m.opts.NextRun = nextRun
+	}
+	if obs != nil && m.opts.Observer == nil {
+		m.opts.Observer = obs
+		if m.started {
+			m.subscribeObserverLocked()
+		}
+	}
+}
+
+// subscribeObserverLocked subscribes to m.opts.Observer. Callers hold m.mu.
+func (m *Metrics) subscribeObserverLocked() {
+	items, cancelItems := m.opts.Observer.Subscribe(subscriberName, subscriberBuffer)
+	m.cancels = append(m.cancels, cancelItems)
+	m.wg.Add(1)
+	go m.consumeItems(items)
 }
 
 // Close unsubscribes and waits for the consumers to finish. Idempotent.
@@ -494,7 +529,10 @@ func (m *Metrics) harnessDef(name string) (h core.Harness, ok bool) {
 }
 
 func (m *Metrics) nextRun(name string) (t time.Time, ok bool) {
-	if m.opts.NextRun == nil {
+	m.mu.Lock()
+	next := m.opts.NextRun // Attach may set it after New
+	m.mu.Unlock()
+	if next == nil {
 		return time.Time{}, false
 	}
 	defer func() {
@@ -503,11 +541,14 @@ func (m *Metrics) nextRun(name string) (t time.Time, ok bool) {
 			t, ok = time.Time{}, false
 		}
 	}()
-	return m.opts.NextRun(name)
+	return next(name)
 }
 
 func (m *Metrics) observerStats() (st observe.Stats, ok bool) {
-	if m.opts.Observer == nil {
+	m.mu.Lock()
+	obs := m.opts.Observer // Attach may set it after New
+	m.mu.Unlock()
+	if obs == nil {
 		return observe.Stats{}, false
 	}
 	defer func() {
@@ -516,7 +557,7 @@ func (m *Metrics) observerStats() (st observe.Stats, ok bool) {
 			st, ok = observe.Stats{}, false
 		}
 	}()
-	return m.opts.Observer.Stats(), true
+	return obs.Stats(), true
 }
 
 func (m *Metrics) countError(collector string) {
