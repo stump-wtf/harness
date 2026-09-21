@@ -245,3 +245,53 @@ func TestStoppingRunningScheduledHarnessLandsInStopped(t *testing.T) {
 			"an operator's stop is not a failure", s.Snapshot().State)
 	}
 }
+
+// The snapshot must carry the loop's give-up accounting, so a harness walking
+// its budget toward `failed` is visible before it arrives (SPEC-0013 REQ-2,
+// harness_consecutive_failures). The value at give-up is the one the loop
+// compared against MaxRestarts; a snapshot that forgot to copy the field
+// reads 0 here and fails.
+//
+// @joestump-agent 09/21/2026 - Added with Snapshot.ConsecutiveFailures.
+func TestSnapshotReportsConsecutiveFailures(t *testing.T) {
+	p := Policy{
+		CrashWindow:    time.Millisecond,
+		CrashThreshold: 1000,
+		BackoffBase:    time.Millisecond,
+		BackoffCap:     2 * time.Millisecond,
+		MaxRestarts:    4,
+		StopGrace:      80 * time.Millisecond,
+	}
+	s := newTestSupervisor(t, shHarnessWithRestart("walker", "exit 1", time.Millisecond, core.RestartOnFailure), p)
+	s.Start()
+
+	seen := map[int]bool{}
+	if !waitUntil(3*time.Second, func() bool {
+		snap := s.Snapshot()
+		seen[snap.ConsecutiveFailures] = true
+		return snap.State == core.StateFailed
+	}) {
+		t.Fatalf("never gave up: %+v", s.Snapshot())
+	}
+	if got, want := s.Snapshot().ConsecutiveFailures, p.MaxRestarts+1; got != want {
+		t.Errorf("ConsecutiveFailures at give-up = %d, want %d (the count that exceeded MaxRestarts)", got, want)
+	}
+	// It climbed rather than jumping: at least one intermediate value was
+	// visible on the way, which is the whole point of exposing it.
+	intermediate := false
+	for n := 1; n <= p.MaxRestarts; n++ {
+		if seen[n] {
+			intermediate = true
+		}
+	}
+	if !intermediate {
+		t.Errorf("no intermediate ConsecutiveFailures value observed on the way to give-up: %v", seen)
+	}
+
+	// A deliberate start resets the budget (clearFailLatch), and the snapshot
+	// must say so.
+	s.Start()
+	if !waitUntil(time.Second, func() bool { return s.Snapshot().ConsecutiveFailures < p.MaxRestarts+1 }) {
+		t.Errorf("ConsecutiveFailures stayed %d after a deliberate start", s.Snapshot().ConsecutiveFailures)
+	}
+}
