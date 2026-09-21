@@ -19,7 +19,7 @@ provider error) to the stack you already run:
 
 This page is the recipe book. The key-by-key reference is
 [Configuration → Telemetry export](./configuration#telemetry-export-telemetry),
-and the reasoning is [ADR-0021](/decisions/adr-0021-telemetry-export).
+and the reasoning is [ADR-0022](/decisions/adr-0022-telemetry-export).
 
 ## Two consents, always
 

@@ -15,7 +15,7 @@
 # # explicit `harness reload` or SIGHUP after config changes.
 # watch_config = true
 
-# Optional agent telemetry export (ADR-0021, SPEC-0014). Nothing leaves the
+# Optional agent telemetry export (ADR-0022, SPEC-0015). Nothing leaves the
 # daemon unless a destination below is on AND a harness is opted in with
 # export_telemetry = true (or export_all = true). Collector credentials never
 # go here: put OTEL_EXPORTER_OTLP_HEADERS in the env_file. Changing this table

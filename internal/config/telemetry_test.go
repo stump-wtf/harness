@@ -2,7 +2,7 @@ package config
 
 // Telemetry Table Tests
 //
-// Governing tests: ADR-0021; SPEC-0014 REQ-1, REQ-2, REQ-13.
+// Governing tests: ADR-0022; SPEC-0015 REQ-1, REQ-2, REQ-13.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
 

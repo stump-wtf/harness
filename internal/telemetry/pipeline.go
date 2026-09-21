@@ -20,7 +20,7 @@
 // that has not opted in is dropped before redaction, queueing or counting,
 // and a reload that changes export_telemetry applies to the next item.
 //
-// Governing: ADR-0021; SPEC-0014 (all REQs); ADR-0007; ADR-0008.
+// Governing: ADR-0022; SPEC-0015 (all REQs); ADR-0007; ADR-0008.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
 package telemetry
@@ -266,7 +266,7 @@ func (p *Pipeline) startIntake(signal string, handle func(observe.Event), tick, 
 	}()
 }
 
-// contributes is the per-item gate (SPEC-0014 REQ-1): the harness's CURRENT
+// contributes is the per-item gate (SPEC-0015 REQ-1): the harness's CURRENT
 // definition, so a reload applies to the next item. A harness the daemon no
 // longer knows does not contribute.
 func (p *Pipeline) contributes(name string) bool {
@@ -285,7 +285,7 @@ type ShutdownReport struct {
 
 // Shutdown stops intake, exports every session's unsent spans, gives each
 // queued batch one attempt and closes the events file — all within ctx
-// (SPEC-0014 REQ-11) — then logs what was lost in one line. It is idempotent.
+// (SPEC-0015 REQ-11) — then logs what was lost in one line. It is idempotent.
 func (p *Pipeline) Shutdown(ctx context.Context) ShutdownReport {
 	p.shutdownOnce.Do(func() {
 		before := map[string]uint64{}
@@ -352,7 +352,7 @@ func (p *Pipeline) Shutdown(ctx context.Context) ShutdownReport {
 	return p.report
 }
 
-// Stats is a snapshot of every enabled signal's counters (SPEC-0014 REQ-12).
+// Stats is a snapshot of every enabled signal's counters (SPEC-0015 REQ-12).
 func (p *Pipeline) Stats() map[string]SignalStats {
 	obs := p.sub.Stats()
 	out := make(map[string]SignalStats, len(p.stats))

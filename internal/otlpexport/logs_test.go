@@ -2,7 +2,7 @@ package otlpexport
 
 // Logs, Transport and Result Tests
 //
-// Governing tests: SPEC-0014 REQ-6 (the LogRecord mapping), REQ-10 (response
+// Governing tests: SPEC-0015 REQ-6 (the LogRecord mapping), REQ-10 (response
 // classification, Retry-After, partialSuccess, gzip, timeout).
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.

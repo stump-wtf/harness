@@ -126,7 +126,7 @@ type formInputs struct {
 	// Carried for the same round-trip reason as schedule (issue #161).
 	operatingHours, hoursShutdown, hoursShutdownTimeout string
 	// exportTelemetry is the tri-state telemetry opt-in: "" (follow
-	// export_all), "true" or "false" (SPEC-0014 REQ-1).
+	// export_all), "true" or "false" (SPEC-0015 REQ-1).
 	exportTelemetry string
 }
 

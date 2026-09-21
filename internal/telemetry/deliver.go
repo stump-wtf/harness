@@ -2,7 +2,7 @@ package telemetry
 
 // OTLP Delivery
 //
-// One batch, one request at a time, with the SPEC-0014 REQ-10 retry policy:
+// One batch, one request at a time, with the SPEC-0015 REQ-10 retry policy:
 // 429, 502, 503, 504 and network errors or timeouts are retried with
 // exponential backoff from 1s, doubling to a 30s cap, with full jitter — or
 // exactly the collector's Retry-After when it sent one. A batch still
@@ -15,7 +15,7 @@ package telemetry
 // interrupts a retry wait and gives the batch one last attempt, bounded by
 // the shutdown deadline.
 //
-// Governing: ADR-0021; SPEC-0014 REQ-10, REQ-11; ADR-0007; ADR-0008 (a
+// Governing: ADR-0022; SPEC-0015 REQ-10, REQ-11; ADR-0007; ADR-0008 (a
 // failure is logged by status or error class, never with a header or body).
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
@@ -29,7 +29,7 @@ import (
 	"github.com/stump-wtf/harness/internal/redact"
 )
 
-// Retry policy constants (SPEC-0014 REQ-10).
+// Retry policy constants (SPEC-0015 REQ-10).
 const (
 	retryBase   = time.Second
 	retryCap    = 30 * time.Second
