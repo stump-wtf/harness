@@ -29,6 +29,9 @@ package telemetry
 // Governing: ADR-0021; SPEC-0014 REQ-4, REQ-7.
 //
 // @joestump-agent 09/21/2026 - Added for harness#391.
+//
+// @joestump-agent 09/21/2026 - review: span source text is redacted before
+// BuildTrace truncates it, not only after.
 
 import (
 	"sort"
@@ -41,6 +44,7 @@ import (
 
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/observe"
+	"github.com/stump-wtf/harness/internal/redact"
 )
 
 // Accumulator bounds (SPEC-0014 REQ-7).
@@ -112,8 +116,11 @@ func (a *traceAccumulator) add(ev observe.Event) {
 	}
 }
 
-// prepare fills a missing timestamp from the observer's Time and applies
-// omit_prompts, before BuildTrace sees the item.
+// prepare fills a missing timestamp from the observer's Time, applies
+// omit_prompts and redacts the text a span is named from, before BuildTrace
+// sees the item. Redaction has to come first: BuildTrace truncates a
+// user-message span name to 128 runes, and a credential cut short there no
+// longer matches its pattern, so cleanSpan alone would export its head.
 func (a *traceAccumulator) prepare(ev observe.Event) observe.Event {
 	fill := ev.Time.UTC().Format(time.RFC3339Nano)
 	switch ev.Kind {
@@ -121,10 +128,12 @@ func (a *traceAccumulator) prepare(ev observe.Event) observe.Event {
 		if !parseableTime(ev.Tool.Timestamp) {
 			ev.Tool.Timestamp = fill
 		}
+		ev.Tool.Summary = redact.String(ev.Tool.Summary)
 	case observe.KindMark:
 		if !parseableTime(ev.Mark.Timestamp) {
 			ev.Mark.Timestamp = fill
 		}
+		ev.Mark.Note = redact.String(ev.Mark.Note)
 		if a.omitPrompts && ev.Mark.Type == "user-message" {
 			ev.Mark.Note = PromptOmitted
 		}
