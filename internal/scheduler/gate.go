@@ -24,6 +24,12 @@ package scheduler
 // Evaluation".
 //
 // @joestump-agent 09/21/2026 - Added for stump.wtf/harness#382.
+//
+// @joestump 09/22/2026 - Lease judged on the tick's clock (it was a wall-clock
+// read the pass then re-judged, so the Gate and the pass could disagree about
+// a lease's end), still asked once per harness per tick for the lease-end
+// tracking; a graceful hold steps its close on the same tick. Fixes
+// stump.wtf/harness#404.
 
 import (
 	"time"
@@ -41,9 +47,13 @@ type Gate interface {
 	// restarting), whether it is held, and whether a graceful close is in
 	// flight. ok is false for an unknown harness.
 	Status(name string) (up, held, closing, ok bool)
-	// Lease reports name's after-hours lease end, ok=false when it has none.
-	// A harness covered by a lease that has not ended is never held.
-	Lease(name string) (until time.Time, ok bool)
+	// Lease reports name's after-hours lease end at now — the tick's own
+	// clock, never a wall-clock read of the Gate's — ok=false when it has
+	// none. A harness covered by a lease that has not ended is never held.
+	// The pass asks on every tick, in hours or not, and the asking is what
+	// retires a lease: one that ended at now is dropped (and its end kept as
+	// the close's anchor), and one whose hours opened is discarded.
+	Lease(name string, now time.Time) (until time.Time, ok bool)
 	// CloseAt reports the instant name went out of hours — the anchor a
 	// graceful close's deadline is measured from. ok is false when the
 	// boundary cannot be determined and the close anchors to now instead.
@@ -206,31 +216,38 @@ func (s *Scheduler) gatePass(now time.Time) (acts []gateAction, hoursChanges []h
 				hoursChanges = append(hoursChanges, hoursChange{name: name, in: in, next: hn})
 			}
 		}
-		// leaseEnd: one Lease() consult per gated harness per tick, tracked
-		// the same way lastIn is, so "was leased, now is not" is caught
-		// whether the lease expired outright or hours opened and discarded it
-		// — either way Lease() itself already decided and (durably)
-		// recorded the expiry; this only notices it happened. wasLeased is
-		// the ONLY reader of this state; no gate decision below consults it.
-		leasedNow := s.leased(name, now)
+		// Asked every tick and on this tick's clock, so lease validity and
+		// hours are judged at the same instant: a lease can neither outlive
+		// a window that opened under it (the asking discards it) nor look
+		// valid to the Gate and expired to the pass (SPEC-0012 REQ
+		// "After-Hours Lease").
+		until, leased := s.gate.Lease(name, now)
+		leased = leased && now.Before(until)
+		// leaseEnd: that one Lease() consult per gated harness per tick,
+		// tracked the same way lastIn is, so "was leased, now is not" is
+		// caught whether the lease expired outright or hours opened and
+		// discarded it — either way Lease() itself already decided and
+		// (durably) recorded the expiry; this only notices it happened.
+		// wasLeased is the ONLY reader of this state; no gate decision below
+		// consults it.
 		if s.leaseEnded != nil {
 			if was, known := s.wasLeased[name]; !known {
 				if s.wasLeased == nil {
 					s.wasLeased = make(map[string]bool)
 				}
-				s.wasLeased[name] = leasedNow
-			} else if was && !leasedNow {
+				s.wasLeased[name] = leased
+			} else if was && !leased {
 				s.wasLeased[name] = false
 				leaseEnds = append(leaseEnds, leaseEnd{name: name})
-			} else if leasedNow {
+			} else if leased {
 				s.wasLeased[name] = true
 			}
 		}
 		switch {
-		case !in && leasedNow:
+		case !in && leased:
 			// Covered by an after-hours lease: nothing to enforce — but if
 			// its end is close, warm the watch a graceful close will need.
-			if until, had := s.gate.Lease(name); had && until.Sub(now) <= armLead {
+			if until.Sub(now) <= armLead {
 				if s.armOnce(name, until) {
 					acts = append(acts, gateAction{name: name, arm: true, closeAt: until})
 				}
@@ -241,7 +258,7 @@ func (s *Scheduler) gatePass(now time.Time) (acts []gateAction, hoursChanges []h
 		case !in && up:
 			closeAt, anchored := s.gate.CloseAt(name, now)
 			delete(s.armed, name) // the close takes over from the warm-up
-			acts = append(acts, gateAction{name: name, hold: true, mode: g.mode, closeAt: closeAt, anchored: anchored})
+			acts = append(acts, gateAction{name: name, hold: true, mode: g.mode, closeAt: closeAt, anchored: anchored, stepAt: now})
 		case in && held:
 			acts = append(acts, gateAction{name: name})
 		case in && next.Sub(now) <= armLead:
@@ -268,14 +285,6 @@ func (s *Scheduler) gatePass(now time.Time) (acts []gateAction, hoursChanges []h
 		s.gating[a.name] = true
 	}
 	return acts, hoursChanges, leaseEnds
-}
-
-// leased reports whether name holds a lease that has not ended at now. The
-// lease itself is the Gate's (it lives in state.json); this is only the seam
-// the pass consults.
-func (s *Scheduler) leased(name string, now time.Time) bool {
-	until, ok := s.gate.Lease(name)
-	return ok && now.Before(until)
 }
 
 // armOnce reports whether name's watch still needs warming for closeAt: the
@@ -328,6 +337,16 @@ func (s *Scheduler) dispatchGate(a gateAction) {
 					log.Info("operating hours closed; stopping", "harness", a.name)
 				}
 				s.gate.Hold(a.name, a.mode, a.closeAt)
+				if a.mode == core.HoursShutdownGraceful {
+					// Decide the close on the tick that began it: a host
+					// waking past the deadline, a turn already ended, or
+					// nothing attributable stops the harness on this
+					// first tick rather than the next (SPEC-0012 Scenario
+					// "Sleeping through a close"). A close with time left
+					// just stays marked; a hold that did not mark one
+					// makes this a no-op.
+					s.gate.CloseStep(a.name, a.stepAt)
+				}
 			})
 		default:
 			s.safely("operating-hours release", a.name, func() {

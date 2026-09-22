@@ -66,6 +66,10 @@ func (g gateManager) Status(name string) (up, held, closing, ok bool) {
 
 func (g gateManager) Release(name string) { g.Manager.Release(name) }
 
+func (g gateManager) Lease(name string, now time.Time) (time.Time, bool) {
+	return g.LeaseAt(name, now)
+}
+
 // TestWatcherDoesNoTraceIOFarFromAClose is the property: hours of ticks far
 // from a close arm nothing, and the arm lead arms exactly once.
 func TestWatcherDoesNoTraceIOFarFromAClose(t *testing.T) {
