@@ -26,6 +26,7 @@ import (
 
 	"github.com/stump-wtf/harness/internal/cliui"
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/schedfmt"
 	"github.com/stump-wtf/harness/internal/tui/theme"
 )
@@ -573,19 +574,30 @@ func (t *Table) bold(s string) string {
 // A scheduled harness that is stopped reads as "armed" in amber rather than
 // "stopped" in pink: it is loaded and waiting to fire, not switched off, and
 // the stopped color is deliberately warm enough to draw the eye (schedfmt).
-func (t *Table) stateCell(state string, schedule ...string) string {
+//
+// held and closing carry a gated harness's operating-hours state (SPEC-0012
+// REQ "Operating Hours Visibility"): held recolors/relabels exactly like
+// scheduled-armed (amber, "off-hours" instead of "stopped"), and closing —
+// which outranks it — recolors to the transient-state cyan and relabels
+// "closing". A scheduled harness is never gated (ADR-0019 exclusions), so the
+// two never compete for the same row. Callers with nothing to say about hours
+// pass false, false.
+//
+// Governing: ADR-0019, SPEC-0012 REQ "Operating Hours Visibility".
+func (t *Table) stateCell(state, schedule string, held, closing bool) string {
 	s := core.State(state)
-	sched := ""
-	if len(schedule) > 0 {
-		sched = schedule[0]
-	}
-	glyph := schedfmt.Glyph(state, sched)
-	label := schedfmt.StateLabel(state, sched)
+	glyph := schedfmt.Glyph(state, schedule)
+	label := schedfmt.StateLabel(state, schedule, held, closing)
 	if !t.colored {
 		return fmt.Sprintf("%s %s", glyph, label)
 	}
 	color := stateColor(s, t.pal)
-	if schedfmt.IsArmed(state, sched) {
+	switch {
+	case closing:
+		color = t.pal.Cyan
+	case schedfmt.IsOffHours(state, held):
+		color = t.pal.Amber
+	case schedfmt.IsArmed(state, schedule):
 		color = t.pal.Amber
 	}
 	return lipgloss.NewStyle().Foreground(color).Bold(true).
@@ -596,24 +608,37 @@ func (t *Table) stateCell(state string, schedule ...string) string {
 // ("daily 09:00 UTC", "every 6h"), in cyan, falling back to the raw cron
 // expression when it cannot be paraphrased — a schedule too irregular to
 // name is exactly the one worth reading verbatim (SPEC-0008 REQ "Schedule
-// Visibility"). An unscheduled harness gets an em dash, not a blank, so the
-// column reads as "no schedule" rather than "unknown".
-func (t *Table) scheduleCell(schedule string) string {
-	if schedule == "" {
-		return "—"
+// Visibility"). A gated resident harness has no schedule (ADR-0019
+// exclusions) — it shows its operating_hours expression instead, with a
+// TZ=/CRON_TZ= prefix trimmed when it names the daemon's own zone
+// (design.md § "Presentation reuses the schedule machinery"). A harness with
+// neither gets an em dash, not a blank, so the column reads as "nothing
+// scheduled" rather than "unknown".
+func (t *Table) scheduleCell(schedule, operatingHours string) string {
+	switch {
+	case schedule != "":
+		return t.cyanBold(schedfmt.LabelOrRaw(schedule))
+	case operatingHours != "":
+		return t.cyanBold(schedfmt.HoursExprLabel(operatingHours, schedfmt.DaemonZoneName()))
 	}
-	return t.cyanBold(schedfmt.LabelOrRaw(schedule))
+	return "—"
 }
 
 // nextRunCell renders the NEXT column: the countdown to the next firing
-// ("in 2h", "due"), in accent. A scheduled harness whose next firing the
-// daemon has not resolved shows an em dash rather than a placeholder time,
-// and an unscheduled one has nothing to say at all.
-func (t *Table) nextRunCell(schedule, nextRun string) string {
-	if schedule == "" {
-		return "—"
+// ("in 2h", "due") for a scheduled one-shot, in accent. A gated resident
+// harness shows its hours phrasing instead — "opens Mon 09:00", "closes
+// 13:00", "lease until 21:00", or "stops by 13:15" — reusing the same column
+// rather than adding one (#343; design.md § "Presentation reuses the
+// schedule machinery"). Neither resolved yet, or neither applies, shows an
+// em dash rather than a placeholder.
+func (t *Table) nextRunCell(h protocol.HarnessInfo) string {
+	var s string
+	switch {
+	case h.Schedule != "":
+		s = schedfmt.NextIn(h.NextRun)
+	case h.OperatingHours != "":
+		s = schedfmt.HoursNext(h.Held, h.ClosingUntil != "", h.LeaseUntil, h.ClosingUntil, h.HoursNext)
 	}
-	s := schedfmt.NextIn(nextRun)
 	if s == "" {
 		return "—"
 	}

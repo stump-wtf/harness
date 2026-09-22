@@ -44,6 +44,10 @@ func Parse(s string) (Expr, error)
 // In reports whether t is inside a window, and the next instant that answer
 // changes. ok is false when the expression covers the whole week.
 func (e Expr) In(t time.Time) (in bool, next time.Time, ok bool)
+// PrevEnd reports the most recent instant at or before t at which a window
+// closed: the anchor of a graceful close's deadline. ok is false in hours, or
+// when the expression covers the whole week.
+func (e Expr) PrevEnd(t time.Time) (end time.Time, ok bool)
 ```
 
 `Parse` resolves zones through the same helper SPEC-0008 uses for `CRON_TZ=`, so
@@ -51,7 +55,10 @@ the embedded tzdata import in `cmd/harness/tzdata.go` covers both. `In` converts
 `t` to the zone and checks today's windows plus yesterday's overnight windows.
 It finds `next` by walking candidate boundaries (each window start and end over
 the next eight local days) and returning the first where membership flips. The
-walk is bounded because every valid expression repeats weekly.
+walk is bounded because every valid expression repeats weekly. `PrevEnd` runs
+the same scan backwards and bisects to the second, so a close that began
+during a DST transition is anchored to the instant membership actually
+flipped, not to a wall-clock label.
 
 Keeping it pure means every grammar case, DST day and overnight wrap is a table
 test in microseconds, and the scheduler's clock seam stays the only time source:
@@ -68,17 +75,31 @@ component stripped. A second ticker would double the daemon's wakeups for no
 gain. The scheduler gains a gate pass per tick:
 
 ```
-for each gated supervisor:
+for each gated harness (skipping one whose last decision is still in flight):
     in, next, _ := expr.In(now)
-    lease := manager.Lease(name)            // zero if none
+    up, held, closing := gate.Status(name)
+    until, leased := gate.Lease(name, now)  // asked every tick, on the tick's clock;
+                                            // the asking retires a spent lease and
+                                            // discards one whose hours opened
     switch {
-    case in && lease.Valid():               manager.EndLease(name)        // hours opened first
-    case !in && lease.Valid(now):           // covered, nothing to do
-    case !in && snap.Up():                  manager.Hold(name)
-    case in && snap.Held:                   manager.Release(name)
+    case !in && leased:                     // covered; warm the watch if until is within armLead
+    case !in && closing:                    gate.CloseStep(name, now)
+    case !in && up:                         gate.Hold(name, mode, gate.CloseAt(name, now))
+                                            // graceful: CloseStep(name, now) on the same tick
+    case in && held:                        gate.Release(name)
+    case in && next-now <= armLead:         gate.Arm(name, next)   // warm the watch
     }
     if in != lastIn[name] { emit harness_hours_changed }
 ```
+
+Each decision runs on its own goroutine, tracked so `Close` waits for it, so a
+hold waiting out a stop grace cannot delay the tick. A reload that removes
+`operating_hours` from a held harness queues one release for the next tick.
+`armLead` is one minute. Every time value the pass hands the Gate is the tick's
+own `now`. A Gate that read the wall clock for a lease could see a lease the
+pass had already judged spent (a suspend stops the monotonic clock, and a tick
+is read a moment before the Gate is asked), so the lease is judged on the tick
+too.
 
 `lastIn` is in-memory only and exists to emit the event. No decision reads it,
 so enforcement stays level-triggered and a daemon restart cannot lose a
@@ -96,13 +117,15 @@ firings (#159). Operating hours needs a third pair:
 - **`Release(name)`** asks the actor loop to clear `Held` and start the
   harness, again without writing `Enabled`.
 
-A `cmdHold` case in `handleCommand` is the shape. The "stop the process, leave
-intent alone" half already exists: `gracefulStopKeepEnabled`
-(`internal/supervisor/supervisor.go:822`) is the manual-restart path, which
-saves `s.enabled`, clears it so the exit path does not respawn, runs
-`gracefulStop`, and restores it. `Hold` needs the same guard plus the flap-reset
-and `Held` bookkeeping, and it must suppress `publishChangeUnchanged` so a hold
-never rewrites `state.json` with `enabled = false`.
+A `cmdHold` case in `handleCommand` is the shape. It does **not** reuse
+`gracefulStopKeepEnabled`, the manual-restart path. That path clears
+`s.enabled` for the length of the stop, and the debounced persist loop can
+write that to `state.json`, where nothing heals it after a hold because no
+start follows. Instead `gracefulStop` takes the exit off the exit channel
+itself, so the restart policy never sees a hold exit, and `s.enabled` is never
+written. An exit that arrives on its own while the harness is held (the
+process ending during a graceful close) is consumed by the gate the same way:
+held, no restart, no restart-count increment.
 
 `Hold` takes the close's mode and deadline. Under `graceful` the actor loop
 marks the supervisor `Closing` with the deadline and returns. The scheduler
@@ -115,9 +138,22 @@ exit, stop and shutdown in order. Doing the check and the action there makes
 "still up? then hold" atomic, the same reason ADR-0013 moved `on_overlap` onto
 the loop.
 
-`Held` is derived state and is not persisted. On boot `Autostart` computes it:
-an enabled gated harness that is out of hours and has no valid lease starts
-held.
+`Held` is derived state and is not persisted. On boot `Autostart` starts an
+enabled gated harness at once only if a restored lease covers it. Every other
+enabled gated harness begins held, and the scheduler's first evaluation, which
+runs as soon as it starts, releases the ones that are in hours. That keeps the
+in-hours decision on the clock seam instead of a wall-clock read in
+`Autostart`. The same mechanism serves every path that sets enabled intent on
+a gated harness that is down: `startOrHold` records the intent and begins it
+held (`EnableHeld`) for a reload that introduces the harness (ADR-0014) and for
+`harness use-profile`. A gated harness that is already up just gains the
+intent and closes at its window's end, and a `failed` one is started as before,
+because `Release` never starts a failed harness.
+
+`Release`, an operator `start` (a lease out of hours), `restart` and `stop`
+all clear `Closing`. After a restart the gate decides the harness again on the
+next tick, and if it is still out of hours it closes it against the same
+boundary.
 
 ### Turn state from a daemon-side watcher
 
@@ -143,6 +179,15 @@ same `Attribute` rule as `harness logs`, extended to resumed sessions
 (SPEC-0006 REQ "Run Correlation"), so turn state can never come from a session
 `logs` would refuse to show.
 
+The Manager reaches it through a `TurnBridge` seam (`Follow`, `Unfollow`,
+`Turn`, `Unavailable`). Production wires the watcher, and tests inject a
+counting stub, which is how the no-trace-I/O property is asserted. `Follow`
+takes one synchronous sample so the first close step has something to read,
+then polls every two seconds. Every path that ends or cancels a close
+unfollows, and as a backstop a follower retires itself five minutes past the
+close it was armed for. An attributed run with no in-window event yet reports
+a zero `LastEventAt`, which the close reads as quiet.
+
 It needs three things from agent-trace
 ([github.com/stump-wtf/agent-trace](https://github.com/stump-wtf/agent-trace)):
 
@@ -153,23 +198,32 @@ It needs three things from agent-trace
   not only failed ones.
 
 Until a reader ships its markers, it reports `TurnMarkers = false` and closes
-fall back to the quiet period.
+fall back to the quiet period. None of the three does yet; the request is
+tracked upstream in agent-trace.
 
 ### Leases in `state.json`
 
 The persisted harness record gains `lease_until` (RFC 3339, omitted when
-unset). The `start` control op handler, when the target is gated and out of
-hours:
+unset). The `start` control op routes an explicit `for` to
+`Manager.StartFor(name, for)`, a `for`-less start on a gated, out-of-hours
+harness (`Manager.LeaseApplies`) to `StartFor(name, DefaultLease)` (one hour),
+and anything else to `Manager.Start`. `StartFor` refuses an ungated or
+in-hours harness with `ErrNoLease` ("no lease applies"), and otherwise:
 
-1. computes `until = now + for` (default `1h`);
-2. writes `lease_until` synchronously;
+1. computes `until = now + for`, wall clock only (no monotonic reading, which
+   a suspend would stall);
+2. writes `lease_until` synchronously (`Manager.Save`);
 3. calls `Manager.Start` (which persists `enabled = true`, as a manual start
-   always has).
+   always has, and cancels a graceful close in progress).
 
-Writing before starting means a crash between the two leaves a lease with a
-stopped harness, which boot resolves by starting it, never an unbounded
-run. `stop` on any gated harness clears `lease_until` and calls `Manager.Stop`,
-which clears `enabled` exactly as it does for an ungated harness.
+Writing before starting means a crash between the two leaves a bounded lease on
+disk. Boot starts the harness under it if the recorded intent is `enabled`,
+and otherwise the lease expires unused. It is never an unbounded run. `Restore`
+drops a lease on a harness that is no longer gated. A lease is spent at its
+end instant. Its end is remembered until the hold consumes it, so the close is
+anchored to the lease's end rather than the window's. `stop` on any gated
+harness clears `lease_until` and calls `Manager.Stop`, which clears `enabled`
+exactly as it does for an ungated harness.
 
 ### Presentation reuses the schedule machinery
 
@@ -181,7 +235,10 @@ which clears `enabled` exactly as it does for an ungated harness.
 - NEXT: `opens Mon 09:00` / `closes 13:00` / `lease until 21:00` /
   `stops by 13:15`;
 - SCHEDULE: the expression, with the zone prefix trimmed when it equals the
-  daemon's zone.
+  viewer's zone. That comparison is made client-side against the `TZ`
+  environment variable, not a daemon-reported zone, because
+  `time.Local.String()` reports `Local` rather than the real IANA name. When
+  `TZ` is unset nothing is trimmed, and the full expression shows.
 
 No new column (#343).
 
@@ -250,8 +307,10 @@ rejects it as unknown, so rolling back requires removing the key.
 ## Open Questions
 
 - Should the default lease length be configurable per harness
-  (`after_hours_lease = "2h"`), or is `--for` enough?
+  (`after_hours_lease = "2h"`), or is `--for` enough? It shipped as a
+  constant (`supervisor.DefaultLease`, one hour).
 - Should the settle (10s) and quiet (2m) periods be configurable, or stay
-  constants until a real agent proves them wrong?
+  constants until a real agent proves them wrong? They shipped as constants.
 - Should the watcher follow a closing harness's sessions only, or keep turn state
-  warm for every adapter-backed harness so `harness describe` can show it?
+  warm for every adapter-backed harness so `harness describe` can show it? It
+  shipped following closing harnesses and those within a minute of a close.

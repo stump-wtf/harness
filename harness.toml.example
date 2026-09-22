@@ -110,6 +110,14 @@ enabled = false
 # operating_hours = "TZ=America/Los_Angeles Mon-Fri 09:00-13:00"
 # hours_shutdown = "graceful"           # or "immediate"; default "graceful"
 # hours_shutdown_timeout = "15m"        # default "15m"; must be a positive duration
+#
+# A late night: `harness start night-owl` outside its hours runs it under a
+# one-hour after-hours lease by default, or `harness start night-owl --for
+# 3h` for a longer one. The gate stops it at the lease's end exactly as it
+# would at a close; `harness stop night-owl` always ends the lease early and
+# clears `enabled`, in or out of hours. `harness list`/`describe` and the TUI
+# show a leased harness's NEXT column as "lease until <time>", distinct from
+# both "off-hours" (held) and "closing" (a graceful close in flight).
 
 # Harness kinds (ADR-0011, SPEC-0006): the `harness` key is an enum selecting
 # the adapter, which owns the executable a long-running harness runs (args are

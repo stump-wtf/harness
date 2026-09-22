@@ -41,6 +41,13 @@ const (
 	// changes. The Manager publishes it for the scheduler, which knows nothing
 	// of the bus.
 	EventScheduleChanged EventKind = "job_schedule_changed"
+
+	// EventHoursChanged is emitted when a gated harness's in_hours flips
+	// (`harness_hours_changed { name, in_hours, hours_next }`). The Manager
+	// publishes it for the scheduler's gate pass, which knows nothing of the
+	// bus, the same way it does for EventScheduleChanged. Governing: ADR-0019,
+	// SPEC-0012 REQ "Operating Hours Visibility".
+	EventHoursChanged EventKind = "harness_hours_changed"
 )
 
 // Event is one lifecycle notification. Only the fields relevant to Kind are
@@ -64,6 +71,12 @@ type Event struct {
 	// NextRun is set for EventScheduleChanged; zero when the harness no longer
 	// has a next window.
 	NextRun time.Time
+
+	// InHours and HoursNext are set for EventHoursChanged: the gate's new
+	// state, and the next flip (zero when OperatingHours covers the entire
+	// week). Governing: SPEC-0012 REQ "Operating Hours Visibility".
+	InHours   bool
+	HoursNext time.Time
 
 	// Code is the process exit code, set for EventExited (-1 if signalled).
 	Code int

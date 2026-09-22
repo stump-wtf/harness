@@ -49,7 +49,7 @@ func (g *fakeGate) Status(name string) (bool, bool, bool, bool) {
 	return g.up[name], g.held[name], g.closing[name], true
 }
 
-func (g *fakeGate) Lease(name string) (time.Time, bool) {
+func (g *fakeGate) Lease(name string, _ time.Time) (time.Time, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	t, ok := g.lease[name]
@@ -171,7 +171,9 @@ func TestGateClosesAndOpens(t *testing.T) {
 }
 
 // SPEC-0012 Scenario "Sleeping through a close": the first tick after resume
-// holds at once.
+// holds at once, and steps the graceful close on that same tick so a deadline
+// already past stops the harness there (TestGateStopsOnTheFirstTickPastTheDeadline
+// drives the real Manager through it).
 func TestGateSuspendThroughClose(t *testing.T) {
 	r, g := gateRig(t, mon(12, 50))
 	r.s.Apply(gatedCfg(t, "a", "TZ=UTC 09:00-13:00", core.HoursShutdownGraceful))
@@ -179,7 +181,7 @@ func TestGateSuspendThroughClose(t *testing.T) {
 	r.tick()
 	wantCalls(t, g, "12:50")
 	r.at(mon(15, 0)) // resume: one tick, two hours later
-	wantCalls(t, g, "first tick after resume", "hold a graceful")
+	wantCalls(t, g, "first tick after resume", "hold a graceful", "clos a")
 }
 
 // SPEC-0012 Scenario "Waking inside a window".

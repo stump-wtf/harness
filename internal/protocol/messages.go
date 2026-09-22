@@ -58,7 +58,18 @@ const (
 	// where the store is the only thing that differs — additive only. A daemon
 	// older than 9 omits it, and correlation infers the store from the workdir
 	// as it did before.
-	ProtoMinor = 9
+	//
+	// ProtoMinor 10 added the operating-hours visibility projection (ADR-0019,
+	// SPEC-0012 REQ "Operating Hours Visibility"): OperatingHours, InHours,
+	// HoursNext, Held, ClosingUntil, HoursShutdown and LeaseUntil on
+	// HarnessInfo, and the harness_hours_changed event with InHours and
+	// HoursNext on EventMsg — additive only. It also records For on
+	// ControlReq (SPEC-0012 REQ "After-Hours Lease"), which reached the wire
+	// under #396 without a minor bump of its own — the same catch-up this
+	// list already did for ProtoMinor 8's fields above. A daemon older than
+	// 10 omits every field above and never sends the event; a client older
+	// than 10 ignores them, exactly like any other unknown field.
+	ProtoMinor = 10
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -323,6 +334,38 @@ type HarnessInfo struct {
 	// NextRun is when Schedule next fires, RFC 3339 local time. Empty when
 	// there is no schedule or the daemon has not resolved a firing time yet.
 	NextRun string `json:"next_run,omitempty"`
+
+	// Operating-hours projection (ADR-0019, SPEC-0012 REQ "Operating Hours
+	// Visibility"). OperatingHours is the raw expression as configured, empty
+	// for an ungated harness — the discriminator every other field here is
+	// read against. InHours and Held carry no omitempty (like Enabled and
+	// Flapping): they default false and stay meaningful for an ungated
+	// harness (always false), so a client can read them without first
+	// checking OperatingHours. The RFC 3339 timestamps below DO omit empty,
+	// each only while its condition holds.
+	OperatingHours string `json:"operating_hours,omitempty"`
+	// InHours reports whether the gate is open now. Meaningful only when
+	// OperatingHours is set.
+	InHours bool `json:"in_hours"`
+	// HoursNext is the next open (out of hours) or close (in hours), RFC
+	// 3339. Omitted when OperatingHours covers the entire week — there is no
+	// next flip to report.
+	HoursNext string `json:"hours_next,omitempty"`
+	// Held reports whether the operating-hours gate has shut this harness
+	// down (or kept it down). Meaningful only when OperatingHours is set.
+	Held bool `json:"held"`
+	// ClosingUntil is the close deadline, RFC 3339, present only while a
+	// graceful close is in progress (SPEC-0012 REQ "Graceful Shutdown") — the
+	// close's own deadline (CloseAt + hours_shutdown_timeout), not the window
+	// it started from, since a close can outrun the window.
+	ClosingUntil string `json:"closing_until,omitempty"`
+	// HoursShutdown is the effective close mode ("graceful" or "immediate")
+	// for a gated harness. Empty for an ungated one.
+	HoursShutdown string `json:"hours_shutdown,omitempty"`
+	// LeaseUntil is the after-hours lease end, RFC 3339, present only while a
+	// lease is valid (SPEC-0012 REQ "After-Hours Lease").
+	LeaseUntil string `json:"lease_until,omitempty"`
+
 	// AttachViewport is the authoritative (smallest-attached-wins) viewport the
 	// guest PTY is sized to, "colsxrows" ("80x24"). Present when a Mux exists
 	// — i.e. someone has attached, or the supervisor teed output — so "why is
@@ -680,6 +723,12 @@ const (
 	EvJobRunStarted      EventKind = "job_run_started"
 	EvJobRunFinished     EventKind = "job_run_finished"
 	EvJobScheduleChanged EventKind = "job_schedule_changed"
+
+	// EvHoursChanged is emitted when a gated harness's in_hours flips — never
+	// on an unchanged tick, so a subscriber sees exactly one event per real
+	// transition (SPEC-0012 REQ "Operating Hours Visibility"). Carries InHours
+	// and HoursNext (empty when the expression covers the entire week).
+	EvHoursChanged EventKind = "harness_hours_changed"
 )
 
 // EventMsg is a pushed EVENT frame body. Only the fields relevant to Kind are
@@ -704,6 +753,12 @@ type EventMsg struct {
 	// NextRunAt (RFC 3339) is job_schedule_changed's new next window; empty
 	// when the harness no longer has one.
 	NextRunAt string `json:"next_run_at,omitempty"`
+
+	// harness_hours_changed fields (SPEC-0012 REQ "Operating Hours
+	// Visibility"). InHours is the gate's new state; HoursNext (RFC 3339) is
+	// the next flip, empty when OperatingHours covers the entire week.
+	InHours   bool   `json:"in_hours,omitempty"`
+	HoursNext string `json:"hours_next,omitempty"`
 }
 
 // ---- Attach data plane (SPEC-0002 REQ "Attach Session") ------------------

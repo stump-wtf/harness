@@ -91,6 +91,47 @@ newer than the moment it was issued — so if two manual triggers fire
 concurrently, either may pick up the other's run and both stream the same log.
 Scheduled firings never collide this way.
 
+## Operating hours
+
+A gated harness — one with `operating_hours` set (see
+[Configuration → Operating hours](./configuration#operating-hours)) — is a
+resident harness the daemon holds down outside its configured windows,
+without ever touching `enabled`. `list`, `describe` and the TUI reuse the same
+STATE/SCHEDULE/NEXT columns `harness jobs` does (no extra column) rather than
+inventing a parallel set:
+
+- **`off-hours`** replaces `stopped` for a held harness — it is down because
+  its window is closed, not because someone turned it off. `stopped` is the
+  same latch a give-up produces, so conflating the two would make an
+  operating-hours hold page like a real failure. NEXT reads `opens Mon 09:00`.
+- **`closing`** replaces the process's own state (`running`, `degraded`, ...)
+  while a graceful close is in flight: the harness is still up, finishing its
+  current turn before it stops. NEXT reads `stops by 13:15` — the close's own
+  deadline, which can run past the window's own close time by up to
+  `hours_shutdown_timeout`.
+- A gated harness running in hours shows NEXT as `closes 13:00`.
+- SCHEDULE shows the `operating_hours` expression, with a `TZ=`/`CRON_TZ=`
+  prefix dropped when it names the daemon's own zone (`$TZ`), the same way a
+  cron `schedule`'s zone is handled.
+
+```sh
+harness start <name>              # gated + out of hours: a one-hour after-hours lease
+harness start <name> --for 3h     # …for a chosen length instead
+```
+
+`--for` only applies to a gated harness that is currently out of hours; on any
+other harness it is rejected. The lease shows in NEXT as `lease until 21:00`
+until it ends — the gate stops the harness exactly as it would at a close — or
+until hours open first, when the lease simply ends and the harness keeps
+running as an ordinary in-hours one. `harness stop <name>` always stops the
+harness, ends any lease, and clears `enabled`, whatever state it is in.
+
+`harness doctor` warns on a gated harness with `enabled = false` (hours will
+never start it), an `operating_hours` expression covering the entire week (it
+gates nothing), and graceful shutdown on a harness nothing can ever be
+attributed to (a `generic` adapter, or no `workdir`) — every close then
+degrades to immediate no matter what `hours_shutdown` says.
+
 ## Logs
 
 ```sh

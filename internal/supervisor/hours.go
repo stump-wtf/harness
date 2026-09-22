@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/hours"
 	"github.com/stump-wtf/harness/internal/runtrace"
 )
 
@@ -122,6 +123,19 @@ func (s *Supervisor) shutdownTimeout() time.Duration {
 	return s.harness.HoursShutdownTimeout
 }
 
+// hoursExpr reads the staged HoursExpr first, the applied one second, the
+// same supervision-key contract gated/shutdownMode/shutdownTimeout use. Read
+// by the durable-log lines below for the next transition to report (SPEC-0012
+// REQ "Operating Hours Visibility") — a presentation-only read, never a gate
+// decision, which is still decided from CloseAt/mode/deadline exactly as
+// before.
+func (s *Supervisor) hoursExpr() hours.Expr {
+	if s.pending != nil {
+		return s.pending.HoursExpr
+	}
+	return s.harness.HoursExpr
+}
+
 // hold is cmdHold on the actor loop.
 func (s *Supervisor) hold(enable bool, mode core.HoursShutdownMode, closeAt time.Time) {
 	if enable && !s.enabled {
@@ -136,6 +150,19 @@ func (s *Supervisor) hold(enable bool, mode core.HoursShutdownMode, closeAt time
 		return
 	}
 	wasHeld := s.held
+	// nextHoursTransition scans up to eight days of the expression
+	// (internal/hours) — cheap in absolute terms, but not free, and every
+	// call below that makes new state visible (publishSnapshot, gracefulStop)
+	// is also what lets the scheduler's gate pass re-decide this harness, as
+	// soon as dispatchGate's deferred cleanup clears s.gating for it.
+	// Computing it FIRST, before any of that visibility, keeps this
+	// function's actual work — and so a real close/hold's window against the
+	// next tick — exactly as short as it was before this line existed,
+	// rather than stretched by however long the scan takes.
+	var next string
+	if !wasHeld {
+		next = s.nextHoursTransition()
+	}
 	// (1) cancel any pending respawn; (5) crash-loop bookkeeping reset.
 	s.cancelRestartTimer()
 	s.dropQueued(OutcomeCancelled)
@@ -152,10 +179,16 @@ func (s *Supervisor) hold(enable bool, mode core.HoursShutdownMode, closeAt time
 			closeAt = time.Now()
 		}
 		s.closeAt = closeAt
-		s.publishSnapshot()
 		if !wasHeld {
-			s.logEvent("held", "reason", "operating_hours", "close", "graceful")
+			// "close start", not "held": the process is still up, and CLAUDE.md
+			// "A zero" cuts both ways — a line claiming the harness stopped
+			// while it is still running would be the wrong kind of silent
+			// wrong. SPEC-0012 REQ "Operating Hours Visibility" asks for the
+			// next transition too; "close ended" (already logged by
+			// closeStep) is the actual stop.
+			s.logEvent("close start", "reason", "operating_hours", "next", next)
 		}
+		s.publishSnapshot()
 		return
 	}
 	switch {
@@ -175,7 +208,7 @@ func (s *Supervisor) hold(enable bool, mode core.HoursShutdownMode, closeAt time
 		s.publishSnapshot()
 	}
 	if !wasHeld {
-		s.logEvent("held", "reason", "operating_hours")
+		s.logEvent("held", "reason", "operating_hours", "next", next)
 	}
 }
 
@@ -239,6 +272,27 @@ func (s *Supervisor) release() {
 		s.publishSnapshot()
 		return
 	}
-	s.logEvent("released", "reason", "operating_hours")
+	// "open": SPEC-0012 REQ "Operating Hours Visibility" names this line
+	// alongside close start/hold/lease start/lease end. next is the window's
+	// own close, since the harness is about to be running in hours again.
+	s.logEvent("open", "reason", "operating_hours", "next", s.nextHoursTransition())
 	s.startProcess(RunRequest{Trigger: TriggerManual})
+}
+
+// nextHoursTransition renders the next operating-hours flip for a durable-log
+// line (SPEC-0012 REQ "Operating Hours Visibility": "stating the reason and
+// the next transition"): the next open while held, the next close once
+// released. "unknown" when the expression covers the entire week (no next
+// flip exists) or hours were removed from underneath this decision — a log
+// line still worth writing, just without a time to give.
+func (s *Supervisor) nextHoursTransition() string {
+	expr := s.hoursExpr()
+	if expr.String() == "" {
+		return "unknown"
+	}
+	_, next, ok := expr.In(time.Now())
+	if !ok {
+		return "unknown"
+	}
+	return next.Format(time.RFC3339)
 }

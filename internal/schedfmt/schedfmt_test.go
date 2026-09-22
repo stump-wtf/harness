@@ -247,11 +247,174 @@ func TestStateLabel(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := StateLabel(tc.state, tc.schedule); got != tc.want {
-				t.Errorf("StateLabel(%q, %q) = %q, want %q", tc.state, tc.schedule, got, tc.want)
+			if got := StateLabel(tc.state, tc.schedule, false, false); got != tc.want {
+				t.Errorf("StateLabel(%q, %q, false, false) = %q, want %q", tc.state, tc.schedule, got, tc.want)
 			}
 			if got := IsArmed(tc.state, tc.schedule); got != tc.wantArmed {
 				t.Errorf("IsArmed(%q, %q) = %v, want %v", tc.state, tc.schedule, got, tc.wantArmed)
+			}
+		})
+	}
+}
+
+// TestStateLabelHours covers the two combinations TestStateLabel's schedule
+// axis cannot reach: held (off-hours) and closing (closing) — a gated
+// harness never carries a schedule (ADR-0019 exclusions), so these are
+// exercised on their own axis. Governing: SPEC-0012 REQ "Operating Hours
+// Visibility".
+func TestStateLabelHours(t *testing.T) {
+	tests := []struct {
+		name          string
+		state         string
+		held, closing bool
+		want          string
+	}{
+		// The one substitution give-up's stopped latch must not share:
+		// stumpcloud/stumpcloud#440 pages on "stopped", and an hours hold is
+		// not a failure.
+		{"held stopped is off-hours", "stopped", true, false, "off-hours"},
+		// Closing outranks off-hours: SPEC-0012 sets Held the instant a
+		// graceful close begins, well before the process actually stops, so
+		// the two are simultaneously true for a closing harness.
+		{"closing running reads closing", "running", true, true, "closing"},
+		{"closing degraded reads closing", "degraded", true, true, "closing"},
+		// held with no real state-stopped is impossible in practice (Hold
+		// only sets Held on a harness it actually stops or starts closing),
+		// but StateLabel must not rename a state that isn't stopped.
+		{"held running (not closing) stays running", "running", true, false, "running"},
+		// Not held: ordinary states are untouched.
+		{"unheld stopped stays stopped", "stopped", false, false, "stopped"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := StateLabel(tc.state, "", tc.held, tc.closing); got != tc.want {
+				t.Errorf("StateLabel(%q, \"\", %v, %v) = %q, want %q", tc.state, tc.held, tc.closing, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsOffHours(t *testing.T) {
+	if !IsOffHours("stopped", true) {
+		t.Error("IsOffHours(stopped, true) = false, want true")
+	}
+	if IsOffHours("stopped", false) {
+		t.Error("IsOffHours(stopped, false) = true, want false (not held)")
+	}
+	if IsOffHours("running", true) {
+		t.Error("IsOffHours(running, true) = true, want false (not stopped)")
+	}
+}
+
+func TestHoursNext(t *testing.T) {
+	tests := []struct {
+		name                                string
+		held, closing                       bool
+		leaseUntil, closingUntil, hoursNext string
+		want                                string
+	}{
+		{
+			name: "held renders opens with the day", held: true,
+			hoursNext: "2026-09-28T09:00:00-07:00",
+			want:      "opens Mon 09:00",
+		},
+		{
+			name:      "in hours renders closes",
+			hoursNext: "2026-09-22T13:00:00-07:00",
+			want:      "closes 13:00",
+		},
+		{
+			name:       "a lease renders lease until, even though held is false",
+			leaseUntil: "2026-09-22T21:00:00-07:00",
+			want:       "lease until 21:00",
+		},
+		{
+			name: "closing renders stops by using its own deadline, not hoursNext",
+			held: true, closing: true,
+			closingUntil: "2026-09-22T13:15:00-07:00",
+			hoursNext:    "2026-09-28T09:00:00-07:00", // must be ignored
+			want:         "stops by 13:15",
+		},
+		{
+			name: "closing beats an active lease",
+			held: true, closing: true,
+			leaseUntil:   "2026-09-22T21:00:00-07:00",
+			closingUntil: "2026-09-22T13:15:00-07:00",
+			want:         "stops by 13:15",
+		},
+		{
+			name: "held with no next (nothing resolved yet) renders empty",
+			held: true,
+			want: "",
+		},
+		{
+			name: "in hours with no next (whole-week expression) renders empty",
+			want: "",
+		},
+		{
+			name: "closing with no closingUntil renders empty rather than a bad parse",
+			held: true, closing: true,
+			want: "",
+		},
+		{
+			name:      "an unparsable stamp renders empty",
+			hoursNext: "not-a-time",
+			want:      "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := HoursNext(tc.held, tc.closing, tc.leaseUntil, tc.closingUntil, tc.hoursNext)
+			if got != tc.want {
+				t.Errorf("HoursNext(%v, %v, %q, %q, %q) = %q, want %q",
+					tc.held, tc.closing, tc.leaseUntil, tc.closingUntil, tc.hoursNext, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHoursExprLabel(t *testing.T) {
+	tests := []struct {
+		name           string
+		operatingHours string
+		daemonZone     string
+		want           string
+	}{
+		{
+			name:           "matching zone prefix trimmed",
+			operatingHours: "TZ=America/Los_Angeles Mon-Fri 09:00-13:00",
+			daemonZone:     "America/Los_Angeles",
+			want:           "Mon-Fri 09:00-13:00",
+		},
+		{
+			name:           "CRON_TZ prefix trimmed the same as TZ",
+			operatingHours: "CRON_TZ=America/Los_Angeles Mon-Fri 09:00-13:00",
+			daemonZone:     "America/Los_Angeles",
+			want:           "Mon-Fri 09:00-13:00",
+		},
+		{
+			name:           "mismatched zone kept whole",
+			operatingHours: "TZ=America/New_York Mon-Fri 09:00-13:00",
+			daemonZone:     "America/Los_Angeles",
+			want:           "TZ=America/New_York Mon-Fri 09:00-13:00",
+		},
+		{
+			name:           "unknown daemon zone declines to trim",
+			operatingHours: "TZ=America/Los_Angeles Mon-Fri 09:00-13:00",
+			daemonZone:     "",
+			want:           "TZ=America/Los_Angeles Mon-Fri 09:00-13:00",
+		},
+		{
+			name:           "no prefix at all is unchanged",
+			operatingHours: "Mon-Fri 09:00-13:00",
+			daemonZone:     "America/Los_Angeles",
+			want:           "Mon-Fri 09:00-13:00",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := HoursExprLabel(tc.operatingHours, tc.daemonZone); got != tc.want {
+				t.Errorf("HoursExprLabel(%q, %q) = %q, want %q", tc.operatingHours, tc.daemonZone, got, tc.want)
 			}
 		})
 	}

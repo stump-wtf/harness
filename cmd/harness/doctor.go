@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/settings"
+	"github.com/stump-wtf/harness/internal/supervisor"
 )
 
 // check is one row in the doctor table.
@@ -49,9 +51,10 @@ type doctorResult struct {
 	// Profile (#99) and Autostart are conditional rows: present only when the
 	// condition fires. Both already counted toward the summary tally, but had no
 	// object here, so `--json` reported `warned: 1` with nothing to point at.
-	Profile   *checkResult `json:"profile,omitempty"`
-	Autostart *checkResult `json:"autostart,omitempty"`
-	Ssh       *checkResult `json:"ssh,omitempty"`
+	Profile        *checkResult `json:"profile,omitempty"`
+	Autostart      *checkResult `json:"autostart,omitempty"`
+	Ssh            *checkResult `json:"ssh,omitempty"`
+	OperatingHours *checkResult `json:"operating_hours,omitempty"`
 	// Settings reports every process setting with the source that supplied it,
 	// so "which one won — my flag, HARNESS_*, the file, or the default?" is
 	// answerable without reading code. It is not a health check and does not
@@ -141,7 +144,11 @@ func runDoctor(o verbOpts) int {
 			row.hint = "start it with: harness daemon"
 		}
 		rows = append(rows, row)
-		// No point continuing: every later check needs the daemon.
+		// The operating-hours warnings below are config-only (SPEC-0012 REQ
+		// "Operating Hours Visibility") — no point skipping them just because
+		// the daemon is down.
+		rows = appendOperatingHoursCheck(rows, cfg)
+		// No point continuing further: every later check needs the daemon.
 		// Resolved process settings and where each came from. A resolve failure
 		// is non-fatal but reported — see resolvedSettings.
 		rows, resolved := resolvedSettings(rows)
@@ -203,6 +210,10 @@ func runDoctor(o verbOpts) int {
 		}
 		rows = append(rows, sshCheck(cfg.Server, info))
 	}
+
+	// --- Check: operating hours misconfiguration ---------------------------
+	// Governing: ADR-0019, SPEC-0012 REQ "Operating Hours Visibility".
+	rows = appendOperatingHoursCheck(rows, cfg)
 
 	// --- Check 5: harnesses in healthy state -------------------------------
 	// Governing: SPEC-0003 (the state model and its healthy/degraded/failed
@@ -345,6 +356,62 @@ func sshCheck(sc core.ServerConfig, di *protocol.DaemonInfo) check {
 	}
 }
 
+// appendOperatingHoursCheck adds the "operating_hours" row when
+// operatingHoursWarnings finds anything to say. cfg may be nil (config failed
+// to load), in which case there is nothing to check.
+func appendOperatingHoursCheck(rows []check, cfg *core.Config) []check {
+	if cfg == nil {
+		return rows
+	}
+	warns := operatingHoursWarnings(cfg)
+	if len(warns) == 0 {
+		return rows
+	}
+	return append(rows, check{
+		name:   "operating_hours",
+		level:  cliui.LevelWarn,
+		detail: strings.Join(warns, "; "),
+		hint:   "review each harness's operating_hours / enabled / hours_shutdown in the config",
+	})
+}
+
+// operatingHoursWarnings returns harness doctor's three operating-hours
+// warnings (SPEC-0012 REQ "Operating Hours Visibility"), one line per
+// offending harness+condition:
+//
+//   - enabled = false on a gated harness: hours will never start it (ADR-0019
+//     never overrides a human's explicit stop).
+//   - an expression covering the entire week: it gates nothing, so the
+//     harness runs exactly as if operating_hours were unset.
+//   - graceful shutdown where nothing can ever be attributed to the run (a
+//     generic adapter, or no workdir) — SPEC-0012's degradation table has
+//     nothing to wait on, so every close is immediate no matter the config.
+//
+// Pure over cfg, so each condition is independently testable — CLAUDE.md "A
+// zero": a check that never fires reads identically to one that works.
+func operatingHoursWarnings(cfg *core.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	var warns []string
+	for _, name := range cfg.HarnessOrder {
+		h := cfg.Harnesses[name]
+		if h.OperatingHours == "" {
+			continue
+		}
+		if !h.Enabled {
+			warns = append(warns, fmt.Sprintf("%s: enabled = false — operating hours will never start it", name))
+		}
+		if in, _, ok := h.HoursExpr.In(time.Now()); in && !ok {
+			warns = append(warns, fmt.Sprintf("%s: operating_hours covers the entire week — it gates nothing", name))
+		}
+		if h.HoursShutdown == core.HoursShutdownGraceful && (h.Adapter == "generic" || supervisor.Workdir(h) == "") {
+			warns = append(warns, fmt.Sprintf("%s: graceful shutdown but nothing can be attributed to it (generic adapter or no workdir) — every close is immediate", name))
+		}
+	}
+	return warns
+}
+
 // emitDoctor renders the rows either as JSON on stdout (when --json) or as
 // a human tabular report on stderr. Split out so it can be unit-tested with
 // an injected writer.
@@ -399,6 +466,9 @@ func emitDoctorJSON(w io.Writer, rows []check, resolved []settings.Resolved) {
 		case "ssh":
 			c := cr
 			res.Ssh = &c
+		case "operating_hours":
+			c := cr
+			res.OperatingHours = &c
 		}
 	}
 	if len(resolved) > 0 {
