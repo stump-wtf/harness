@@ -41,8 +41,11 @@ project root and provenance, and publishes trajectories through SPEC-0005.
 - **Filesystem search.** Explicitly rejected; see the measurement above.
 - **Skill authoring or editing.** Harness assembles and places skills; it does
   not create them. Machine-authored skills are SPEC-0007's concern.
-- **Serving skills over MCP.** MCP has no skill primitive, and agent CLIs
-  discover skills from disk. Projection is the only mechanism that works.
+- **Serving hand-written skills over MCP.** MCP has no skill primitive, and
+  agent CLIs discover native skills from disk, so projection is the only
+  mechanism that delivers them as skills. SPEC-0007's skill repos are a separate
+  channel: their skills reach agents as ordinary text returned by a search tool,
+  and are never projected.
 - **Writing to trajectories.** Read-only, always.
 
 ## Decisions

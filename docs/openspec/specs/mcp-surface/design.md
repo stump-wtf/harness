@@ -1,6 +1,6 @@
 # Design: Local MCP Surface (facade, broker, prompts)
 
-> **Not yet implemented.** Design-stage; nothing in this spec is built today (the `[mcp.*]` tables are a config parse error). See harness issue #3.
+> **Partly implemented.** The facade's trajectory handlers and capability classes exist in `internal/facade`. No endpoint, broker, prompts or caller identity is built yet. Tracked by the SPEC-0005 epic in the Harness issue tracker.
 
 ## Context
 
@@ -177,6 +177,39 @@ C4Container
   analysis above covers writes only; scoping trajectory reads to a consumer is
   an open question below.
 
+## Caller attribution and wiring
+
+*Resolved 2026-09-22, when SPEC-0007's `serve_to` scoping made the question
+unavoidable.*
+
+**Choice**: A per-spawn token in the harness's environment (`HARNESS_MCP_TOKEN`,
+alongside an informational `HARNESS_NAME`). The token is presented by a
+`harness mcp` stdio bridge, which adapters wire in at launch through a flag, and
+never by editing the tool's own configuration.
+
+**Rationale**: The daemon already builds every harness's environment at spawn,
+so the token costs nothing to deliver, and it rotates with the process by
+construction. Agent CLIs speak stdio MCP, not Unix sockets, so a bridge is needed
+either way, and making that bridge the only door gives one attribution path for
+the facade, the broker, and SPEC-0007's skill tools. Wiring by launch flag keeps
+ADR-0010's promise that a harness's own MCP configuration is left alone.
+
+**Alternatives considered**:
+
+- *A socket path per harness*: attribution by which socket was dialed. It needs
+  one listener per harness, cleanup on every exit, and a way to tell the tool
+  which path to use, which is the same wiring problem again. Any process of the
+  user can still dial any path.
+- *The name alone*: trivially wrong. Any subprocess, or an operator copying a
+  config, would be scoped as whatever name it inherited.
+- *Peer credentials (`SO_PEERCRED`) mapped to process trees*: precise on Linux,
+  but awkward on macOS, and it breaks when the bridge is started by a tool
+  daemon that is not a descendant of the harness process.
+
+**Limit**: This is scoping, not authentication. A process that can read another
+process's environment can borrow its token. That sits inside the same-user trust
+boundary ADR-0004 already draws around the socket.
+
 ## Migration Plan
 
 Additive throughout. A daemon with no `[mcp.*]` tables serves a facade-only
@@ -194,9 +227,5 @@ read-only — so `ProtoMinor` moves and `ProtoMajor` does not.
 - Should `mcp_allow` grow finer classes than read/write (e.g. a `lifecycle`
   scope distinct from a `config` scope, or a `trajectory` read scope distinct
   from plain `read`) as the facade surface widens?
-- How is a caller attributed to a harness for per-call `mcp_allow` evaluation
-  (per-harness socket path, token, injected env), and which component wires
-  the endpoint into each tool's MCP client configuration? Neither this spec
-  nor SPEC-0006's three adapter questions currently answers it.
 - Should a project's `[mcp.*]` tables be able to *override* a global upstream of
   the same key, or only add new ones? Currently additive-only.

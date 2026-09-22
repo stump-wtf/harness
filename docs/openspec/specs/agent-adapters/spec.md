@@ -200,8 +200,9 @@ skill set into the adapter's target directory. The target directory MUST NOT
 itself be treated as a contributing source root; the merged set is drawn from
 the remaining roots. Projection SHALL copy file contents; it MUST NOT create
 symbolic links into a configured source root, so a harness writing into its
-own skill directory cannot mutate a shared source. The learned skill tier
-(SPEC-0007) SHALL be excluded from projection unconditionally. Projection
+own skill directory cannot mutate a shared source. Every SPEC-0007 skill repo,
+whether or not a distiller targets it, SHALL be excluded from projection
+unconditionally. Projection
 SHALL occur on every start and restart. When an adapter declares no target
 directory, projection SHALL be skipped and the harness SHALL start normally.
 
