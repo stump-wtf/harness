@@ -19,7 +19,7 @@ quota resets instead of restarting it into `failed`. See ADR-0027.
 
 Counters are read from the run ledger (SPEC-0022), so they survive a restart and
 agree with `harness runs`. Token and cost figures come from the ledger's usage
-accumulator (SPEC-0022 REQ "Usage Accumulation"), which reads agent-trace usage
+accumulator (SPEC-0022 REQ-8), which reads agent-trace usage
 through the daemon's observer. Error classes come from the classifier SPEC-0013
 REQ-3 defines.
 
