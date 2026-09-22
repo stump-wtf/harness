@@ -180,13 +180,22 @@ var stateValues = []string{stateRunning, stateStopped, stateFailed, stateFlappin
 // the one that needs a human. Held is not a fifth state value: REQ-2's enum is
 // fixed, so held reads as stopped here.
 //
+// A graceful close (SPEC-0012 REQ "Graceful Shutdown") is the exception: the
+// harness is already held but still up, finishing its agent's turn, so it
+// reads as whatever its process state says until the close lands. Reporting
+// it stopped while it is doing work would be exactly the "running vs able to
+// work" confusion this metric exists to remove, in the other direction.
+//
 // @joestump-agent 09/21/2026 - Held (SPEC-0012, arrived on rebase) maps to
 // stopped explicitly (review, harness#356).
+//
+// @joestump-agent 09/22/2026 - A held harness mid graceful close (Closing,
+// arrived on rebase with #403) reads by its process state, not stopped.
 func StateValue(s supervisor.Snapshot) string {
 	switch {
 	case s.State == core.StateFailed:
 		return stateFailed
-	case s.Held:
+	case s.Held && !s.Closing:
 		return stateStopped
 	case s.Flapping || s.State == core.StateDegraded:
 		return stateFlapping
