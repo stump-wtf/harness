@@ -632,8 +632,8 @@ sequenceDiagram
   sibling), ADR-0029 / SPEC-0024, ADR-0034 / SPEC-0029, ADR-0035 / SPEC-0030
   and ADR-0038 / SPEC-0033. Cairn ADR-0023, ADR-0027 and ADR-0029.
 * **SPEC-0019 (`relay-attempts`)** formalizes this ADR.
-* The relay pattern (a fresh agent per attempt, with notes passed forward) was
-  raised in a community discussion as Dan Lorenc's one-shot relay.
+* The one-shot relay pattern (a fresh agent per attempt, with notes passed
+  forward) was raised in a community discussion.
 * Switchboard's lease model (SQS-style visibility, `heartbeat` as
   `ChangeMessageVisibility`, bounded retries and the reaper) is described in the
   [Switchboard docs](https://switchboard.stump.wtf/docs/).
