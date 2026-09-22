@@ -162,8 +162,10 @@ records the attempt as having died, which is the truth.
 
 **Choice**: `[cairn.*]` plus `attempt_receipt` creates one Markdown artifact per
 attempt through `internal/relay/receipt.go`, which reuses `cairnexport`'s HTTP
-plumbing, with a 30-second cap. It uses the receipt metadata of Cairn SPEC-0021
-when the server advertises it, and falls back to tags.
+plumbing, with a 30-second cap. It is a tagged Markdown artifact, which every
+Cairn accepts today. There is no capability probe and no fallback: when Cairn
+SPEC-0021 receipt metadata ships, a follow-up switches to it outright and
+requires that Cairn release.
 
 **Rationale**: a Cairn handle is worth having when the agent crashed before
 writing its own, but it must never hold up the report that keeps the lease

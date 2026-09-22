@@ -282,8 +282,9 @@ A `fail` carries a Cairn handle when one exists, chosen in this order:
    created.
 2. **An attempt receipt Harness uploaded** when the harness sets
    `attempt_receipt = "cairn.<name>"`, naming an opt-in `[cairn.<name>]` source.
-   The receipt holds the composed summary and a redacted tail of the run log, in
-   the receipt shape of Cairn ADR-0027 (in flight).
+   The receipt holds the composed summary and a redacted tail of the run log,
+   as a tagged Markdown artifact. When Cairn ADR-0027's receipt shape ships, it
+   replaces the tags outright; there is no per-server fallback between them.
 3. **None.** The summary alone still reaches the next attempt.
 
 A trace handle becomes a fourth source once Harness ADR-0022 (PR #408) exports

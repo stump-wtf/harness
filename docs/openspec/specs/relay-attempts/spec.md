@@ -435,9 +435,11 @@ When a leased harness sets `attempt_receipt = "cairn.<name>"` and the agent did
 not supply an artifact, the daemon SHALL, after the verdict and before the
 report, create one Markdown artifact on that Cairn source holding the REQ-11
 summary and the last 200 lines of the run log, ANSI-folded and passed through
-the credential redactor. It SHALL be tagged `receipt`, `harness` and `relay`,
-and it SHALL use Cairn's receipt metadata when the server supports it. The
-upload SHALL be bounded by a 30-second timeout. A failed upload SHALL be logged
+the credential redactor. It SHALL be tagged `receipt`, `harness` and `relay`.
+The daemon SHALL NOT probe for Cairn's receipt metadata (Cairn ADR-0027) or
+switch shape by server capability: when receipt metadata ships, adopting it
+replaces the tags outright, requires that Cairn release, and carries an upgrade
+note. The upload SHALL be bounded by a 30-second timeout. A failed upload SHALL be logged
 and SHALL NOT delay the report beyond that timeout or change the verdict.
 
 #### Scenario: Receipt on failure
