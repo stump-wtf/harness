@@ -61,6 +61,18 @@ func testTrace() otel.Trace {
 	}
 }
 
+// buildOTLPJSON encodes a trace the way the exporter would, for tests that
+// inspect the wire bytes without a destination.
+func buildOTLPJSON(trace otel.Trace) ([]byte, error) {
+	res := Resource{Attributes: []KeyValue{
+		{Key: "service.name", Value: "harness"},
+		{Key: "agent.session.id", Value: trace.Session.ID},
+		{Key: "agent.session.harness", Value: string(trace.Session.Harness)},
+	}}
+	scope := Scope{Name: "github.com/stump-wtf/agent-trace", Version: "1"}
+	return encodeSpans(res, scope, trace.Spans)
+}
+
 func TestExportSuccess(t *testing.T) {
 	var receivedBody []byte
 	var receivedPath string
