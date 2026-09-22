@@ -235,7 +235,10 @@ exactly as it does for an ungated harness.
 - NEXT: `opens Mon 09:00` / `closes 13:00` / `lease until 21:00` /
   `stops by 13:15`;
 - SCHEDULE: the expression, with the zone prefix trimmed when it equals the
-  daemon's zone.
+  viewer's zone. That comparison is made client-side against the `TZ`
+  environment variable, not a daemon-reported zone, because
+  `time.Local.String()` reports `Local` rather than the real IANA name. When
+  `TZ` is unset nothing is trimmed, and the full expression shows.
 
 No new column (#343).
 
