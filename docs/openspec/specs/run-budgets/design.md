@@ -343,11 +343,20 @@ stateDiagram-v2
 
 ## Open Questions
 
-- Should a quota group be inferred from a shared `env_file` when no
-  `quota_group` is set? The ADR says no (it would mean reading credentials);
-  revisit if operators forget to group.
-- Is 10 minutes / 3 errors the right "stuck" threshold for crush, whose own
-  retries can space errors minutes apart? The thresholds are constants in the
-  first cut, promoted to keys only if field data asks.
-- Should `--over-budget` on a resident default to the harness's remaining
-  operating window instead of 1h?
+Every question below was settled in the Operation Stumply design review. None is
+left open.
+
+- **Should a quota group be inferred from a shared `env_file`?** Resolved
+  (design review 2026-09-22): no. It would mean reading credentials; operators
+  set `quota_group` explicitly.
+- **Is 10 minutes / 3 errors the right "stuck" threshold?** Resolved (design
+  review 2026-09-22): yes. A harness parks after 3 quota errors with no success
+  in 10 minutes. The values are constants in the first cut, promoted to keys
+  only if field data asks.
+- **The run-log text fallback.** Resolved (design review 2026-09-22): accepted
+  as temporary. Matching the last 4 KiB of a non-zero exit's sanitized run log
+  stays until stump.wtf/agent-trace#104 surfaces claude-code API errors as
+  marks, then it is removed.
+- **Should `--over-budget` on a resident default to the remaining operating
+  window instead of 1h?** Resolved (design review 2026-09-22): no; it stays 1h,
+  as proposed.

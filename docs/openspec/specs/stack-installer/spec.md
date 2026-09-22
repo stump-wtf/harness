@@ -531,7 +531,9 @@ plugin marketplace add` and `claude plugin install` from the public GitHub
 repositories. For `crush` it SHALL fetch the pinned ref into
 `$XDG_DATA_HOME/harness/skills/<plugin>@<ref>/` and add its `skills` directory to
 the persona's `options.skills_paths`. A failed skill install SHALL be reported
-as a warning naming the plugin, and SHALL NOT fail the persona.
+as a warning naming the plugin, and SHALL NOT fail the persona. The manifest
+SHALL pin each plugin to a release tag once its repository cuts one, and to a
+commit SHA until then; it SHALL NOT pin a branch.
 
 #### Scenario: Pinned fetch for Crush
 
@@ -622,12 +624,36 @@ characters of its SHA-256.
 `harness stack init` SHALL require an identity provider for human login: an OIDC
 issuer with client ID and secret, or a GitHub OAuth application. It SHALL
 configure both Switchboard and Cairn with it. It SHALL NOT enable either
-product's development login under any flag.
+product's development login under any flag. The bundle SHALL NOT include an
+identity provider of its own.
+
+When the identity provider is a GitHub OAuth application, `stack init` SHALL
+write an enrollment mode for both products, `SWITCHBOARD_ENROLLMENT_MODE` and
+`CAIRN_ENROLLMENT_MODE`, each one of `allowlist`, `invite` or `open`. The mode
+SHALL default to `invite`. `open` SHALL be written only when the operator chose
+it explicitly (`--enrollment open` or the answers file), and `stack init` SHALL
+then print a warning that anyone with a GitHub account can create an account on
+the instance.
 
 #### Scenario: No identity provider
 
 - **WHEN** `stack init --non-interactive` runs without identity-provider answers
 - **THEN** it exits `2` and names the OIDC and GitHub answers
+
+#### Scenario: GitHub login defaults to invite
+
+- **WHEN** `stack init` runs with a GitHub OAuth application and no enrollment
+  answer
+- **THEN** `secrets/switchboard.env` sets `SWITCHBOARD_ENROLLMENT_MODE=invite`,
+  `secrets/cairn.env` sets `CAIRN_ENROLLMENT_MODE=invite`, and a GitHub user
+  who holds no invitation cannot create an account on either product
+
+#### Scenario: Open sign-up is explicit
+
+- **WHEN** `stack init` runs with a GitHub OAuth application and
+  `--enrollment open`
+- **THEN** both products are configured with `open`, and `stack init` prints the
+  open sign-up warning
 
 ### Requirement: REQ-19 Optional Caddy
 

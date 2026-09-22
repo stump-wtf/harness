@@ -474,22 +474,30 @@ behaves exactly as before.
 
 ## Open Questions
 
-- Should Switchboard ring only sessions that declare the channel capability
-  client-side? That would close the agent-session ring leak. It is a Switchboard
-  decision; this spec only makes the signal available.
-- Is `60/m` the right default `rate_limit` for a forge organization with bursty
-  bulk edits? A burst mostly coalesces anyway, so the limit mainly protects the
-  daemon.
-- Should the listener serve an optional `GET /hooks/<name>` probe for senders
-  that validate a URL with a GET before saving it? None of the four presets
-  needs one today.
-- Two things the Switchboard notify-hook path depends on belong to Switchboard's
-  notify-hook spec, not this one. First, the minted secret must be a real
-  Standard Webhooks secret: `whsec_` plus base64, signed with the decoded bytes.
-  Switchboard's inbound webhook secrets today are `whsec_` plus hex. Second,
-  `rotate_notify_hook` should sign with both the old and the new secret for a
-  grace window. Without that, rotation 401s every delivery until the operator
-  updates `env_file`.
-- Pool dispatch (`dispatch = "one"`): route each event to one idle bound harness.
-  Revisit when a single drainer with `claim_next`-until-empty measurably cannot
-  keep up.
+Every question below was settled in the Operation Stumply design review. None is
+left open.
+
+- **Should Switchboard ring only sessions that declare the channel capability
+  client-side?** Resolved (design review 2026-09-22): not a Harness decision.
+  This spec keeps making the signal available, as proposed; whether to ring only
+  capability-declaring sessions is Switchboard's call.
+- **Is `60/m` the right default `rate_limit` for a forge organization with
+  bursty bulk edits?** Resolved (design review 2026-09-22): yes, `60/m` stays
+  the default, as proposed. A burst mostly coalesces, so the limit mainly
+  protects the daemon; an operator can raise it per webhook.
+- **Should the listener serve an optional `GET /hooks/<name>` probe?** Resolved
+  (design review 2026-09-22): no. None of the four presets needs one; add it
+  only when a sender does.
+- **The two Switchboard notify-hook dependencies** (a real Standard Webhooks
+  secret, and dual signing on rotation). Resolved (design review 2026-09-22):
+  both belong to Switchboard's notify-hook spec, SPEC-0024, which specifies
+  them: secrets are `whsec_` plus padded standard base64 and the HMAC key is the
+  decoded bytes, and `rotate_notify_hook` signs with both the old and the new
+  secret for a 24-hour grace period. Each retry also carries its own timestamp.
+- **Pool dispatch (`dispatch = "one"`).** Resolved (design review 2026-09-22):
+  stays deferred, as proposed. Revisit when a single drainer with
+  `claim_next`-until-empty measurably cannot keep up.
+- **F-X2 latency budget.** Resolved (design review 2026-09-22): the end-to-end
+  acceptance test (a trusted, labelled issue waking a one-shot) passes when the
+  Harness run starts within **30 seconds** of Switchboard receiving the forge's
+  webhook, with no polling (ADR-0021 "Confirmation").

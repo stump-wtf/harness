@@ -319,8 +319,11 @@ The bundle directory defaults to `$XDG_CONFIG_HOME/harness/stack/`.
 * **`stack init`** writes the bundle and starts nothing: `compose.yaml`, a
   Postgres init script, an optional `Caddyfile`, the object-store config,
   `stack.lock.json`, and `secrets/*.env`. It asks for base URLs, the identity
-  provider (an OIDC issuer, or a GitHub OAuth app), whether Caddy terminates
-  TLS, and whether the object store is bundled or external.
+  provider (an OIDC issuer, or a GitHub OAuth app; the bundle ships none),
+  whether Caddy terminates TLS, and whether the object store is bundled Garage
+  (the default) or an external S3 endpoint. GitHub login is offered only with an
+  enrollment mode (`SWITCHBOARD_ENROLLMENT_MODE` / `CAIRN_ENROLLMENT_MODE`:
+  `allowlist`, `invite` or `open`), which defaults to `invite`.
 * **`stack up`** pulls the pinned images, starts the services, waits for each
   health check, verifies each running image digest against the lock, verifies
   each service's reported version against the lock, then runs `harness init
@@ -677,8 +680,8 @@ sequenceDiagram
   surfaces verbatim. A consented CLI mint for agent tokens would remove the
   paste step. Cairn's single-binary work (cairn#246) would shrink the bundle.
 * **Homebrew:** the `harness` formula gains no dependency. A `cairn` CLI
-  formula (cairn#183) is recommended alongside it, and an optional `switchboard`
-  operator CLI formula later.
+  formula (homebrew-tap#20, for cairn#183) is recommended alongside it, and an
+  optional `switchboard` operator CLI formula later.
 
 ## More Information
 

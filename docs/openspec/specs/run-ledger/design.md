@@ -370,10 +370,18 @@ erDiagram
 
 ## Open Questions
 
-- Should the in-memory window be configurable, or is 7 days always enough for
-  the CLI's default queries?
-- Should `harness runs` default to 24 hours or to "since the last daemon start"
-  when no NAME is given?
-- Should the first-boot import also parse `exited code=` lines out of the
-  durable logs to backfill resident history? It is best-effort text parsing,
-  which this ADR exists to retire, so the default answer is no.
+Every question below was settled in the Operation Stumply design review. None is
+left open.
+
+- **Should the in-memory window be configurable?** Resolved (design review
+  2026-09-22): no. It stays 7 days, as proposed; a key is added only if field
+  data asks.
+- **Should `harness runs` default to 24 hours or to "since the last daemon
+  start"?** Resolved (design review 2026-09-22): 24 hours, as REQ-14 states.
+- **Should the first-boot import parse `exited code=` lines to backfill resident
+  history?** Resolved (design review 2026-09-22): no. It is best-effort text
+  parsing, which this ADR exists to retire.
+- **Trace push and `internal/cairnexport`.** Resolved (design review
+  2026-09-22): delete the unused `internal/cairnexport` package once ADR-0022's
+  telemetry export (#408, in review as #548) lands; #499 tracks it. Runs link to
+  traces through `trace_url`, not through that package.

@@ -257,10 +257,16 @@ in, and gain the callout and the new key. Rollback: remove the key.
 
 ## Open Questions
 
-- Does the current dialog offer numbered choices (an absolute selection), or
-  only arrow navigation? The first fixture decides `KeysSelect`. The design
-  prefers absolute selection.
-- Should `doctor` escalate the standing warning to `fail` if the last
-  confirmation was under a Claude Code version outside every signature's
-  `captured_from`? It is deferred: matching is by text, and an unknown version
-  with matching text is still a match.
+Every question below was settled in the Operation Stumply design review. None is
+left open.
+
+- **Does the dialog offer numbered choices, or only arrow navigation?** Resolved
+  (design review 2026-09-22): the first captured fixture decides `KeysSelect`,
+  as proposed; the design prefers absolute selection.
+- **Should `doctor` escalate to `fail` for a confirmation under an unknown
+  Claude Code version?** Resolved (design review 2026-09-22): no, deferred as
+  proposed. Matching is by text, and an unknown version with matching text is
+  still a match.
+- **Opt-in and loudness.** Resolved (design review 2026-09-22): auto-confirm
+  stays opt-in per entry, with a WARN every time it fires and a standing
+  `doctor` warning (REQ-10 to REQ-14).

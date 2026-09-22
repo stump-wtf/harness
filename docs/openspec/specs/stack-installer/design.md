@@ -53,7 +53,9 @@ ADR-0008, ADR-0009, ADR-0011, ADR-0018, ADR-0019, ADR-0021.
 - **Multi-host or high-availability deployments.** One host, one Compose
   project. StumpCloud keeps deploying with Ansible.
 - **Running an identity provider.** The bundle consumes an OIDC issuer or a
-  GitHub OAuth app; it does not ship one.
+  GitHub OAuth app; it does not ship one (decided for v1 in the 2026-09-22
+  design review). With GitHub login it writes an enrollment mode for both
+  products, `invite` by default (REQ-18).
 - **Managing someone else's instance.** `harness stack` never takes a remote URL.
 - **A human work queue.** Human work is a notification (Switchboard ADR-0034).
 - **Replacing each product's own self-hosting docs.** The bundle is a
@@ -72,7 +74,8 @@ self-test read-back.
 
 **Rationale**: a Homebrew user has `harness` and nothing else. Requiring the
 `switchboard` binary (which ships inside the server image) or the `cairn` CLI
-(not yet publicly installable, cairn#183) would make the installer depend on
+(not yet publicly installable; its formula is homebrew-tap#20) would make the
+installer depend on
 installs it is supposed to perform.
 
 **Alternatives considered**:
@@ -233,8 +236,10 @@ $XDG_CONFIG_HOME/harness/stack/          0700
   secrets/                                0700
     postgres.env       POSTGRES_PASSWORD, SWITCHBOARD_DB_PASSWORD, CAIRN_DB_PASSWORD
     switchboard.env    SWITCHBOARD_DATABASE_URL, SWITCHBOARD_SECRET_ENCRYPTION_KEY,
-                       SWITCHBOARD_METRICS_TOKEN, SWITCHBOARD_OIDC_* | SWITCHBOARD_GITHUB_*
-    cairn.env          CAIRN_DATABASE_URL, CAIRN_S3_*, CAIRN_OIDC_* | CAIRN_GITHUB_*
+                       SWITCHBOARD_METRICS_TOKEN, SWITCHBOARD_OIDC_* | SWITCHBOARD_GITHUB_*,
+                       SWITCHBOARD_ENROLLMENT_MODE (GitHub login only; default invite)
+    cairn.env          CAIRN_DATABASE_URL, CAIRN_S3_*, CAIRN_OIDC_* | CAIRN_GITHUB_*,
+                       CAIRN_ENROLLMENT_MODE (GitHub login only; default invite)
     garage.env         GARAGE_RPC_SECRET, GARAGE_ADMIN_TOKEN
 ```
 
@@ -573,17 +578,24 @@ flowchart TB
 
 ## Open Questions
 
-- **Bundle an identity provider?** The bundle requires OIDC or a GitHub OAuth
-  app. A small passkey OIDC provider as an optional service would remove the
-  biggest first-run hurdle, at the cost of one more service to pin. Joe's call.
-- **Channel `url` by reference.** SPEC-0014 makes a channel `url` a literal.
-  Allowing `${NAME}` there would let a drop-in carry no instance URL at all.
-  Probably unnecessary: the URL is not a secret.
-- **Garage or external-only.** If Cairn's single-binary work adds a filesystem
-  store, the bundled object store could be dropped rather than maintained.
-- **Plugin tags.** `claude-plugin-switchboard` and `claude-plugin-cairn` have no
-  tags yet; pinning needs them to cut releases, or the manifest pins commits.
-- **Operator sign-up policy.** Both products let anyone who can authenticate
-  with the configured provider create an account. A GitHub OAuth app therefore
-  needs an allowlist (Cairn ADR-0024 adds one; Switchboard has none yet) before
-  `stack init` offers it for an internet-facing instance.
+Every question below was settled in the Operation Stumply design review. None is
+left open.
+
+- **Bundle an identity provider?** Resolved (design review 2026-09-22): no, not
+  in v1. The bundle requires an OIDC issuer or a GitHub OAuth app (REQ-18).
+- **Channel `url` by reference.** Resolved (design review 2026-09-22): no, as
+  proposed. SPEC-0014 keeps a channel `url` literal; the URL is not a secret.
+- **Garage or external-only.** Resolved (design review 2026-09-22): bundle
+  Garage by default for Cairn's S3, with an external S3 endpoint as the option.
+  Revisit only if Cairn's single-binary work adds a filesystem store.
+- **Plugin tags.** Resolved (design review 2026-09-22): pin
+  `claude-plugin-switchboard` and `claude-plugin-cairn` to release tags once
+  they exist. Cutting those tags is tracked in each plugin repository; until
+  then the manifest pins a commit, never a branch (REQ-14).
+- **Operator sign-up policy.** Resolved (design review 2026-09-22): `stack init`
+  offers GitHub login only with an enrollment mode configured: it writes
+  `SWITCHBOARD_ENROLLMENT_MODE` and `CAIRN_ENROLLMENT_MODE` (`allowlist`,
+  `invite` or `open`), defaulting to `invite` (REQ-18). Open sign-up is opt-in.
+- **The `cairn` CLI formula.** Resolved (design review 2026-09-22): it ships
+  through the Homebrew tap (homebrew-tap#20); the `harness` formula still gains
+  no dependency.
