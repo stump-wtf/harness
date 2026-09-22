@@ -1,5 +1,5 @@
 ---
-status: draft
+status: implemented
 date: 2026-09-17
 implements: [ADR-0019]
 requires: [SPEC-0002, SPEC-0003, SPEC-0006, SPEC-0008]
@@ -215,8 +215,15 @@ SHALL start it without modifying `enabled`. The daemon SHALL NOT start a gated
 harness that is `failed`, or one whose `enabled` is false, when hours open.
 
 On daemon start, SPEC-0003 REQ "Autostart" SHALL start an `enabled` gated
-harness only if it is in hours or covered by a valid lease. Otherwise the
-harness SHALL begin held.
+harness at once only if it is covered by a valid lease. Every other `enabled`
+gated harness SHALL begin held, and the first gate evaluation, which runs as
+soon as the scheduler starts, SHALL release it if it is in hours. The in-hours
+decision is then made on the scheduler's clock like every other gate decision.
+An in-hours harness comes up a moment after boot rather than inside Autostart,
+and a harness booted out of hours is never started only to be shut again.
+The same rule applies whenever enabled intent is set on a gated harness that
+is down: a reload that introduces it (ADR-0014) and `harness use-profile` each
+record the intent and begin it held.
 
 #### Scenario: Close
 
@@ -259,6 +266,12 @@ harness SHALL begin held.
 - **WHEN** the daemon starts at 20:00 and an enabled harness has
   `operating_hours = "09:00-13:00"` and no lease
 - **THEN** the harness is not started and begins held
+
+#### Scenario: Boot in hours
+
+- **WHEN** the daemon starts at 10:00 and an enabled harness has
+  `operating_hours = "09:00-13:00"`
+- **THEN** it begins held and the first gate evaluation starts it
 
 ### Requirement: Shutdown Mode
 
@@ -320,10 +333,17 @@ harness with no workdir, or a session SPEC-0006 excludes as ambiguous), the
 daemon SHALL stop the harness at once and log that graceful shutdown was
 unavailable, with the reason.
 
+The tick that begins a close SHALL also evaluate these conditions, so a
+host that wakes past the deadline, a turn that has already ended, or a run with
+nothing attributable stops on that first tick. An attributed run with no trace
+event in its run window yet counts as quiet.
+
 The daemon SHALL cancel a close in progress, and leave the harness running,
-when hours open again or a lease starts (REQ "After-Hours Lease"). A process
-that exits on its own while closing SHALL be held without a restart. The
-durable log SHALL record which of the conditions above ended each close.
+when hours open again, a lease starts (REQ "After-Hours Lease"), or an operator
+restarts the harness. A restarted harness is decided afresh by the next tick,
+which closes it again against the same boundary if it is still out of hours.
+A process that exits on its own while closing SHALL be held without a restart.
+The durable log SHALL record which of the conditions above ended each close.
 
 A closing harness keeps receiving whatever its agent receives. A prompt that
 starts a new turn during a close SHALL NOT extend the deadline.
@@ -414,8 +434,14 @@ non-positive or unparseable `for` SHALL be rejected. The CLI SHALL expose it as
 hours SHALL be rejected with an error saying no lease applies.
 
 The daemon SHALL persist the lease's absolute end time in `state.json` before
-starting the harness, and SHALL restore it on boot. While a lease is valid, Gate
-Enforcement SHALL NOT hold the harness. When the lease ends, the next tick SHALL
+starting the harness, and SHALL restore it on boot. A crash between the write
+and the start therefore leaves a bounded lease: boot starts the harness under
+it if its recorded intent is `enabled`, and otherwise the lease expires unused.
+It is never an unbounded run. A restored lease on a harness that is no longer
+gated SHALL be dropped. The lease SHALL be judged on the same tick clock as the
+hours (REQ "Gate Evaluation"): a lease ends at its end instant, and it is
+discarded on the first tick that finds its hours open. While a lease is valid,
+Gate Enforcement SHALL NOT hold the harness. When the lease ends, the next tick SHALL
 enforce the gate as for a close. When hours open before the lease ends, the
 daemon SHALL discard the lease, and the harness continues as an in-hours
 harness.
