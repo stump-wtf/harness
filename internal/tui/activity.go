@@ -3,7 +3,7 @@ package tui
 // Live Harness Activity
 //
 // The dashboard's list rows carry a live "what is this agent doing" field fed
-// by agent-trace's tail.Watcher (ADR-0015 REQ "Dashboard Activity Field"). The
+// by agent-trace's tail.Watcher (ADR-0015). The
 // watcher discovers every agent session on the machine and reports the working
 // directory each one ran in; it has no concept of a harness. This file is the
 // correlation between the two, plus the fixed-width column the field renders
@@ -16,7 +16,8 @@ package tui
 // a field whose width tracks the action would resize the pane, and the peek
 // beside it, on every event.
 //
-// Governing: ADR-0015 (chatroom TUI), SPEC-0015 REQ "Dashboard Activity Field"
+// Governing: ADR-0015 (chatroom TUI). No spec requirement covers the
+// dashboard field yet; SPEC-0009 specifies the chatroom it shares a feed with.
 //
 // @joestump-agent 08/21/2026 - Extracted from update.go and view.go. The field
 // was keyed by adapter kind, so every harness sharing an adapter showed one

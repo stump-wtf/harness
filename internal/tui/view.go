@@ -106,7 +106,7 @@ func paneInner(w int) int {
 // truncates down (#179).
 const paneBorderRows = 2
 
-// viewChatroom renders the chatroom view (ADR-0015, SPEC-0015). The chatroom
+// viewChatroom renders the chatroom view (ADR-0015, SPEC-0009). The chatroom
 // model owns its own layout; this is a thin pass-through that clips to the
 // terminal geometry the same way the dashboard does.
 func (m *Model) viewChatroom() string {

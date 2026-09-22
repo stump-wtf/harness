@@ -218,7 +218,7 @@ type Model struct {
 	fInputs    formInputs
 	editing    bool // form is editing (e) vs new (n)
 
-	// chatroom view (ADR-0015, SPEC-0015). Built once and kept for the
+	// chatroom view (ADR-0015, SPEC-0009). Built once and kept for the
 	// session: it is a view over a buffer the watcher fills whether or not it
 	// is on screen, so opening it shows what has been happening rather than an
 	// empty stream while a fresh scan runs.

@@ -1,4 +1,4 @@
-// Styles for the chatroom view (ADR-0015, SPEC-0015).
+// Styles for the chatroom view (ADR-0015, SPEC-0009).
 //
 // Harness themes map to the existing Palette tokens where possible, falling
 // back to hex values from the spec. The styles layer resolves through the

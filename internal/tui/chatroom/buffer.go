@@ -1,4 +1,4 @@
-// Package chatroom implements the unified chatroom TUI view (ADR-0015, SPEC-0015).
+// Package chatroom implements the unified chatroom TUI view (ADR-0015, SPEC-0009).
 //
 // A full-screen chronological stream of all agent activity across every harness
 // (Claude Code, Codex, Crush, OpenCode, Pi). Each event renders as a chat-style

@@ -21,7 +21,7 @@ package tui
 // buffer. What survives is delivered in batches, so a burst costs a frame
 // rather than a frame each.
 //
-// Governing: ADR-0015 (chatroom TUI), SPEC-0015 REQ "Live Event Stream"
+// Governing: ADR-0015 (chatroom TUI), SPEC-0009 REQ "Multi-Harness Event Aggregation"
 //
 // @joestump-agent 08/21/2026 - Replaces the two independent watchers PR #248
 // created (one for the dashboard field, one built per chatroom entry), each

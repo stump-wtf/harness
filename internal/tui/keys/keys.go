@@ -64,7 +64,7 @@ type KeyMap struct {
 	// Overlays.
 	Confirm key.Binding // Enter/y confirm a guarded action.
 
-	// Chatroom view (ADR-0015, SPEC-0015).
+	// Chatroom view (ADR-0015, SPEC-0009).
 	Chatroom key.Binding // C — enter chatroom from dashboard.
 	ChatUp   key.Binding
 	ChatDown key.Binding
