@@ -121,15 +121,24 @@ type otlpScope struct {
 }
 
 type otlpSpan struct {
-	TraceID           string     `json:"traceId"`
-	SpanID            string     `json:"spanId"`
-	ParentSpanID      string     `json:"parentSpanId,omitempty"`
-	Name              string     `json:"name"`
-	Kind              string     `json:"kind"`
-	StartTimeUnixNano string     `json:"startTimeUnixNano"`
-	EndTimeUnixNano   string     `json:"endTimeUnixNano"`
-	Attributes        []otlpKV   `json:"attributes,omitempty"`
-	Status            otlpStatus `json:"status"`
+	TraceID           string      `json:"traceId"`
+	SpanID            string      `json:"spanId"`
+	ParentSpanID      string      `json:"parentSpanId,omitempty"`
+	Name              string      `json:"name"`
+	Kind              string      `json:"kind"`
+	StartTimeUnixNano string      `json:"startTimeUnixNano"`
+	EndTimeUnixNano   string      `json:"endTimeUnixNano"`
+	Attributes        []otlpKV    `json:"attributes,omitempty"`
+	Events            []otlpEvent `json:"events,omitempty"`
+	Status            otlpStatus  `json:"status"`
+}
+
+// otlpEvent is the OTLP span event wire shape: a name, a Unix-nanosecond
+// timestamp, and typed attributes.
+type otlpEvent struct {
+	Name         string   `json:"name"`
+	TimeUnixNano string   `json:"timeUnixNano"`
+	Attributes   []otlpKV `json:"attributes,omitempty"`
 }
 
 type otlpStatus struct {
@@ -192,6 +201,7 @@ func convertSpan(sp otel.Span) otlpSpan {
 		StartTimeUnixNano: unixNano(sp.StartTime),
 		EndTimeUnixNano:   unixNano(sp.EndTime),
 		Attributes:        convertAttrs(sp.Attributes),
+		Events:            convertEvents(sp.Events),
 		Status:            convertStatus(sp.Status, sp.StatusMsg),
 	}
 }
@@ -225,6 +235,21 @@ func convertAttrs(attrs map[string]any) []otlpKV {
 	out := make([]otlpKV, 0, len(attrs))
 	for k, v := range attrs {
 		out = append(out, otlpKV{Key: k, Value: convertValue(v)})
+	}
+	return out
+}
+
+func convertEvents(events []otel.SpanEvent) []otlpEvent {
+	if len(events) == 0 {
+		return nil
+	}
+	out := make([]otlpEvent, 0, len(events))
+	for _, ev := range events {
+		out = append(out, otlpEvent{
+			Name:         ev.Name,
+			TimeUnixNano: unixNano(ev.Timestamp),
+			Attributes:   convertAttrs(ev.Attributes),
+		})
 	}
 	return out
 }

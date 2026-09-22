@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -280,5 +281,69 @@ func TestResourceAttributes(t *testing.T) {
 	}
 	if found["agent.session.harness"] != "claude-code" {
 		t.Errorf("agent.session.harness = %q", found["agent.session.harness"])
+	}
+}
+
+// TestSpanEventsExported checks that span events (the error-mark exception
+// events from agent-trace#107) reach the OTLP wire with name, nanosecond
+// timestamp, and typed attributes.
+func TestSpanEventsExported(t *testing.T) {
+	trace := testTrace()
+	trace.Spans[0].Events = []otel.SpanEvent{
+		{
+			Name:      "exception",
+			Timestamp: time.Date(2026, 1, 1, 10, 0, 3, 0, time.UTC),
+			Attributes: map[string]any{
+				"exception.message": "Bad Request: context window exceeded",
+			},
+		},
+	}
+
+	body, err := buildOTLPJSON(trace)
+	if err != nil {
+		t.Fatalf("buildOTLPJSON: %v", err)
+	}
+
+	var parsed struct {
+		ResourceSpans []struct {
+			ScopeSpans []struct {
+				Spans []struct {
+					Events []struct {
+						Name         string `json:"name"`
+						TimeUnixNano string `json:"timeUnixNano"`
+						Attributes   []struct {
+							Key   string `json:"key"`
+							Value struct {
+								StringValue string `json:"stringValue"`
+							} `json:"value"`
+						} `json:"attributes"`
+					} `json:"events"`
+				} `json:"spans"`
+			} `json:"scopeSpans"`
+		} `json:"resourceSpans"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal OTLP JSON: %v", err)
+	}
+
+	spans := parsed.ResourceSpans[0].ScopeSpans[0].Spans
+	if len(spans) == 0 {
+		t.Fatal("no spans in OTLP JSON")
+	}
+	events := spans[0].Events
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	ev := events[0]
+	if ev.Name != "exception" {
+		t.Errorf("event name = %q, want %q", ev.Name, "exception")
+	}
+	want := strconv.FormatInt(time.Date(2026, 1, 1, 10, 0, 3, 0, time.UTC).UnixNano(), 10)
+	if ev.TimeUnixNano != want {
+		t.Errorf("event timeUnixNano = %q, want %q", ev.TimeUnixNano, want)
+	}
+	if len(ev.Attributes) != 1 || ev.Attributes[0].Key != "exception.message" ||
+		ev.Attributes[0].Value.StringValue != "Bad Request: context window exceeded" {
+		t.Errorf("event attributes = %+v, want exception.message with the note", ev.Attributes)
 	}
 }
