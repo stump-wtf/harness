@@ -59,6 +59,10 @@ func TestEveryDeclaredHarnessReportsAllFourStates(t *testing.T) {
 		{"held-stopping", supervisor.Snapshot{State: core.StateStopping, Gated: true, Held: true, PID: 1}, stateStopped},
 		{"held-was-flapping", supervisor.Snapshot{State: core.StateRestarting, Gated: true, Held: true, Flapping: true}, stateStopped},
 		{"held-was-degraded", supervisor.Snapshot{State: core.StateDegraded, Gated: true, Held: true}, stateStopped},
+		// A graceful close in flight (SPEC-0012 REQ "Graceful Shutdown"): held,
+		// but the process is still up finishing its turn, so it is running
+		// until the close lands.
+		{"held-closing", supervisor.Snapshot{State: core.StateRunning, Gated: true, Held: true, Closing: true, PID: 1}, stateRunning},
 		// Gated but in hours is an ordinary running harness.
 		{"gated-running", supervisor.Snapshot{State: core.StateRunning, Gated: true, PID: 1}, stateRunning},
 	}
