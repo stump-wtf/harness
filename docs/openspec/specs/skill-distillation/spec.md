@@ -69,10 +69,13 @@ model run a distiller starts, MUST NOT contribute evidence.
 
 ### Requirement: Session Git Provenance
 
-For each harvested session it attributes, the daemon SHALL record the working
-directory's origin remote URL, with any credentials stripped, and every distinct
-(branch, HEAD SHA) pair observed there. It SHALL sample when it delivers the
-session's events and when the session goes idle. The records SHALL be made with
+For each harvested session it attributes, the daemon SHALL record, for every
+working directory the session's transcript reports, the origin remote URL with
+any credentials stripped, and every distinct (branch, HEAD SHA) pair observed
+there. It SHALL sample when it delivers the session's events and when the
+session goes idle. A pair SHALL be marked **authored** only if its HEAD first
+appeared during the session, meaning it was not already HEAD at that directory's
+first sample. The records SHALL be made with
 local, read-only git operations that need no credentials. They SHALL be kept in
 daemon state, and they SHALL outlive the working directory. A session whose
 working directory is not a git repository SHALL have an empty record.
@@ -83,6 +86,12 @@ working directory is not a git repository SHALL have an empty record.
   twice
 - **THEN** its record holds `main` with its HEAD, and `feat/x` with each HEAD
   observed after the commits
+
+#### Scenario: A parked branch is not authored
+
+- **WHEN** a session runs in a checkout already on someone else's branch and
+  makes no commit
+- **THEN** that branch's HEAD is recorded but not marked authored
 
 #### Scenario: Provenance survives a deleted worktree
 
@@ -99,10 +108,10 @@ working directory is not a git repository SHALL have an empty record.
 `harness distill` SHALL link a session to a pull request only from the session's
 provenance record. The recorded remote SHALL be resolved to its canonical host,
 and linking MUST NOT target a copy that declares `downstream-mirror`. The
-repository MUST match the distiller's `evidence_repos`. A pull request SHALL
-link when its head branch is a recorded branch and its commit list contains a
-recorded HEAD SHA, or, if the branch no longer matches, when its commit list
-contains a recorded HEAD SHA. A branch name alone MUST NOT link, and a pair
+repository MUST match the distiller's `evidence_repos`. Only authored pairs
+SHALL link. A pull request SHALL link when its head branch is a recorded branch
+and its commit list contains an authored HEAD SHA, or, if the branch no longer
+matches, when its commit list contains an authored HEAD SHA. A branch name alone MUST NOT link, and a pair
 observed on the repository's default branch SHALL count as no branch. A session
 that
 matches no pull request, or several in one repository, SHALL be left unlinked,
@@ -110,8 +119,11 @@ and the number of unlinked sessions SHALL be reported.
 
 For each linked pull request the ledger SHALL record its state, base SHA, merge
 SHA, the combined status of the head at merge, each review with its state and
-comment text, the commits pushed after the first review, and any revert on the
-default branch.
+comment text, the commits pushed after the first review, and any revert. A
+revert SHALL be a commit on the default branch whose message contains
+`This reverts commit <sha>` naming the merge commit, the squash commit or any of
+the pull request's commits, or a merged pull request whose title begins
+`Revert` and references this pull request.
 
 #### Scenario: Branch and HEAD together
 
@@ -213,14 +225,19 @@ Detection SHALL group evidence by an **evidence key**, computed without a model:
 A candidate SHALL be eligible once its evidence key spans the distiller's
 `min_repos` distinct canonical repositories, and SHALL otherwise wait in the
 ledger. After authoring, the skill's **purpose key** SHALL be
-`(task_family, action, target)`, read from its frontmatter. Each value MUST come
-from the closed vocabulary in REQ "Skill Artifact". An out-of-vocabulary value
+`(task_family, action, target, path class)`. The first three are read from its
+frontmatter, and each MUST come from the closed vocabulary in REQ "Skill
+Artifact". The path class is the evidence key's, computed by code. An out-of-vocabulary value
 MUST NOT be coerced. The author run SHALL be retried once with the vocabulary
 restated, and a second miss SHALL drop the candidate for the pass. The slug SHALL
 be derived from the purpose key. The ledger SHALL map each evidence key to the
-purpose key it produced. A distiller SHALL skip a candidate whose mapped purpose
-key is suppressed for its target repo, or is active in some skill repo served to
-every harness its evidence came from, before starting any model run.
+purpose key it produced. Before starting any model run, a distiller SHALL skip
+a candidate whose mapped purpose key is suppressed for its target repo, or is
+active in a skill repo other than its `to` that is served to every harness its
+evidence came from, or whose evidence is all already cited by the active skill or
+the open proposal for that key in its `to` repo. A candidate whose key matches an
+active skill or open proposal in its `to` repo, and that brings new evidence,
+SHALL proceed as a revision (REQ "Revisions").
 
 #### Scenario: Below the distiller's threshold, a candidate waits
 
@@ -234,6 +251,14 @@ every harness its evidence came from, before starting any model run.
 - **WHEN** an author run returns `task_family = "misc"` twice
 - **THEN** the candidate is dropped for this pass with reason `vocabulary`, and
   no skill carries a fallback value
+
+#### Scenario: New evidence revises, old evidence skips
+
+- **WHEN** a candidate's key matches an active skill in the distiller's `to`
+  repo, once with a new evidence pull request and once with only pull requests
+  the skill already cites
+- **THEN** the first proceeds as a revision, and the second is skipped without a
+  model run
 
 #### Scenario: Known lessons cost no model run
 
@@ -273,7 +298,17 @@ running the configured `verifier` adapter's prompt command. For each child:
 - Author, judge and adjudicator runs SHALL have no tools. Reconstructor and
   control runs SHALL have file read and write tools only, with no shell and no
   network tool. The Harness MCP bridge MUST NOT be wired into any model run.
+- It SHALL be launched with the tool's project-level settings and project MCP
+  servers disabled (for Claude Code, `--setting-sources user` and
+  `--strict-mcp-config`). Agent configuration files (`.claude/`, `.mcp.json`,
+  `.crush.json`, `.crush/`, `.codex/`) SHALL be removed from any clean room
+  before the run starts.
+- It SHALL authenticate only from `verifier_env_file`, because its `HOME` is
+  fresh.
 - It SHALL run under the distiller's timeout.
+
+A `verifier` whose adapter cannot enforce the per-role tool restrictions SHALL
+fail the load.
 
 | Run | Receives | MUST NOT receive |
 |---|---|---|
@@ -295,6 +330,13 @@ running the configured `verifier` adapter's prompt command. For each child:
 - **WHEN** a reconstructor run starts
 - **THEN** its working directory contains no `.git`, and no file whose contents
   match the post-merge version of any cited file
+
+#### Scenario: A repository's hooks cannot run
+
+- **WHEN** the base snapshot contains `.claude/settings.json` with a hook and a
+  `.mcp.json`
+- **THEN** neither file exists in the clean room, and the run's argv disables
+  project settings and project MCP servers
 
 #### Scenario: Judges have no tools
 
@@ -376,7 +418,8 @@ A skill SHALL be a markdown file at `<path>/<slug>/SKILL.md` in a skill repo,
 where `<path>` is the skill repo's configured path. Its frontmatter SHALL carry:
 `name`; `description`, of at most 300 characters; `level` (`atomic`, `composite`
 or `pattern`); `status` (`active` or `retired`); `task_family`, `action` and
-`target`, each from the closed vocabularies below; `tags`; `purpose_key`;
+`target`, each from the closed vocabularies below; `tags`; `purpose_key`, which
+includes the evidence's path class;
 `symptoms`, the literal strings from its evidence; `applies_to`, path globs; and
 `provenance`. `provenance` SHALL record the scope counts, the first- and
 last-seen dates, one entry per evidence item (signal, repository, pull request,
@@ -466,7 +509,7 @@ as a pull request:
 - Count every open distillation pull request in the target repository against
   the distiller's `max_open`. Candidates beyond the cap SHALL wait in the ledger,
   ranked by distinct repositories × occurrences × signal weight.
-- If the skill repo is public, or has a public mirror, hold any candidate whose
+- Unless the skill repo declares `public = false`, hold any candidate whose
   evidence includes a private repository, with reason `visibility`.
 - Request `reviewers` and apply `labels` at creation. A reviewer equal to the
   forge token's own login SHALL fail the pass with a configuration error.
@@ -562,7 +605,8 @@ Skill repos SHALL be exposed through the SPEC-0005 facade as two tools.
 
 - `search_skills` SHALL search only the skill repos whose `serve_to` matches the
   calling harness, as attributed by SPEC-0005 REQ "Caller Identity". An
-  unattributed caller SHALL search only skill repos whose `serve_to` is `["*"]`.
+  unattributed caller SHALL search only skill repos whose `serve_to` contains the
+  bare `"*"`.
   It SHALL take a query and an optional `paths` list. It SHALL return
   identifiers, qualified by skill repo, and descriptions only: 3 by default and
   at most 5. A skill whose `applies_to` matches any given path SHALL rank above
@@ -676,7 +720,8 @@ treated as newly promoted.
 ### Requirement: Skill Repos
 
 A skill repo SHALL be declared by a `[skill_repo.<name>]` table with `remote`
-(required), `path` (default `skills`) and `serve_to` (default `["*"]`).
+(required), `path` (default `skills`), `serve_to` (default `["*"]`) and
+`public`. An unset `public` SHALL be treated as `true`.
 `serve_to` SHALL be a list of harness selectors. The selector `"*"` on its own
 SHALL match every harness. Any other selector SHALL be a glob over qualified
 harness names in which `*` does not match `/`. Serving settings SHALL be read
@@ -715,8 +760,8 @@ runs `harness distill run <name>`. The table has:
 - `credential_file`: required. A path to the forge token, read only by
   `harness distill`.
 - `reviewers`: required, and non-empty.
-- `evidence_repos`: owner/name globs naming the canonical repositories evidence
-  may come from. The default is the owner of `to`'s remote.
+- `evidence_repos`: host/owner/name globs naming the canonical repositories
+  evidence may come from. The default is the host and owner of `to`'s remote.
 - `min_repos`: default 1.
 
 Optional per-distiller policy: `max_open` (default 3), `max_candidates` (default
@@ -731,6 +776,7 @@ Loading SHALL fail when:
 - a distiller lists itself;
 - `reviewers` is empty, or `credential_file` is unset;
 - the harness carrying the table is not a triggered `command` one-shot;
+- the `verifier` adapter cannot enforce the per-role tool restrictions;
 - the table appears in a project `harness.toml`.
 
 Project-qualified names and globs SHALL be resolved at each pass, and the pass

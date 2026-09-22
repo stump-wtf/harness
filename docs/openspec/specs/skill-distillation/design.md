@@ -211,11 +211,13 @@ retire_window_days = 60
 
 [skill_repo.go-stack]
 remote   = "https://git.example.com/your-org/go-skills.git"
+public   = false                    # unset is treated as public
 path     = "skills"
 serve_to = ["*"]                    # the bare star matches every harness
 
 [skill_repo.reduit]
 remote   = "https://git.example.com/your-org/reduit.git"
+public   = false
 path     = ".harness/skills"       # outside every adapter's native skill path
 serve_to = ["reduit/*"]
 
@@ -229,7 +231,7 @@ timeout  = "2h"
 credential_file    = "~/.config/harness/forge/go-stack.token"   # read by harness distill; never in any env
 from               = ["reduit/*", "spotter/*", "pr-review"]
 to                 = "go-stack"
-evidence_repos     = ["your-org/*"]
+evidence_repos     = ["git.example.com/your-org/*"]
 min_repos          = 2
 reviewers          = ["your-reviewer"]   # must not be the token's own login
 max_open           = 3
@@ -239,8 +241,8 @@ replay_max_lines   = 400
 revert_window_days = 7
 labels             = ["toil"]
 branch_prefix      = "toil/distill-"
-verifier           = "claude-code"
-verifier_env_file  = "~/.config/harness/env/verifier.env"   # model credentials only
+verifier           = "claude-code"   # must be able to restrict tools per role
+verifier_env_file  = "~/.config/harness/env/verifier.env"   # model API key; HOME is fresh, so no subscription login
 test_sandbox       = ["docker", "run", "--rm", "-v", "{clean_room}:/src", "-w", "/src", "golang:1.26"]
 
 [harness.distill-reduit]

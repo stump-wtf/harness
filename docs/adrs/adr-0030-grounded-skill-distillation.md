@@ -158,11 +158,13 @@ retire_window_days = 60
 # Skill repos: where skills live, and who may search them.
 [skill_repo.go-stack]
 remote   = "https://git.example.com/your-org/go-skills.git"
+public   = false                  # declared visibility; unset is treated as public
 path     = "skills"               # <slug>/SKILL.md lives under here (default "skills")
 serve_to = ["*"]                  # "*" alone means every harness (the default)
 
 [skill_repo.reduit]
 remote   = "https://git.example.com/your-org/reduit.git"   # a project repository can hold its own
+public   = false
 path     = ".harness/skills"
 serve_to = ["reduit/*"]
 
@@ -178,10 +180,11 @@ credential_file = "~/.config/harness/forge/go-stack.token"  # read by harness di
 from           = ["reduit/*", "spotter/*", "pr-review"]  # whose sessions count
 to             = "go-stack"                              # the skill repo it proposes to
 min_repos      = 2                                       # distinct repositories before a lesson counts
-evidence_repos = ["your-org/*"]                          # repositories whose pull requests may count
+evidence_repos = ["git.example.com/your-org/*"]          # host/owner/name globs
 reviewers      = ["your-reviewer"]
 
 [harness.distill-reduit.distill]    # (harness keys as above)
+credential_file = "~/.config/harness/forge/reduit.token"
 from      = ["reduit/*"]
 to        = "reduit"
 min_repos = 1
@@ -209,10 +212,14 @@ reviewers = ["your-reviewer"]
   tier and a stack-level tier are simply two distillers with different `from`,
   `to` and `min_repos`.
 * **`evidence_repos` limits where evidence may come from**: canonical
-  repositories matching these owner/name globs. It defaults to the owner of the
-  `to` remote. A cloned repository can give itself a project name that matches a
+  repositories matching these host/owner/name globs. It defaults to the host and
+  owner of the `to` remote, so the same owner name on another forge never
+  qualifies. A cloned repository can give itself a project name that matches a
   `from` glob, but its pull requests land in a repository outside
   `evidence_repos`, so they count for nothing.
+* **A skill repo declares its visibility** with `public`. An unset value is
+  treated as public, because detecting a public mirror would need repository
+  admin rights Harness should not hold.
 * **The forge token lives in `credential_file`**, a path that only
   `harness distill` reads. It never enters the distiller harness's environment,
   so a bug in the model runs' environment allowlist cannot leak it.
@@ -238,8 +245,9 @@ reviewers = ["your-reviewer"]
 * **Distillers converge.** The idempotency marker is keyed on (skill repo,
   purpose key), so two distillers that find the same lesson for the same repo
   push to one pull request. A distiller also skips a candidate whose purpose key
-  is already active in some skill repo served to every one of the candidate's
-  source harnesses. That lesson is already reachable where it would be used.
+  is active in some *other* skill repo served to every one of the candidate's
+  source harnesses. That lesson is already reachable where it would be used. A
+  match in the distiller's own `to` repo is a revision, not a skip.
 * **Syncing a skill repo** is `harness skills sync`, a client command. Every pass
   runs it first. A hand-curated skill repo with no distiller gets its own
   command one-shot that runs sync. The daemon never fetches, because a private
@@ -260,8 +268,10 @@ reviewers = ["your-reviewer"]
 | 9 | Serve | daemon | no | `search_skills` / `get_skill` over each serving clone's default branch, scoped by `serve_to` |
 | 10 | Maintain | `harness distill`, then stage 6 | only to re-verify | pull requests that revise or retire |
 
-Dedup runs before verification, so a candidate that is suppressed, already
-active, or already open costs no verifier run.
+Dedup runs before any model run where it can. A candidate is skipped without a
+model run if its key is suppressed, if it is served from another repo, or if
+every piece of its evidence is already cited by the active skill or the open
+proposal for its key. Anything else with a matching key becomes a revision.
 
 ### Linking a session to its pull request
 
@@ -273,17 +283,21 @@ captured at harvest time instead.
 1. **Git provenance at harvest.** The daemon's observer already attributes every
    session it delivers. For each harvested session it records the origin remote
    URL (credentials stripped) and every distinct (branch, HEAD SHA) pair it sees
-   in the session's working directory. It samples whenever it delivers events
-   and again when the session goes idle. These are local, read-only git calls,
-   and they need no credentials.
+   in every working directory the transcript reports, not just the one the
+   session started in. It samples whenever it delivers events and again when the
+   session goes idle. A pair counts as **authored** only if its HEAD first
+   appeared during the session. A HEAD that was already there when the session
+   started, such as someone else's parked branch or a `main` tip that happens to
+   be a pull request's head, is recorded but never links. These are local,
+   read-only git calls, and they need no credentials.
 2. **Repository.** The recorded remote, resolved to the canonical copy by its
    `canonical-*` topic, never the mirror. It must match `evidence_repos`.
 3. **Branch and HEAD, together.** A pull request links only if its head branch
    is one of the recorded branches *and* its commit list contains one of the
-   recorded HEAD SHAs. A pair observed on the repository's default branch counts
+   session's authored HEAD SHAs. A pair observed on the repository's default branch counts
    as no branch at all. A branch name alone never links, so a session that started
    on someone else's branch cannot claim their pull request.
-4. **Commits.** Recorded HEAD SHAs are also matched against every pull request's
+4. **Commits.** Authored HEAD SHAs are also matched against every pull request's
    commit list, which keeps the original commits after a squash merge. This
    covers sessions whose branch was renamed or deleted.
 5. **Fail closed.** A session that links to no pull request contributes nothing,
@@ -293,8 +307,11 @@ captured at harvest time instead.
 
 For each linked pull request the ledger records its state; its base and merge
 SHAs; the combined CI status of the head at merge; every review, with its state
-and comments; the commits pushed after the first review; and any revert on the
-default branch.
+and comments; the commits pushed after the first review; and any revert. A
+revert is a commit on the default branch whose message says
+`This reverts commit <sha>` for the merge commit, the squash commit or any of
+the pull request's commits, or a merged pull request that names this one in a
+title beginning `Revert`.
 
 Reading from the forge needs a token, so linking cannot live in the daemon. The
 ledger belongs to `harness distill` and sits in its own state directory. It is a
@@ -343,9 +360,11 @@ Two keys are computed by code, and neither is chosen by a model.
 
   A candidate is eligible once its evidence key spans `min_repos` distinct
   canonical repositories.
-* **Purpose key**: `(task_family, action, target)`, three frontmatter fields,
-  each from a closed vocabulary defined in SPEC-0007. `task_family` uses the
-  paper's sixteen task families. An out-of-vocabulary value is never coerced:
+* **Purpose key**: `(task_family, action, target, path class)`. The first three
+  are frontmatter fields, each from a closed vocabulary defined in SPEC-0007.
+  `task_family` uses the paper's sixteen task families. The path class comes from
+  the evidence, by code, so two different lessons that happen to share a
+  vocabulary triple still land in different files. An out-of-vocabulary value is never coerced:
   the author run gets one retry with the vocabulary restated, and a second miss
   drops the candidate for this pass. The slug is derived from the purpose key,
   so it is deterministic.
@@ -373,7 +392,18 @@ its facade or its logs. Code controls each child's surroundings:
   state directory, holding only that role's inputs.
 * **Tools**: the author, judge and adjudicator get none. The reconstructor and
   the control can read and write files only: no shell and no network tools. The
-  Harness MCP bridge is never wired into a model run.
+  Harness MCP bridge is never wired into a model run. A `verifier` whose adapter
+  cannot enforce these restrictions fails the load; at first only Claude Code
+  can.
+* **Project configuration off**: the run is launched with project settings and
+  project MCP servers disabled (for Claude Code, `--setting-sources user` and
+  `--strict-mcp-config`). Agent configuration files are stripped from the clean
+  room (`.claude/`, `.mcp.json`, `.crush.json`, `.crush/`, `.codex/`), so a
+  repository's own hooks and MCP servers cannot run commands or fetch the pull
+  request.
+* **Authentication**: because `HOME` is fresh, a subscription login does not
+  carry over. The verifier authenticates only from `verifier_env_file`, for
+  example with an API key.
 
 Children run under the distiller's timeout. Their transcripts land in their
 tool's store under a temporary working directory that no harness claims, so
@@ -527,7 +557,8 @@ path into the real home directory is caught by the audit, not prevented.
   MCP endpoint, which is not built yet. `serve_to` needs to know which harness
   is calling, which SPEC-0005's caller identity provides: a per-spawn token that
   the `harness mcp` bridge presents. A caller with no token, such as an
-  operator's own interactive session, sees only repos served to `"*"`.
+  operator's own interactive session, sees only repos whose `serve_to`
+  contains the bare `"*"`.
   `serve_to` is relevance scoping, not access control. A harness can reach the
   tools only if its adapter wires the bridge and allows the bridge's tools in
   headless runs. SPEC-0005 requires both; an adapter that cannot do it says so
@@ -594,8 +625,9 @@ path into the real home directory is caught by the audit, not prevented.
 * Good, because the control run catches the paper's most common failure, a skill
   that is accurate and useless, before it costs a reviewer any time.
 * Good, because one mechanism covers a single project and a large fleet. Scope,
-  thresholds and targets are configuration, and delivery does not depend on
-  which adapter a harness runs.
+  thresholds and targets are configuration, and no skill is written into an
+  adapter's native directory. A harness still needs an adapter that can wire the
+  SPEC-0005 bridge.
 * Bad, because verification is expensive: up to five model runs per candidate,
   two of them full agent sessions. `max_candidates`, `max_reverify` and
   `replay_max_lines` bound the cost.
