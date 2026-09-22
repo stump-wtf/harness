@@ -51,6 +51,9 @@ type rawHarness struct {
 	KeepRuns          *int     `toml:"keep_runs"`
 	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
 	MCPAllow          []string `toml:"mcp_allow"`
+	// ExportTelemetry is the per-harness telemetry opt-in; nil follows
+	// [telemetry] export_all (SPEC-0015 REQ-1).
+	ExportTelemetry *bool `toml:"export_telemetry"`
 
 	// OperatingHours gates a resident harness to weekly windows (ADR-0019).
 	// Plain string like Schedule: blank-vs-absent is checked the same way
@@ -84,8 +87,11 @@ type rawProfile struct {
 
 // rawDaemon mirrors the [daemon] table before validation.
 type rawDaemon struct {
-	WatchConfig  *bool  `toml:"watch_config"`
-	OTelEndpoint string `toml:"otel_endpoint"`
+	WatchConfig *bool `toml:"watch_config"`
+	// RemovedOTelEndpoint is decoded only so its presence can be REJECTED
+	// with a migration error (SPEC-0015 REQ-13), like rawHarness's removed
+	// keys: unknown keys fail anyway, but this one deserves the way forward.
+	RemovedOTelEndpoint *string `toml:"otel_endpoint"`
 }
 
 // rawServer mirrors the [server] table before validation (ADR-0004/0008 remote
@@ -197,6 +203,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 	cfg := &core.Config{
 		Harnesses: map[string]core.Harness{},
 		Profiles:  map[string]core.Profile{},
+		Telemetry: core.DefaultTelemetryConfig(),
 	}
 
 	// Defer profile member validation until every harness is known.
@@ -205,7 +212,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 		line    int
 	}
 	var pending []pendingProfile
-	var serverSeen, daemonSeen bool
+	var serverSeen, daemonSeen, telemetrySeen bool
 	var harnessDPath string
 
 	for _, h := range headers {
@@ -225,10 +232,29 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 			if err := md.PrimitiveDecode(top["daemon"], &rd); err != nil {
 				return nil, newError(filename, h.line, "[daemon]: %v", err)
 			}
-			cfg.Daemon = core.DaemonConfig{
-				WatchConfig:  rd.WatchConfig,
-				OTelEndpoint: strings.TrimSpace(rd.OTelEndpoint),
+			if rd.RemovedOTelEndpoint != nil {
+				return nil, removedOTelEndpointErr(filename, lineOfKeyInTable(data, "daemon", "otel_endpoint"))
 			}
+			cfg.Daemon = core.DaemonConfig{WatchConfig: rd.WatchConfig}
+
+		case len(h.parts) == 1 && h.parts[0] == "telemetry":
+			// The global telemetry export table (ADR-0022, SPEC-0015 REQ-2).
+			if telemetrySeen {
+				return nil, newError(filename, h.line, "duplicate [telemetry] table")
+			}
+			telemetrySeen = true
+			var rt rawTelemetry
+			if err := md.PrimitiveDecode(top["telemetry"], &rt); err != nil {
+				return nil, newError(filename, h.line, "[telemetry]: %v", err)
+			}
+			tc, err := buildTelemetry(filename, data, h.line, rt)
+			if err != nil {
+				return nil, err
+			}
+			cfg.Telemetry = tc
+
+		case len(h.parts) == 2 && h.parts[0] == "telemetry" && h.parts[1] == "headers":
+			return nil, telemetryHeadersErr(filename, h.line)
 
 		case len(h.parts) == 1 && h.parts[0] == "server":
 			// The optional remote-access front door (ADR-0004/0008).
@@ -794,6 +820,10 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	}
 
 	h.HarvestTrajectory = rh.HarvestTrajectory != nil && *rh.HarvestTrajectory
+	if rh.ExportTelemetry != nil {
+		v := *rh.ExportTelemetry
+		h.ExportTelemetry = &v
+	}
 	h.MCPAllow = mcpAllow
 	cfg.Harnesses[name] = h
 	cfg.HarnessOrder = append(cfg.HarnessOrder, name)

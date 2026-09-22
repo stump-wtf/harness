@@ -818,6 +818,7 @@ var harnessFormFields = []string{
 	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule", "CatchUp",
 	"Timeout", "OnOverlap", "KeepRuns", "HarvestTrajectory", "MCPAllow",
 	"OperatingHours", "HoursShutdown", "HoursShutdownTimeout",
+	"ExportTelemetry",
 	// HoursExpr is OperatingHours parsed (internal/hours), not a config key of
 	// its own — config.Parse derives it fresh from OperatingHours on every
 	// load, so there is nothing for the form's save path to carry or drop; it
@@ -890,6 +891,7 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				"enabled = true",
 				"harvest_trajectory = true",
 				`mcp_allow = ["read", "write"]`,
+				"export_telemetry = false",
 			},
 		},
 		{
@@ -967,6 +969,7 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				`hours_shutdown = "immediate"`,
 				`hours_shutdown_timeout = "30m"`,
 				`description = "gated agent"`,
+				"export_telemetry = true",
 			},
 		},
 	}

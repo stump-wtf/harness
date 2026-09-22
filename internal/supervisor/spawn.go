@@ -116,6 +116,33 @@ func DiscoveryEnv(h core.Harness, keys []string) (map[string]string, error) {
 	return out, err
 }
 
+// EnvFileValues reads only keys from the env file at path, with the same
+// parser a harness env_file gets, and returns nothing else — the rest of the
+// file (a harness's own secrets, say) never leaves this function. A missing
+// file yields an empty map; callers that require the file check for it
+// themselves. Nothing is exported into the process environment.
+//
+// Governing: ADR-0008; SPEC-0015 REQ-3 ([telemetry] env_file shares this
+// parser).
+func EnvFileValues(path string, keys []string) (map[string]string, error) {
+	kvs, err := parseEnvFile(path)
+	if err != nil {
+		return nil, err
+	}
+	want := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		want[k] = true
+	}
+	out := make(map[string]string)
+	for _, kv := range kvs {
+		k, v, _ := strings.Cut(kv, "=")
+		if want[k] {
+			out[k] = v
+		}
+	}
+	return out, nil
+}
+
 // unquote strips a single matching pair of surrounding single or double quotes.
 func unquote(s string) string {
 	if len(s) >= 2 {

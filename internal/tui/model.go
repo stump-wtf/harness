@@ -125,6 +125,9 @@ type formInputs struct {
 	// (graceful, 15m), same convention as timeout/onOverlap/keepRuns above.
 	// Carried for the same round-trip reason as schedule (issue #161).
 	operatingHours, hoursShutdown, hoursShutdownTimeout string
+	// exportTelemetry is the tri-state telemetry opt-in: "" (follow
+	// export_all), "true" or "false" (SPEC-0015 REQ-1).
+	exportTelemetry string
 }
 
 // Model is the root Bubble Tea model.

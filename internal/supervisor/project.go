@@ -488,5 +488,14 @@ func harnessDefEqual(a, b core.Harness) bool {
 		a.CatchUp == b.CatchUp &&
 		a.Timeout == b.Timeout &&
 		a.OnOverlap == b.OnOverlap &&
-		a.KeepRuns == b.KeepRuns
+		a.KeepRuns == b.KeepRuns &&
+		boolPtrEqual(a.ExportTelemetry, b.ExportTelemetry)
+}
+
+// boolPtrEqual compares two tri-state flags by value (nil equals only nil).
+func boolPtrEqual(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
