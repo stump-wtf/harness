@@ -1,6 +1,6 @@
 # Design: Local MCP Surface (facade, broker, prompts)
 
-> **Not yet implemented.** Design-stage; nothing in this spec is built today (the `[mcp.*]` tables are a config parse error). Tracked by the SPEC-0005 epic, harness#67.
+> **Partly implemented.** The facade's trajectory handlers and capability classes exist in `internal/facade`. No endpoint, broker, prompts or caller identity is built yet. Tracked by the SPEC-0005 epic in the Harness issue tracker.
 
 ## Context
 

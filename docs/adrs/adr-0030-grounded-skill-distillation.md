@@ -10,7 +10,7 @@ related: [ADR-0008, ADR-0010, ADR-0011]
 # ADR-0030: Grounded distillation — sessions find the lesson, merged pull requests prove it, pull requests propose it
 
 > **Not yet implemented.** Design stage, amending ADR-0012 before either is
-> built. Tracked by the SPEC-0007 epic, harness#69.
+> built. Tracked by the SPEC-0007 epic in the Harness issue tracker.
 
 ## Context and Problem Statement
 
@@ -74,9 +74,9 @@ sees it, and how does it reach that human?**
   once it appears in one repository or only after ten depends on the fleet. A
   large fleet wants a high bar for a shared skill. A single project wants every
   lesson. A threshold baked into Harness is wrong for one of them.
-* **Delivery is independent of the adapter.** A repository worked by both Crush
-  and Claude Code harnesses must not need its skills written twice, once into
-  each tool's native directory.
+* **Delivery does not depend on any adapter's skill directory.** A repository
+  worked by both Crush and Claude Code harnesses must not need its skills written
+  twice, once into each tool's native directory.
 
 ## Considered Options
 
@@ -110,8 +110,8 @@ Five questions.
 * 4A — A daemon subsystem.
 * 4B — A distiller agent following a prompt, doing forge work with `gh` and
   `tea`.
-* 4C — Deterministic `harness distill` commands, with each model call in its own
-  one-shot run and its inputs fixed by code.
+* 4C — Deterministic `harness distill` commands. Each model call is a separate
+  child process whose inputs, environment and tools are fixed by code.
 
 **5. Where skills live, and who decides what gets distilled**
 
@@ -150,133 +150,164 @@ skills, which harnesses distill, and which harnesses each distiller learns from.
 # this is rejected, because a cloned repository must not be able to read your
 # sessions or redirect proposals.
 
+[skills]                            # serving settings, owned by the daemon
+summary_max_chars  = 1000
+retire_grace_days  = 30
+retire_window_days = 60
+
 # Skill repos: where skills live, and who may search them.
 [skill_repo.go-stack]
 remote   = "https://git.example.com/your-org/go-skills.git"
 path     = "skills"               # <slug>/SKILL.md lives under here (default "skills")
-serve_to = ["*"]                  # harness selectors that may search it (default "*")
+serve_to = ["*"]                  # "*" alone means every harness (the default)
 
 [skill_repo.reduit]
 remote   = "https://git.example.com/your-org/reduit.git"   # a project repository can hold its own
 path     = ".harness/skills"
 serve_to = ["reduit/*"]
 
-# Distillers: triggered one-shot harnesses with a distill table.
+# A distiller is a command one-shot (ADR-0023) with a distill table.
 [harness.distill-go]
-harness  = "claude-code"          # "command" once ADR-0023 lands
-prompt   = "Run `harness distill run distill-go` and report only that it finished, and the dossier path it printed. Do nothing else."
+harness  = "command"
+argv     = ["harness", "distill", "run", "distill-go"]
 schedule = "0 3 * * *"
-triggers = ["webhook.gitea-pr"]   # ADR-0021: a merged pull request is new evidence
 timeout  = "2h"
 
 [harness.distill-go.distill]
-from            = ["reduit/*", "spotter/*", "pr-review"]  # whose sessions and pull requests count
-to              = "go-stack"                              # the skill repo it proposes to
-min_repos       = 2                                       # distinct repositories before a lesson counts
-reviewers       = ["your-reviewer"]
-credential_file = "~/.config/harness/forge/go-stack.token"  # read by `harness distill` itself; never in this harness's env
+credential_file = "~/.config/harness/forge/go-stack.token"  # read by harness distill; never in any env
+from           = ["reduit/*", "spotter/*", "pr-review"]  # whose sessions count
+to             = "go-stack"                              # the skill repo it proposes to
+min_repos      = 2                                       # distinct repositories before a lesson counts
+evidence_repos = ["your-org/*"]                          # repositories whose pull requests may count
+reviewers      = ["your-reviewer"]
 
 [harness.distill-reduit.distill]    # (harness keys as above)
 from      = ["reduit/*"]
 to        = "reduit"
 min_repos = 1
+reviewers = ["your-reviewer"]
 ```
 
-* **A skill repo is a remote plus a path.** Harness keeps its own clone under
-  its state directory (sparse if `path` allows) and never touches an operator's
-  checkout. The daemon indexes each clone's default branch and serves it through
-  `search_skills` to the harnesses that match `serve_to`, whatever their
-  adapter. That settles the Crush-versus-Claude-Code question: a skill is written
-  once, and every harness in scope can reach it.
-* **A distiller is an ordinary triggered harness** with a `distill` table. `from`
-  lists harness selectors: exact names, or globs over qualified names such as
-  `reduit/*`. `to` names one skill repo. `min_repos` replaces ADR-0012's fixed
-  cross-project threshold, and its default is 1. A project-level tier and a
-  stack-level tier are simply two distillers with different `from`, `to` and
-  `min_repos`.
+* **A skill repo is a remote plus a path, with two clones.** Neither is ever an
+  operator's checkout. `harness skills sync` creates and fast-forwards the
+  **serving clone**, under `$XDG_STATE_HOME/harness/skills/<name>`, and the daemon
+  only reads it. Each distiller also has its own **proposal clone** in its state
+  directory, where it cuts branches. The daemon reindexes a serving clone when
+  it starts, when the clone's files change, and when `harness skills sync`
+  reports over the socket that it fast-forwarded. It then serves the repo
+  through `search_skills` to every harness that matches `serve_to`, whichever
+  adapter that harness uses. A skill is written once, and any harness in scope
+  whose adapter can reach the Harness MCP endpoint can read it (SPEC-0005).
+* **Selectors.** `"*"` on its own matches every harness. Anything else is a glob
+  over qualified names in which `*` does not cross `/`. So `reduit/*` is every
+  harness in project reduit, and `pr-review` is exactly that global harness.
+* **A distiller is a `command` one-shot** (ADR-0023) whose argv runs
+  `harness distill run <name>`. Until that kind lands, there is no supported
+  distiller. A prompt harness would put the forge token and the webhook payload
+  inside an agent, which is option 4B. `to` names one skill repo, and
+  `min_repos` (default 1) replaces ADR-0012's fixed threshold. A project-level
+  tier and a stack-level tier are simply two distillers with different `from`,
+  `to` and `min_repos`.
+* **`evidence_repos` limits where evidence may come from**: canonical
+  repositories matching these owner/name globs. It defaults to the owner of the
+  `to` remote. A cloned repository can give itself a project name that matches a
+  `from` glob, but its pull requests land in a repository outside
+  `evidence_repos`, so they count for nothing.
+* **The forge token lives in `credential_file`**, a path that only
+  `harness distill` reads. It never enters the distiller harness's environment,
+  so a bug in the model runs' environment allowlist cannot leak it.
 * **Everything else is per distiller**: `max_open`, `max_candidates`,
-  `replay_max_lines`, `revert_window`, `reviewers`, `labels`, `branch_prefix`,
-  `verifier` and `verifier_env_file`. The forge token belongs in
-  `credential_file`, which only `harness distill` reads — never in the wrapper
-  harness's `env_file`, and never in its prompt. Until ADR-0023's `command`
-  kind lands, the wrapper is a prompt harness: no `auto_accept`, no forge
-  credential, and nothing forge-sourced in what it is asked to report.
-  Serving settings (`summary_max_chars`,
-  `retire_grace`, `retire_window`) belong to the daemon, in `[skills]`.
-* **Load fails** when `to` names an undeclared skill repo; when an exact `from`
-  name is undeclared or lacks `harvest_trajectory`, since it would silently
-  contribute nothing; when a distiller lists itself; and when a `distill` table
-  sits on a harness with neither `schedule` nor `triggers`. Globs resolve at
-  each pass, and a glob that matches nothing is reported.
-* **No distiller learns from distillation.** Sessions of every distiller, and of
-  every model run a distiller starts, are excluded from all `from` sets.
+  `max_reverify`, `replay_max_lines`, `revert_window_days`, `labels`,
+  `branch_prefix`, `verifier`, `verifier_env_file` and `test_sandbox`. Serving
+  settings live in `[skills]`.
+* **Load fails** in any of these cases:
+  * `to` names an undeclared skill repo;
+  * an exact global `from` name is undeclared or lacks `harvest_trajectory`,
+    since it would silently contribute nothing;
+  * a distiller lists itself;
+  * `reviewers` is empty, or `credential_file` is unset;
+  * the table sits on a harness that is not a triggered `command` one-shot.
+
+  Project-qualified names and globs are resolved at each pass, because project
+  harnesses register at runtime. The pass summary lists what each selector
+  matched.
+* **No distiller learns from distillation.** Excluded everywhere:
+  * sessions of any distiller or of its model runs;
+  * sessions whose linked pull request is a distillation proposal;
+  * sessions whose linked pull request targets a skill repo.
 * **Distillers converge.** The idempotency marker is keyed on (skill repo,
   purpose key), so two distillers that find the same lesson for the same repo
   push to one pull request. A distiller also skips a candidate whose purpose key
   is already active in some skill repo served to every one of the candidate's
   source harnesses. That lesson is already reachable where it would be used.
-* **Syncing a skill repo** is `harness skills sync`, a client command. Every
-  distiller pass runs it first, and an operator with a hand-curated skill repo
-  and no distiller schedules it alone. The daemon never fetches, because a
-  private remote would need a credential.
+* **Syncing a skill repo** is `harness skills sync`, a client command. Every pass
+  runs it first. A hand-curated skill repo with no distiller gets its own
+  command one-shot that runs sync. The daemon never fetches, because a private
+  remote would need a credential.
 
 ### The pipeline
 
 | # | Stage | Runs in | Model? | Produces |
 |---|---|---|---|---|
-| 1 | Harvest | daemon (exists: `internal/trajectory`, `runtrace`, `observe`) | no | opted-in, attributed, redacted sessions |
+| 1 | Harvest | daemon (exists: `internal/trajectory`, `runtrace`, `observe`), plus git provenance per session | no | opted-in, attributed, redacted sessions with their remote, branches and HEADs |
 | 2 | Link | `harness distill` | no | session → pull request → outcome, in the distill ledger |
-| 3 | Detect | `harness distill` | no | candidates: evidence bundles grouped by evidence key, with a repository count |
-| 4 | Author | one-shot run; its only input is the bundle | yes | a typed skill record |
-| 5 | Verify | one-shot runs in a clean room | yes | fidelity verdict, test and control results, audit |
-| 6 | Dedup | `harness distill` | no | purpose key computed; new, supersedes an existing skill, or drop |
+| 3 | Detect | `harness distill` | no | candidates: evidence grouped by evidence key, with a repository count |
+| 4 | Author | a child process of `harness distill`; its only input is the bundle | yes | a typed skill record |
+| 5 | Dedup | `harness distill` | no | purpose key and slug computed; drop, revise an existing skill, or new |
+| 6 | Verify | child processes in a clean room | yes | fidelity verdict, audit, and test and control results |
 | 7 | Propose | `harness distill` | no | a pull request, or a new commit on an open one |
-| 8 | Review | a human | — | merge (promote) or close (suppress) |
-| 9 | Serve | daemon | no | `search_skills` / `get_skill` over each skill repo's default branch, scoped by `serve_to` |
-| 10 | Maintain | `harness distill`, then stage 5 | only to re-verify | pull requests that supersede or retire |
+| 8 | Review | whoever the skill repo's branch protection requires | — | merge (promote) or close (suppress) |
+| 9 | Serve | daemon | no | `search_skills` / `get_skill` over each serving clone's default branch, scoped by `serve_to` |
+| 10 | Maintain | `harness distill`, then stage 6 | only to re-verify | pull requests that revise or retire |
+
+Dedup runs before verification, so a candidate that is suppressed, already
+active, or already open costs no verifier run.
 
 ### Linking a session to its pull request
 
-This is cheap for two of the adapters we run. It is not free for the third.
+The transcript is the wrong record to link from. `gitBranch` holds whichever
+branch the session saw first, and the working directory (often a worktree or
+scratch directory) is usually gone by the nightly pass. So the facts are
+captured at harvest time instead.
 
-1. **Repository.** The remote is captured when the session is harvested —
-   `git -C <cwd> remote get-url origin`, run at observe time as a local,
-   read-only call, because the working directory is routinely gone by pass
-   time — and resolved to the
-   canonical copy by its `canonical-*` topic, never the mirror.
-2. **Branch.** Claude Code and Codex record `gitBranch` in the transcript, so
-   the join is `(repo, branch)` → pull requests with that head. The branch and
-   cwd used are the last values seen in the transcript, not the first — a
-   session that starts in a primary checkout parked on someone else's branch
-   and later moves to a worktree must link to the worktree's work (agent-trace's
-   `SessionMeta` keeps the first value today; the companion change tracks the
-   last) — and a session observed on the repository's default branch is treated
-   as branchless. The HEAD SHA is captured at the same moment. Crush, OpenCode
-   and Pi record no branch.
-3. **Commits.** For those three, and as a cross-check on the other two: commits
-   reachable in the captured checkout whose committer time falls inside the
-   session's window,
-   matched against each pull request's head SHA and commit list.
-4. **Fail closed.** A session that links to no pull request contributes
-   nothing, and so does one that links to several in one repository with no
-   branch to choose between them. The number of unlinked sessions is reported.
-   `runtrace` already follows this rule for attribution.
+1. **Git provenance at harvest.** The daemon's observer already attributes every
+   session it delivers. For each harvested session it records the origin remote
+   URL (credentials stripped) and every distinct (branch, HEAD SHA) pair it sees
+   in the session's working directory. It samples whenever it delivers events
+   and again when the session goes idle. These are local, read-only git calls,
+   and they need no credentials.
+2. **Repository.** The recorded remote, resolved to the canonical copy by its
+   `canonical-*` topic, never the mirror. It must match `evidence_repos`.
+3. **Branch and HEAD, together.** A pull request links only if its head branch
+   is one of the recorded branches *and* its commit list contains one of the
+   recorded HEAD SHAs. A pair observed on the repository's default branch counts
+   as no branch at all. A branch name alone never links, so a session that started
+   on someone else's branch cannot claim their pull request.
+4. **Commits.** Recorded HEAD SHAs are also matched against every pull request's
+   commit list, which keeps the original commits after a squash merge. This
+   covers sessions whose branch was renamed or deleted.
+5. **Fail closed.** A session that links to no pull request contributes nothing,
+   and so does one that links to several in one repository. The number of
+   unlinked sessions is reported. `runtrace` already follows this rule for
+   attribution.
 
 For each linked pull request the ledger records its state; its base and merge
 SHAs; the combined CI status of the head at merge; every review, with its state
-and comments; the commits pushed after the first review; and whether a commit
-on the default branch reverted it within `revert_window` (default 14 days).
+and comments; the commits pushed after the first review; and any revert on the
+default branch.
 
 Reading from the forge needs a token, so linking cannot live in the daemon. The
 ledger belongs to `harness distill` and sits in its own state directory. It is a
-cache, rebuildable from transcripts and the forge. Once the run-history ledger
-proposed in ADR-0028 lands, its `sessions` field replaces this attribution step
-and the distill ledger keys on `(harness, run_id)`.
+cache, rebuildable from the harvest records and the forge. Once the run-history
+ledger proposed in ADR-0028 lands, the provenance records can move into it, and
+the distill ledger keys on `(harness, run_id)`.
 
 ### What counts as evidence
 
-Only a pull request that merged, was green at merge, and was not reverted can
-ground a skill. Three signals find candidates, strongest first:
+A pull request can ground a skill only if it merged, was green at merge, and has
+gone `revert_window_days` (default 7) since merging without a revert. A younger
+pull request cannot yet be known to be unreverted, so it waits in the ledger as
+pending. Three signals find candidates, strongest first:
 
 | Signal | Shape | Why it is evidence |
 |---|---|---|
@@ -284,33 +315,69 @@ ground a skill. Three signals find candidates, strongest first:
 | **Red to green** | a required check failing on a head, then a commit that fixes it, then merge | the check names the invariant, and the hunk is the repair |
 | **Struggle, then resolution** | in a linked session, at least k failed `exec`/`verify` calls, or repeated edit→verify cycles on the same targets, before a pass | agent-trace's actions show where the lesson is, and the merged hunk on those targets is the answer |
 
-Always excluded: harnesses without `harvest_trajectory`; pull requests that
-closed unmerged, went red or were reverted; and, as the brake on the
-reinforcement loop, any session whose own trajectory shows it retrieved the
-skill its evidence would support.
+Always excluded:
+* harnesses without `harvest_trajectory`;
+* repositories outside `evidence_repos`;
+* pull requests that closed unmerged, went red, were reverted, or are still
+  inside the revert window;
+* distillation proposals, and pull requests against skill repos;
+* the brake on the reinforcement loop: any session whose trajectory shows it
+  retrieved the skill its evidence would support, or that reviewed a
+  distillation pull request for that skill's purpose key.
 
 The literal `symptoms` come from failing check names, from review text, and,
 once agent-trace grows one, from an opt-in, length-capped `ErrorExcerpt` on
-errored tool results. `internal/redact` runs on the excerpt before anything is
-stored.
+errored tool results. `internal/redact` runs on all of them, and on every hunk
+and every piece of review text, before anything is stored or shown to a model.
 
-Two keys are computed by code, and neither is chosen by a model. Detection
-groups evidence by an **evidence key**: the signal kind, the class of paths
-touched, and the failing check or error signature. A candidate is eligible once
-its evidence key spans the distiller's `min_repos` distinct canonical
-repositories. After authoring, the skill gets a **purpose key**,
-`(task_family, action, target)`, from its closed-vocabulary fields, following the
-paper's deterministic clustering. Deduplication, idempotency and suppression all
-run on the purpose key. The ledger remembers which evidence key produced which
-purpose key, so a lesson already rejected or already served is recognized before
-any model runs.
+Two keys are computed by code, and neither is chosen by a model.
+
+* **Evidence key**: `(signal kind, path class, failure signature)`.
+  * *Path class*: each touched path is mapped through a fixed table of
+    well-known files and globs (`go.mod`, `Makefile`, `Dockerfile`,
+    `.gitea/workflows/*`, `*_test.go`, and so on), falling back to its file
+    extension. The key uses the sorted set.
+  * *Failure signature*: the failing check's context name, or the first line of
+    the error excerpt, with numbers, hex, paths and quoted strings replaced by
+    placeholders. It is empty for review corrections.
+
+  A candidate is eligible once its evidence key spans `min_repos` distinct
+  canonical repositories.
+* **Purpose key**: `(task_family, action, target)`, three frontmatter fields,
+  each from a closed vocabulary defined in SPEC-0007. `task_family` uses the
+  paper's sixteen task families. An out-of-vocabulary value is never coerced:
+  the author run gets one retry with the vocabulary restated, and a second miss
+  drops the candidate for this pass. The slug is derived from the purpose key,
+  so it is deterministic.
+
+Deduplication, idempotency and suppression all run on the purpose key. The
+ledger remembers which evidence key produced which purpose key, so a lesson
+already rejected or already served is recognized before any model runs. When a
+purpose key matches an active skill in the target repo, the author run is given
+that skill and writes a revision, and the proposal edits the existing file. No
+model decides whether the new evidence "contradicts" the old skill; the reviewer
+reads the diff.
 
 ### Verification: rebuild the change without seeing it
 
-This is the paper's central check, adapted. Each model call is a separate
-one-shot scratch run (ADR-0017), and `harness distill` assembles its inputs, so
-the information boundary comes from what each run is handed, not from what its
-prompt asks.
+This is the paper's central check, adapted. Every model call is a child process
+that `harness distill` starts itself, running the verifier adapter's prompt
+command. It is not a daemon run, so nothing reaches it through Harness's socket,
+its facade or its logs. Code controls each child's surroundings:
+
+* **Environment**: an allowlist of `PATH`, locale, `TMPDIR`, a fresh `HOME`
+  inside the run's temporary directory, and whatever `verifier_env_file` holds.
+  Nothing is inherited from the daemon or from `harness distill`: no forge token,
+  and no `HARNESS_*` variables.
+* **Working directory**: a new `os.MkdirTemp` directory outside every Harness
+  state directory, holding only that role's inputs.
+* **Tools**: the author, judge and adjudicator get none. The reconstructor and
+  the control can read and write files only: no shell and no network tools. The
+  Harness MCP bridge is never wired into a model run.
+
+Children run under the distiller's timeout. Their transcripts land in their
+tool's store under a temporary working directory that no harness claims, so
+they are never harvested as evidence.
 
 | Run | Sees | Never sees |
 |---|---|---|
@@ -320,50 +387,39 @@ prompt asks.
 | Adjudicator | the judge's reason, both sets of hunks, the full skill | the sessions |
 | Control | the task statement and the same snapshot | the skill |
 
-Every run is spawned with an allowlisted environment — the variables its role
-needs, never the daemon's `os.Environ()`, its `env_file`, or any forge
-credential — with `mcp_bridge = false` and no path to the daemon socket, so the
-facade read tools and `harness logs` are unreachable from it. The same allowlist
-covers any build or test a verification step executes. Author, judge and
-adjudicator run with tools disabled; the reconstructor and control get file
-tools confined to the clean room and restricted exec. A `harness` CLI call or an
-`mcp__harness__*` tool call from any model run marks it contaminated.
-
-* **Clean room.** `git archive <base>` into a new scratch directory created in
-  a fresh temporary location outside the distill state directory — away from
-  the evidence bundles and the ledger — which has
-  no `.git`, no refs and no later history. It is removed when verification
-  ends. The reconstructor works only on the
-  files the skill cites, just as the paper rebuilds one code unit rather than a
-  whole repository.
+* **Clean room.** `git archive <base>` from the proposal clone into the run's
+  temporary directory, which has no `.git`, no refs and no later history. The
+  reconstructor works only on the files the skill cites, just as the paper
+  rebuilds one code unit rather than a whole repository. If a cited file is
+  missing from the archive (it is inside a submodule, or it is an LFS pointer),
+  the candidate is `not_replayable` and cannot pass.
 * **Task statement.** The body of the linked issue if there is one, otherwise
   the session's first user message, redacted. The dossier records which was
   used. If the statement already contains a line of the merged hunks verbatim,
   as a handoff prompt that names the fix often does, the dossier flags the
-  rebuild as not blind, so the reviewer can discount it.
-* **Audit.** The reconstructor's own transcript is read back through
-  agent-trace. A read outside the clean room (`OutsideTouch`) — including a
-  relative path that escapes it, which agent-trace is required to report rather
-  than drop (it discards relative `..` paths today, `classify/paths.go`; until
-  that lands a transcript showing a `..` escape cannot be audited and the run
-  fails closed) — or any fetch,
-  clone or forge call, marks the run contaminated. The check is deterministic,
-  but it is not a proof.
+  rebuild as not blind and the control is skipped, because both runs would be
+  handed the answer.
+* **Audit.** Every path in the reconstructor's tool calls is resolved against
+  the clean room from the raw tool input. This deliberately does not rely only on
+  agent-trace's `OutsideTouch`, which drops relative `..` paths. A path outside
+  the clean room, any invocation of the `harness` CLI or of an `mcp__harness__*`
+  tool, or any fetch, clone or forge call marks the run contaminated. The check is deterministic, but it is not a proof.
 * **Decision.** If the judge rules the two versions equivalent, the candidate
   passes. If it does not, the case goes to the adjudicator rather than straight
   to rejection. In the paper, adjudicated records never rebuilt correctly, yet
   84% were judged worth keeping.
-* **Tests, which the paper lacked.** When the repository has a `make test`
-  target, `harness distill` runs it in the reconstructor's clean room, under
-  the reconstructor's allowlisted environment — never inside a model run, and
-  never with `harness distill`'s own environment, which holds the forge
-  credential. The paper offers its
-  model-judged round trip as a scalable filter for when no tests exist, not as a
-  replacement for them. We have the tests.
+* **Tests, which the paper lacked, and only in a sandbox.** Running `make test`
+  on a reconstruction runs model-written code. So it happens only when the
+  distiller sets `test_sandbox`, an argv prefix that isolates the command (for
+  example, a container with the clean room mounted), and always with the model
+  runs' environment allowlist. It never runs bare, and never in a process
+  holding the forge token. Without `test_sandbox`, the dossier says tests were
+  not run.
 * **Control.** When the merged change is under `replay_max_lines` (default 400),
   the same task is replayed without the skill. If the control does as well, the
-  skill teaches nothing the agent did not already know. It is dropped and its
-  purpose key suppressed.
+  candidate is dropped for this pass. Its purpose key is suppressed only after
+  the control matches on two different evidence pull requests, because one
+  sample is noise.
 
 A candidate reaches review only with a fidelity pass and a clean audit. Test and
 control results go with it as evidence. Neither is required, because many
@@ -371,16 +427,16 @@ changes cannot be replayed.
 
 ### How it submits pull requests
 
-Every change to any skill surface is a pull request: a new skill, a revision, a
-supersession, a retirement. It targets the distiller's `to` skill repo, on that
-repository's canonical host, at `<path>/<slug>/SKILL.md`. Nothing reaches an
-agent's context without a merge.
+Every change to any skill surface is a pull request: a new skill, a revision or
+a retirement. It targets the distiller's `to` skill repo, on that repository's
+canonical host, at `<path>/<slug>/SKILL.md`. Nothing reaches an agent's context
+without a merge.
 
 A skill repo is no longer a local directory with a field flipped by hand. It is
-**a clone of a forge repository**. The daemon indexes the checked-out default
-branch and nothing else. Proposals live on branches, so there is no `proposed`
-status for a reader to forget to check. ADR-0012 wanted promotion to be a commit
-with an author; now it is a reviewed merge.
+a forge repository. The daemon indexes the serving clone's default branch and
+nothing else. Proposals live on branches, so there is no `proposed` status for a
+reader to forget to check. ADR-0012 wanted promotion to be a commit with an
+author; now it is a merge.
 
 Harness writes skills and nothing else. ADR-0012's other project output, an edit
 to a repository's `AGENTS.md` or `CLAUDE.md`, is dropped: those files are loaded
@@ -389,27 +445,39 @@ repository's owner, not for a distiller.
 
 `harness distill propose` enforces the following in code:
 
-1. **One skill per pull request.** The branch is cut from a freshly fetched
-   default branch in the distiller's own clone under its state directory, never
-   in an operator's checkout.
+1. **One skill per pull request**, on a branch cut from a freshly fetched
+   default branch in the distiller's proposal clone.
 2. **Idempotent by skill repo and purpose key.** The body carries
    `<!-- harness-distill key=<purpose-key> -->`. If an open pull request against
    that skill repo already has that key, it gets a new commit instead of a
    sibling, whichever distiller opened it. A closed, unmerged one suppresses the
    key for that repo until the evidence count has doubled, and the next proposal
    links to it.
-3. **Never force-push, never merge, never arm auto-merge.** A revision is a
-   commit on top. The token should be scoped so the forge refuses the rest.
-4. **Capped.** At most `max_open` (default 3) open distillation pull requests
-   per target repository. The rest wait in the ledger, ranked by distinct
-   repositories × occurrences × signal weight.
-5. **Addressed.** Review is requested from `reviewers`, and `labels` are applied
-   when the pull request is created.
-6. **Self-describing.** The body is the evidence dossier: the claim; an evidence
+3. **Never force-push, never merge, never arm auto-merge.** Before committing,
+   `propose` fetches the proposal branch. If the remote has commits it lacks
+   (a reviewer pushed a fix), it builds on the remote tip. If its own earlier
+   commits are missing from the remote, it refuses with `ErrBranchDiverged`. It
+   never overwrites.
+4. **Capped.** Each distiller counts every open distillation pull request in the
+   target repository, not only its own, against its own `max_open` (default 3).
+   The rest wait in the ledger, ranked by distinct repositories × occurrences ×
+   signal weight.
+5. **Visibility-safe.** If the skill repo is public or mirrored publicly, every
+   evidence repository must be public too. Otherwise the candidate waits with
+   reason `visibility`, because the dossier and the skill would carry private
+   code and links into public view.
+6. **Addressed.** Review is requested from `reviewers`, and a reviewer equal to
+   the token's own login is an error. `labels` are applied when the pull request
+   is created.
+7. **Self-describing.** The body is the evidence dossier: the claim; an evidence
    table of signal, repository, pull request, merge SHA, span and session count;
    the fidelity, test, control and audit results; the scope; the context cost in
-   characters of the summary and full renders; and whatever the skill
-   supersedes.
+   characters of the summary and full renders; and whatever the skill revises.
+
+Harness cannot enforce who merges. A token scope cannot forbid merging on most
+forges, and reviewers are often agents. The skill repo's branch protection is
+the gate, and it should require approval from a human. The pass summary flags
+any proposal merged by the token's own login.
 
 Review feedback closes the loop. `harness distill` lists the comments on its
 open pull requests. A new author run gets the skill plus those comments, as
@@ -419,37 +487,35 @@ marks it `rejected`, and the reviewer's reason is kept as the evidence behind
 the suppression.
 
 Each skill repo gets CI of its own: `harness skills lint` checks the schema, the
-required sections, the size caps, and that no two skills on the default branch
-share a purpose key.
+vocabularies, the required sections, the size caps, and that no two skills on
+the default branch share a purpose key.
 
 ### Who runs it
 
 `harness distill run <distiller>` orchestrates one distiller's pass
-deterministically. The distiller name is passed explicitly: `HARNESS_NAME` is
-informational, and is not trusted as authorization. The distiller harness runs it
-on a `schedule`. Once ADR-0021 lands, a `webhook.*` trigger for merged pull
-requests also runs it, with `on_overlap = "queue"`. With the `command` kind
-proposed in ADR-0023, the distiller is simply a command one-shot. Until that
-lands, it is a prompt harness whose only instruction is to run the command —
-and which must therefore never be given `auto_accept`, and never hold a forge
-credential (see the configuration below).
+deterministically. The distiller is named explicitly, so a pass can be
+reproduced by hand from a shell. The distiller harness runs it on a `schedule`.
+An ADR-0021 `webhook.*` trigger for merged pull requests may also fire it, with
+`on_overlap = "queue"`. A firing is only a wake-up: the distiller ignores the
+payload, re-reads the forge, and new evidence still waits out its revert window.
+Webhooks fire on every pull-request action, including the distiller's own
+proposals. Passes are idempotent, and queued firings collapse into one, so that
+costs only a cheap pass.
 
 Credentials split three ways, and the split is the point:
 
 | Process | Holds | Reads untrusted text? |
 |---|---|---|
-| daemon | nothing new | no; it counts retrievals and serves an index |
-| `harness distill` | a forge token, read from the distill table's `credential_file` — a path that never enters the wrapper harness's environment | it parses that text and never follows it |
-| author, reconstructor, judge, adjudicator, control | model credentials only, from an allowlisted environment assembled from `verifier_env_file` | yes, and they are spawned with that allowlist in place of the daemon's inherited environment — no forge credential in any variable, no daemon socket, no MCP bridge |
+| daemon | nothing new | no; it records git provenance, counts retrievals and serves an index |
+| `harness distill` | a forge token, read from `credential_file` and never placed in any environment | it parses that text and never follows it |
+| author, reconstructor, judge, adjudicator, control | model credentials from `verifier_env_file`, an allowlisted environment and a fresh `HOME`; no shell | yes, and none of them can push, comment or merge |
+| `make test` on a reconstruction | the same allowlisted environment, inside `test_sandbox` | it runs model-written code, and nothing else |
 
-Only the runs that read transcripts and review comments can be steered by them.
-Author, judge and adjudicator run with tools disabled; the reconstructor and the
-control get file tools confined to the clean room and restricted exec, and any
-`harness` CLI or `mcp__harness__*` call marks a run contaminated. What the
-allowlist cannot remove is the shared filesystem — a claude-code or crush run
-with a shell can still read the operator's credential files and dial the daemon
-socket by path, which is a residual risk recorded under Consequences, not a
-boundary this design claims.
+Only the runs that read transcripts and review comments can be steered by them,
+and those runs cannot touch the forge. The process that can touch the forge
+never treats text as instructions. All of these processes run as the same user,
+so this is least privilege, not a sandbox. A model run that reads an absolute
+path into the real home directory is caught by the audit, not prevented.
 
 ### Delivery, adjusted to the paper's results
 
@@ -462,7 +528,10 @@ boundary this design claims.
   is calling, which SPEC-0005's caller identity provides: a per-spawn token that
   the `harness mcp` bridge presents. A caller with no token, such as an
   operator's own interactive session, sees only repos served to `"*"`.
-  `serve_to` is relevance scoping, not access control.
+  `serve_to` is relevance scoping, not access control. A harness can reach the
+  tools only if its adapter wires the bridge and allows the bridge's tools in
+  headless runs. SPEC-0005 requires both; an adapter that cannot do it says so
+  in `harness doctor`.
 * **`search_skills` returns 3 results by default and 5 at most**, searching only
   the skill repos whose `serve_to` matches the calling harness. It accepts an
   optional `paths` list matched against each skill's `applies_to` globs, so a
@@ -475,14 +544,19 @@ boundary this design claims.
 
 ### Maintenance
 
-* **Staleness.** Each skill cites `(repo, path, merge SHA, span)`. When a cited
-  span changes on the default branch, or its file disappears, the skill is
-  re-verified against the current code (stage 5). A failure becomes a pull
-  request that supersedes or retires it. This is the paper's source-aware
-  refresh, and it is the only rot signal that does not wait for a skill to fall
-  out of use.
-* **Retirement** keeps ADR-0012's rule of retrieval count after a grace period,
-  but acts through a pull request. The counts live in daemon state and cannot be
+* **Staleness.** Each skill cites `(repo, path, merge SHA, span)` and records
+  the blob SHA of each cited file at merge. A pass compares those against the
+  default branch, with one tree listing per evidence repository. When the cited
+  lines have changed, or the file is gone, the skill is re-verified against the
+  current code (stage 6). Each pass re-verifies at most `max_reverify` skills
+  (default 2), oldest first, so a hot file cannot trigger a storm of model runs.
+  A failure becomes a pull request that revises or retires the skill. This is
+  the paper's source-aware refresh, and it is the only rot signal that does not
+  wait for a skill to fall out of use.
+* **Retirement** keeps ADR-0012's rule of retrieval count after a grace period
+  (`retire_grace_days`, `retire_window_days`), but acts through a pull request.
+  Retrievals are counted per (harness, run), which is what the facade can
+  attribute. The counts live in daemon state and cannot be
   rebuilt. Losing them restarts every grace period, which fails safe: nothing
   retires.
 * **Efficacy is reported, not acted on.** The ledger can join the sessions that
@@ -501,10 +575,10 @@ boundary this design claims.
 | `status: proposed` on disk, and "posts for human review" | Pull requests; merging promotes; each skill repo is a clone of a forge repository |
 | One learned store; project findings edit `AGENTS.md` / `CLAUDE.md` | Any number of skill repos, each served by search to the harnesses in its `serve_to`; Harness writes skills only |
 | A fixed cross-project threshold decides project vs. stack knowledge | Each distiller sets `from`, `to` and `min_repos`; the two tiers are two distillers |
-| A skill supersedes another by judgment | Supersession is decided by a computed purpose key |
+| A skill supersedes another by judgment | A matching purpose key makes the proposal a revision of the existing skill; the reviewer reads the diff |
 | Retirement by retrieval count | Also by staleness of cited spans; both go through pull requests |
 | `get_skill` returns the body | A summary by default, a small k, and `paths` queries |
-| A distiller harness that wakes on its own schedule | `harness distill` commands, fired by a schedule or a merged-pull-request webhook, with every model call isolated |
+| A distiller harness that wakes on its own schedule | A `command` one-shot running `harness distill run`, woken by a schedule or a webhook, with every model call an isolated child process |
 
 ### Consequences
 
@@ -523,15 +597,22 @@ boundary this design claims.
   thresholds and targets are configuration, and delivery does not depend on
   which adapter a harness runs.
 * Bad, because verification is expensive: up to five model runs per candidate,
-  two of them full agent sessions. The budgets `max_candidates` and
-  `replay_max_lines` bound the cost, and ADR-0027's proposed run budgets would
-  apply to the one-shots.
+  two of them full agent sessions. `max_candidates`, `max_reverify` and
+  `replay_max_lines` bound the cost.
+* Bad, because there is no supported distiller until ADR-0023's `command` kind
+  lands. A prompt-harness stopgap would reintroduce option 4B.
+* Bad, because Harness cannot enforce who merges. The skill repo's branch
+  protection must, and an operator who leaves it open lets an agent promote its
+  own skills.
+* Bad, because a reconstruction's tests run only inside a configured
+  `test_sandbox`. Without one, fidelity rests on the judge alone, as it did in
+  the paper.
 * Bad, because lessons that never reached a merged pull request are invisible:
   exploratory sessions, operations work, anything learned and never committed.
   This is narrower than ADR-0012's reach, deliberately.
-* Bad, because linking is weakest for Crush, the adapter we run most, which
-  records no branch. Matching commits by time window fails closed, and the
-  unlinked rate has to be watched.
+* Bad, because linking depends on the daemon recording git provenance while a
+  session runs, which is a new daemon duty (local, read-only git calls). A
+  session that was never observed has no provenance and cannot link.
 * Bad, because `symptoms` cannot carry literal error text until agent-trace adds
   an opt-in error excerpt, and that excerpt is more transcript content held in
   memory.
@@ -541,13 +622,11 @@ boundary this design claims.
   harnesses.
 * Bad, because a project repository used as a skill repo means Harness keeps
   another clone of it. A sparse checkout of `path` keeps that small.
-* Bad, because the clean room is a convention on a shared filesystem, not a
-  sandbox. The audit catches the reads it can see. A claude-code or crush run
-  with a shell can read the operator's own credential files
-  (`~/.config/gh/hosts.yml`, `~/.config/tea/config.yml`, `~/.git-credentials`)
-  and dial the daemon socket by path; the allowlisted environment and the closed
-  spawn surfaces narrow what a steered run can do with them, and a real sandbox
-  (under Deferred) is the eventual answer.
+* Bad, because model runs execute as the same user. The allowlisted
+  environment, the fresh `HOME` and the missing shell remove the easy paths to
+  credentials and to the answer. The audit catches the absolute-path reads it
+  can see, but a reconstructor that learns the answer some way the audit cannot
+  see still passes.
 * Neutral, because the paper's code-beats-trajectories result compares benchmark
   banks built with other models and run through one loop. It motivates grounding
   skills in code here; it does not measure whether that works for this fleet.
@@ -561,10 +640,17 @@ matter:
 * A candidate whose only evidence is a closed or reverted pull request produces
   nothing.
 * A session that retrieved skill X contributes no evidence to X's purpose key.
-* A reconstructor run that read a file outside its clean room is marked
+* A reconstructor run that read a file outside its clean room, including
+  through a relative `..` path, or that invoked `harness`, is marked
   contaminated, and its candidate goes no further.
-* A candidate whose control run does as well as its skill run is dropped and
-  suppressed.
+* A model run's environment contains no variable from the daemon's or
+  `harness distill`'s environment other than the allowlist.
+* A pull request inside its revert window grounds nothing.
+* A proposal to a public skill repo whose evidence includes a private repository
+  is held with reason `visibility`.
+* A candidate whose control run does as well as its skill run is dropped for the
+  pass. Its purpose key is suppressed after a second match on different
+  evidence.
 * Two passes over the same evidence open one pull request; the second pushes a
   commit to it.
 * A closed distillation pull request suppresses its key until the evidence
@@ -578,8 +664,10 @@ matter:
   `from` name lacks `harvest_trajectory`.
 * Two distillers that find the same purpose key for the same skill repo share
   one pull request.
-* `harness distill propose` never force-pushes: a test fakes a diverged remote
-  and asserts a refusal, not an overwrite.
+* `harness distill propose` never force-pushes. When a test fakes a remote
+  carrying extra commits, it commits on top of them. When a test fakes a remote
+  that is missing the distiller's own earlier commits, it refuses with
+  `ErrBranchDiverged`. In neither case is the remote overwritten.
 * The daemon process makes no forge or model request during a full pass.
 
 ## Pros and Cons of the Options
@@ -676,7 +764,8 @@ matter:
 * Good, because the invariants are code with tests, and credentials are split
   according to what each process reads.
 * Bad, because it means the most code: a small forge client for Gitea and
-  GitHub, a ledger, the clean-room builder and the audit.
+  GitHub, a ledger, the clean-room builder and the audit. It also waits on
+  ADR-0023's `command` kind before a distiller can run at all.
 
 ### 5A — One learned store, a global table, a fixed threshold
 
@@ -708,7 +797,7 @@ flowchart TD
         SR["skill_repo tables: remote, path, serve_to"]
         DC["distiller harness: from, to, min_repos"]
     end
-    subgraph fleet["harnesses named in from, with harvest_trajectory"]
+    subgraph fleet["harnesses named in from, with harvest_trajectory and git provenance"]
         S["agent sessions"]
     end
     subgraph forge["forge, canonical host"]
@@ -718,10 +807,10 @@ flowchart TD
     DC -->|"schedule or merged-PR webhook"| DT["harness distill run: link and detect, no model"]
     S -->|"agent-trace, redacted"| DT
     PR -->|"forge token, read only"| DT
-    DT -->|"evidence bundle"| AU["author one-shot"]
+    DT -->|"evidence bundle"| AU["author: child process, no tools"]
     AU -->|"typed skill record"| RC
 
-    subgraph verify["verify: one-shot runs, inputs fixed by code"]
+    subgraph verify["verify: child processes, inputs and env fixed by code"]
         RC["reconstructor: skill plus clean room at base SHA"]
         J["judge: merged hunks vs rebuilt hunks"]
         AD["adjudicator"]
@@ -734,7 +823,7 @@ flowchart TD
     G -->|"no"| SUP["suppress purpose key in ledger"]
     G -->|"yes"| PP["harness distill propose"]
     PP -->|"one skill per PR, to the repo named by to"| SKR["skill repo on its forge"]
-    SKR -->|"human merge"| MAIN["skill repo default branch"]
+    SKR -->|"merge, per branch protection"| MAIN["skill repo default branch"]
     MAIN -->|"harness skills sync, reindex"| IDX["daemon: FTS5 index, per repo"]
     SR -.-> IDX
     IDX -->|"search_skills scoped by serve_to"| fleet
@@ -752,10 +841,10 @@ flowchart TD
   typed records with explicit anti-goals, deterministic purpose keys, summary
   rendering, and placement at review time. The control run is how we will find
   out whether they pay.
-* **Extends [ADR-0012](adr-0012-cross-harness-distillation.md)**, replacing its
-  signal, verification, scope gate (now the per-distiller `min_repos`) and
-  proposal sections, keeping its delivery tier, index and lifecycle rules, and
-  dropping its AGENTS.md/CLAUDE.md proposal flow (listed under Deferred).
+* **Extends [ADR-0012](adr-0012-cross-harness-distillation.md)**. It replaces
+  ADR-0012's signal, verification and proposal sections, its fixed scope gate,
+  and its `AGENTS.md` output. It keeps the search-only delivery tier, the index,
+  and the lifecycle rules.
 * **Related [ADR-0008](adr-0008-security-and-secrets.md)**: credentials are
   split by process, and only the processes without forge credentials read
   attacker-reachable text.
@@ -765,13 +854,19 @@ flowchart TD
   identity and endpoint wiring requirements.
 * **Related [ADR-0011](adr-0011-agent-adapters.md)**: adapters locate
   transcripts. Skill repos are served by search and are never projected, so no
-  adapter's native skill path is involved.
-* **Mechanisms borrowed from other designs.**
-  [ADR-0017](adr-0017-ephemeral-scratchpad-harnesses.md) scratch runs host every
-  model call, and [ADR-0021](adr-0021-on-demand-one-shots.md) webhook triggers
-  fire a pass on merge. Three designs still in review also apply once they land:
-  ADR-0023 (command one-shots), ADR-0027 (run budgets) and ADR-0028 (the run
-  ledger).
+  adapter's native skill path is involved. This does not contradict ADR-0010,
+  ADR-0011 or SPEC-0006's non-goal of serving skills over MCP. Those concern the
+  native skill primitive, which MCP lacks. Here a skill is ordinary text returned
+  by a search tool.
+* **Mechanisms from other designs.**
+  [ADR-0021](adr-0021-on-demand-one-shots.md) webhook triggers can wake a pass.
+  Three designs still in review are involved. ADR-0023's `command` kind is a
+  **prerequisite**: it is what a distiller runs as. ADR-0027 (run budgets)
+  applies to the distiller's run. ADR-0028's run ledger can absorb the git
+  provenance records. Scratchpad harnesses (ADR-0017) were considered for model
+  runs and rejected, because they have no prompt, wait or result contract, and a
+  daemon-spawned run would inherit the daemon's environment and reach its
+  facade.
 * **Dependency on agent-trace:** an opt-in, capped `ErrorExcerpt` on errored
   tool results. The default stays off, so existing consumers see no change.
 * **Overlap:** stet's skills epic plans its own distill-to-pull-request flow and

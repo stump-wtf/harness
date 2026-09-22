@@ -7,8 +7,7 @@ requires: [SPEC-0002, SPEC-0003, SPEC-0004]
 
 # SPEC-0005: Local MCP Surface (facade, broker, prompts)
 
-> **Partially implemented.** `mcp_allow` parses and `internal/facade` exists;
-the rest of this spec is design-stage. Tracked by the SPEC-0005 epic, harness#67.
+> **Partly implemented.** The facade's trajectory handlers and its read/write capability classes exist in `internal/facade`. No MCP endpoint, broker, prompt side-loading or caller identity is built yet, and the `[mcp.*]` tables are a config parse error. Tracked by the SPEC-0005 epic in the Harness issue tracker.
 
 ## Overview
 
@@ -41,9 +40,9 @@ only where `mcp_allow` grants `write`. The remaining SPEC-0002 operations
 (`project_up`, `project_down`, `profiles`, `use_profile`, `reload`,
 `daemon_info`) are not part of the initial facade; exposing one later requires
 classifying it here as read or write. Additional read-only facade tools are
-defined by SPEC-0006 (trajectories) and SPEC-0007 (learned-skill search) and
+defined by SPEC-0006 (trajectories) and SPEC-0007 (skill search) and
 SHALL be classified as read operations under `mcp_allow`; SPEC-0007
-additionally defines promoted-skill MCP resources, which the facade serves
+additionally defines MCP resources for active skills, which the facade serves
 alongside its tools. A facade tool MUST
 NOT expose data the corresponding control operation does not already return.
 
@@ -152,6 +151,9 @@ parse SHALL be skipped with a logged warning rather than failing the scan.
 At every spawn of a harness process, the daemon SHALL inject into its
 environment `HARNESS_NAME`, the harness's qualified name, and
 `HARNESS_MCP_TOKEN`, a token of at least 128 random bits minted for that spawn.
+Both SHALL be applied after the harness's `env_file`, so an `env_file` cannot
+override them, and an `env_file` that sets either SHALL produce a warning naming
+the file.
 The daemon SHALL hold tokens in memory only. A token MUST NOT be written to
 `state.json`, run records, logs, or any output of `describe` or `logs`. It SHALL
 be invalidated when its process exits, and a restart SHALL mint a new one.
@@ -163,10 +165,7 @@ that owns the presented token. `HARNESS_NAME` is informational, and a name that
 does not match its token SHALL NOT be trusted. A connection with no valid token
 is an **unattributed caller**. It SHALL be scoped as `mcp_allow = ["read"]`, and
 it SHALL receive only data that is not scoped to a harness (for example, SPEC-0007
-skill repos with `serve_to = ["*"]`). The identity variables SHALL override both
-the daemon's own environment and any `env_file` the harness declares: a spawned
-process MUST NOT be able to change its `HARNESS_NAME` or `HARNESS_MCP_TOKEN`
-through either.
+skill repos with `serve_to = ["*"]`).
 
 Attribution is least-privilege scoping within the user's trust boundary
 (ADR-0004), not authentication against the user's own processes. A local process
@@ -192,6 +191,12 @@ that can read another process's environment can present that process's token.
 - **THEN** the previous spawn's token is rejected, and the new process's token is
   accepted
 
+#### Scenario: An env_file cannot forge an identity
+
+- **WHEN** a harness's `env_file` sets `HARNESS_MCP_TOKEN=abc`
+- **THEN** the process receives the daemon-minted token, and the load logs a
+  warning naming the file
+
 #### Scenario: Tokens never reach output
 
 - **WHEN** an operator runs `harness describe --json` on a running harness
@@ -215,19 +220,17 @@ Claude Code this is `--mcp-config` without `--strict-mcp-config`, so the tool's
 own servers still load. An adapter that cannot wire the bridge SHALL say so in
 `harness doctor`. The operator may then add `harness mcp` to the tool's
 configuration by hand, and attribution still works, because the identity
-variables are injected regardless of wiring. The Generic adapter SHALL NOT be
-wired.
-
-A spawn that is a distillation model run (SPEC-0007) SHALL always be spawned as
-if `mcp_bridge = false`, whatever its adapter can wire: blindness to Harness's
-own surfaces is the point of those runs.
+variables are injected regardless of wiring. Where the tool denies MCP tools in
+non-interactive runs unless they are allowed, the adapter SHALL also allow the
+bridge's tools when it wires the bridge. For Claude Code this means an
+`--allowedTools` entry for them. The Generic adapter SHALL NOT be wired.
 
 #### Scenario: Claude Code gets the bridge additively
 
 - **WHEN** a `claude-code` harness with default settings starts
 - **THEN** its argv carries `--mcp-config` naming a Harness-owned file that
-  declares `harness mcp`, and no file under the user's Claude configuration
-  changes
+  declares `harness mcp`, plus an `--allowedTools` entry for the bridge's tools,
+  and the spawn writes no file outside Harness's state directory
 
 #### Scenario: Unsupported adapters are reported, not faked
 
