@@ -267,11 +267,15 @@ prompt template they are available only as `{{untrusted event.title}}`, and only
 when the harness sets `untrusted_inline = true`. The fence renders a delimited
 block whose delimiter carries a random per-render nonce the content cannot
 contain. Control characters are stripped and each field is capped at 4 KiB,
-with the truncation marked. Setting the key logs a WARN when the config loads.
+with the truncation marked. The key defaults to `false`, is global-only, and is
+the only way to open the fence. Setting it logs a WARN when the config loads.
 Every rendering logs a WARN naming the harness, the run and the field paths
-with their byte counts, never the content, and increments a counter. The
-recommended form is still `{{event.file}}` plus an instruction to read it as
-data.
+with their byte counts, never the content, and increments a counter, and
+`harness doctor` keeps a warn row while it is set. The configuration reference
+and the templates page carry a danger callout for it. The recommended form is
+still `{{event.file}}` plus an instruction to read it as data. This is the
+shape Joe approved on 2026-09-22: a risky capability is fine when it is
+configurable, off by default, and loud.
 
 ### Prompt delivery
 
@@ -451,7 +455,10 @@ Acceptance includes:
   configured argv length.
 * A webhook body whose `pull_request.title` contains an instruction never
   appears in argv. In a prompt template it appears only inside the fence, and
-  only with `untrusted_inline = true` and a WARN logged.
+  only with `untrusted_inline = true` and a WARN logged. Without the key, no
+  fence renders.
+* The configuration reference and the templates page render a danger callout
+  for `untrusted_inline`.
 * A typed value that fails validation (a non-numeric number, a URL on another
   host, a value starting with `-`) is absent. A required reference to it skips
   the run with `template_unresolved`.

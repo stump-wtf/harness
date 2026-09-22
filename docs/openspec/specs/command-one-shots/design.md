@@ -294,7 +294,9 @@ flowchart TD
   into a visible `template_unresolved` skip rather than a wrong argument.
 - **The fence gets used as the default.** → It is off by default, WARNs at load
   and on every render, is counted, gets a doctor row, and is refused in project
-  files. The docs lead with `{{event.file}}`.
+  files. The docs lead with `{{event.file}}`, and a danger callout sits on
+  `untrusted_inline` in the configuration reference and the templates page
+  (SPEC-0017 REQ-10).
 - **`stdin` wiring differs across platforms.** → A real-process test runs on
   both CI platforms. Attach is view-only for those runs, and the client is told
   why.

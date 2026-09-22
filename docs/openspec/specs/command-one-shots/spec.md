@@ -459,11 +459,28 @@ every C0 and C1 control character except newline and tab removed, and SHALL be
 capped at 4096 bytes on a UTF-8 boundary, with a trailing `[truncated N bytes]`
 marker when capped. An absent field SHALL render as an empty fenced block.
 
+`untrusted_inline` SHALL default to `false`, and SHALL be enabled only by an
+explicit `untrusted_inline = true` on that harness in the global config or a
+`harness_d` drop-in (REQ-14). No other key, default, template or front door
+SHALL open the fence.
+
 `untrusted_inline = true` SHALL cause one WARN log line when the config loads,
 naming the harness. Each rendering that emits a fenced value SHALL log one WARN
 line naming the harness, the run ID, and each field path with its byte count.
 It MUST NOT log any content. Each such rendering SHALL increment
 `harness_template_untrusted_renders_total{harness}`.
+
+The configuration reference entry for `untrusted_inline`, and the templates
+page, SHALL each carry a danger-level admonition. It SHALL state:
+
+- that the key puts text an outside party wrote (titles, bodies, comments,
+  refs, channel content) into the model's prompt;
+- that the fence delimits that text but does not neutralise prompt injection;
+- that it is off by default, refused in project files and on the wire, logs a
+  WARN at load and on every rendering, is counted, and keeps a `harness doctor`
+  warn row for as long as it is set;
+- that `{{event.file}}`, with an instruction to read the file as data, is the
+  recommended way to give an agent the event.
 
 #### Scenario: A title never reaches argv
 
@@ -489,6 +506,18 @@ It MUST NOT log any content. Each such rendering SHALL increment
 
 - **WHEN** an opted-in harness's template references `{{event.title}}`
 - **THEN** config validation fails, requiring the `untrusted` form
+
+#### Scenario: Off by default
+
+- **WHEN** a harness omits `untrusted_inline`
+- **THEN** `harness describe` shows it as `false`, and no rendering for that
+  harness can emit a fenced block or the fence's WARN
+
+#### Scenario: The docs call out the fence
+
+- **WHEN** the docs site is built
+- **THEN** the configuration reference and the templates page each render a
+  danger admonition naming `untrusted_inline` and recommending `{{event.file}}`
 
 ### Requirement: REQ-11 — Rendering
 
