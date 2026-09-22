@@ -35,6 +35,7 @@ import (
 	"github.com/stump-wtf/harness/internal/scheduler"
 	"github.com/stump-wtf/harness/internal/supervisor"
 	"github.com/stump-wtf/harness/internal/telemetry"
+	"github.com/stump-wtf/harness/internal/trigger/source"
 )
 
 // daemonManagerOptions is the ManagerOptions the daemon actually runs with.
@@ -262,6 +263,15 @@ func runDaemon(o daemonOpts) {
 	// Manager holds exactly one.
 	sched := startDaemonScheduler(mgr, cfg, nil, telemetryReloadWarning(mgr, cfg.Telemetry))
 
+	// The trigger source manager (ADR-0021 / SPEC-0014). It is built here,
+	// on the daemon's own path, even though nothing produces events yet: the
+	// listener and the channel session are later stories, and a manager that
+	// only ever appeared in their wiring would mean the fan-out was never
+	// exercised against the Manager the daemon actually runs. It reads the
+	// live config per firing, so a reload's change to a harness's `triggers`
+	// applies from the next event (REQ "Source Reconciliation On Reload").
+	sources := startDaemonSources(mgr)
+
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
 		Registry:   reg,
@@ -368,6 +378,9 @@ func runDaemon(o daemonOpts) {
 		cfgWatcher.Close()
 	}
 	sched.Close()
+	// Before the Manager closes: a firing in progress is still holding a
+	// reference to it, and Close waits for those to reach StartRun.
+	sources.Close()
 	if remoteSrv != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_ = remoteSrv.Shutdown(ctx)
@@ -376,6 +389,25 @@ func runDaemon(o daemonOpts) {
 	srv.Close()
 	mgr.Close()
 	<-telemetryDone
+}
+
+// startDaemonSources builds and starts the trigger source manager the daemon
+// runs. It is a function rather than inline in runDaemon for the reason
+// startDaemonScheduler is: a wiring test must be able to drive THE DAEMON'S
+// manager, not one it assembled itself (#315).
+//
+// Governing: ADR-0021; SPEC-0014 REQ "Firing", REQ "Concurrency Safety".
+func startDaemonSources(mgr *supervisor.Manager) *source.Manager {
+	sm := source.New(source.Options{
+		Runner: mgr,
+		// A function, not a snapshot: REQ "Source Reconciliation On Reload"
+		// says a change to the set of harnesses bound to a source applies
+		// from the next event, which is only true if each firing re-reads it.
+		Config: mgr.Config,
+		Log:    log.Default(),
+	})
+	sm.Start(context.Background())
+	return sm
 }
 
 // startDaemonScheduler builds, applies and starts the scheduler the daemon

@@ -224,8 +224,20 @@ func TestRunHistoryPruningUnderConcurrency(t *testing.T) {
 			t.Errorf("ids out of order: %d then %d", rs[i-1].RunID, rs[i].RunID)
 		}
 	}
-	if last := rs[len(rs)-1].RunID; last != 1+workers*each {
-		t.Errorf("last id = %d, want %d: an id was lost or reissued", last, 1+workers*each)
+	// SPEC-0014's skip coalescing changed what this bound can be. The 80
+	// schedule firings no longer allocate 80 ids: they collapse into one open
+	// record per run in flight, which this test's keep_runs = 3 can prune out
+	// from under them — and a pruned record is re-opened rather than losing
+	// the skip. So the exact total is no longer deterministic.
+	//
+	// What must still hold, and is what this test was always about, is that
+	// no id is lost or reissued: the ids are strictly increasing (above), the
+	// highest is at least one per missed record — those always allocate — and
+	// never more than one per firing.
+	missed := workers / 2 * each
+	if last := rs[len(rs)-1].RunID; last <= missed || last > 1+workers*each {
+		t.Errorf("last id = %d, want more than %d (one per missed record) and at most %d (one per firing): an id was lost or reissued",
+			last, missed, 1+workers*each)
 	}
 	entries, err := os.ReadDir(filepath.Join(e.jobs, "busy"))
 	if err != nil {

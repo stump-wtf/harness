@@ -220,6 +220,13 @@ type Supervisor struct {
 	run       *activeRun  // the run in flight; nil when none
 	queued    *RunRequest // the one firing on_overlap = "queue" holds
 	timeoutCh chan uint64 // run timeout fired (carries run gen)
+	// openSkips maps a skip class to the run id of the record covering it,
+	// for the run currently in flight. Loop-owned, like every other field in
+	// this block: coalescing is part of the overlap decision, and the overlap
+	// decision is atomic on the actor loop (SPEC-0008 REQ "Overlap Policy").
+	// Cleared by finishRun. Governing: SPEC-0014 REQ "Overlap Skip
+	// Coalescing".
+	openSkips map[skipKey]int
 
 	// ---- snapshot (guarded) ----
 	mu   sync.Mutex
