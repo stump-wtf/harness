@@ -441,6 +441,13 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 	case cmdRestart:
 		s.enabled = true
 		s.held = false
+		// A restart cancels a graceful close in flight, as a start does.
+		// Left set, the gate would keep stepping a close on a harness
+		// that is no longer held, and the stop that ended it would leave
+		// the harness down with held=false, which no window opening
+		// ever releases (SPEC-0012 REQ "Gate Enforcement": only a held
+		// harness is started when hours open).
+		s.closing = false
 		s.cancelRestartTimer()
 		s.clearFailLatch()
 		s.resetCrashState()

@@ -17,6 +17,9 @@ package supervisor
 // Manager" (the Closing/CloseStep half).
 //
 // @joestump-agent 09/21/2026 - Added for stump.wtf/harness#384.
+//
+// @joestump-agent 09/22/2026 - A restart during a close, and the watch's
+// anchor for an unanchored close.
 
 import (
 	"os"
@@ -46,6 +49,7 @@ type stubWatch struct {
 	mu        sync.Mutex
 	follows   int
 	unfollows int
+	closeAt   time.Time // the anchor the last Follow was given
 	ts        map[string]runtrace.TurnState
 	ok        map[string]bool
 	why       map[string]string
@@ -55,9 +59,10 @@ func newStubWatch() *stubWatch {
 	return &stubWatch{ts: map[string]runtrace.TurnState{}, ok: map[string]bool{}, why: map[string]string{}}
 }
 
-func (w *stubWatch) Follow(name string, _ runtrace.Scope, _ runtrace.Window, _ []runtrace.Scope, _ time.Time) {
+func (w *stubWatch) Follow(name string, _ runtrace.Scope, _ runtrace.Window, _ []runtrace.Scope, closeAt time.Time) {
 	w.mu.Lock()
 	w.follows++
+	w.closeAt = closeAt
 	w.mu.Unlock()
 }
 
@@ -414,4 +419,62 @@ func TestStopAndLeaseDuringAClose(t *testing.T) {
 			t.Error("the watch survived a cancelled close")
 		}
 	})
+}
+
+// A restart during a close cancels it, as a start does. The gate then decides
+// the harness afresh on its next tick (up and out of hours: hold again), and
+// the harness still comes back when its hours open. Before the fix the close
+// survived the restart on a harness no longer held, so the pass kept stepping
+// it, the stop that ended it left the harness down with held=false, and no
+// window opening ever released it.
+func TestRestartDuringACloseCancelsIt(t *testing.T) {
+	m, w, _, _ := newCloseRig(t, gracefulH(shHarness("g", "while true; do sleep 0.02; done", 0), 15*time.Minute))
+	m.Start("g")
+	waitFor(t, 3*time.Second, "running", func() bool { s, _ := m.Snapshot("g"); return s.State == core.StateRunning })
+	m.Hold("g", core.HoursShutdownGraceful, closeAt())
+	w.set("g", runtrace.TurnState{LastEventAt: closeAt().Add(14 * time.Minute), TurnMarkers: true}, true, "")
+
+	m.Restart("g")
+	waitFor(t, 3*time.Second, "running after the restart", func() bool { s, _ := m.Snapshot("g"); return s.State == core.StateRunning })
+
+	// What the gate pass does on each later out-of-hours tick: step a close in
+	// flight, otherwise hold a harness that is up (gate.go gatePass).
+	gateTick := func(now time.Time) {
+		if s, _ := m.Snapshot("g"); s.Closing {
+			m.CloseStep("g", now)
+		} else if snapUp(s.State) {
+			m.Hold("g", core.HoursShutdownGraceful, closeAt())
+		}
+	}
+	gateTick(closeAt().Add(time.Minute))
+	gateTick(closeAt().Add(15 * time.Minute)) // the cap
+	stopped := waitStopped(t, m, "g")
+	if !stopped.Held || !stopped.Enabled {
+		t.Fatalf("after the close that followed a restart: held=%v enabled=%v, want both", stopped.Held, stopped.Enabled)
+	}
+	m.Release("g") // the next window opens
+	waitFor(t, 3*time.Second, "running at the next open", func() bool { s, _ := m.Snapshot("g"); return s.State == core.StateRunning })
+}
+
+// An unanchored hold (the gate could not find the boundary, closeAt zero) is
+// capped from now on the actor loop, and the watch must be armed with that
+// same anchor. The zero time would bound the watcher's linger backstop at
+// 00:05 UTC, year 1, retiring the watch on its first poll and ending the
+// close as "graceful unavailable".
+func TestUnanchoredCloseArmsTheWatchWithItsRealAnchor(t *testing.T) {
+	m, w, _, _ := newCloseRig(t, gracefulH(shHarness("g", "while true; do sleep 0.02; done", 0), 15*time.Minute))
+	m.Start("g")
+	waitFor(t, 3*time.Second, "running", func() bool { s, _ := m.Snapshot("g"); return s.State == core.StateRunning })
+
+	m.Hold("g", core.HoursShutdownGraceful, time.Time{})
+	snap, _ := m.Snapshot("g")
+	if !snap.Closing || snap.CloseAt.IsZero() {
+		t.Fatalf("unanchored hold: closing=%v closeAt=%v, want a close anchored to now", snap.Closing, snap.CloseAt)
+	}
+	w.mu.Lock()
+	got := w.closeAt
+	w.mu.Unlock()
+	if !got.Equal(snap.CloseAt) {
+		t.Fatalf("watch armed with closeAt %v, want the close's own anchor %v", got, snap.CloseAt)
+	}
 }
