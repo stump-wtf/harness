@@ -124,6 +124,18 @@ type HarnessForm struct {
 	// OperatingHours (Validate mirrors the parser).
 	HoursShutdown        string
 	HoursShutdownTimeout string
+	// Triggers binds the harness to [channel.*]/[webhook.*] sources
+	// (SPEC-0014). A round-trip field like Schedule, and a strict one: the
+	// save path rewrites the whole table, so a form that dropped `triggers`
+	// would silently unbind a harness from its webhook the next time someone
+	// edited its description — and the harness would keep looking healthy
+	// while never firing again.
+	//
+	// The form does NOT carry the source tables themselves. They are separate
+	// top-level tables, and SPEC-0014 REQ "Triggers Round-Trip Through Config
+	// Writers" requires a harness rewrite to leave them byte-identical, so
+	// the only safe thing to do with them here is nothing.
+	Triggers []string
 }
 
 // NewHarnessForm is a blank form for `n` with sane defaults (native backend).
@@ -200,22 +212,67 @@ func (f HarnessForm) Validate() error {
 			return fmt.Errorf("invalid schedule %q: %v", schedule, err)
 		}
 	}
-	if f.CatchUp && strings.TrimSpace(f.Schedule) == "" {
-		return fmt.Errorf("catch_up requires schedule")
+	// Mirror the parser's `triggers` rules (SPEC-0014 REQ "Triggers Key",
+	// REQ "Triggered Harness Exclusions"), for the same reason as schedule
+	// above. Only the SHAPE of each reference is checkable here: whether the
+	// named source exists depends on the rest of the file plus every
+	// harness_d drop-in, which the form does not read.
+	triggers := normalizeTriggers(f.Triggers)
+	if len(triggers) > 0 {
+		if !promptSet {
+			return fmt.Errorf("triggers requires prompt (a triggered harness is a one-shot agent run)")
+		}
+		if f.Enabled {
+			return fmt.Errorf("triggers and enabled are mutually exclusive")
+		}
+		if r := core.RestartPolicy(f.Restart); r == core.RestartAlways || r == core.RestartUnlessStopped {
+			return fmt.Errorf("triggers requires restart no or on-failure (%s respawns the one-shot with no event)", r)
+		}
+		seen := map[string]bool{}
+		for _, t := range triggers {
+			ref, err := core.ParseTriggerRef(t)
+			if err != nil {
+				return fmt.Errorf("invalid triggers entry %q: %v", t, err)
+			}
+			if seen[ref.String()] {
+				return fmt.Errorf("triggers lists %q twice", ref.String())
+			}
+			seen[ref.String()] = true
+		}
 	}
-	// Mirror the parser's run keys (issue #119).
-	scheduled := strings.TrimSpace(f.Schedule) != ""
+	hasChannelTrigger := false
+	for _, t := range triggers {
+		if strings.HasPrefix(t, core.SourceKindChannel+".") {
+			hasChannelTrigger = true
+			break
+		}
+	}
+	if f.CatchUp && strings.TrimSpace(f.Schedule) == "" && !hasChannelTrigger && strings.TrimSpace(f.OperatingHours) == "" {
+		return fmt.Errorf("catch_up requires schedule, a channel trigger, or operating_hours")
+	}
+	// Mirror the parser's run keys (issue #119), widened by SPEC-0014 from
+	// "scheduled" to "triggered": an event source produces runs the same way
+	// a clock does.
+	//
+	// This predicate is deliberately NOT reused by the operating_hours check
+	// below. `operating_hours` excludes a *schedule* (a cron one-shot is
+	// already time-gated by its own expression) but is explicitly ALLOWED on
+	// a harness whose only firing source is an event — SPEC-0014 REQ
+	// "Operating Hours On Triggered Harnesses" exists precisely to gate those
+	// firings. Folding triggers into the exclusion would forbid the
+	// combination the spec is about.
+	triggered := strings.TrimSpace(f.Schedule) != "" || len(triggers) > 0
 	if t := strings.TrimSpace(f.Timeout); t != "" {
-		if !scheduled {
-			return fmt.Errorf("timeout requires schedule")
+		if !triggered {
+			return fmt.Errorf("timeout requires schedule or triggers")
 		}
 		if d, err := time.ParseDuration(t); err != nil || d < 0 {
 			return fmt.Errorf("invalid timeout %q (want a duration such as 45m or 2h, or 0 for no limit)", t)
 		}
 	}
 	if o := strings.TrimSpace(f.OnOverlap); o != "" && o != string(core.OverlapSkip) {
-		if !scheduled {
-			return fmt.Errorf("on_overlap requires schedule")
+		if !triggered {
+			return fmt.Errorf("on_overlap requires schedule or triggers")
 		}
 		if !core.OverlapPolicy(o).Valid() {
 			return fmt.Errorf("on_overlap must be skip, queue, or replace")
@@ -224,15 +281,15 @@ func (f HarnessForm) Validate() error {
 	if f.KeepRuns < 0 {
 		return fmt.Errorf("keep_runs must be at least 1")
 	}
-	if f.KeepRuns > 0 && f.KeepRuns != core.DefaultKeepRuns && !scheduled {
-		return fmt.Errorf("keep_runs requires schedule")
+	if f.KeepRuns > 0 && f.KeepRuns != core.DefaultKeepRuns && !triggered {
+		return fmt.Errorf("keep_runs requires schedule or triggers")
 	}
 	// Mirror the parser's operating_hours rules (ADR-0019, config.registerHarness):
 	// same reasoning as schedule above — a combination the parser rejects would
 	// leave the file unparseable on disk until hand-edited.
 	operatingHours := strings.TrimSpace(f.OperatingHours)
 	if operatingHours != "" {
-		if scheduled {
+		if strings.TrimSpace(f.Schedule) != "" {
 			return fmt.Errorf("operating_hours and schedule are mutually exclusive")
 		}
 		if _, err := hours.Parse(operatingHours); err != nil {
@@ -243,6 +300,9 @@ func (f HarnessForm) Validate() error {
 		if operatingHours == "" {
 			return fmt.Errorf("hours_shutdown requires operating_hours")
 		}
+		if len(triggers) > 0 {
+			return fmt.Errorf("hours_shutdown is not accepted on a triggered harness")
+		}
 		if !core.HoursShutdownMode(hs).Valid() {
 			return fmt.Errorf("hours_shutdown must be graceful or immediate")
 		}
@@ -250,6 +310,9 @@ func (f HarnessForm) Validate() error {
 	if hst := strings.TrimSpace(f.HoursShutdownTimeout); hst != "" {
 		if operatingHours == "" {
 			return fmt.Errorf("hours_shutdown_timeout requires operating_hours")
+		}
+		if len(triggers) > 0 {
+			return fmt.Errorf("hours_shutdown_timeout is not accepted on a triggered harness")
 		}
 		if d, err := time.ParseDuration(hst); err != nil || d <= 0 {
 			return fmt.Errorf("invalid hours_shutdown_timeout %q (want a positive duration such as 15m)", hst)
@@ -308,20 +371,43 @@ func (f HarnessForm) TOML() string {
 			// output to whoever attaches (issue #60).
 			b.WriteString("quiet = false\n")
 		}
-		if schedule := strings.TrimSpace(f.Schedule); schedule != "" {
+		schedule := strings.TrimSpace(f.Schedule)
+		triggers := normalizeTriggers(f.Triggers)
+		if schedule != "" {
 			// The daemon fires this one-shot on a cron cadence (issue #66).
 			// Prompt-only, like the knobs above: Validate rejects a schedule
 			// without a prompt, so this branch is the only place it can appear.
 			fmt.Fprintf(&b, "schedule = %s\n", strconv.Quote(schedule))
+		}
+		if len(triggers) > 0 {
+			// Event sources (SPEC-0014). Written beside `schedule` rather
+			// than instead of it: the two combine, and a harness may fire on
+			// both a clock and a doorbell.
+			parts := make([]string, len(triggers))
+			for i, t := range triggers {
+				parts[i] = strconv.Quote(t)
+			}
+			fmt.Fprintf(&b, "triggers = [%s]\n", strings.Join(parts, ", "))
+		}
+		if schedule != "" || len(triggers) > 0 {
 			if f.CatchUp {
 				b.WriteString("catch_up = true\n")
 			}
 			// Run keys (issue #119), emitted only when they differ from the
-			// parser default.
+			// parser default. The on_overlap default is not a constant: it
+			// is `queue` for a harness with triggers and `skip` otherwise
+			// (SPEC-0014 REQ "Overlap Default For Triggered Harnesses"), so
+			// the value that can be omitted differs with the firing source.
+			// Comparing against the wrong one would either drop an explicit
+			// policy or grow a key nobody wrote.
 			if t := strings.TrimSpace(f.Timeout); t != "" {
 				fmt.Fprintf(&b, "timeout = %s\n", strconv.Quote(t))
 			}
-			if o := strings.TrimSpace(f.OnOverlap); o != "" && o != string(core.OverlapSkip) {
+			defaultOverlap := string(core.OverlapSkip)
+			if len(triggers) > 0 {
+				defaultOverlap = string(core.OverlapQueue)
+			}
+			if o := strings.TrimSpace(f.OnOverlap); o != "" && o != defaultOverlap {
 				fmt.Fprintf(&b, "on_overlap = %s\n", strconv.Quote(o))
 			}
 			if f.KeepRuns > 0 && f.KeepRuns != core.DefaultKeepRuns {
@@ -405,6 +491,19 @@ func (f HarnessForm) TOML() string {
 	return b.String()
 }
 
+// normalizeTriggers trims and drops blank entries from a triggers list, so
+// Validate and TOML agree on what "no triggers" means. A list of nothing but
+// whitespace is a cleared field, not a binding to an unnamed source.
+func normalizeTriggers(in []string) []string {
+	var out []string
+	for _, t := range in {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // isDefaultMCPAllow reports whether scope is exactly the parser's default,
 // ["read"] (SPEC-0005 REQ "Capability Scoping"). config.Parse materializes that
 // default for a table with no mcp_allow key, so the edit pre-fill always sees
@@ -477,14 +576,21 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.maxTurns = strconv.Itoa(h.MaxTurns)
 	fi.schedule = h.Schedule
 	fi.catchUp = h.CatchUp
-	if h.Schedule != "" {
+	fi.triggers = strings.Join(h.Triggers, " ")
+	if h.Triggered() {
 		// Pre-fill only what differs from the parser's defaults: a blank
 		// field means the default, and a harness that never set the key must
-		// not grow one on save (issue #119).
+		// not grow one on save (issue #119). The on_overlap default follows
+		// the firing source (SPEC-0014 REQ "Overlap Default For Triggered
+		// Harnesses"), so it is derived rather than a constant.
 		if h.Timeout != core.DefaultRunTimeout {
 			fi.timeout = formatRunTimeout(h.Timeout)
 		}
-		if h.OnOverlap != core.OverlapSkip {
+		defaultOverlap := core.OverlapSkip
+		if len(h.Triggers) > 0 {
+			defaultOverlap = core.OverlapQueue
+		}
+		if h.OnOverlap != defaultOverlap {
 			fi.onOverlap = string(h.OnOverlap)
 		}
 		if h.KeepRuns != core.DefaultKeepRuns {
@@ -531,6 +637,7 @@ func (fi formInputs) toForm() HarnessForm {
 		Quiet:       fi.quiet,
 		Schedule:    strings.TrimSpace(fi.schedule),
 		CatchUp:     fi.catchUp,
+		Triggers:    strings.Fields(fi.triggers),
 		Timeout:     strings.TrimSpace(fi.timeout),
 		OnOverlap:   strings.TrimSpace(fi.onOverlap),
 		Workdir:     strings.TrimSpace(fi.workdir),

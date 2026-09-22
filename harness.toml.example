@@ -169,6 +169,83 @@ restart = "on-failure"
 description = "service that sometimes falls over"
 enabled = false
 
+# --- Event triggers (ADR-0021 / SPEC-0014) --------------------------------
+#
+# A one-shot can be fired by an external event as well as by a clock. There are
+# two kinds of trigger source, and which one you want is decided by where the
+# daemon runs, not by what is sending the event:
+#
+#   * A CHANNEL source dials OUT to an MCP server and holds a listen-only
+#     session. It needs no inbound port and no public URL, so it is the path
+#     for a laptop behind NAT.
+#   * A WEBHOOK source serves an authenticated route on an HTTP listener you
+#     turn on explicitly. It needs to be reachable, so it is the path for a
+#     server.
+#
+# A harness binds sources with `triggers`, and every firing goes through the
+# same run machinery a `schedule` firing does: a run record, a per-run log,
+# `timeout`, `on_overlap` and `keep_runs`. The event reaches the run as a
+# private file named by HARNESS_EVENT_FILE — never as prompt text or argv.
+#
+# Harness is a TRIGGER, not a queue: nothing here buffers events durably, and
+# an event whose loss matters belongs in a durable queue in front of Harness.
+
+# A channel source: one MCP Streamable HTTP endpoint the daemon listens on.
+# `url` must be https unless its host is loopback, and must not carry
+# credentials — those go in `headers`, as a ${NAME} reference resolved from
+# this source's own env_file. References never resolve from the daemon's
+# environment, so the CLI and the daemon always agree.
+[channel.switchboard]
+url = "https://switchboard.example.com/mcp/my-agent-k3x9"
+env_file = "~/.config/harness/triggers.env"
+headers = { Authorization = "Bearer ${SB_TOKEN}" }
+description = "switchboard doorbells for my-agent"
+
+# A webhook source. The route is POST /hooks/<name> on the listener configured
+# under [server] below; with no listener, the source is valid and simply has
+# nowhere to be served (`harness triggers` shows it as no_listener).
+#
+# `verify` picks the authentication scheme: bearer, hmac-sha256, github,
+# gitea, gitlab or standard-webhooks. The four presets fix their own header
+# names, so setting signature_header/event_header alongside one is an error
+# rather than a silently ignored override.
+#
+# `secret` must be exactly one ${NAME} reference — a literal is refused,
+# because harness.toml is routinely committed to a dotfiles repository.
+[webhook.gitea-pr]
+verify = "gitea"
+env_file = "~/.config/harness/triggers.env"
+secret = "${GITEA_HOOK_SECRET}"
+# Optional: only these event names fire the harness. Everything else is
+# accepted, counted and dropped.
+events = ["pull_request"]
+# Optional: the largest body accepted (default "1MiB", ceiling "25MiB") and
+# the delivery rate this route allows (default "60/m", "0" for no limit).
+max_body = "2MiB"
+rate_limit = "120/m"
+description = "gitea pull-request events"
+
+# The harness the two sources fire. `triggers` requires a prompt source for
+# the same reason `schedule` does — a triggered unit is a one-shot agent run —
+# and is mutually exclusive with `enabled = true`, with profile membership,
+# and with a respawning restart policy: each of those would fire the one-shot
+# with no event for it to act on.
+#
+# `schedule` and `triggers` combine, so a harness may fire hourly AND on every
+# doorbell.
+#
+# on_overlap defaults to "queue" here, not "skip". The asymmetry is
+# deliberate: a cron firing that lands during a run is the same work coming
+# round again, so skipping it loses nothing, while an event firing is a
+# DIFFERENT event and dropping it loses work nothing will re-deliver.
+[harness.pr-review]
+harness = "claude-code"
+prompt_file = "~/.config/harness/prompts/pr-review.md"
+triggers = ["webhook.gitea-pr", "channel.switchboard"]
+timeout = "20m"
+keep_runs = 50
+description = "review a pull request when one arrives"
+
 # Profiles (ADR-0006): named groups of harnesses that switch together via
 # `harness use-profile <name>`. Only one profile is active at a time; the
 # active profile is what `harness list` flags with *.
@@ -182,6 +259,20 @@ autostart = true
 description = "all agents running"
 harnesses = ["heartbeat", "my-agent"]
 autostart = true
+
+# The webhook listener (SPEC-0014 REQ "Webhook Listener") is part of [server]
+# and is OFF unless an address names it — declaring a [webhook.*] table does
+# not open a port. It is a server of its own, separate from the SSH front door
+# below and from the metrics listener.
+#
+# [server]
+# webhook_listen = "127.0.0.1:9080"
+# # Both TLS keys or neither; setting one is a parse error, because a
+# # half-configured pair is an operator who believes the listener is
+# # encrypted when it is not. A non-loopback bind with no TLS starts, warns at
+# # startup, and is flagged by `harness doctor`.
+# webhook_tls_cert_file = "/etc/harness/webhook.crt"
+# webhook_tls_key_file = "/etc/harness/webhook.key"
 
 # Optional remote-access SSH front door (ADR-0004/ADR-0008). Off by default;
 # flip enabled = true to expose the cockpit TUI over SSH. Only public keys

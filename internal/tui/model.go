@@ -125,6 +125,12 @@ type formInputs struct {
 	// (graceful, 15m), same convention as timeout/onOverlap/keepRuns above.
 	// Carried for the same round-trip reason as schedule (issue #161).
 	operatingHours, hoursShutdown, hoursShutdownTimeout string
+	// triggers is the space-separated `channel.<name>` / `webhook.<name>`
+	// binding list (SPEC-0014), same encoding as mcpAllow above. Carried for
+	// the round-trip reason schedule is: the save path rewrites the whole
+	// table, so a dropped triggers key silently unbinds a harness from its
+	// event source.
+	triggers string
 }
 
 // Model is the root Bubble Tea model.

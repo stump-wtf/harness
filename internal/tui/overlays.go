@@ -353,7 +353,8 @@ func (m *Model) onConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // buildHarnessForm constructs the Huh form bound to fi (SPEC-0001 REQ "Harness
 // Form" schema: harness/prompt/model/auto_accept/max_turns/quiet/args/workdir/
 // env_file/restart_delay/restart/backend/tmux_socket/description/enabled/
-// harvest_trajectory/mcp_allow; schedule for a cron one-shot; operating_hours/
+// harvest_trajectory/mcp_allow; schedule for a cron one-shot and triggers for
+// an event one-shot (SPEC-0014); operating_hours/
 // hours_shutdown/hours_shutdown_timeout for a resident harness's weekly time
 // gate, ADR-0019). Every config key core.Harness carries has a widget here —
 // an unbound key is one the `e` save path silently deletes from harness.toml
@@ -370,10 +371,11 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 			huh.NewInput().Title("max_turns (agent turn budget; requires prompt; 0 = unlimited)").Value(&fi.maxTurns),
 			huh.NewConfirm().Title("quiet (run headless; yes = suppress agent output; requires prompt)").Value(&fi.quiet),
 			huh.NewInput().Title("schedule (cron expression; requires prompt; excludes enabled)").Value(&fi.schedule),
-			huh.NewConfirm().Title("catch_up (run once after missed schedule windows; requires schedule)").Value(&fi.catchUp),
+			huh.NewInput().Title("triggers (space-separated channel.<name> / webhook.<name>; requires prompt; excludes enabled)").Value(&fi.triggers),
+			huh.NewConfirm().Title("catch_up (run once after missed firings; requires schedule, a channel trigger, or operating_hours)").Value(&fi.catchUp),
 			huh.NewInput().Title("timeout (per run, e.g. 45m; 0 = no limit; blank = 1h; requires schedule)").Value(&fi.timeout),
-			huh.NewInput().Title("on_overlap (skip/queue/replace; blank = skip; requires schedule)").Value(&fi.onOverlap),
-			huh.NewInput().Title("keep_runs (run history kept; blank = 20; requires schedule)").Value(&fi.keepRuns),
+			huh.NewInput().Title("on_overlap (skip/queue/replace; blank = skip, or queue with triggers; requires schedule or triggers)").Value(&fi.onOverlap),
+			huh.NewInput().Title("keep_runs (run history kept; blank = 20; requires schedule or triggers)").Value(&fi.keepRuns),
 			huh.NewInput().Title("args (space-separated)").Value(&fi.args),
 			huh.NewInput().Title("workdir").Value(&fi.workdir),
 			huh.NewInput().Title("env_file").Value(&fi.envFile),

@@ -28,6 +28,14 @@ var (
 	docsTableHeaderRe = regexp.MustCompile(`(?m)^\s*\[\[?[A-Za-z]`)
 	docsPromptFileRe  = regexp.MustCompile(`(?m)^\s*prompt_file\s*=\s*"([^"]+)"`)
 	docsHarnessDRe    = regexp.MustCompile(`(?m)^\s*harness_d\s*=\s*"([^"]+)"`)
+	// A trigger source's env_file (SPEC-0014 REQ "Credential Resolution") is
+	// created like a prompt_file, and for the same reason: Load opens it to
+	// resolve ${NAME} references, so an example naming one would otherwise
+	// fail here for a missing fixture rather than for anything about the
+	// example. Its keys come from the ${NAME} references in the same block,
+	// so the fixture cannot drift from what the example asks for.
+	docsEnvFileRe = regexp.MustCompile(`(?m)^\s*env_file\s*=\s*"([^"]+)"`)
+	docsEnvRefRe  = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 )
 
 // docsTOMLBlock is one fenced toml block and the line its fence opens on.
@@ -101,6 +109,21 @@ func loadDocsConfig(t *testing.T, body string) error {
 	}
 	for _, m := range docsHarnessDRe.FindAllStringSubmatch(body, -1) {
 		if err := os.MkdirAll(resolve(m[1]), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One env file holding every ${NAME} the block references, at 0600 so a
+	// valid example does not also trip the group/other-readable warning.
+	var envBody strings.Builder
+	for _, m := range docsEnvRefRe.FindAllStringSubmatch(body, -1) {
+		envBody.WriteString(m[1] + "=example-value\n")
+	}
+	for _, m := range docsEnvFileRe.FindAllStringSubmatch(body, -1) {
+		p := resolve(m[1])
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(envBody.String()), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
