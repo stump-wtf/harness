@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"charm.land/log/v2"
 
@@ -57,6 +58,17 @@ type Options struct {
 	// Dial opens a channel session. Defaults to a real client; a test
 	// substitutes one to steer the transport.
 	Dial func(core.ChannelSource) *channel.Client
+	// Now is the clock. Defaults to time.Now; a test pins it so an outage
+	// long enough to owe a catch-up can be produced without waiting for one.
+	Now func() time.Time
+	// Sleep waits for d, returning false when ctx ends first. Defaults to a
+	// real timer; a test substitutes one that returns instantly and records
+	// what it was asked to wait, so a backoff schedule is asserted rather
+	// than endured.
+	Sleep func(ctx context.Context, d time.Duration) bool
+	// Rand returns a value in [0, 1) for backoff jitter. Defaults to the
+	// global source; a test pins it to make a delay exact.
+	Rand func() float64
 	// OnState is called for every source state CHANGE, with the new status.
 	// It is the seam `trigger_source_changed` hangs off (#476) — and it is
 	// what makes the state SEQUENCE observable, which a snapshot cannot be:
@@ -97,6 +109,10 @@ type Manager struct {
 	dial dialer
 	// onState is notified of every source state change.
 	onState func(Status)
+	// now, sleep and rand are the clock, the timer and the jitter source.
+	now   func() time.Time
+	sleep func(context.Context, time.Duration) bool
+	rand  func() float64
 
 	mu       sync.Mutex
 	closed   bool
@@ -128,13 +144,39 @@ func New(opts Options) *Manager {
 			return channel.New(channel.Options{Source: src, Log: logger})
 		}
 	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	sleep := opts.Sleep
+	if sleep == nil {
+		sleep = realSleep
+	}
 	return &Manager{
 		runner:  opts.Runner,
 		config:  cfg,
 		log:     logger,
 		dial:    dial,
 		onState: opts.OnState,
+		now:     now,
+		sleep:   sleep,
+		rand:    opts.Rand,
 		sources: map[string]*sourceState{},
+	}
+}
+
+// realSleep waits for d, returning false when ctx ends first.
+func realSleep(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 
