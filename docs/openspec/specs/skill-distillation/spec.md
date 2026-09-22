@@ -1,256 +1,665 @@
 ---
 status: draft
-date: 2026-07-27
-implements: [ADR-0012]
-requires: [SPEC-0005, SPEC-0006]
+date: 2026-09-22
+implements: [ADR-0012, ADR-0030]
+requires: [SPEC-0005, SPEC-0006, SPEC-0011]
 ---
 
 # SPEC-0007: Cross-Harness Skill Distillation
 
-> **Not yet implemented.** Design-stage; no distiller or learned-skill store exists today. See harness issue #3.
+> **Not yet implemented.** Design stage. No distiller, distill ledger or
+> skill repo support exists today. Tracked by the SPEC-0007 epic, harness#69.
 
 ## Overview
 
-Detection of patterns recurring across independent harnesses, and the **learned
-skill tier** they are promoted into: markdown on disk, never projected, reachable
-only through a search tool backed by an embedded full-text index. See
-**ADR-0012**.
+This spec covers how a lesson the fleet keeps relearning becomes a reviewed
+skill, and how that skill is served. See **ADR-0012** for the search-only skill
+tier, and **ADR-0030** for grounding, verification, proposal, skill repos and
+distillers.
 
-Detection clusters literal error strings and repeated failed tool calls — a
-count, not a judgment — and the promotion gate is *scope*: a pattern in one
-project leaves as a pull request against that repo, a pattern across several
-becomes a learned skill. The authoring step runs in a **distiller harness**, not
-in the daemon, which never calls a model and never writes to a repository.
+Sessions show where agents struggled. The merged, green, unreverted pull request
+that ended the struggle supplies the content. Before any human sees a candidate,
+a model that never saw that pull request must rebuild the change from the skill
+alone. Every change to a skill then arrives as a pull request, and its merge
+promotes it.
 
-Retrieval is `modernc.org/sqlite` FTS5 with `bm25()` — pure Go, no CGo, no model
-weights, no external service.
+The operator declares **skill repos** (a remote, a path, and the harnesses they
+serve) and **distillers** (triggered harnesses that name the harnesses they
+learn from, the skill repo they propose to, and how many distinct repositories
+a lesson must span). Skills are served by search, never projected, so delivery
+does not depend on which adapter a harness runs.
+
+The daemon makes no model request, holds no model or forge credential, and
+writes to no repository. Deterministic work runs in `harness distill`. Each
+model call runs in its own one-shot scratch run (SPEC-0011), with inputs
+assembled by code.
 
 ## Requirements
 
-### Requirement: Pattern Detection Inputs
+### Requirement: Harvest Boundary
 
-Detection SHALL operate on literal error strings and repeated failed tool calls
-extracted from trajectories obtained through the SPEC-0006 read-only interface.
-Detection MUST NOT require a language model. Only harnesses that have opted into
-trajectory harvesting SHALL contribute. Each detected occurrence SHALL retain
-the project provenance of the harness that produced it.
+Distillation SHALL obtain session data only through the SPEC-0006
+opt-in-enforcing trajectory interface. A harness without `harvest_trajectory`
+MUST contribute nothing to any stage. Every string taken from a transcript SHALL
+be redacted before it is stored or passed to a model run.
 
-#### Scenario: Detection needs no model
-
-- **WHEN** a detection pass runs over available trajectories
-- **THEN** it completes without issuing any model request
+Sessions of any distiller, and of any model run a distiller starts, MUST NOT
+contribute evidence to any distiller.
 
 #### Scenario: Non-harvesting harnesses contribute nothing
 
 - **WHEN** a harness has not opted into harvesting
-- **THEN** none of its output appears in any cluster
+- **THEN** none of its sessions appear in the ledger, in any candidate, or in any
+  evidence bundle
 
-### Requirement: Cross-Project Promotion Gate
+#### Scenario: Distillation does not learn from itself
 
-A cluster SHALL be classified by the number of **distinct projects** it appears
-in. A cluster confined to one project SHALL be treated as project knowledge and
-SHALL NOT produce a learned skill. A cluster spanning at least the configured
-threshold of distinct projects SHALL be eligible for the learned tier. The
-threshold SHALL be configurable.
+- **WHEN** a distiller's `from` glob matches another distiller, or matches a
+  scratch run a distiller started
+- **THEN** that harness's sessions are excluded from the pass
 
-#### Scenario: Single-project pattern stays local
+#### Scenario: Transcript text is redacted before it leaves
 
-- **WHEN** a cluster's occurrences all carry the same project provenance
-- **THEN** no learned skill is created for it
+- **WHEN** a session excerpt that contains a credential-shaped string is placed
+  in an evidence bundle
+- **THEN** the bundle carries the redacted form, and the unredacted form is
+  written nowhere
 
-#### Scenario: Cross-project pattern is eligible
+### Requirement: Session-To-Pull-Request Linking
 
-- **WHEN** a cluster spans at least the configured number of distinct projects
-- **THEN** it becomes eligible for authoring into the learned tier
+`harness distill` SHALL link each attributed session to the pull requests it
+worked toward. Linking SHALL resolve the session's working directory to its
+repository's canonical host, and MUST NOT link to a copy that declares
+`downstream-mirror`. It SHALL match by the transcript's recorded branch when one
+exists, and otherwise by commits reachable in the working directory whose
+committer time falls within the session's window. A session that matches no pull
+request, or matches several in one repository with no branch to choose between
+them, SHALL be left unlinked. The number of unlinked sessions SHALL be reported.
+
+For each linked pull request the ledger SHALL record: state, base SHA, merge
+SHA, the combined status of the head at merge, each review with its state and
+comment text, the commits pushed after the first review, and whether a commit on
+the default branch reverted it within the configured revert window.
+
+#### Scenario: Branch match
+
+- **WHEN** a Claude Code session records branch `feat/x` in `stump.wtf/reduit`,
+  and a pull request in that repository has head `feat/x`
+- **THEN** the session is linked to that pull request
+
+#### Scenario: Commit match without a branch
+
+- **WHEN** a Crush session records no branch, and a commit made in its working
+  directory during its window is the head of a pull request
+- **THEN** the session is linked to that pull request
+
+#### Scenario: Ambiguity fails closed
+
+- **WHEN** a session without a branch matches two open pull requests in the same
+  repository
+- **THEN** it is linked to neither, and the unlinked count increases
+
+#### Scenario: Mirrors are never targets
+
+- **WHEN** a working directory's `origin` points at a copy tagged
+  `downstream-mirror`
+- **THEN** linking resolves to the canonical copy its `canonical-*` topic names,
+  or leaves the session unlinked if that topic is absent
+
+### Requirement: Grounding Evidence
+
+A pull request SHALL count as grounding evidence only if it merged, its head's
+combined status was success at merge, and it was not reverted within the revert
+window. Candidates SHALL be found by three signals, all detected without a
+model:
+
+1. **Review correction**: a changes-requested review or line comment, followed by
+   a commit touching the commented span, followed by merge.
+2. **Red to green**: a required check failing on a head, followed by a commit
+   that makes it pass, followed by merge.
+3. **Struggle, then resolution**: in a linked session, at least the configured
+   number of failed `exec` or `verify` actions, or repeated edit→verify cycles on
+   the same targets, before a passing `verify`, where the linked pull request's
+   merged hunks touch those targets.
+
+A session whose own trajectory shows a retrieval of skill X MUST NOT contribute
+evidence to X's purpose key.
+
+#### Scenario: Detection needs no model
+
+- **WHEN** `harness distill` links and detects over the available sessions
+- **THEN** it completes without starting any model run
+
+#### Scenario: Closed or reverted pull requests ground nothing
+
+- **WHEN** a candidate's only evidence is a pull request that was closed
+  unmerged, red at merge, or reverted within the window
+- **THEN** no candidate is emitted
+
+#### Scenario: Retrieval does not reinforce itself
+
+- **WHEN** a session called `get_skill` for skill X and later ended in a merged
+  pull request matching X's purpose key
+- **THEN** that session is not counted in X's evidence
+
+### Requirement: Evidence Key, Purpose Key And Scope
+
+Detection SHALL group evidence by an **evidence key** computed without a model
+from the signal kind, the normalized class of the touched paths, and the failing
+check name or error signature. After authoring, each skill SHALL carry a
+**purpose key**, `(task_family, action, target)`, computed by code from the
+record's closed-vocabulary fields. A model MUST NOT assign either key directly.
+The ledger SHALL remember which evidence key produced which purpose key, so a
+suppressed or already-active lesson is recognized before any model run. The
+number of distinct canonical repositories under an evidence key SHALL be
+compared with the distiller's `min_repos`. Below it, the candidate SHALL wait in the ledger. At or
+above it, the candidate is eligible. A distiller SHALL skip an eligible
+candidate whose purpose key is already active in some skill repo served to every
+harness its evidence came from.
+
+#### Scenario: Below the distiller's threshold, a candidate waits
+
+- **WHEN** a distiller has `min_repos = 3` and a candidate's evidence spans two
+  repositories
+- **THEN** nothing is proposed, and the candidate stays in the ledger with its
+  count
+
+#### Scenario: A single-project distiller acts on one repository
+
+- **WHEN** a distiller has `min_repos = 1` and a candidate's evidence comes from
+  one repository
+- **THEN** the candidate is eligible
+
+#### Scenario: Already reachable lessons are skipped
+
+- **WHEN** a candidate's purpose key is active in a skill repo whose `serve_to`
+  matches every harness in its evidence
+- **THEN** no distiller proposes it again
+
+#### Scenario: Out-of-vocabulary values fall back
+
+- **WHEN** an author run returns a `task_family` outside the closed vocabulary
+- **THEN** it is replaced with the vocabulary's fallback value before the key is
+  computed, and the substitution is logged
 
 ### Requirement: Distillation Runs Outside The Daemon
 
-The detection and authoring steps SHALL run in a supervised harness, not in
-the daemon. The daemon MUST NOT issue model requests, MUST NOT hold model
-credentials, and MUST NOT write to any repository working tree. The daemon's
-only obligations are supervising the distiller, answering read-only trajectory
-queries, and serving the retrieval tools.
+Linking, detection, deduplication and proposal SHALL run in `harness distill`,
+a client process started by the distiller harness. Every model call SHALL run in
+a separate one-shot scratch run. The daemon MUST NOT issue model requests, MUST
+NOT issue forge requests, MUST NOT hold model or forge credentials, and MUST NOT
+write to any repository working tree, including a skill repo's clone. `harness
+distill` SHALL hold the forge credential. Model runs SHALL receive only
+`verifier_env_file`, which MUST NOT contain a forge credential.
 
-#### Scenario: Daemon issues no model requests
+#### Scenario: Daemon makes no model or forge request
 
-- **WHEN** distillation runs end to end
-- **THEN** every model request originates from the distiller harness and none
-  from the daemon
+- **WHEN** a full distillation pass runs
+- **THEN** every model request comes from a one-shot run, every forge request
+  comes from `harness distill`, and none comes from the daemon process
 
-#### Scenario: Daemon writes no repositories
+#### Scenario: Model runs cannot reach the forge
 
-- **WHEN** a project-scoped finding is produced
-- **THEN** the change reaches the repository as a pull request authored by the
-  distiller, and no daemon code path writes to a working tree
+- **WHEN** a model run starts
+- **THEN** its environment contains no variable carrying the forge credential
+  `harness distill` holds
 
-### Requirement: Learned Skill Artifact
+### Requirement: Isolated Model Runs
 
-An authored learned skill SHALL be written as markdown to a Harness-owned
-directory under the state directory, one directory per skill. Its frontmatter
-SHALL carry a `status` field, a `symptoms` list containing the literal strings
-that formed its cluster, and provenance recording the contributing trajectories,
-the distinct project count, and first- and last-seen timestamps. Learned skills
-MUST NOT be written into any project repository working tree or into a user's
-dotfiles; the Harness-owned learned store is itself git-tracked by design.
+Each model run SHALL receive exactly the inputs listed for its role. No other
+file SHALL be placed in its working directory.
+
+| Run | Receives | MUST NOT receive |
+|---|---|---|
+| Author | the evidence bundle: redacted session excerpts, review text, merged hunks, cited spans | forge credentials |
+| Reconstructor | the skill record, the task statement, a clean-room snapshot at the base SHA | the merged diff, later history, review text, the pull request's identity |
+| Judge | the merged hunks, the reconstructed hunks, the skill's summary render | the full skill record, sessions |
+| Adjudicator | the judge's reason, both sets of hunks, the full skill record | sessions |
+| Control | the task statement, the same clean-room snapshot | the skill record |
+
+#### Scenario: Reconstructor never receives the answer
+
+- **WHEN** a reconstructor run starts
+- **THEN** its working directory contains no `.git`, and no file whose contents
+  match the post-merge version of any cited file
+
+### Requirement: Blind Reconstruction Verification
+
+Every candidate SHALL pass verification before it is proposed. Verification
+SHALL:
+
+1. Build a clean room from `git archive` of the base SHA, containing no
+   repository metadata. Take the task statement from the linked issue's body,
+   or, when there is no linked issue, from the session's first user message,
+   redacted. Record which source was used. If the statement contains any
+   non-blank line of the merged hunks verbatim, record `task_leak: true`.
+2. Run the reconstructor on the files the skill cites.
+3. Audit the reconstructor's transcript through agent-trace. A read outside the
+   clean room, or an exec that fetches, clones or calls a forge, SHALL mark the
+   run contaminated.
+4. Run the judge. `equivalent: true` SHALL pass directly. Anything else SHALL go
+   to the adjudicator, and `keep: true` SHALL pass as adjudicated.
+5. Run `make test` in the reconstructor's clean room when the repository defines
+   that target, and record the result.
+6. When the merged change is under `replay_max_lines`, run the control. If the
+   control's test result and judge verdict are at least as good as the
+   reconstructor's, the candidate SHALL be dropped and its purpose key
+   suppressed.
+
+A candidate SHALL be proposed only with a fidelity pass (direct or adjudicated)
+and a clean audit. Test and control results SHALL travel with the proposal as
+evidence and are not required to pass.
+
+#### Scenario: A leaky task statement is flagged
+
+- **WHEN** a session's first message contains a line that appears verbatim in
+  the merged hunks
+- **THEN** verification proceeds, and the dossier marks the rebuild
+  `task_leak: true`
+
+#### Scenario: Contaminated runs stop the candidate
+
+- **WHEN** the reconstructor's transcript shows a read outside its clean room
+- **THEN** the run is recorded as contaminated, and the candidate is not
+  proposed in this pass
+
+#### Scenario: A failed rebuild is adjudicated, not rejected
+
+- **WHEN** the judge rules a reconstruction not equivalent
+- **THEN** the adjudicator decides whether the skill is faithful, and a
+  `keep: true` verdict lets the candidate proceed as adjudicated
+
+#### Scenario: A skill that teaches nothing is dropped
+
+- **WHEN** the control run's tests pass and its judge verdict is equivalent,
+  matching the reconstructor's
+- **THEN** the candidate is not proposed, and its purpose key is suppressed in
+  the ledger
+
+### Requirement: Skill Artifact
+
+A skill SHALL be a markdown file at `<path>/<slug>/SKILL.md` in a skill repo,
+where `<path>` is the skill repo's configured path. Its frontmatter SHALL carry: `name`; `description`, of at most
+300 characters; `level` (`atomic`, `composite` or `pattern`); `status`
+(`active`, `superseded` or `retired`); `task_family` and `tags`, from the closed
+vocabularies; `purpose_key`; `symptoms`, the literal strings from its evidence;
+`applies_to`, path globs; and `provenance`. `provenance` SHALL record the scope
+counts, first- and last-seen dates, one entry per evidence item (signal,
+repository, pull request, merge SHA, span, session count), and the verification
+results. The body SHALL contain the sections *When to use*, *Steps*,
+*Invariants*, *Failure modes*, *Do not* and *Evidence*. The steps SHALL describe
+the procedure against the repository and stack, not against a particular agent's
+tools.
 
 #### Scenario: Artifact carries its evidence
 
-- **WHEN** a learned skill is authored
-- **THEN** its frontmatter lists the literal error strings that formed the
-  cluster and the number of distinct projects observed
+- **WHEN** a skill is authored
+- **THEN** each evidence entry names a pull request, a merge SHA and a span, and
+  the verification results are present
 
-#### Scenario: Learned tier is Harness-owned
+#### Scenario: Lint rejects an incomplete record
 
-- **WHEN** a learned skill is written
-- **THEN** the path is inside the Harness state directory and no file outside it
-  is modified
+- **WHEN** `harness skills lint` reads a skill missing the *Do not* section, or
+  whose `description` exceeds 300 characters
+- **THEN** it exits non-zero, naming the file and the rule
 
-### Requirement: Two-Channel Gate
+### Requirement: Default-Branch Gate
 
-A learned skill with `status: proposed` MUST NOT be projected into any harness
-and MUST NOT be indexed for retrieval. Only a skill whose `status` is `promoted`
-SHALL be indexed. Learned skills MUST NOT be projected at any status — the
-SPEC-0006 projection path SHALL exclude the learned tier unconditionally.
+For each skill repo, the daemon SHALL index only files under its `path` on the
+clone's checked-out default branch whose `status` is `active`. If a clone's
+`HEAD` is not the default branch, or its working tree is dirty, the daemon SHALL
+keep serving that repo's previous index and SHALL report the condition through
+`harness doctor`. Harness MUST NOT project skill-repo content at any status: the
+SPEC-0006 projection path SHALL exclude every skill repo unconditionally. The
+daemon MUST NOT fetch, pull, commit or push in any clone. `harness skills sync`
+SHALL fast-forward every declared clone, and every distiller pass SHALL run it
+first.
 
-#### Scenario: Proposed skills are inert on both channels
+#### Scenario: Proposals are inert
 
-- **WHEN** a skill is written with `status: proposed`
-- **THEN** it appears in no harness's projected skill set and is returned by no
-  search
+- **WHEN** a skill exists only on a proposal branch or an open pull request
+- **THEN** no search returns it, and no harness has it projected
 
-#### Scenario: Promotion enables retrieval only
+#### Scenario: Merge promotes
 
-- **WHEN** a skill's `status` is changed to `promoted` and the index is refreshed
-- **THEN** it becomes searchable, and it is still projected into no harness
+- **WHEN** the proposal is merged and the store is synced
+- **THEN** the next index refresh makes the skill searchable, and it is still
+  projected into no harness
+
+#### Scenario: A detached store keeps the last good index
+
+- **WHEN** a clone's `HEAD` points at a branch other than the default
+- **THEN** searches return the previous index's results, and `harness doctor`
+  warns
+
+### Requirement: Pull Request Proposals
+
+`harness distill propose` SHALL submit every new skill, revision, supersession
+and retirement as a pull request.
+
+- Every proposal SHALL target the distiller's `to` skill repo, on that
+  repository's canonical host, at `<path>/<slug>/SKILL.md`. `propose` MUST NOT
+  modify any other file, including a repository's `AGENTS.md` or `CLAUDE.md`.
+- Each pull request SHALL carry exactly one skill, on a branch named
+  `<branch_prefix><slug>` and cut from a freshly fetched default branch, in a
+  clone under `harness distill`'s state directory.
+- The body SHALL contain the marker `<!-- harness-distill key=<purpose_key> -->`
+  and the evidence dossier: the claim; an evidence table; the fidelity, test,
+  control and audit results; the scope; the context cost in characters of the
+  summary and full renders; and any skill it supersedes.
+- If an open pull request against the same skill repo already carries the same
+  marker, `propose` SHALL push a new commit to it and MUST NOT open another,
+  whichever distiller opened the first.
+- `propose` MUST NOT force-push, merge, approve, or enable auto-merge.
+- At most `max_open` distillation pull requests SHALL be open per target
+  repository. Candidates beyond the cap SHALL wait in the ledger, ranked by
+  distinct repositories × occurrences × signal weight.
+- `reviewers` SHALL be requested, and `labels` applied, when the pull request is
+  created.
+
+#### Scenario: Re-running does not duplicate
+
+- **WHEN** two passes produce the same purpose key while the first pass's pull
+  request is open
+- **THEN** there is one pull request, and the second pass added a commit to it
+
+#### Scenario: The cap holds
+
+- **WHEN** `max_open` distillation pull requests are open against a repository
+- **THEN** a pass opens no new pull request there, and the waiting candidates
+  keep their rank in the ledger
+
+#### Scenario: Diverged remote is refused, not overwritten
+
+- **WHEN** the remote proposal branch has commits the local clone lacks
+- **THEN** `propose` fetches and adds its commit on top, or fails with
+  `ErrBranchDiverged`, and never rewrites the remote branch
+
+#### Scenario: Two distillers converge
+
+- **WHEN** two distillers with the same `to` produce the same purpose key
+- **THEN** one pull request exists, carrying both distillers' evidence
+
+#### Scenario: Only the skill file changes
+
+- **WHEN** a proposal targets a skill repo that is also a project repository
+- **THEN** the pull request's diff touches only files under the skill repo's
+  `path`
+
+### Requirement: Review Feedback And Suppression
+
+`harness distill` SHALL list the review comments on its open pull requests and
+pass them to a new author run as untrusted data. The revised skill SHALL be
+pushed as a new commit, with a comment summarizing the change. A merged pull
+request SHALL mark its key `promoted` for that skill repo in the ledger. A pull
+request closed unmerged SHALL mark its key `rejected` for that skill repo, keep
+the reviewer's last comment as the reason, and suppress the key for that repo
+until the evidence count for it has doubled. A
+later proposal for a suppressed key SHALL link the rejected pull request.
+
+#### Scenario: A rejection is remembered
+
+- **WHEN** a distillation pull request is closed without merging and the next
+  pass sees the same evidence
+- **THEN** no pull request is opened for that key
+
+#### Scenario: New evidence reopens the question
+
+- **WHEN** the evidence count for a rejected key has doubled since the rejection
+- **THEN** a new pull request may be opened, and its body links the rejected one
 
 ### Requirement: Embedded Retrieval Index
 
-Retrieval SHALL use an embedded full-text index requiring no external service,
-no network access, and no model weights. The index SHALL cover at minimum the
-skill name, description, and `symptoms` fields, and SHALL apply stemming so
-morphological variants of a term match. The index SHALL be treated as a
-rebuildable cache: deleting it and reindexing from the markdown files MUST
-restore equivalent behavior.
+Retrieval SHALL use an embedded full-text index that requires no external
+service, no network access and no model weights. It SHALL record which skill
+repo each skill came from. The index SHALL cover `name`, `description`,
+`symptoms`, `tags` and `applies_to`, and SHALL stem terms so that morphological
+variants match. It SHALL be a rebuildable cache: deleting it and
+reindexing from the skill repos' default branches MUST restore equivalent
+behavior.
 
 #### Scenario: Search runs with no external dependency
 
-- **WHEN** a search is performed on a machine with no other software installed
-  and no network access
+- **WHEN** a search runs on a machine with no other software installed and no
+  network access
 - **THEN** it returns results
 
 #### Scenario: Literal symptom text matches
 
-- **WHEN** a query contains a literal error string recorded in a promoted
-  skill's `symptoms`
-- **THEN** that skill is returned among the results
+- **WHEN** a query contains a literal string from an active skill's `symptoms`
+- **THEN** that skill is among the results
 
-#### Scenario: Index is rebuildable from source
+#### Scenario: Index is rebuildable
 
-- **WHEN** the index is deleted and rebuilt from the markdown files
-- **THEN** the same promoted skills are searchable with equivalent ranking
+- **WHEN** the index is deleted and rebuilt
+- **THEN** the same active skills are searchable, with equivalent ranking
 
 ### Requirement: Search And Retrieval Tools
 
-The learned tier SHALL be exposed through the SPEC-0005 facade as two tools: one
-returning skill identifiers and descriptions for a query, and one returning a
-single skill's full body by identifier. The search tool MUST NOT return full
-bodies. Each promoted skill SHALL additionally be addressable as an MCP resource
-so a human may reference one directly. The search tool's description SHALL
-instruct callers to supply multiple phrasings including any literal error text.
+Skill repos SHALL be exposed through the SPEC-0005 facade as two tools.
+
+- `search_skills` SHALL search only the skill repos whose `serve_to` matches the
+  calling harness, as attributed by SPEC-0005 REQ "Caller Identity". An
+  unattributed caller SHALL search only skill repos whose `serve_to` is
+  `["*"]`. It SHALL take a query and an optional `paths` list, SHALL
+  return identifiers (qualified by skill repo) and descriptions only, and SHALL
+  return 3 results by default and at most 5. A skill whose `applies_to` matches any given path SHALL rank above
+  an otherwise equal skill.
+- `get_skill` SHALL return one skill. By default it SHALL return a summary render
+  (*When to use*, *Steps*, *Invariants*, *Do not*) of at most
+  `summary_max_chars`. `render: "full"` SHALL return the whole file.
+- The tool descriptions SHALL tell callers to search while planning and while
+  reviewing a concrete draft or diff, and to supply several phrasings, including
+  any literal error text.
+- Each active skill SHALL also be available as an MCP resource under a stable
+  identifier.
+
+Each retrieval SHALL be counted per (skill repo, skill), together with the
+session that made it, in the daemon's state.
 
 #### Scenario: Search returns descriptions, not bodies
 
 - **WHEN** a search matches several skills
-- **THEN** the result carries identifiers and descriptions only
+- **THEN** the result carries at most the requested number of identifiers and
+  descriptions, and no bodies
 
-#### Scenario: Bodies are fetched individually
+#### Scenario: Search is scoped to the caller
 
-- **WHEN** a caller requests a skill by identifier
-- **THEN** the full body is returned for that skill alone
+- **WHEN** harness `spotter/agent` calls `search_skills` and a skill repo has
+  `serve_to = ["reduit/*"]`
+- **THEN** no skill from that repo is returned
 
-#### Scenario: Promoted skills are addressable by humans
+#### Scenario: Unattributed callers see only unscoped repos
 
-- **WHEN** a promoted skill exists
-- **THEN** it is reachable as an MCP resource under a stable identifier
+- **WHEN** a session started outside Harness calls `search_skills` without a
+  valid token
+- **THEN** only skill repos with `serve_to = ["*"]` are searched
+
+#### Scenario: Summary by default
+
+- **WHEN** `get_skill` is called without `render`
+- **THEN** the response is the summary render, no longer than
+  `summary_max_chars`
+
+#### Scenario: Paths narrow the search to the diff
+
+- **WHEN** `search_skills` is called with `paths: [".gitea/workflows/ci.yml"]`
+- **THEN** skills whose `applies_to` matches that path rank first
 
 ### Requirement: Supersession
 
-When a newly authored skill contradicts or subsumes an existing learned skill,
-it SHALL supersede rather than accompany it. Supersession SHALL take effect
-only when the superseding skill is promoted; a `proposed` skill MUST NOT alter
-the retrieval status of any existing skill. On promotion, the superseded skill
-SHALL be removed from the retrieval index, SHALL record the identifier of the
-skill replacing it in its frontmatter, and its `status` SHALL become
-`superseded` — so a rebuilt index excludes it. Two learned skills describing
-the same pattern MUST NOT both be retrievable.
+If a skill's purpose key equals that of an active skill in the same skill repo,
+`propose`
+SHALL submit it as a change to the existing file rather than as a new one. If
+its evidence contradicts the existing skill, it SHALL instead be a pull request
+that sets the old skill's `status` to `superseded`, sets `superseded_by`, and
+adds the new skill. Supersession SHALL take effect only on merge. Two active
+skills on one skill repo's default branch MUST NOT share a purpose key, and
+`harness skills lint` SHALL enforce this.
 
-#### Scenario: Superseding replaces rather than accumulates
+#### Scenario: Same purpose updates, not duplicates
 
-- **WHEN** a new skill supersedes an existing one
-- **THEN** only the new skill is retrievable and the old one records its
-  successor
+- **WHEN** a candidate's purpose key matches an active skill
+- **THEN** the pull request modifies that skill's file, and no second file is
+  added
+
+#### Scenario: Unmerged supersession changes nothing
+
+- **WHEN** a supersession pull request is open
+- **THEN** the old skill is still searchable
+
+### Requirement: Staleness Re-Verification
+
+On each pass, `harness distill` SHALL compare every span cited by an active
+skill against the current default branch of its repository. A skill SHALL be
+re-verified when a cited span has changed or its file no longer exists. A skill
+that fails re-verification SHALL produce a supersede or retire pull request.
+
+#### Scenario: Deleted evidence triggers re-verification
+
+- **WHEN** a file cited in a skill's evidence has been deleted on its
+  repository's default branch
+- **THEN** the skill is re-verified against current code, and a failure opens a
+  retire pull request
 
 ### Requirement: Retrieval-Count Retirement
 
-The system SHALL record how often each promoted skill is returned by search. A
-promoted skill SHALL become eligible for retirement only after a configurable
-grace period has elapsed **since its promotion**, and only if it has accrued no
-retrievals within a configurable window. A skill inside its grace period MUST
-NOT be retired. Retirement SHALL remove the skill from the index; it MUST NOT
-delete the markdown file. Retirement SHALL be recorded in the skill's
-frontmatter, so that rebuilding the index from the markdown files does not
-resurrect a retired skill.
+An active skill SHALL become eligible for retirement only after
+`retire_grace` has elapsed since its merge, and only if it has had no
+retrievals within `retire_window`. A skill still inside its grace period MUST NOT
+be retired. Retirement SHALL be a pull request setting `status: retired`. The
+file SHALL remain. Retrieval counts SHALL be stored in daemon state separate from
+the index. If they are lost, every skill SHALL be treated as newly promoted.
 
 #### Scenario: Grace period protects new skills
 
-- **WHEN** a skill was promoted within the grace period and has zero retrievals
-- **THEN** it is not eligible for retirement
+- **WHEN** a skill merged within `retire_grace` has zero retrievals
+- **THEN** no retire pull request is opened
 
-#### Scenario: Unused skills retire without data loss
+#### Scenario: Lost counts fail safe
 
-- **WHEN** a skill past its grace period accrues no retrievals within the window
-- **THEN** it is removed from the index and its markdown file remains on disk
+- **WHEN** the retrieval-count store is missing at startup
+- **THEN** no skill becomes eligible for retirement until `retire_grace` has
+  elapsed again
+
+### Requirement: Skill Repos
+
+A skill repo SHALL be declared by a `[skill_repo.<name>]` table with `remote`
+(required), `path` (default `skills`) and `serve_to`, a list of harness
+selectors (default `["*"]`). Harness SHALL keep its own clone of each skill repo
+under its state directory. The clone MAY be sparse to `path`. It MUST NOT be an
+operator's working checkout. Skill repo tables SHALL be accepted in global
+configuration only. With no skill repo declared, the facade SHALL NOT register
+the skill tools, and no index file SHALL be created.
+
+#### Scenario: Project files cannot declare skill repos
+
+- **WHEN** a project `harness.toml` contains a `[skill_repo.*]` table
+- **THEN** the load fails with an error naming the file and the table
+
+#### Scenario: Inert by default
+
+- **WHEN** no skill repo is declared
+- **THEN** `search_skills` and `get_skill` are not registered, and no index file
+  exists
+
+### Requirement: Distillers
+
+A harness SHALL become a distiller by carrying a `[harness.<name>.distill]`
+table with:
+
+- `from`: harness selectors naming whose sessions and pull requests count. A
+  selector is an exact harness name or a glob over qualified names.
+- `to`: the name of one skill repo.
+- `min_repos`, default 1. Optional per-distiller policy: `max_open` (default 3),
+  `max_candidates` (default 5), `replay_max_lines` (default 400),
+  `revert_window` (default 14 days), `reviewers`, `labels`, `branch_prefix`,
+  `verifier` and `verifier_env_file`.
+
+`harness distill run <name>` SHALL run one pass for the named distiller. Loading
+SHALL fail when `to` names an undeclared skill repo; when an exact `from` name is
+undeclared or lacks `harvest_trajectory`; when a distiller lists itself in
+`from`; when the harness carrying the table has neither `schedule` nor
+`triggers`; or when the table appears in a project `harness.toml`. Glob
+selectors SHALL be resolved at each pass, and a glob that matches no harness
+SHALL be reported in the pass summary.
+
+#### Scenario: A dangling target fails the load
+
+- **WHEN** a distiller sets `to = "go-stack"` and no `[skill_repo.go-stack]`
+  exists
+- **THEN** the configuration fails to load, naming the distiller and the missing
+  skill repo
+
+#### Scenario: A non-harvesting source fails the load
+
+- **WHEN** a distiller's `from` lists an exact harness name whose
+  `harvest_trajectory` is false
+- **THEN** the configuration fails to load, because that source would silently
+  contribute nothing
+
+#### Scenario: Two tiers are two distillers
+
+- **WHEN** one distiller has `from = ["reduit/*"]`, `to = "reduit"`,
+  `min_repos = 1`, and another has `from = ["*"]`, `to = "go-stack"`,
+  `min_repos = 3`
+- **THEN** a lesson seen only in reduit is proposed to `reduit`, and a lesson
+  seen in three repositories is proposed to `go-stack`
+
+#### Scenario: An empty glob is visible
+
+- **WHEN** a pass runs and the `from` glob `spotter/*` matches no registered
+  harness
+- **THEN** the pass summary reports the selector as matching nothing
 
 ### Requirement: Error Handling Standards
 
-All error-producing operations MUST follow structured error handling:
+All operations that can fail MUST follow structured error handling:
 
-- Errors MUST be wrapped with contextual information at each layer boundary
-  (e.g., "distillation: index refresh: open learned store: permission denied")
-- Sentinel errors MUST be defined for domain-specific failure modes callers need
-  to distinguish programmatically — at minimum: skill not found, index
-  unavailable, and malformed frontmatter
-- Silent error swallowing MUST NOT occur — every error MUST be returned to the
-  caller, logged with sufficient context, or explicitly handled with a
-  documented reason for suppression
-- Structured logging MUST be used for error reporting (key-value pairs, not
-  string interpolation)
+- Errors MUST be wrapped with context at each layer boundary (for example,
+  "distill: link: resolve canonical repo for ~/src/reduit: no canonical topic").
+- Sentinel errors MUST be defined at minimum for: skill not found, skill repo
+  not found, index unavailable, malformed frontmatter, session not linked, run
+  contaminated, and branch diverged.
+- Errors MUST NOT be silently swallowed. Every error MUST be returned, logged
+  with context, or explicitly handled with a documented reason for suppressing
+  it.
+- Errors MUST be reported with structured logging (key-value pairs, not string
+  interpolation).
 
 #### Scenario: A malformed skill does not break the index
 
-- **WHEN** one learned skill has unparseable frontmatter during a reindex
-- **THEN** the remaining skills index successfully and a warning names the
-  offending file and cause
+- **WHEN** one skill has frontmatter that cannot be parsed during a
+  reindex
+- **THEN** the other skills index successfully, and a warning names the file
+  and the cause
+
+#### Scenario: One bad candidate does not stop a pass
+
+- **WHEN** verification of one candidate fails with an error
+- **THEN** the pass records the error against that candidate and continues with
+  the next
 
 ### Requirement: Database Operation Standards
 
-All operations against the retrieval index MUST follow structured data access
-patterns:
+All operations against the retrieval index, the retrieval-count store and the
+distill ledger MUST follow structured data access:
 
-- Transactions MUST be used for multi-step mutations that require atomicity,
-  including a full reindex
-- Connection lifecycle MUST be explicitly managed — connections MUST be released
-  after use, with timeouts configured
-- Query parameters MUST use parameterized queries — string interpolation into
-  queries MUST NOT occur, including for user- or agent-supplied search terms
+- Multi-step mutations that must be atomic, including a full reindex and a
+  ledger update for one pull request, MUST run in a transaction.
+- Connection lifecycle MUST be managed explicitly: connections are released
+  after use, and timeouts are configured.
+- Queries MUST be parameterized. String interpolation into a query MUST NOT
+  occur, including for search terms supplied by users or agents.
 
 #### Scenario: Reindex is atomic
 
 - **WHEN** a reindex fails partway through
-- **THEN** the previous index contents remain queryable and no partial state is
+- **THEN** the previous index contents remain queryable, and no partial state is
   visible
 
 #### Scenario: Search terms are parameterized
 
-- **WHEN** a search query contains characters significant to the query language
-- **THEN** they are bound as parameters and cannot alter the query structure
+- **WHEN** a search query contains characters that mean something in the query
+  language
+- **THEN** they are bound as parameters and cannot change the query's structure

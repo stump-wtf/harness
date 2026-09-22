@@ -1,158 +1,243 @@
 # Design: Cross-Harness Skill Distillation
 
-> **Not yet implemented.** Design-stage; no distiller or learned-skill store exists today. See harness issue #3.
+> **Not yet implemented.** Design stage. No distiller, distill ledger or skill
+> repo support exists today. Tracked by the SPEC-0007 epic, harness#69.
 
 ## Context
 
-Once Harness can read every harness's trajectory (SPEC-0006) and serve tools to
-every harness (SPEC-0005), a fleet-level fact becomes visible that no individual
-agent can see: **several independent harnesses hitting the same wall.** One
-agent rediscovering SSE reconnection in Go is normal; six agents in six
-unrelated repos rediscovering it is a missing shared artifact.
+Harness is the only thing watching every agent at once, so it is the only thing
+that can see the fleet relearning the same lesson. **ADR-0012** decided that
+distilled skills are searched rather than projected. **ADR-0030** decided what a
+skill is grounded in, how it reaches a human, and that the operator configures
+where skills live and who distills them. Sessions locate
+the lesson. The merged pull request that ended the struggle proves it. A model
+that never saw that pull request rebuilds the change from the skill. A pull
+request proposes it.
 
-**ADR-0012** decided to detect that by counting repetition rather than judging
-quality, to gate promotion on *cross-project* recurrence, to do the authoring in
-a supervised harness rather than the daemon, and to deliver the results by
-search rather than projection.
-
-This spec (SPEC-0007) formalizes that pipeline. It requires SPEC-0006 for
-trajectory access and SPEC-0005 for both the read tools it consumes and the
-search tools it publishes.
+The main influence is Code2Skill
+([arXiv 2609.05571](https://arxiv.org/abs/2609.05571)). It grounds skills in
+source spans, verifies them by source-blind reconstruction, stores typed records
+with anti-goals, and found that compact summaries, retrieved at planning or
+review time, carry most of their value.
 
 ## Goals / Non-Goals
 
 ### Goals
 
-- Turn fleet-wide repetition into a durable, reviewable artifact.
-- Keep the daemon free of model credentials and repository writes.
-- Deliver a growing corpus at constant context cost.
-- Ship retrieval inside the single Go binary.
+- Turn a lesson the fleet keeps relearning into a reviewed, durable artifact.
+- Ground every skill in code that a reviewer merged and that CI passed.
+- Filter out unfaithful and useless candidates before they cost a reviewer any
+  time.
+- Keep the daemon free of model credentials, forge credentials and repository
+  writes.
+- Keep a growing corpus at constant, small context cost.
 
 ### Non-Goals
 
-- **Judging session quality.** Explicitly rejected in favor of counting.
+- **Learning from work that never merged.** Exploratory sessions and operations
+  work leave no grounding evidence. This is accepted.
+- **Judging session quality with a model.** Candidates are found by counting,
+  and models only author and verify.
+- **Automatic merge.** Nothing reaches an agent's context without a human merge.
+- **A local-only skill repo.** Promotion is a merge, so a forge remote is
+  required.
+- **Editing `AGENTS.md` or `CLAUDE.md`.** Harness writes skills only.
+- **Importing third-party skill banks.** Deferred (ADR-0030).
 - **Neural embeddings.** See the retrieval decision below.
-- **Automatic merge.** Project findings become pull requests a human merges;
-  learned skills require a human status flip. Nothing lands unattended.
-- **Replacing hand-written skills.** The learned tier sits below them and is
-  never projected; a hand-written skill always wins.
-- **Distilling from harnesses that have not opted in.** Inherited from
-  SPEC-0006.
 
 ## Decisions
 
-### Count repetition, do not judge quality
+### Trajectories find the candidates; merged pull requests ground them
 
-**Choice**: Cluster literal error strings and repeated failed tool calls.
+**Choice**: Three signals find candidates: review corrections, red-to-green
+fixes, and struggle-then-resolution in a linked session. Only a merged, green,
+unreverted pull request can ground a skill.
 
-**Rationale**: "Was this session good?" requires a model over a transcript
-corpus already measured at ~1.1 GB across 1,738 files, and yields a subjective
-verdict that cannot be audited. "Did six harnesses emit this string?" is a
-count — cheap, deterministic, explainable, and re-derivable from the evidence.
+**Rationale**: Code2Skill's trajectory-derived baselines lost because their
+content can be no better than the agent that produced it. Grounding on the merged
+fix gets around that, and grounding on a reviewer's correction captures knowledge
+beyond what the agent had. Trajectories still earn their place, because they
+show where agents actually struggle. A static code miner has no idea which of
+its million records matter.
 
-**Alternatives considered**:
+**Alternatives considered**: *Trajectories alone* (ADR-0012 as written): capped
+by the agent's competence, and the literal error text it clusters on is not in
+agent-trace's output. *Code mining* (Code2Skill): it does not know which tasks
+come up, and in the agent's own repositories it restates code the agent can
+already read.
 
-- *LLM judge over trajectories*: expensive, unbounded, unauditable, and unable to
-  distinguish project knowledge from stack knowledge — which is the distinction
-  that decides where the artifact goes.
-- *Manual capture*: puts the operator back in the tightest loop, and a human
-  inside one session cannot see the cross-fleet pattern at all.
+### Skill repos and distillers are configuration
 
-### Scope is the promotion gate
+**Choice**: Declare any number of `[skill_repo.*]` tables (remote, path,
+`serve_to`), and make distillers ordinary triggered harnesses with a `distill`
+table naming `from`, `to` and `min_repos`.
 
-**Choice**: One project → pull request. Several projects → learned tier.
+**Rationale**: No single threshold suits both a one-project operator and a large
+fleet, so ADR-0012's fixed cross-project gate becomes a per-distiller
+`min_repos`. The project tier and the stack tier are two distillers. Serving by
+search, scoped by `serve_to`, makes delivery independent of the adapter: a
+repository worked by Crush and Claude Code harnesses gets each skill once. And
+because a distiller is an ordinary harness, it inherits run records, logs,
+timeouts and budgets.
 
-**Rationale**: This is not a heuristic; it is the definition of the thing being
-captured. A pattern confined to one repo *is* project knowledge and belongs in
-that repo's context file, where git provides the audit log and review. A pattern
-crossing unrelated repos is stack knowledge with no natural home — which is
-exactly the gap the learned tier fills. Provenance is already tracked per
-harness, so the classifier needs no new data.
+**Alternatives considered**: *One learned store and a global `[distill]` table*
+(the first draft of ADR-0030): one threshold for every fleet, and
+single-repository skills written into each adapter's native directory.
 
-### The distiller is a harness
+### Linking needs a token, so it lives in `harness distill`
 
-**Choice**: Authoring runs in an ordinary supervised process.
+**Choice**: Join sessions to pull requests by `(repo, branch)` where the
+transcript records a branch (Claude Code, Codex), and by committer-time commit
+windows otherwise (Crush, OpenCode, Pi). Ambiguous matches fail closed.
 
-**Rationale**: Authoring needs a model; the daemon must not have one. ADR-0008
-deliberately fences the daemon away from the secret backend, and a supervisor
-holding model credentials would breach that for a feature that does not need to
-live there. As a harness, the distiller is supervised, restartable, and
-observable by the machinery that already exists.
+**Rationale**: Branch matching is a free join. Crush records no branch, so it
+needs the commit fallback. Either way, reading the forge needs credentials the
+daemon must not hold. The ledger is a cache that can be rebuilt from transcripts
+and the forge, and it keys on ADR-0028's `(harness, run_id)` once that ledger
+exists.
 
-### Storage and delivery are orthogonal
+### Verify by rebuilding without seeing the answer
 
-**Choice**: Markdown on disk as substrate; search as the only delivery path.
+**Choice**: Author, reconstructor, judge, adjudicator and control are separate
+one-shot scratch runs. `harness distill` assembles each run's inputs, the
+reconstructor works in a `git archive` clean room, and its transcript is audited
+through agent-trace.
 
-**Rationale**: These feel coupled only because SPEC-0006 made "on disk" and
-"discovered from disk" the same act. They are separable, and separating them
-gets both properties:
+**Rationale**: In the paper, the round trip catches omitted steps and invented
+constraints. A judge's disagreement goes to an adjudicator, because a failed
+rebuild can still come from a faithful skill: 84% of the paper's adjudicated
+records were judged worth keeping. We add what the paper lacked: `make test` in
+the clean room, and a control run without the skill, which catches the paper's
+most common failure, a skill that is accurate and teaches nothing.
 
-- *Disk* buys git history — which matters **more** for machine-written content,
-  not less — plus human and agent editability, reviewable diffs, grep, and a
-  rebuildable index. The files are truth; the index is a cache.
-- *Search* buys constant context cost. Projection puts every description
-  permanently in context: correct at 15 skills, fatal at 200. A distilled corpus
-  grows by construction, so projection was never viable for it.
+**Alternatives considered**: *A model grading the skill text*: it sees the skill
+and the evidence together, so it can only judge plausibility. *One agent doing
+everything*: once it has seen the diff, it cannot be blind.
 
-**Alternatives considered**:
+### Every change to a skill is a pull request
 
-- *Project learned skills like hand-written ones*: fails on context budget as the
-  corpus grows, which is the one thing guaranteed to happen.
-- *Index-only, no files*: loses history, human review, and recoverability — the
-  void stops being legible, which defeats collaboration on it.
+**Choice**: Every proposal is a pull request to the distiller's `to` skill repo,
+which the daemon indexes only on its default branch. Revisions, supersessions and
+retirements are pull requests too.
 
-### `status` gates both channels at once
+**Rationale**: It supplies a reviewer, a notification, a diff, history, CI, a
+record of rejections and rate control, all from machinery the fleet already
+runs. Promotion becomes a merge, which is unambiguous, has an author, and cannot
+be done by accident with an editor.
 
-**Choice**: A single frontmatter field controls indexing eligibility;
-projection of the learned tier is banned unconditionally, so an unreviewed
-skill is inert on every path.
+**Alternatives considered**: *A local `status` field* (ADR-0012 as written): no
+reviewer, and an unreviewed proposal is one edit away from promotion. *A Cairn
+artifact or Switchboard todo*: reaches the operator, but approval would still
+need a second mechanism to change the store.
 
-**Rationale**: One mechanism, one place to look, no way for the two channels to
-disagree. An unreviewed skill is inert everywhere until a human flips a field —
-and that flip is itself a commit, so promotion has an author and a timestamp for
-free.
+### Invariants live in code, not prompts
+
+**Choice**: `harness distill propose` owns branch naming, the idempotency
+marker, the open pull request cap, the reviewer request and the ban on
+force-pushing and merging.
+
+**Rationale**: These are the rules agents most often break when they follow a
+prompt, and each break has a precedent in the house rules. As code, each one has
+a test.
+
+### The runs that read untrusted text hold no forge credentials
+
+**Choice**: `harness distill` holds the forge token and parses text without
+following it. Model runs get `verifier_env_file`, which holds only model
+credentials.
+
+**Rationale**: Transcripts and review comments can be written by an attacker.
+Only the runs that read them can be steered by them, and those runs cannot push,
+comment or merge.
+
+### Summary rendering, small k, and review-time placement
+
+**Choice**: `get_skill` returns a summary capped at 1,000 characters by default.
+`search_skills` returns 3 results by default and 5 at most, and accepts `paths`.
+The tool descriptions steer use toward planning and reviewing.
+
+**Rationale**: In the paper, summaries cut rendered skill text by 88.9% with no
+loss, raising the retrieval depth from 1 to 10 grew context 8.5× for little
+gain, and review after a draft exists was the most consistent placement (38% vs
+24% resolve rate in its coding-RL experiment).
 
 ### FTS5 over embeddings
 
-**Choice**: `modernc.org/sqlite` FTS5 with `bm25()` — pure Go, verified against
-v1.54.0.
+**Choice**: `modernc.org/sqlite` FTS5 with `bm25()`, pure Go (already a
+dependency at v1.59.0), with columns for `name`, `description`, `symptoms`,
+`tags` and `applies_to`.
 
-**Rationale**: The requirement is semantic search with no external dependency,
-and neural embeddings cannot satisfy it. ONNX via CGo needs a shared library at
-runtime — an external dependency by another name. Embedded weights would take an
-**11 MB** binary to 34–100 MB against a Homebrew formula that builds from
-source. Production-grade pure-Go transformer inference does not exist.
+**Rationale**: Unchanged from ADR-0012. Embeddings would add a runtime library
+or grow the binary several-fold, and vocabulary mismatch is closed more cheaply
+here. The `symptoms` are observed literal strings, callers are frontier models
+that can supply several phrasings, and the porter tokenizer stems for free.
+`applies_to` adds a lexical match on file paths, the query a reviewer already
+has in hand. LSA over the local corpus is held in reserve.
 
-Embeddings buy exactly one thing — closing vocabulary mismatch — and this corpus
-closes it three cheaper ways:
+### Retirement by disuse and by staleness, both through a pull request
 
-1. **The vocabulary was already harvested.** Detection clusters on literal error
-   text, so at authoring time the exact strings agents emit are in hand. Written
-   into `symptoms` and indexed, the match becomes *literal*. General semantic
-   search needs embeddings because query vocabulary is unpredictable; here it
-   was observed and recorded.
-2. **The caller is a frontier model.** The search tool instructs callers to
-   supply several phrasings including literal error text — better expansion than
-   a small embedding model, performed outside the daemon.
-3. **Stemming is free** via the FTS5 porter tokenizer.
+**Choice**: Retire on zero retrievals in a window after a grace period, and
+re-verify when a cited span changes on the default branch. Either becomes a pull
+request.
 
-**Alternatives considered**:
+**Rationale**: Retrieval counts only see disuse, while span staleness catches rot
+while the skill is still being used. Counts live outside the index, and losing
+them restarts every grace period, which fails safe.
 
-- *LSA/SVD over the local corpus* (`gonum`, no CGo, no pretrained weights): real
-  semantic similarity derived from the documents themselves. Held in reserve —
-  correct upgrade if recall demonstrably misses, wrong first move before there
-  is a miss to point at.
+## Configuration
 
-### Retirement by retrieval count, with a grace period
+```toml
+# ~/.config/harness/harness.toml. Global only; rejected in project files.
 
-**Choice**: Retire on zero retrievals in a window, but only after a grace period
-measured from promotion.
+[skills]                            # serving, owned by the daemon
+summary_max_chars = 1000
+retire_grace      = "30d"
+retire_window     = "60d"
 
-**Rationale**: Serving rather than projecting makes retrievals countable, which
-is the only usage signal available. But a freshly promoted skill has zero
-retrievals *by definition*, so a naive counter would evict everything new and
-the corpus would shrink faster than distillation fills it. Retirement removes
-from the index only — the markdown stays, so the decision is reversible.
+[skill_repo.go-stack]
+remote   = "https://git.example.com/your-org/go-skills.git"
+path     = "skills"
+serve_to = ["*"]
+
+[skill_repo.reduit]
+remote   = "https://git.example.com/your-org/reduit.git"
+path     = ".harness/skills"       # outside every adapter's native skill path
+serve_to = ["reduit/*"]
+
+[harness.distill-go]
+harness  = "claude-code"           # "command" with argv once ADR-0023 lands
+prompt   = "Run `harness distill run distill-go` and report its summary. Do nothing else."
+schedule = "0 3 * * *"
+triggers = ["webhook.gitea-pr"]    # ADR-0021: a merged pull request is new evidence
+env_file = "~/.config/harness/env/distiller.env"   # forge token for harness distill
+timeout  = "2h"
+
+[harness.distill-go.distill]
+from              = ["reduit/*", "spotter/*", "pr-review"]
+to                = "go-stack"
+min_repos         = 2
+max_open          = 3
+max_candidates    = 5
+replay_max_lines  = 400
+revert_window     = "14d"
+reviewers         = ["your-reviewer"]
+labels            = ["toil"]
+branch_prefix     = "toil/distill-"
+verifier          = "claude-code"
+verifier_env_file = "~/.config/harness/env/verifier.env"   # model credentials only
+
+[harness.distill-reduit]
+harness  = "claude-code"
+prompt   = "Run `harness distill run distill-reduit` and report its summary. Do nothing else."
+schedule = "30 3 * * *"
+env_file = "~/.config/harness/env/distiller.env"
+
+[harness.distill-reduit.distill]
+from      = ["reduit/*"]
+to        = "reduit"
+min_repos = 1
+reviewers = ["your-reviewer"]
+```
 
 ## Architecture
 
@@ -161,82 +246,99 @@ sequenceDiagram
     autonumber
     participant H as Harnesses (opted in)
     participant D as Daemon
-    participant F as MCP facade (SPEC-0005)
-    participant X as Distiller harness
-    participant S as Learned store (markdown, git)
-    participant I as FTS5 index (embedded)
-    participant P as Human reviewer
+    participant X as harness distill
+    participant F as Forge (canonical)
+    participant M as Model runs (scratch one-shots)
+    participant L as Skill repo (the distiller's to)
+    participant R as Reviewer
 
-    H->>D: trajectories (SPEC-0006, read-only)
-    X->>F: list_trajectories / get_trajectory
-    F->>D: delegate
-    D-->>X: transcripts
-
-    Note over X: cluster literal error strings,<br/>group by project provenance<br/>(no model)
-
-    alt confined to one project
-        Note over X: author context-file change<br/>(model call)
-        X->>P: pull request against repo context file
-    else spans N distinct projects
-        Note over X: author SKILL.md + symptoms[]<br/>(model call)
-        X->>S: write status: proposed
-        S-->>P: review
-        P->>S: flip to status: promoted
-        S->>I: index (description + symptoms, stemmed)
-    end
-
-    H->>F: search_skills(query + phrasings)
-    F->>I: parameterized FTS5 query
-    I-->>H: ids + descriptions
-    H->>F: get_skill(id)
-    F->>S: read body
-    S-->>H: full skill
-
-    I-->>X: retrieval counts
-    Note over X: retire: 0 hits in window,<br/>past grace period → deindex,<br/>file retained
+    D-->>X: attributed, redacted sessions (SPEC-0006)
+    X->>F: pull requests, statuses, reviews, reverts
+    Note over X: link, detect, purpose key, scope<br/>(no model)
+    X->>M: author (evidence bundle only)
+    M-->>X: typed skill record
+    X->>M: reconstructor (skill + clean room at base)
+    X->>M: judge, adjudicator, control
+    M-->>X: verdicts
+    Note over X: audit transcripts, make test,<br/>drop if control matches
+    Note over X: evidence spans min_repos?<br/>purpose key, dedup
+    X->>L: one skill per PR (marker, cap, reviewers)
+    R->>L: review, merge or close
+    X->>L: harness skills sync
+    L-->>D: files changed, reindex FTS5 per repo
+    H->>D: search_skills(query, paths), scoped by serve_to
+    D-->>H: ids + descriptions (k ≤ 5)
+    H->>D: get_skill(id)
+    D-->>H: summary render
+    D-->>X: retrieval counts
+    Note over X: staleness and retirement<br/>become pull requests
 ```
 
 ## Risks / Trade-offs
 
-- **Reinforcement loop.** A distilled skill is model output fed back as
-  instruction. A wrong or stale one reaches every agent, and their repetitions
-  become further evidence for the pattern. → Provenance frontmatter records the
-  evidence; human review gates promotion; retrieval-based retirement removes
-  what stops earning its place. None of these is a proof, and this remains the
-  most serious weakness of the design.
-- **Trajectory exposure.** Persisted transcripts are a larger secret exposure
-  than a bounded ring. → Opt-in per harness (SPEC-0006), read-only, never
-  written.
-- **Homogeneity dependence.** Cross-project signal is real only when projects
-  share a stack; a heterogeneous fleet produces mush. → A known limit of the
-  mechanism. The configurable threshold lets an operator tighten the gate rather
-  than accept noise.
-- **FTS5 is weaker than embeddings in general.** → The corpus-specific
-  mitigations (harvested `symptoms`, caller-side expansion, stemming) are what
-  make it sufficient; LSA is the documented upgrade path if they prove not to
-  be.
-- **Blind to lessons that left no error trail.** Counting cannot see a hard
-  thing done well on the first try. → Accepted; the alternative is the judge
-  model, rejected above.
+- **Reinforcement loop.** A skill is model output fed back to agents as
+  instruction. → Grounding requires a merged, green, unreverted pull request.
+  Sessions that retrieved a skill cannot count as evidence for it. A human merges
+  every change. Staleness re-verifies. None of these is a proof.
+- **Prompt injection through evidence.** Review comments and transcripts can be
+  written by an attacker. → Only model runs read them, and those runs hold no
+  forge credential. The dossier a reviewer sees quotes the evidence it was built
+  from.
+- **The clean room is not a sandbox.** Runs share the user's filesystem. → The
+  audit catches reads and fetches it can see. A real sandbox is deferred.
+- **Cost.** Up to five model runs per candidate. → `max_candidates`,
+  `replay_max_lines`, and ADR-0027's run budgets once they land.
+- **Linking gaps.** Crush records no branch. → Commit-window matching fails
+  closed, and the unlinked rate is reported so the gap stays visible.
+- **Narrower reach than ADR-0012.** Work that never merged teaches nothing. →
+  Accepted, since that is the cost of grounding.
+- **Homogeneity.** Cross-repository signal is only real when the repositories
+  share a stack. → Distillers are scoped by `from`, so a Go distiller reads Go
+  harnesses. `min_repos` is per distiller.
+- **Misconfigured sources.** A `from` glob can match the wrong harnesses. → Every
+  pass summary lists the harnesses each selector resolved to, and exact names
+  are validated at load.
 
 ## Migration Plan
 
-Greenfield and inert by default. With no distiller harness configured, nothing
-runs: no clusters, no learned skills, no index. Enabling it is configuring one
-harness. The learned directory is a plain git repository, so adoption and
-abandonment are both `git` operations, and the index can be deleted at any time
-without data loss.
+Greenfield, and inert without a `[distill]` table. Rollout in slices, each of
+which is useful on its own:
+
+1. **Linking and the ledger**, with `harness distill scan --json`, which reports
+   candidates and opens nothing. This measures the link rate and signal volume
+   before any model spend.
+2. **Skill repos, `harness skills sync`, the index and the tools**, served from a
+   hand-curated repo first, with `harness skills lint` as its CI.
+3. **Distillers with fidelity verification**, starting with one
+   `min_repos = 1` distiller against a single project's skill repo, the
+   lowest-risk surface.
+4. **Control runs, staleness and retirement.**
+
+agent-trace's `ErrorExcerpt` can land at any point, and until it does `symptoms`
+come from check names and review text.
 
 ## Open Questions
 
-- Should the learned tier gain a derived claims ledger (provenance, retrieval
-  counts, supersession edges) in a queryable store rather than frontmatter?
-  Candidates surveyed are experimental with no migration guarantees — survivable
-  only because such a ledger is rebuildable from the markdown.
-- Can the harvester detect whether a *retrieved* skill's guidance actually
-  influenced what the agent did next, giving a stronger usage signal than
-  retrieval count?
-- What is the right default for the cross-project threshold, and should it scale
-  with fleet size rather than being a fixed count?
-- Should superseded skills remain retrievable under an explicit "history" query
-  for auditing, or is index removal sufficient?
+- **Should a distiller also fire when a `from` harness's run closes?** Schedule
+  and the merged-pull-request webhook cover it today. A run-closed trigger fed
+  by ADR-0028's run ledger would react faster, at the cost of a new trigger
+  kind.
+- **Should `harness distill` share a proposal format with stet's skills epic**,
+  so that one reviewer workflow covers both products?
+- **Can one distiller target more than one skill repo?** One `to` per distiller
+  keeps routing obvious. Routing by scope inside one distiller would save a
+  config table, at the cost of a rule the operator has to predict.
+- **Should retrieval efficacy ever act on its own?** It is correlation today. A
+  controlled A/B, serving a skill to half of matching sessions, would make it
+  causal, at the cost of deliberately withholding a skill the reviewer believed
+  useful.
+
+### Resolved
+
+- *Task statement for replay* (2026-09-22): the linked issue's body, otherwise
+  the session's first user message, with a verbatim-leak flag in the dossier.
+- *Where a single-repository skill lands when Crush and Claude Code share a
+  repository* (2026-09-22): in a skill repo, served by search to both. No
+  adapter-native path is written.
+- *The cross-project threshold* (2026-09-22): per distiller, as `min_repos`,
+  default 1.
