@@ -86,6 +86,36 @@ type gateAction struct {
 	ungated   bool      // a release for a harness whose hours a reload removed
 }
 
+// hoursChange is one gated harness's in_hours flip, detected during gatePass
+// (SPEC-0012 REQ "Operating Hours Visibility"). Carried separately from
+// gateAction and notified the same way NextChanged is — after the lock drops,
+// with no goroutine and no participation in the gating in-flight guard —
+// because unlike a gateAction it names no Gate call: routing it through
+// dispatchGate's per-name gating map would let a same-tick pair (a real
+// hold/release/closeStep/arm action plus a hoursChange for the same name)
+// race their two independent goroutines' "clear gating" defers, letting the
+// faster one (this notify, which is nearly instant) release the guard while
+// the slower one (a hold waiting out a stop grace) is still in flight, and
+// the next tick would then re-decide a harness whose real action has not
+// finished yet.
+type hoursChange struct {
+	name string
+	in   bool
+	next time.Time // zero when the expression has no next flip
+}
+
+// leaseEnd names a gated harness whose after-hours lease ended this tick —
+// expired, or discarded because hours opened first (design.md's "the lease
+// simply ends") — detected the same way hoursChange is: comparing this
+// tick's Lease() answer to the last one, and reported separately from
+// gateAction for the same reason hoursChange is kept separate (see its doc):
+// it names no Gate call, so it must never share dispatchGate's per-name
+// gating guard with a real decision for the same harness. A lease can end
+// with no matching hoursChange (the lease was covering an already out-of-
+// hours harness, which stays out of hours once held) or alongside one (hours
+// opened and discarded it), so this needs its own tracking.
+type leaseEnd struct{ name string }
+
 // applyGates reconciles the gate set against cfg. Caller holds s.mu.
 //
 // Only what the pass needs is kept, so an unchanged value keeps its state for
@@ -137,24 +167,67 @@ func (s *Scheduler) applyGates(cfg *core.Config) {
 
 // gatePass decides every gated harness at now. Caller holds s.mu; the Gate is
 // consulted only for its read-only status and lease answers, which never call
-// back into the scheduler.
-func (s *Scheduler) gatePass(now time.Time) []gateAction {
+// back into the scheduler. hoursChanges is every in_hours flip and leaseEnds
+// every after-hours lease end detected this tick (SPEC-0012 REQ "Operating
+// Hours Visibility"), both reported separately from acts — see hoursChange's
+// and leaseEnd's docs for why neither may ride along as a gateAction.
+func (s *Scheduler) gatePass(now time.Time) (acts []gateAction, hoursChanges []hoursChange, leaseEnds []leaseEnd) {
 	if s.gate == nil {
-		return nil
+		return nil, nil, nil
 	}
-	var acts []gateAction
 	for _, name := range s.gateOrder {
 		g := s.gates[name]
 		if s.gating[name] {
 			continue // the last decision is still being carried out
 		}
-		in, next, _ := g.expr.In(now)
+		in, next, hasNext := g.expr.In(now)
 		up, held, closing, ok := s.gate.Status(name)
 		if !ok {
 			continue
 		}
+		// harness_hours_changed fires exactly on a real flip, never on an
+		// unchanged tick. lastIn seeds silently on a harness's first pass
+		// (nothing to compare against yet) and is otherwise compared every
+		// tick, independent of whatever the switch below decides for the
+		// same harness — this is the ONLY reader of lastIn; no gate decision
+		// below consults it.
+		if s.hoursChanged != nil {
+			if last, known := s.lastIn[name]; !known {
+				if s.lastIn == nil {
+					s.lastIn = make(map[string]bool)
+				}
+				s.lastIn[name] = in
+			} else if last != in {
+				s.lastIn[name] = in
+				hn := time.Time{}
+				if hasNext {
+					hn = next
+				}
+				hoursChanges = append(hoursChanges, hoursChange{name: name, in: in, next: hn})
+			}
+		}
+		// leaseEnd: one Lease() consult per gated harness per tick, tracked
+		// the same way lastIn is, so "was leased, now is not" is caught
+		// whether the lease expired outright or hours opened and discarded it
+		// — either way Lease() itself already decided and (durably)
+		// recorded the expiry; this only notices it happened. wasLeased is
+		// the ONLY reader of this state; no gate decision below consults it.
+		leasedNow := s.leased(name, now)
+		if s.leaseEnded != nil {
+			if was, known := s.wasLeased[name]; !known {
+				if s.wasLeased == nil {
+					s.wasLeased = make(map[string]bool)
+				}
+				s.wasLeased[name] = leasedNow
+			} else if was && !leasedNow {
+				s.wasLeased[name] = false
+				leaseEnds = append(leaseEnds, leaseEnd{name: name})
+			} else if leasedNow {
+				s.wasLeased[name] = true
+			}
+		}
 		switch {
-		case !in && s.leased(name, now):
+		case !in && leasedNow:
 			// Covered by an after-hours lease: nothing to enforce — but if
 			// its end is close, warm the watch a graceful close will need.
 			if until, had := s.gate.Lease(name); had && until.Sub(now) <= armLead {
@@ -181,6 +254,8 @@ func (s *Scheduler) gatePass(now time.Time) []gateAction {
 	}
 	for name := range s.ungated {
 		delete(s.ungated, name)
+		delete(s.lastIn, name)    // regated later starts a fresh flip history
+		delete(s.wasLeased, name) // same, for the lease tracking above
 		if _, held, _, ok := s.gate.Status(name); ok && held {
 			delete(s.armed, name)
 			acts = append(acts, gateAction{name: name, ungated: true})
@@ -192,7 +267,7 @@ func (s *Scheduler) gatePass(now time.Time) []gateAction {
 		}
 		s.gating[a.name] = true
 	}
-	return acts
+	return acts, hoursChanges, leaseEnds
 }
 
 // leased reports whether name holds a lease that has not ended at now. The

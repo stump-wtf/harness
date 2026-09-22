@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/supervisor"
 )
@@ -116,6 +117,7 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		info.Backend = string(h.Backend)
 		info.Description = h.Description
 		info.Schedule = h.Schedule
+		info.OperatingHours = h.OperatingHours
 	}
 	info.Project = project
 	// Next-run comes from the live cron, not the config snapshot: the spec
@@ -124,6 +126,32 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 	if info.Schedule != "" && c.srv.sched != nil {
 		if next, ok := c.srv.sched.NextFire(snap.Name); ok {
 			info.NextRun = next.Format(time.RFC3339)
+		}
+	}
+	// Operating-hours projection (ADR-0019, SPEC-0012 REQ "Operating Hours
+	// Visibility"). Gated is the snapshot's own record of "has operating_hours"
+	// (set on the actor loop, so it can never disagree with Held/Closing below);
+	// info.OperatingHours is the wire discriminator clients read against.
+	if snap.Gated {
+		info.Held = snap.Held
+		info.HoursShutdown = string(h.HoursShutdown)
+		if c.srv.sched != nil {
+			if in, next, hasNext, ok := c.srv.sched.HoursStatus(snap.Name); ok {
+				info.InHours = in
+				if hasNext {
+					info.HoursNext = next.Format(time.RFC3339)
+				}
+			}
+		}
+		if snap.Closing && !snap.CloseAt.IsZero() {
+			timeout := h.HoursShutdownTimeout
+			if timeout <= 0 {
+				timeout = core.DefaultHoursShutdownTimeout
+			}
+			info.ClosingUntil = snap.CloseAt.Add(timeout).Format(time.RFC3339)
+		}
+		if until, hasLease := c.srv.mgr.Lease(snap.Name); hasLease {
+			info.LeaseUntil = until.Format(time.RFC3339)
 		}
 	}
 	return info
@@ -217,6 +245,15 @@ func (c *conn) opLifecycle(req protocol.ControlReq) {
 					_ = c.pc.WriteError(req.ID, protocol.ErrInternal, "leased start: %v", err)
 				}
 				return
+			}
+			// SPEC-0012 REQ "Operating Hours Visibility": a durable-log line
+			// for the lease start, stating its end — the "next transition" a
+			// gated harness's other lifecycle lines already carry. Read back
+			// through Lease rather than the (durable but only in-memory
+			// until now) forDur, so the line always reports what actually
+			// landed, including an existing lease StartFor just replaced.
+			if until, had := c.srv.mgr.Lease(req.Name); had {
+				c.srv.mgr.LogLifecycle(req.Name, "lease start", "reason", "operating_hours", "until", until.Format(time.RFC3339))
 			}
 			ok = true
 			break

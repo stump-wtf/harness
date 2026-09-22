@@ -313,6 +313,14 @@ func startDaemonScheduler(mgr *supervisor.Manager, cfg *core.Config, clock sched
 		// harness out of hours and releases it when they open, both on the
 		// harness's actor loop (SPEC-0012 REQ "Gate Enforcement").
 		Gate: hoursGate{mgr},
+		// Every in_hours flip reaches clients as harness_hours_changed
+		// (SPEC-0012 REQ "Operating Hours Visibility").
+		HoursChanged: mgr.PublishHoursChanged,
+		// A lease ending gets its own durable-log line, alongside close
+		// start/hold/open (SPEC-0012 REQ "Operating Hours Visibility").
+		LeaseEnded: func(name string) {
+			mgr.LogLifecycle(name, "lease end", "reason", "operating_hours")
+		},
 	})
 	sched.Apply(cfg)
 	sched.Start()
