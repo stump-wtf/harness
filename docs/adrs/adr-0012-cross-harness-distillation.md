@@ -9,7 +9,9 @@ related: [ADR-0008, ADR-0010, ADR-0011]
 
 # ADR-0012: Cross-harness distillation and the learned skill tier
 
-> **Not yet implemented.** Distillation and the learned-skill tier described here are design-stage; no distiller or learned-skill store exists in the codebase. See harness issue #3.
+> **Not yet implemented.** Distillation and the learned-skill tier described here are design-stage; no distiller or learned-skill store exists in the codebase. Tracked by the SPEC-0007 epic in the Harness issue tracker.
+>
+> **Amended by [ADR-0030](adr-0030-grounded-skill-distillation.md)** before implementation: what grounds a skill (merged pull requests, not trajectories alone), how a candidate is verified (blind reconstruction), how it reaches review (pull requests, with merge as promotion), and where skills live (operator-declared skill repos, with the fixed cross-project threshold replaced by each distiller's `min_repos`) are decided there. ADR-0030 also drops the project-scoped pull requests against `CLAUDE.md` / `AGENTS.md`: Harness writes skills only. The search-only tier, FTS5 index and lifecycle rules below still stand.
 
 ## Context and Problem Statement
 
