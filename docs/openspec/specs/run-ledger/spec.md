@@ -26,7 +26,8 @@ accumulator.
 This spec amends, by reference and without editing them:
 
 * **SPEC-0008 REQ "Run History"**: records exist for resident harnesses too, the
-  outcome set gains `budget_exceeded`, `quota_parked` and `model_mismatch`, and
+  outcome set gains `budget_exceeded`, `quota_parked`, `model_mismatch` and
+  `model_unattested`, and
   `cancelled` covers any deliberate stop with a `reason` (REQ-5). The bounded
   `state.json` history becomes a projection of the ledger (REQ-13).
 * **SPEC-0008 REQ "Protocol Operations"** and **SPEC-0002 REQ "Control
@@ -154,6 +155,7 @@ A folded record SHALL expose these fields, each omitted when it does not apply:
 | `log` | string | the per-run log path (one-shot) or the durable log path (resident) |
 | `log_pruned` | boolean | the per-run log was deleted by `keep_runs` |
 | `override` | boolean | admitted with `--over-budget` (SPEC-0021 REQ-15) |
+| `mismatch` | `{kind, served_model, served_provider, at}` | the first mismatching call of a `model_mismatch` record (SPEC-0020); `kind` is `model` or `provider` |
 | `window`, `first_window`, `windows`, `coalesced` | as SPEC-0008 and SPEC-0014 | |
 
 Every string field SHALL be capped at 256 bytes, `models` and `sessions` at 16
@@ -181,17 +183,21 @@ one of:
 | `budget_exceeded` | SPEC-0021 REQ-9, REQ-10 | stopped for crossing a per-run or daily cap |
 | `quota_parked` | SPEC-0021 REQ-13 | ended by a provider quota refusal that parked the harness |
 | `model_mismatch` | SPEC-0020 (model pinning) | the served model or provider did not match the harness's pin |
+| `model_unattested` | SPEC-0020 (model pinning) | a full-attestation pin found no model or provider evidence for a call, or its final check timed out |
 
 `running` SHALL mark a record in flight. `cancelled` SHALL mean a run ended by a
 deliberate stop, with `reason` `operator`, `hours` or `reload`. A resident whose
 process exits on its own SHALL read `success` for exit 0 and `failed` otherwise.
-`reason` SHALL be set for `skipped` (SPEC-0014 and SPEC-0021 reasons),
+`reason` SHALL be set for `skipped` (SPEC-0014's `overlap`, `stopping` and
+`outside_hours`; SPEC-0021's `quota_parked`, `budget` and `concurrency`; and
+SPEC-0020's `model_hold`),
 `cancelled`, `budget_exceeded` (the cap), `failed` when the process never spawned
 (`spawn`), and `interrupted` (`shutdown` or `daemon_crash`).
 
 For SPEC-0013's `harness_scheduled_runs_total{outcome}` and for SPEC-0008's
 consecutive-failure count, `success` SHALL count as success; `failed`,
-`timed_out`, `budget_exceeded` and `model_mismatch` SHALL count as failure; and
+`timed_out`, `budget_exceeded`, `model_mismatch` and `model_unattested` SHALL
+count as failure; and
 every other outcome, `quota_parked` included, SHALL count as neither.
 
 #### Scenario: A model mismatch counts as a failure

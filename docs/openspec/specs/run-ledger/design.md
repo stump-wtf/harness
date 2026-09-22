@@ -86,6 +86,7 @@ type Record struct {
     TraceURL      string            `json:"trace_url,omitempty"`
     Log           string            `json:"log,omitempty"`
     Override      bool              `json:"override,omitempty"`
+    Mismatch      *Mismatch         `json:"mismatch,omitempty"` // SPEC-0020
     Imported      bool              `json:"imported,omitempty"`
     // SPEC-0008 / SPEC-0014 fields
     Window, FirstWindow *time.Time

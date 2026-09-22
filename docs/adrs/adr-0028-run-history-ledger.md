@@ -143,13 +143,14 @@ The existing SPEC-0008 values keep their names and meanings, so no consumer of
 `harness runs --json` or `state.json` breaks: `success`, `failed`, `timed_out`,
 `skipped`, `replaced`, `missed`, `cancelled`, `interrupted`, with `running` while
 in flight. (What an operator calls "timeout" is the existing `timed_out`.)
-Three are added:
+Four are added:
 
 | Outcome | Set by | Means |
 | --- | --- | --- |
 | `budget_exceeded` | ADR-0027 | stopped for crossing a per-run or daily cap |
 | `quota_parked` | ADR-0027 | ended by a provider quota refusal, and the harness was parked |
-| `model_mismatch` | ADR-0026 (model pinning) | the model or provider that served it did not match the pin |
+| `model_mismatch` | ADR-0026 (model pinning) | the model or provider that served it did not match the pin; the record carries `mismatch` for the first mismatching call |
+| `model_unattested` | ADR-0026 (model pinning) | a full-attestation pin could not find model or provider evidence for a call |
 
 `reason` qualifies an outcome where one class covers several causes. `cancelled`
 is widened from "ended by an operator stop" to "ended by a deliberate stop",
@@ -157,7 +158,8 @@ with `reason` saying whose: `operator`, `hours` (an operating-hours close), or
 `reload` (the harness was removed from the config). A daemon shutdown stays
 `interrupted`, as SPEC-0008 defines it. A resident
 that exits on its own reads `success` for exit 0 and `failed` otherwise, as a
-one-shot does. `skipped` keeps SPEC-0014's reasons and gains ADR-0027's.
+one-shot does. `skipped` keeps SPEC-0014's reasons and gains ADR-0027's (`quota_parked`,
+`budget`, `concurrency`) and ADR-0026's (`model_hold`).
 
 ### The ledger on disk
 
@@ -470,7 +472,8 @@ flowchart LR
 * **Related [ADR-0002](adr-0002-daemon-client-architecture.md)**: the `runs` op
   gains a query, and NAME becomes optional.
 * **Related, in flight**: ADR-0027 (budgets, which read the ledger and set two
-  outcomes), ADR-0026 (model pinning, which sets `model_mismatch`), ADR-0025
+  outcomes), ADR-0026 (model pinning, which sets `model_mismatch` and
+  `model_unattested` and the skip reason `model_hold`), ADR-0025
   (supervisor-held leases, which supply `todo_id` and replay the ledger),
   ADR-0022 (telemetry export, #408), and the SPEC-0013 implementation (#407),
   whose `harness_scheduled_runs_total` this re-sources.
