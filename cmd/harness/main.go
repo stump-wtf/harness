@@ -58,6 +58,7 @@ type verbOpts struct {
 	name       string
 	run        int    // logs --run: one run of a scheduled harness
 	wait       bool   // trigger --wait: follow the run and exit with its code
+	eventFile  string // trigger --event: an event envelope to replay (SPEC-0014)
 	limit      int    // runs --limit
 	forDur     string // start --for: after-hours lease length (SPEC-0012)
 }

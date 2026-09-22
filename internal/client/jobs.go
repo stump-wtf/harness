@@ -29,7 +29,22 @@ func (c *Client) Jobs() ([]protocol.JobInfo, error) {
 // Trigger starts a manual run of a scheduled harness. The daemon applies the
 // harness's on_overlap exactly as it would for a schedule firing.
 func (c *Client) Trigger(name string) (protocol.TriggerData, error) {
-	resp, err := c.call(protocol.ControlReq{Op: protocol.OpTrigger, Name: name})
+	return c.TriggerWithEvent(name, nil)
+}
+
+// TriggerWithEvent starts a manual run and, when event is non-empty, replays
+// that event envelope into it (SPEC-0014 REQ "Manual Trigger With Event").
+//
+// The bytes go over the wire verbatim, exactly as the operator's file held
+// them. Decoding and re-encoding here would normalize a field the daemon is
+// about to judge — key order, an omitted optional, a number's spelling — so
+// the client would be validating a document the daemon never sees.
+func (c *Client) TriggerWithEvent(name string, event []byte) (protocol.TriggerData, error) {
+	req := protocol.ControlReq{Op: protocol.OpTrigger, Name: name}
+	if len(event) > 0 {
+		req.Event = json.RawMessage(event)
+	}
+	resp, err := c.call(req)
 	if err != nil {
 		return protocol.TriggerData{}, err
 	}

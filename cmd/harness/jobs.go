@@ -36,6 +36,7 @@ import (
 	"github.com/stump-wtf/harness/internal/client"
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/schedfmt"
+	"github.com/stump-wtf/harness/internal/trigger"
 )
 
 const (
@@ -63,12 +64,15 @@ type exitCodeError struct{ code int }
 
 func (e exitCodeError) Error() string { return fmt.Sprintf("exit status %d", e.code) }
 
-// newTriggerCmd builds `harness trigger NAME [--wait]`.
+// newTriggerCmd builds `harness trigger NAME [--wait] [--event FILE]`.
 func newTriggerCmd(g *globalOpts) *cobra.Command {
-	var wait bool
+	var (
+		wait      bool
+		eventFile string
+	)
 	cmd := &cobra.Command{
 		Use:           "trigger",
-		Short:         "run a scheduled harness now",
+		Short:         "run a triggered harness now",
 		Args:          cobra.MaximumNArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -78,11 +82,17 @@ func newTriggerCmd(g *globalOpts) *cobra.Command {
 				return err
 			}
 			o := g.opts()
-			o.name, o.wait = name, wait
+			o.name, o.wait, o.eventFile = name, wait, eventFile
 			return run("trigger", o)
 		},
 	}
 	cmd.Flags().BoolVar(&wait, "wait", false, "stream the run's log and exit with its exit code")
+	// A past run's event file is a valid input by construction: it is the same
+	// envelope schema, so replaying one is a copy rather than a translation.
+	// That is what makes a failed webhook run debuggable offline — no sender,
+	// no listener, no port.
+	cmd.Flags().StringVar(&eventFile, "event", "",
+		"replay an event envelope from FILE (e.g. a past run's <id>.event.json)")
 	return cmd
 }
 
@@ -242,6 +252,22 @@ func runExitCell(r protocol.RunInfo) string {
 
 // cmdTrigger starts a manual run and, with --wait, follows it to the end.
 func cmdTrigger(c *client.Client, o verbOpts) error {
+	var event []byte
+	if o.eventFile != "" {
+		// Read and shape-check locally before dialling, so an operator who
+		// mistyped a path or pointed at a log file hears about it here rather
+		// than as an invalid_event from the daemon. The daemon validates it
+		// again, against the harness, and that check is the authoritative one
+		// — this is only about a better error for the common mistake.
+		b, err := os.ReadFile(o.eventFile)
+		if err != nil {
+			return fmt.Errorf("--event: %w", err)
+		}
+		if _, err := trigger.ParseEnvelope(b, 0); err != nil {
+			return fmt.Errorf("--event %s: %w", o.eventFile, err)
+		}
+		event = b
+	}
 	before := 0
 	if o.wait {
 		// A queued trigger has no run id until it starts, so note the newest
@@ -254,7 +280,7 @@ func cmdTrigger(c *client.Client, o verbOpts) error {
 			before = rd.Runs[0].RunID
 		}
 	}
-	td, err := c.Trigger(o.name)
+	td, err := c.TriggerWithEvent(o.name, event)
 	if err != nil {
 		return err
 	}

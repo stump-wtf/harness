@@ -28,7 +28,7 @@ import (
 // master never reached EOF, so the only way to stop the reader was to close
 // the PTY under it and drop whatever it had not read yet.
 func TestSpawnPTYReachesEOFWhenProcessExits(t *testing.T) {
-	proc, err := spawn(shHarness("eof", "echo eof-probe", 0), 80, 24)
+	proc, err := spawn(shHarness("eof", "echo eof-probe", 0), 80, 24, RunEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
