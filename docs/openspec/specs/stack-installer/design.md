@@ -282,7 +282,8 @@ system_prompt_file = "~/.config/harness/personas/reviewer/system.md"
 mcp_config = "~/.config/harness/personas/reviewer/mcp.json"
 allowed_tools = ["Read", "Grep", "Glob", "Bash(git diff:*)", "mcp__switchboard", "mcp__cairn"]
 model = "claude-opus-5"
-auto_accept = true
+# auto_accept is not written: allowed_tools is the least-privilege path, and
+# auto_accept (--dangerously-skip-permissions) needs an explicit opt-in (REQ-5).
 triggers = ["channel.reviewer"]
 schedule = "@every 1h"                    # safety net: push is lossy (ADR-0021)
 timeout = "30m"
@@ -327,8 +328,11 @@ enabled = true
 ```
 
 `args` values are not path-resolved by Harness, so `init` writes absolute
-paths there. When ADR-0029's auto-confirm lands, `init` adds its key for
-`server:switchboard` and prints the warning that it bypasses the confirmation.
+paths there. `init` adds ADR-0029's `accept_dev_channels = ["server:switchboard"]`
+only when the user opted in for this persona (`accept_dev_channels = true` in
+its answers block, or `--accept-dev-channels coordinator`), and then prints the
+warning that it bypasses the confirmation. Without the opt-in it writes the
+table as shown and says that each start waits for `harness attach`.
 
 ### The answers file
 
@@ -348,6 +352,9 @@ model = "claude-opus-5"
 workdir = "~/src/project"
 queue = "reviews"
 cairn_token_file = "~/.secrets/cairn-reviewer"   # until Cairn offers a consented mint
+# Risky capabilities are off unless set here, per persona (SPEC-0018 REQ-5):
+# auto_accept = true            # --dangerously-skip-permissions
+# accept_dev_channels = true    # resident personas: SPEC-0023 auto-confirm
 
 [[persona]]
 name = "implementer"

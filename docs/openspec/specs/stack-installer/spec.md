@@ -186,6 +186,37 @@ operator has added it. `init` SHALL NOT modify or replace a file it did not
 create; it SHALL record every file it creates in
 `$XDG_STATE_HOME/harness/init-manifest.json`.
 
+A drop-in `init` writes SHALL NOT enable a risky capability unless the user
+opted in for that persona. Two capabilities are risky here:
+
+* `auto_accept = true`, which makes Claude Code skip every permission prompt
+  (`--dangerously-skip-permissions`), so `allowed_tools` no longer limits what
+  the run may do;
+* `accept_dev_channels` (SPEC-0023), which answers Claude Code's
+  development-channel confirmation automatically.
+
+Each SHALL default to off. Each SHALL be enabled only by an explicit
+per-persona answer: `auto_accept = true` or `accept_dev_channels = true` in the
+persona's answers block, or `--auto-accept <persona>` or
+`--accept-dev-channels <persona>`. No template, client default or other answer
+SHALL enable either. An interactive prompt for either SHALL default to no, and
+SHALL state what the capability bypasses before asking. A generated one-shot
+SHALL rely on `allowed_tools` (REQ-11) for least privilege instead.
+
+#### Scenario: A reviewer without opt-ins
+
+- **WHEN** `init` writes a `reviewer` persona for `claude-code` with no
+  `auto_accept` answer
+- **THEN** its drop-in sets `allowed_tools` and does not set `auto_accept`, and
+  the spawned argv carries no `--dangerously-skip-permissions`
+
+#### Scenario: Opting in to auto_accept
+
+- **WHEN** the answers file sets `auto_accept = true` for the `implementer`
+  persona only
+- **THEN** only the `implementer` drop-in sets `auto_accept = true`, and `init`
+  prints a warning naming the persona and what the key bypasses
+
 #### Scenario: Fresh machine
 
 - **GIVEN** no `harness.toml`
@@ -457,9 +488,13 @@ supplies. No client configuration file `init` writes SHALL contain a token.
 A `claude-code` one-shot persona SHALL reference its `mcp.json` through
 `mcp_config`. A resident `claude-code` persona SHALL reference it through `args`
 (`--mcp-config`, `--strict-mcp-config`). A resident persona that listens for
-doorbells SHALL additionally carry the development-channels flag in `args`, and
-`init` SHALL enable the auto-confirm SPEC-0023 defines for that server when the
-running binary supports it, and say so. A persona's workdir `crush.json` that
+doorbells SHALL additionally carry the development-channels flag in `args`.
+`init` SHALL NOT enable the auto-confirm SPEC-0023 defines unless the user opted
+in for that persona (REQ-5). With the opt-in, and a binary that supports it,
+`init` SHALL write `accept_dev_channels` for that server and print SPEC-0023's
+warning. Without it, `init` SHALL say that every start of that persona waits at
+Claude Code's confirmation until someone runs `harness attach`, and SHALL name
+the opt-in and the alternatives SPEC-0023 REQ-15 lists. A persona's workdir `crush.json` that
 `init` did not create SHALL NOT be modified (REQ-5); `init` SHALL print the
 block to merge instead.
 
@@ -467,6 +502,14 @@ block to merge instead.
 `--connect-interactive-session`, and then only through the client's own CLI (for
 Claude Code, `claude mcp add --scope user`), still with references rather than
 tokens.
+
+#### Scenario: A doorbell persona without the opt-in
+
+- **WHEN** `init` writes a resident `coordinator` persona that listens for
+  doorbells, with no `accept_dev_channels` answer
+- **THEN** its `args` carry `--dangerously-load-development-channels
+  server:switchboard`, its drop-in has no `accept_dev_channels`, and `init`
+  says each start needs `harness attach` to confirm
 
 #### Scenario: No literal token
 

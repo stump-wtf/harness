@@ -240,6 +240,13 @@ The built-in set maps the roles in the canonical stack page: `coordinator`
 reviewer that defaults to a different model family than the implementer), and
 `drainer`.
 
+Generated personas are least-privilege by default. A template never turns on
+a risky capability: `auto_accept` (Claude Code's
+`--dangerously-skip-permissions`) and ADR-0029's `accept_dev_channels` are off
+unless the user opts in for that persona, by answer or flag, and `init` warns
+when they do. A one-shot persona gets `allowed_tools` instead. This follows
+Joe's 2026-09-22 rule for risky capabilities: configurable, and off by default.
+
 Templates render operator-authored files at `init` time. They never see an
 event payload, so ADR-0021's rule that events reach a run as data, never as
 prompt text, is untouched. There is deliberately no human-QA persona: human
@@ -684,7 +691,8 @@ sequenceDiagram
   they merge): Harness ADR-0022 (telemetry), ADR-0023 (command kind), ADR-0026
   (model pinning, which `init` will render once it lands), ADR-0027 (budgets),
   ADR-0028 (run history), ADR-0029 (dev-channels auto-confirm, which `init`
-  enables per resident Claude Code persona with its warning); Switchboard
+  writes for a resident Claude Code persona only when the user opts in for that
+  persona, with its warning); Switchboard
   ADR-0030, ADR-0032, ADR-0034, ADR-0038 and SPEC-0024; Cairn ADR-0025 and
   ADR-0029.
 * The canonical stack page, layered onboarding, glossary and `llms.txt` are
