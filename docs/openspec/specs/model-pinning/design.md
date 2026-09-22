@@ -15,10 +15,10 @@ mismatch, and a `doctor --models` canary. Governing spec: SPEC-0020.
 
 Related specs: SPEC-0006 (adapters), SPEC-0013 (metrics; PR #407 implements
 it), SPEC-0008 (run records), SPEC-0003 (state machine), SPEC-0002 (protocol).
-Parallel records cited in prose until they merge: ADR-0023/SPEC-0017 (the
-`command` kind, `transcripts`, and the `pi`/`omp` adapters), ADR-0028 (the run
-ledger), ADR-0027 (budgets, which share the observer's usage items), and
-ADR-0025 (supervisor-held leases).
+Records accepted with this one on 2026-09-22: ADR-0023/SPEC-0017 (the
+`command` kind, `transcripts`, and the `pi`/`omp` adapters), ADR-0028/SPEC-0022
+(the run ledger), ADR-0027 (budgets, which share the observer's usage items),
+and ADR-0025 (supervisor-held leases).
 
 ## Goals / Non-Goals
 
@@ -335,12 +335,20 @@ its next spawn.
 
 ## Open Questions
 
-- Does the pinned Pi/OMP version's models configuration carry OpenRouter
-  `provider` preferences natively? If not, Pi/OMP pins are `litellm`-only until
-  it does, or until a Pi extension is shipped. The customer's OMP setup suggests
-  that OMP can.
-- What does a LiteLLM gateway report as the served model: the upstream ID or
-  the alias? That decides whether `litellm` attestation can be better than
-  `model` on the alias. The canary's `gateway` case measures it.
-- Should `accept_served` accept a pattern for dated suffixes beyond the
-  eight-digit rule? Deferred until a real route needs it.
+One question stays open; the rest were settled in the Operation Stumply design
+review.
+
+- **Does the pinned Pi/OMP version's models configuration carry OpenRouter
+  `provider` preferences natively?** **Open** (design review 2026-09-22): it is
+  unverified. Story #520 checks it first. If it does not, Pi/OMP pins are
+  `litellm`-only until it does, or until a Pi extension ships.
+- **What happens on a mismatch by default?** Resolved (design review
+  2026-09-22): `on_mismatch = "hold"` is the default (REQ-12). A pin fails
+  closed; `fail-run` is the opt-in alternative.
+- **What does a LiteLLM gateway report as the served model?** Resolved (design
+  review 2026-09-22): measured, not decided in advance: the canary's `gateway`
+  case records whether it is the upstream ID or the alias. Until it shows the
+  upstream ID, `litellm` attestation is on the alias.
+- **Should `accept_served` accept a pattern for dated suffixes beyond the
+  eight-digit rule?** Resolved (design review 2026-09-22): deferred until a real
+  route needs it, as proposed.

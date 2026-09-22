@@ -19,9 +19,10 @@ SPEC-0017.
 
 Related specs: SPEC-0006 (adapters, prompt source, run correlation), SPEC-0008
 (run records), SPEC-0014 (triggers, envelope), SPEC-0013 (metrics), SPEC-0002
-(protocol). Related ADRs: ADR-0011, ADR-0013, ADR-0018, ADR-0021. Parallel
-records cited in prose only until they merge: ADR-0026 (model pinning), ADR-0027
-(budgets), ADR-0028 (run ledger).
+(protocol). Related ADRs: ADR-0011, ADR-0013, ADR-0018, ADR-0021. Records
+accepted with this one on 2026-09-22: ADR-0026 (model pinning; SPEC-0020
+requires this spec for `transcripts` and the `pi`/`omp` adapters), ADR-0027
+(budgets) and ADR-0028 (run ledger).
 
 ## Goals / Non-Goals
 
@@ -328,12 +329,24 @@ behaviour, except REQ-1, which is intentionally not reverted.
 
 ## Open Questions
 
-- Should `stdin` and `file` delivery extend to the built-in adapters? Claude
-  Code's `-p` and Codex's `exec -` read stdin, and keeping prompts out of argv
-  is worth having. It is deferred to keep the adapter argv contracts unchanged
-  in this spec.
-- Should `trusted_actors` also accept an org or team (a forge API call)? That is
-  deferred: it needs a forge client in the daemon, which ADR-0021 avoided, and
-  Switchboard's trusted-actor work (Switchboard ADR-0031) is the better home.
-- `switchboard` and `cairn` extractors wait for their payload contracts
-  (Switchboard SPEC-0024 notify hooks, Cairn ADR-0022 events).
+Every question below was settled in the Operation Stumply design review. None is
+left open.
+
+- **Should `stdin` and `file` delivery extend to the built-in adapters?**
+  Resolved (design review 2026-09-22): not in this spec, as proposed. The
+  built-in adapters keep their argv contracts; extending delivery to them is a
+  later change.
+- **Should `trusted_actors` also accept an org or team?** Resolved (design
+  review 2026-09-22): no. That needs a forge client in the daemon, which
+  ADR-0021 avoided. Switchboard's trusted-actor work (Switchboard ADR-0031) owns
+  org and team trust when Switchboard is in front.
+- **`switchboard` and `cairn` extractors.** Resolved (design review 2026-09-22):
+  they wait for their payload contracts, as proposed: Switchboard SPEC-0024
+  (notify hooks) and Cairn ADR-0022 (annotation events), both accepted in the
+  same review. Each extractor follows once its contract is implemented.
+- **Pi and OMP.** Resolved (design review 2026-09-22): keep the built-in `pi`
+  and `omp` adapters (ADR-0023 option 4A), with the `command` kind as the
+  fallback for any other CLI.
+- **The untrusted fence.** Resolved (design review 2026-09-22): it ships, off by
+  default and gated by `untrusted_inline`, with a WARN each time it renders
+  (REQ-10, already on `main`).

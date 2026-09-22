@@ -1,9 +1,9 @@
 ---
-status: draft
+status: approved
 date: 2026-09-22
 implements: [ADR-0026]
 extends: [SPEC-0006, SPEC-0013]
-requires: [SPEC-0002, SPEC-0003, SPEC-0008]
+requires: [SPEC-0002, SPEC-0003, SPEC-0008, SPEC-0017, SPEC-0022]
 ---
 
 # SPEC-0020: Fail-Closed Model Pinning
@@ -408,12 +408,12 @@ proceed. A resident harness SHALL behave as REQ-10 describes under either value.
 
 ### Requirement: REQ-13 — Run Record Fields
 
-The run record (SPEC-0008 REQ "Run History", and ADR-0028's run ledger once it
-lands) SHALL gain the outcomes `model_mismatch` and `model_unattested`, and the
-skip reason `model_hold`. A `model_mismatch` record SHALL carry `mismatch`:
-`{kind: model|provider, served_model, served_provider, at}` for the first
-mismatching call. Records SHALL NOT carry prompts, output, credentials or
-generation-lookup responses (ADR-0008).
+The run record (the SPEC-0022 run ledger, which replaces SPEC-0008's
+`state.json` run history) SHALL gain the outcomes `model_mismatch` and
+`model_unattested`, and the skip reason `model_hold`. A `model_mismatch` record
+SHALL carry `mismatch`: `{kind: model|provider, served_model, served_provider,
+at}` for the first mismatching call. Records SHALL NOT carry prompts, output,
+credentials or generation-lookup responses (ADR-0008).
 
 #### Scenario: A mismatch record
 

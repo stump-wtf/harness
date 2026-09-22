@@ -18,7 +18,8 @@ What exists on `main` today:
   `triggers`, the event file and a purpose-built, listen-only MCP Streamable
   HTTP client.
 * `internal/redact` masks credentials in agent activity and logs.
-  `internal/cairnexport` can POST to Cairn, but nothing calls it.
+  `internal/cairnexport` can POST to Cairn, but nothing calls it, and it is
+  deleted once ADR-0022's telemetry export lands (#499).
 * Switchboard's drain verbs (`claim`, `claim_next`, `heartbeat`, `complete`,
   `fail`, `list_todos`) exist in every release. Their input schemas forbid
   unknown properties. Switchboard SPEC-0034 (in flight) adds attempt history, a
@@ -28,9 +29,10 @@ What exists on `main` today:
 Related specs: SPEC-0008 (runs), SPEC-0014 (triggers), SPEC-0002 (protocol),
 SPEC-0006 (prompt and argv), SPEC-0012 (hours), SPEC-0013 (metrics).
 
-Related ADRs: ADR-0021 (partly reversed), ADR-0013, ADR-0008, ADR-0019. Records
-in flight, by number: Harness ADR-0022, ADR-0023, ADR-0027 and ADR-0028;
-Switchboard ADR-0039 / SPEC-0034; Cairn ADR-0027 / SPEC-0021.
+Related ADRs: ADR-0021 (partly reversed), ADR-0013, ADR-0008, ADR-0019, and,
+accepted with this one on 2026-09-22, ADR-0023, ADR-0027 and ADR-0028. Harness
+ADR-0022 (#408) is not on `main` yet. Cross-repo, by number: Switchboard
+ADR-0039 / SPEC-0034; Cairn ADR-0027 / SPEC-0021.
 
 ## Goals / Non-Goals
 
@@ -161,8 +163,9 @@ records the attempt as having died, which is the truth.
 ### Receipts are optional and bounded
 
 **Choice**: `[cairn.*]` plus `attempt_receipt` creates one Markdown artifact per
-attempt through `internal/relay/receipt.go`, which reuses `cairnexport`'s HTTP
-plumbing, with a 30-second cap. It is a tagged Markdown artifact, which every
+attempt through `internal/relay/receipt.go`, a small client of its own for
+Cairn's artifact API (the unused `cairnexport` package is being deleted, #499),
+with a 30-second cap. It is a tagged Markdown artifact, which every
 Cairn accepts today. There is no capability probe and no fallback: when Cairn
 SPEC-0021 receipt metadata ships, a follow-up switches to it outright and
 requires that Cairn release.
@@ -382,11 +385,16 @@ stopped and their leases lapse.
 
 ## Open Questions
 
-- Should `harness trigger <name>` on a leased harness accept `--todo <id>` to
-  claim a specific todo for debugging? That is the one place option 4B has a
-  real use.
-- Should a relay record which model served the attempt (Harness ADR-0026, model
-  pinning) in `result.harness`? It is cheap once that lands.
-- Should `success_check` also be allowed on an unleased triggered harness, to
-  turn its exit code into a better run outcome? It is out of scope here, and it
-  would be a small follow-up.
+Every question below was settled in the Operation Stumply design review. None is
+left open.
+
+- **Should `harness trigger <name>` on a leased harness accept `--todo <id>`?**
+  Resolved (design review 2026-09-22): not in this spec, as proposed. It is the
+  one place option 4B has a real use; add it as a debugging follow-up if
+  operators ask.
+- **Should a relay record which model served the attempt (ADR-0026) in
+  `result.harness`?** Resolved (design review 2026-09-22): yes, as a follow-up
+  once model attestation lands; it is not part of the first cut.
+- **Should `success_check` also be allowed on an unleased triggered harness?**
+  Resolved (design review 2026-09-22): out of scope here, as proposed; a small
+  follow-up if wanted.

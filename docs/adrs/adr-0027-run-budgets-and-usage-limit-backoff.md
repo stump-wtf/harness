@@ -1,9 +1,9 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-22
 decision-makers: [joestump]
 extends: [ADR-0019, ADR-0013, ADR-0005]
-related: [ADR-0020, ADR-0021, ADR-0007, ADR-0008, ADR-0011]
+related: [ADR-0020, ADR-0021, ADR-0007, ADR-0008, ADR-0011, ADR-0023, ADR-0024, ADR-0025, ADR-0026]
 ---
 
 # ADR-0027: Run budgets and usage-limit backoff — admission ceilings, in-run caps, and a parked state for exhausted quota
@@ -357,9 +357,9 @@ the budget-day rollover in the same pass, on the same clock. A harness parked
 until 15:00 and out of hours at 15:00 stays held for hours, and each surface
 names the reason that will clear last.
 
-SPEC-0012 is not edited here while #412 is bringing it in line with what
-shipped. SPEC-0021 states the amendment to SPEC-0012 REQ "Gate Enforcement", and
-a follow-up folds it into SPEC-0012 once #412 merges.
+SPEC-0012 is not edited here. SPEC-0021 states the amendment to SPEC-0012 REQ
+"Gate Enforcement". #412 (which brought SPEC-0012 in line with what shipped) has
+merged, and story #488 folds the amendment into SPEC-0012 when it ships.
 
 ### Visibility
 
@@ -612,11 +612,19 @@ flowchart TD
 * **Related [ADR-0021](adr-0021-on-demand-one-shots.md)**: skip reasons
   `quota_parked`, `budget` and `concurrency` join SPEC-0014's `overlap`,
   `stopping` and `outside_hours`.
-* **Related, in flight**: ADR-0028 (run history ledger, the counters' store and
-  the usage accumulator), ADR-0022 (telemetry export, #408), ADR-0023 (command
-  kind, whose `transcripts` key decides whether a cap is measurable), ADR-0025
-  (supervisor-held leases), ADR-0026 (model pinning, the other consumer of the
-  served-model data).
+* **Related, accepted with this ADR (2026-09-22)**:
+  [ADR-0023](adr-0023-command-one-shots-and-templating.md) (command kind,
+  whose `transcripts` key decides whether a cap is measurable),
+  [ADR-0024](adr-0024-stack-installer-and-central-management.md) (the
+  installer's templates set `max_runs_per_day`),
+  [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md)
+  (supervisor-held leases) and
+  [ADR-0026](adr-0026-fail-closed-model-pinning.md) (model pinning, the other
+  consumer of the served-model data), linked in this ADR's front matter;
+  [ADR-0028](adr-0028-run-history-ledger.md) (run history ledger, the
+  counters' store and the usage accumulator), which carries the edge to this
+  ADR. ADR-0022 (telemetry export, #408) is not on `main` yet, so it stays
+  cited by number.
 * **Depends on** stump.wtf/agent-trace#105 (usage, cost, model and provider
   items) for token and cost caps, and on stump.wtf/agent-trace#104 (claude-code
   API errors as marks) to retire the run-log fallback.

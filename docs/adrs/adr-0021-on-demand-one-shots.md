@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-21
 decision-makers: [joestump]
 extends: [ADR-0013, ADR-0004, ADR-0008, ADR-0006]
@@ -486,6 +486,10 @@ Acceptance tests include:
   a log line, or a protocol frame.
 * `harness trigger --event` with a past run's event file reproduces that run's
   event file (plus `replayed_at`) and its `HARNESS_RUN_SOURCE`.
+* **F-X2 end to end** (design review 2026-09-22): a trusted, labelled issue
+  becomes a Switchboard todo, and its notify hook or doorbell starts the bound
+  one-shot, with no polling, **within 30 seconds**. The budget runs from
+  Switchboard receiving the forge's webhook to the Harness run starting.
 
 ### Deferred
 
@@ -498,10 +502,12 @@ Acceptance tests include:
   routing rules own this.
 * **Permission relay** (`claude/channel/permission`) and reply tools.
 * **`cmd` one-shots on triggers.** `schedule` requires a prompt, and `triggers`
-  keeps parity with it.
+  keeps parity with it. ADR-0023 (accepted 2026-09-22) lifts this deferral with
+  its `command` kind.
 * **Synchronous webhook responses and result callbacks**, timestamped schemes
   other than Standard Webhooks (Stripe, Slack), and de-duplication that
-  survives a restart.
+  survives a restart. ADR-0025 (accepted 2026-09-22) delivers result callbacks
+  for leased harnesses only.
 * **An SSH exec trigger** (`ssh host trigger <name>` with a per-key scope). It is
   cheap to add later; see option 2C.
 

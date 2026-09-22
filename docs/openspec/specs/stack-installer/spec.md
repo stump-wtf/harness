@@ -1,9 +1,9 @@
 ---
-status: draft
+status: approved
 date: 2026-09-22
 implements: [ADR-0024]
 extends: [SPEC-0006]
-requires: [SPEC-0008, SPEC-0010, SPEC-0014]
+requires: [SPEC-0008, SPEC-0010, SPEC-0014, SPEC-0017, SPEC-0021, SPEC-0022, SPEC-0023]
 ---
 
 # SPEC-0018: Stack Installer and Centralized Stack Management
@@ -33,11 +33,11 @@ ADR-0006, ADR-0011, ADR-0019 and ADR-0021.
 
 It requires SPEC-0008 (the run machinery the self-test's one-shot uses),
 SPEC-0010 (the command tree and environment layer the new commands join), and
-SPEC-0014 (the channel source the self-test binds). Records written in
-parallel are cited by number: SPEC-0017 (the command kind), SPEC-0021 (run
-budgets), SPEC-0022 (run history), SPEC-0023 (dev-channels auto-confirm);
-Switchboard SPEC-0025 (doorbell acknowledgement and `doctor`), SPEC-0027
-(release and version contract) and SPEC-0033 (teams); Cairn SPEC-0023 (teams).
+SPEC-0014 (the channel source the self-test binds), SPEC-0017 (the command
+kind), SPEC-0021 (run budgets), SPEC-0022 (run history) and SPEC-0023
+(dev-channels auto-confirm). Cross-repo records are cited by number: Switchboard
+SPEC-0025 (doorbell acknowledgement and `doctor`), SPEC-0027 (release and
+version contract) and SPEC-0033 (teams); Cairn SPEC-0023 (teams).
 
 Terms: an **instance** is one deployment of Switchboard and Cairn. The
 **operator** runs an instance; a **user** has an account on one. A **persona**
@@ -531,7 +531,9 @@ plugin marketplace add` and `claude plugin install` from the public GitHub
 repositories. For `crush` it SHALL fetch the pinned ref into
 `$XDG_DATA_HOME/harness/skills/<plugin>@<ref>/` and add its `skills` directory to
 the persona's `options.skills_paths`. A failed skill install SHALL be reported
-as a warning naming the plugin, and SHALL NOT fail the persona.
+as a warning naming the plugin, and SHALL NOT fail the persona. The manifest
+SHALL pin each plugin to a release tag once its repository cuts one, and to a
+commit SHA until then; it SHALL NOT pin a branch.
 
 #### Scenario: Pinned fetch for Crush
 
@@ -622,12 +624,36 @@ characters of its SHA-256.
 `harness stack init` SHALL require an identity provider for human login: an OIDC
 issuer with client ID and secret, or a GitHub OAuth application. It SHALL
 configure both Switchboard and Cairn with it. It SHALL NOT enable either
-product's development login under any flag.
+product's development login under any flag. The bundle SHALL NOT include an
+identity provider of its own.
+
+When the identity provider is a GitHub OAuth application, `stack init` SHALL
+write an enrollment mode for both products, `SWITCHBOARD_ENROLLMENT_MODE` and
+`CAIRN_ENROLLMENT_MODE`, each one of `allowlist`, `invite` or `open`. The mode
+SHALL default to `invite`. `open` SHALL be written only when the operator chose
+it explicitly (`--enrollment open` or the answers file), and `stack init` SHALL
+then print a warning that anyone with a GitHub account can create an account on
+the instance.
 
 #### Scenario: No identity provider
 
 - **WHEN** `stack init --non-interactive` runs without identity-provider answers
 - **THEN** it exits `2` and names the OIDC and GitHub answers
+
+#### Scenario: GitHub login defaults to invite
+
+- **WHEN** `stack init` runs with a GitHub OAuth application and no enrollment
+  answer
+- **THEN** `secrets/switchboard.env` sets `SWITCHBOARD_ENROLLMENT_MODE=invite`,
+  `secrets/cairn.env` sets `CAIRN_ENROLLMENT_MODE=invite`, and a GitHub user
+  who holds no invitation cannot create an account on either product
+
+#### Scenario: Open sign-up is explicit
+
+- **WHEN** `stack init` runs with a GitHub OAuth application and
+  `--enrollment open`
+- **THEN** both products are configured with `open`, and `stack init` prints the
+  open sign-up warning
 
 ### Requirement: REQ-19 Optional Caddy
 
