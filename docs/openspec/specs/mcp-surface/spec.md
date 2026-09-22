@@ -7,7 +7,8 @@ requires: [SPEC-0002, SPEC-0003, SPEC-0004]
 
 # SPEC-0005: Local MCP Surface (facade, broker, prompts)
 
-> **Not yet implemented.** Design-stage; nothing in this spec is built today (the `[mcp.*]` tables are a config parse error). Tracked by the SPEC-0005 epic, harness#67.
+> **Partially implemented.** `mcp_allow` parses and `internal/facade` exists;
+the rest of this spec is design-stage. Tracked by the SPEC-0005 epic, harness#67.
 
 ## Overview
 
@@ -162,7 +163,10 @@ that owns the presented token. `HARNESS_NAME` is informational, and a name that
 does not match its token SHALL NOT be trusted. A connection with no valid token
 is an **unattributed caller**. It SHALL be scoped as `mcp_allow = ["read"]`, and
 it SHALL receive only data that is not scoped to a harness (for example, SPEC-0007
-skill repos with `serve_to = ["*"]`).
+skill repos with `serve_to = ["*"]`). The identity variables SHALL override both
+the daemon's own environment and any `env_file` the harness declares: a spawned
+process MUST NOT be able to change its `HARNESS_NAME` or `HARNESS_MCP_TOKEN`
+through either.
 
 Attribution is least-privilege scoping within the user's trust boundary
 (ADR-0004), not authentication against the user's own processes. A local process
@@ -213,6 +217,10 @@ own servers still load. An adapter that cannot wire the bridge SHALL say so in
 configuration by hand, and attribution still works, because the identity
 variables are injected regardless of wiring. The Generic adapter SHALL NOT be
 wired.
+
+A spawn that is a distillation model run (SPEC-0007) SHALL always be spawned as
+if `mcp_bridge = false`, whatever its adapter can wire: blindness to Harness's
+own surfaces is the point of those runs.
 
 #### Scenario: Claude Code gets the bridge additively
 

@@ -164,17 +164,17 @@ serve_to = ["reduit/*"]
 # Distillers: triggered one-shot harnesses with a distill table.
 [harness.distill-go]
 harness  = "claude-code"          # "command" once ADR-0023 lands
-prompt   = "Run `harness distill run distill-go` and report its summary. Do nothing else."
+prompt   = "Run `harness distill run distill-go` and report only that it finished, and the dossier path it printed. Do nothing else."
 schedule = "0 3 * * *"
 triggers = ["webhook.gitea-pr"]   # ADR-0021: a merged pull request is new evidence
-env_file = "~/.config/harness/env/distiller.env"   # forge token for harness distill
 timeout  = "2h"
 
 [harness.distill-go.distill]
-from      = ["reduit/*", "spotter/*", "pr-review"]  # whose sessions and pull requests count
-to        = "go-stack"                              # the skill repo it proposes to
-min_repos = 2                                       # distinct repositories before a lesson counts
-reviewers = ["your-reviewer"]
+from            = ["reduit/*", "spotter/*", "pr-review"]  # whose sessions and pull requests count
+to              = "go-stack"                              # the skill repo it proposes to
+min_repos       = 2                                       # distinct repositories before a lesson counts
+reviewers       = ["your-reviewer"]
+credential_file = "~/.config/harness/forge/go-stack.token"  # read by `harness distill` itself; never in this harness's env
 
 [harness.distill-reduit.distill]    # (harness keys as above)
 from      = ["reduit/*"]
@@ -196,7 +196,12 @@ min_repos = 1
   `min_repos`.
 * **Everything else is per distiller**: `max_open`, `max_candidates`,
   `replay_max_lines`, `revert_window`, `reviewers`, `labels`, `branch_prefix`,
-  `verifier` and `verifier_env_file`. Serving settings (`summary_max_chars`,
+  `verifier` and `verifier_env_file`. The forge token belongs in
+  `credential_file`, which only `harness distill` reads — never in the wrapper
+  harness's `env_file`, and never in its prompt. Until ADR-0023's `command`
+  kind lands, the wrapper is a prompt harness: no `auto_accept`, no forge
+  credential, and nothing forge-sourced in what it is asked to report.
+  Serving settings (`summary_max_chars`,
   `retire_grace`, `retire_window`) belong to the daemon, in `[skills]`.
 * **Load fails** when `to` names an undeclared skill repo; when an exact `from`
   name is undeclared or lacks `harvest_trajectory`, since it would silently
@@ -234,13 +239,23 @@ min_repos = 1
 
 This is cheap for two of the adapters we run. It is not free for the third.
 
-1. **Repository.** `git -C <cwd> remote get-url origin`, resolved to the
+1. **Repository.** The remote is captured when the session is harvested —
+   `git -C <cwd> remote get-url origin`, run at observe time as a local,
+   read-only call, because the working directory is routinely gone by pass
+   time — and resolved to the
    canonical copy by its `canonical-*` topic, never the mirror.
 2. **Branch.** Claude Code and Codex record `gitBranch` in the transcript, so
-   the join is `(repo, branch)` → pull requests with that head. Crush, OpenCode
+   the join is `(repo, branch)` → pull requests with that head. The branch and
+   cwd used are the last values seen in the transcript, not the first — a
+   session that starts in a primary checkout parked on someone else's branch
+   and later moves to a worktree must link to the worktree's work (agent-trace's
+   `SessionMeta` keeps the first value today; the companion change tracks the
+   last) — and a session observed on the repository's default branch is treated
+   as branchless. The HEAD SHA is captured at the same moment. Crush, OpenCode
    and Pi record no branch.
 3. **Commits.** For those three, and as a cross-check on the other two: commits
-   reachable in `<cwd>` whose committer time falls inside the session's window,
+   reachable in the captured checkout whose committer time falls inside the
+   session's window,
    matched against each pull request's head SHA and commit list.
 4. **Fail closed.** A session that links to no pull request contributes
    nothing, and so does one that links to several in one repository with no
@@ -305,8 +320,20 @@ prompt asks.
 | Adjudicator | the judge's reason, both sets of hunks, the full skill | the sessions |
 | Control | the task statement and the same snapshot | the skill |
 
-* **Clean room.** `git archive <base>` into a new scratch directory, which has
-  no `.git`, no refs and no later history. The reconstructor works only on the
+Every run is spawned with an allowlisted environment — the variables its role
+needs, never the daemon's `os.Environ()`, its `env_file`, or any forge
+credential — with `mcp_bridge = false` and no path to the daemon socket, so the
+facade read tools and `harness logs` are unreachable from it. The same allowlist
+covers any build or test a verification step executes. Author, judge and
+adjudicator run with tools disabled; the reconstructor and control get file
+tools confined to the clean room and restricted exec. A `harness` CLI call or an
+`mcp__harness__*` tool call from any model run marks it contaminated.
+
+* **Clean room.** `git archive <base>` into a new scratch directory created in
+  a fresh temporary location outside the distill state directory — away from
+  the evidence bundles and the ledger — which has
+  no `.git`, no refs and no later history. It is removed when verification
+  ends. The reconstructor works only on the
   files the skill cites, just as the paper rebuilds one code unit rather than a
   whole repository.
 * **Task statement.** The body of the linked issue if there is one, otherwise
@@ -315,7 +342,11 @@ prompt asks.
   as a handoff prompt that names the fix often does, the dossier flags the
   rebuild as not blind, so the reviewer can discount it.
 * **Audit.** The reconstructor's own transcript is read back through
-  agent-trace. A read outside the clean room (`OutsideTouch`), or any fetch,
+  agent-trace. A read outside the clean room (`OutsideTouch`) — including a
+  relative path that escapes it, which agent-trace is required to report rather
+  than drop (it discards relative `..` paths today, `classify/paths.go`; until
+  that lands a transcript showing a `..` escape cannot be audited and the run
+  fails closed) — or any fetch,
   clone or forge call, marks the run contaminated. The check is deterministic,
   but it is not a proof.
 * **Decision.** If the judge rules the two versions equivalent, the candidate
@@ -323,7 +354,10 @@ prompt asks.
   to rejection. In the paper, adjudicated records never rebuilt correctly, yet
   84% were judged worth keeping.
 * **Tests, which the paper lacked.** When the repository has a `make test`
-  target, it runs in the reconstructor's clean room. The paper offers its
+  target, `harness distill` runs it in the reconstructor's clean room, under
+  the reconstructor's allowlisted environment — never inside a model run, and
+  never with `harness distill`'s own environment, which holds the forge
+  credential. The paper offers its
   model-judged round trip as a scalable filter for when no tests exist, not as a
   replacement for them. We have the tests.
 * **Control.** When the merged change is under `replay_max_lines` (default 400),
@@ -391,24 +425,31 @@ share a purpose key.
 ### Who runs it
 
 `harness distill run <distiller>` orchestrates one distiller's pass
-deterministically. The distiller name is passed explicitly, because Harness does
-not export a harness's name into its environment. The distiller harness runs it
+deterministically. The distiller name is passed explicitly: `HARNESS_NAME` is
+informational, and is not trusted as authorization. The distiller harness runs it
 on a `schedule`. Once ADR-0021 lands, a `webhook.*` trigger for merged pull
 requests also runs it, with `on_overlap = "queue"`. With the `command` kind
 proposed in ADR-0023, the distiller is simply a command one-shot. Until that
-lands, it is a prompt harness whose only instruction is to run the command.
+lands, it is a prompt harness whose only instruction is to run the command —
+and which must therefore never be given `auto_accept`, and never hold a forge
+credential (see the configuration below).
 
 Credentials split three ways, and the split is the point:
 
 | Process | Holds | Reads untrusted text? |
 |---|---|---|
 | daemon | nothing new | no; it counts retrievals and serves an index |
-| `harness distill` | a forge token, from the distiller's `env_file` | it parses that text and never follows it |
-| author, reconstructor, judge, adjudicator, control | model credentials only, from `verifier_env_file` | yes, and none of them can push, comment or merge |
+| `harness distill` | a forge token, read from the distill table's `credential_file` — a path that never enters the wrapper harness's environment | it parses that text and never follows it |
+| author, reconstructor, judge, adjudicator, control | model credentials only, from an allowlisted environment assembled from `verifier_env_file` | yes, and they are spawned with that allowlist in place of the daemon's inherited environment — no forge credential in any variable, no daemon socket, no MCP bridge |
 
-Only the runs that read transcripts and review comments can be steered by them,
-and those runs cannot touch the forge. The process that can touch the forge
-never treats text as instructions.
+Only the runs that read transcripts and review comments can be steered by them.
+Author, judge and adjudicator run with tools disabled; the reconstructor and the
+control get file tools confined to the clean room and restricted exec, and any
+`harness` CLI or `mcp__harness__*` call marks a run contaminated. What the
+allowlist cannot remove is the shared filesystem — a claude-code or crush run
+with a shell can still read the operator's credential files and dial the daemon
+socket by path, which is a residual risk recorded under Consequences, not a
+boundary this design claims.
 
 ### Delivery, adjusted to the paper's results
 
@@ -501,8 +542,12 @@ never treats text as instructions.
 * Bad, because a project repository used as a skill repo means Harness keeps
   another clone of it. A sparse checkout of `path` keeps that small.
 * Bad, because the clean room is a convention on a shared filesystem, not a
-  sandbox. The audit catches the reads it can see. A reconstructor that learns
-  the answer some other way still passes.
+  sandbox. The audit catches the reads it can see. A claude-code or crush run
+  with a shell can read the operator's own credential files
+  (`~/.config/gh/hosts.yml`, `~/.config/tea/config.yml`, `~/.git-credentials`)
+  and dial the daemon socket by path; the allowlisted environment and the closed
+  spawn surfaces narrow what a steered run can do with them, and a real sandbox
+  (under Deferred) is the eventual answer.
 * Neutral, because the paper's code-beats-trajectories result compares benchmark
   banks built with other models and run through one loop. It motivates grounding
   skills in code here; it does not measure whether that works for this fleet.
@@ -708,8 +753,9 @@ flowchart TD
   rendering, and placement at review time. The control run is how we will find
   out whether they pay.
 * **Extends [ADR-0012](adr-0012-cross-harness-distillation.md)**, replacing its
-  signal, verification and proposal sections and keeping its scope gate,
-  delivery tier, index and lifecycle rules.
+  signal, verification, scope gate (now the per-distiller `min_repos`) and
+  proposal sections, keeping its delivery tier, index and lifecycle rules, and
+  dropping its AGENTS.md/CLAUDE.md proposal flow (listed under Deferred).
 * **Related [ADR-0008](adr-0008-security-and-secrets.md)**: credentials are
   split by process, and only the processes without forge credentials read
   attacker-reachable text.

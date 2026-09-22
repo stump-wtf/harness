@@ -70,9 +70,17 @@ contribute evidence to any distiller.
 `harness distill` SHALL link each attributed session to the pull requests it
 worked toward. Linking SHALL resolve the session's working directory to its
 repository's canonical host, and MUST NOT link to a copy that declares
-`downstream-mirror`. It SHALL match by the transcript's recorded branch when one
-exists, and otherwise by commits reachable in the working directory whose
-committer time falls within the session's window. A session that matches no pull
+`downstream-mirror`. The repository remote, the branch and the HEAD SHA SHALL
+be captured when the session is harvested — a local, read-only git call — so
+linking does not depend on a working directory that pass time finds deleted
+(worktrees removed, scratch directories cleaned). Linking SHALL use the last
+branch and working directory recorded in the transcript, not the first — a
+session that starts in a primary checkout parked on someone else's branch and
+later moves to a worktree must link to the worktree's work — and SHALL treat a
+branch that is the repository's default branch as no branch at all. It SHALL
+match by the transcript's recorded branch when one
+exists, and otherwise by commits reachable in the captured working directory
+whose committer time falls within the session's window. A session that matches no pull
 request, or matches several in one repository with no branch to choose between
 them, SHALL be left unlinked. The number of unlinked sessions SHALL be reported.
 
@@ -105,6 +113,13 @@ the default branch reverted it within the configured revert window.
   `downstream-mirror`
 - **THEN** linking resolves to the canonical copy its `canonical-*` topic names,
   or leaves the session unlinked if that topic is absent
+
+#### Scenario: A session that starts on the default branch
+
+- **WHEN** a session is harvested in a checkout whose branch is the repository's
+  default branch
+- **THEN** it is treated as recording no branch, and links only through the
+  commit match — ambiguity still leaves it unlinked
 
 ### Requirement: Grounding Evidence
 
@@ -189,8 +204,13 @@ a client process started by the distiller harness. Every model call SHALL run in
 a separate one-shot scratch run. The daemon MUST NOT issue model requests, MUST
 NOT issue forge requests, MUST NOT hold model or forge credentials, and MUST NOT
 write to any repository working tree, including a skill repo's clone. `harness
-distill` SHALL hold the forge credential. Model runs SHALL receive only
-`verifier_env_file`, which MUST NOT contain a forge credential.
+distill` SHALL hold the forge credential, read from the distill table's
+`credential_file` — a path that never enters the wrapper harness's environment.
+Model runs, and every build or test a verification step executes, SHALL be
+spawned with an allowlisted environment containing only the variables their role
+needs — never the daemon's inherited environment, the daemon's `env_file`, or
+any variable carrying a forge credential. A model run SHALL be spawned with no
+MCP bridge (`mcp_bridge = false`) and no path to the daemon socket.
 
 #### Scenario: Daemon makes no model or forge request
 
@@ -200,9 +220,11 @@ distill` SHALL hold the forge credential. Model runs SHALL receive only
 
 #### Scenario: Model runs cannot reach the forge
 
-- **WHEN** a model run starts
-- **THEN** its environment contains no variable carrying the forge credential
-  `harness distill` holds
+- **WHEN** a model run starts, or a build or test command runs in a clean room
+  during verification
+- **THEN** its environment contains no forge credential at all: no variable
+  inherited from the daemon's environment or `env_file`, and nothing that can
+  push, comment or merge
 
 ### Requirement: Isolated Model Runs
 
@@ -217,30 +239,49 @@ file SHALL be placed in its working directory.
 | Adjudicator | the judge's reason, both sets of hunks, the full skill record | sessions |
 | Control | the task statement, the same clean-room snapshot | the skill record |
 
+Author, judge and adjudicator runs SHALL start with tools disabled. Reconstructor
+and control runs MAY have file tools confined to their clean room and restricted
+exec. Any call to the `harness` CLI, or to an `mcp__harness__*` tool, from any
+model run SHALL mark that run contaminated.
+
 #### Scenario: Reconstructor never receives the answer
 
 - **WHEN** a reconstructor run starts
 - **THEN** its working directory contains no `.git`, and no file whose contents
   match the post-merge version of any cited file
 
+#### Scenario: Model runs cannot reach Harness's own surfaces
+
+- **WHEN** a model run starts
+- **THEN** it has no MCP bridge and no path to the daemon socket, so the facade
+  read tools and `harness logs` are unreachable from it; a `harness` CLI call or
+  an `mcp__harness__*` tool call marks the run contaminated
+
 ### Requirement: Blind Reconstruction Verification
 
 Every candidate SHALL pass verification before it is proposed. Verification
 SHALL:
 
-1. Build a clean room from `git archive` of the base SHA, containing no
-   repository metadata. Take the task statement from the linked issue's body,
+1. Build a clean room from `git archive` of the base SHA in a fresh temporary
+   directory outside the distill state directory — away from the evidence
+   bundles and the ledger — containing no
+   repository metadata; remove it when verification ends. Take the task
+   statement from the linked issue's body,
    or, when there is no linked issue, from the session's first user message,
    redacted. Record which source was used. If the statement contains any
    non-blank line of the merged hunks verbatim, record `task_leak: true`.
 2. Run the reconstructor on the files the skill cites.
 3. Audit the reconstructor's transcript through agent-trace. A read outside the
-   clean room, or an exec that fetches, clones or calls a forge, SHALL mark the
-   run contaminated.
+   clean room — including a relative path that escapes it, which the audit SHALL
+   treat as a read outside: agent-trace is required to report such escapes, not
+   drop them silently — or an exec that fetches, clones or calls a forge, SHALL
+   mark the run contaminated.
 4. Run the judge. `equivalent: true` SHALL pass directly. Anything else SHALL go
    to the adjudicator, and `keep: true` SHALL pass as adjudicated.
-5. Run `make test` in the reconstructor's clean room when the repository defines
-   that target, and record the result.
+5. `harness distill` runs `make test` in the reconstructor's clean room when the
+   repository defines that target, under the reconstructor's allowlisted
+   environment — never inside a model run, and never with `harness distill`'s
+   own environment — and records the result.
 6. When the merged change is under `replay_max_lines`, run the control. If the
    control's test result and judge verdict are at least as good as the
    reconstructor's, the candidate SHALL be dropped and its purpose key
@@ -256,6 +297,12 @@ evidence and are not required to pass.
   the merged hunks
 - **THEN** verification proceeds, and the dossier marks the rebuild
   `task_leak: true`
+
+#### Scenario: The test run gets no forge credential
+
+- **WHEN** `make test` runs during verification
+- **THEN** it executes under the reconstructor role's allowlisted environment,
+  and no forge credential is present in it
 
 #### Scenario: Contaminated runs stop the candidate
 

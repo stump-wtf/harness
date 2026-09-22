@@ -142,13 +142,23 @@ a test.
 
 ### The runs that read untrusted text hold no forge credentials
 
-**Choice**: `harness distill` holds the forge token and parses text without
-following it. Model runs get `verifier_env_file`, which holds only model
-credentials.
+**Choice**: `harness distill` holds the forge token, read from the distill
+table's `credential_file` (a path that never enters the wrapper harness's
+environment), and parses text without following it. Model runs are spawned with
+an allowlisted environment assembled from `verifier_env_file` — never the
+daemon's inherited environment or `env_file`, and no forge credential in any
+variable — with `mcp_bridge = false` and no path to the daemon socket. Author,
+judge and adjudicator run with tools disabled; the reconstructor and control get
+file tools confined to the clean room and restricted exec. Any build or test a
+verification step runs uses the same allowlist. The same residual risk applies
+to every one of them: the filesystem is shared, so a run with a shell can reach
+the operator's own credential files — Consequences records it, and a real
+sandbox is the eventual answer.
 
 **Rationale**: Transcripts and review comments can be written by an attacker.
-Only the runs that read them can be steered by them, and those runs cannot push,
-comment or merge.
+Only the runs that read them can be steered by them; spawning them with an
+allowlisted environment, closed surfaces and audited tools is what keeps a
+steered run from reaching the forge, not trust in the prompt.
 
 ### Summary rendering, small k, and review-time placement
 
@@ -206,10 +216,9 @@ serve_to = ["reduit/*"]
 
 [harness.distill-go]
 harness  = "claude-code"           # "command" with argv once ADR-0023 lands
-prompt   = "Run `harness distill run distill-go` and report its summary. Do nothing else."
+prompt   = "Run `harness distill run distill-go` and report only that it finished, and the dossier path it printed. Do nothing else."
 schedule = "0 3 * * *"
 triggers = ["webhook.gitea-pr"]    # ADR-0021: a merged pull request is new evidence
-env_file = "~/.config/harness/env/distiller.env"   # forge token for harness distill
 timeout  = "2h"
 
 [harness.distill-go.distill]
@@ -221,6 +230,7 @@ max_candidates    = 5
 replay_max_lines  = 400
 revert_window     = "14d"
 reviewers         = ["your-reviewer"]
+credential_file   = "~/.config/harness/forge/go-stack.token"  # read by `harness distill` itself; never in the wrapper's env
 labels            = ["toil"]
 branch_prefix     = "toil/distill-"
 verifier          = "claude-code"
@@ -228,9 +238,8 @@ verifier_env_file = "~/.config/harness/env/verifier.env"   # model credentials o
 
 [harness.distill-reduit]
 harness  = "claude-code"
-prompt   = "Run `harness distill run distill-reduit` and report its summary. Do nothing else."
+prompt   = "Run `harness distill run distill-reduit` and report only that it finished, and the dossier path it printed. Do nothing else."
 schedule = "30 3 * * *"
-env_file = "~/.config/harness/env/distiller.env"
 
 [harness.distill-reduit.distill]
 from      = ["reduit/*"]
@@ -301,7 +310,7 @@ sequenceDiagram
 
 ## Migration Plan
 
-Greenfield, and inert without a `[distill]` table. Rollout in slices, each of
+Greenfield: a harness with no `distill` table is untouched by any of this. Rollout in slices, each of
 which is useful on its own:
 
 1. **Linking and the ledger**, with `harness distill scan --json`, which reports
