@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/stump-wtf/harness/internal/cliui"
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/hours"
 	"github.com/stump-wtf/harness/internal/protocol"
 )
 
@@ -267,5 +269,147 @@ func TestSshCheckDaemonInfoUnavailable(t *testing.T) {
 		if row.level != cliui.LevelWarn {
 			t.Errorf("unavailable info (enabled=%v) = %+v, want warn", sc.Enabled, row)
 		}
+	}
+}
+
+// --- operating-hours doctor warnings (SPEC-0012 REQ "Operating Hours
+// Visibility") ---------------------------------------------------------
+
+// gatedHarness builds a harness with a parsed operating_hours expression, the
+// way config.Load's registration always does — HoursExpr must be populated
+// for operatingHoursWarnings' whole-week check to see anything.
+func gatedHarness(t *testing.T, expr string) core.Harness {
+	t.Helper()
+	e, err := hours.Parse(expr)
+	if err != nil {
+		t.Fatalf("hours.Parse(%q): %v", expr, err)
+	}
+	return core.Harness{
+		Enabled:        true,
+		OperatingHours: expr,
+		HoursExpr:      e,
+		HoursShutdown:  core.HoursShutdownGraceful,
+		Adapter:        "crush",
+		Workdir:        "/srv/app",
+	}
+}
+
+func gatedConfig(t *testing.T, harnesses map[string]core.Harness) *core.Config {
+	t.Helper()
+	order := make([]string, 0, len(harnesses))
+	for name := range harnesses {
+		order = append(order, name)
+	}
+	sort.Strings(order) // deterministic across the map's random iteration
+	return &core.Config{Harnesses: harnesses, HarnessOrder: order}
+}
+
+// TestOperatingHoursWarningsClean pins the zero case: a well-formed gated
+// harness (enabled, a bounded window, a generic-free adapter with a workdir)
+// gets no warnings at all — CLAUDE.md "A zero": every warning test below
+// must also prove its own condition can fire, not just that this one stays
+// silent.
+func TestOperatingHoursWarningsClean(t *testing.T) {
+	cfg := gatedConfig(t, map[string]core.Harness{
+		"claude-src": gatedHarness(t, "Mon-Fri 09:00-13:00"),
+	})
+	if warns := operatingHoursWarnings(cfg); len(warns) != 0 {
+		t.Errorf("clean gated harness produced warnings: %v", warns)
+	}
+}
+
+// TestOperatingHoursWarningsUngated pins that an ungated harness (no
+// operating_hours) is invisible to every check here, warnings or not.
+func TestOperatingHoursWarningsUngated(t *testing.T) {
+	cfg := gatedConfig(t, map[string]core.Harness{
+		"always-on": {Enabled: true, Adapter: "crush"},
+	})
+	if warns := operatingHoursWarnings(cfg); len(warns) != 0 {
+		t.Errorf("ungated harness produced warnings: %v", warns)
+	}
+}
+
+// TestOperatingHoursWarningDisabled fires the first warning: a gated harness
+// with enabled = false will never be started by the gate (ADR-0019: opening
+// hours never overrides a human).
+func TestOperatingHoursWarningDisabled(t *testing.T) {
+	h := gatedHarness(t, "Mon-Fri 09:00-13:00")
+	h.Enabled = false
+	cfg := gatedConfig(t, map[string]core.Harness{"disabled-gated": h})
+
+	warns := operatingHoursWarnings(cfg)
+	if len(warns) != 1 || !strings.Contains(warns[0], "disabled-gated") || !strings.Contains(warns[0], "enabled = false") {
+		t.Errorf("operatingHoursWarnings = %v, want exactly one mentioning disabled-gated and enabled = false", warns)
+	}
+}
+
+// TestOperatingHoursWarningWholeWeek fires the second warning: an expression
+// covering every hour of every day gates nothing.
+func TestOperatingHoursWarningWholeWeek(t *testing.T) {
+	cfg := gatedConfig(t, map[string]core.Harness{
+		"always-gated": gatedHarness(t, "Mon-Sun 00:00-24:00"),
+	})
+	warns := operatingHoursWarnings(cfg)
+	if len(warns) != 1 || !strings.Contains(warns[0], "always-gated") || !strings.Contains(warns[0], "entire week") {
+		t.Errorf("operatingHoursWarnings = %v, want exactly one mentioning always-gated and the entire week", warns)
+	}
+}
+
+// TestOperatingHoursWarningUnattributable fires the third warning twice over:
+// a generic adapter and a harness with no workdir either one leaves graceful
+// shutdown with nothing to attribute a turn to, so every close degrades to
+// immediate no matter what hours_shutdown says.
+func TestOperatingHoursWarningUnattributable(t *testing.T) {
+	generic := gatedHarness(t, "Mon-Fri 09:00-13:00")
+	generic.Adapter = "generic"
+
+	noWorkdir := gatedHarness(t, "Mon-Fri 09:00-13:00")
+	noWorkdir.Workdir = ""
+
+	cfg := gatedConfig(t, map[string]core.Harness{
+		"generic-gated":    generic,
+		"no-workdir-gated": noWorkdir,
+	})
+	warns := operatingHoursWarnings(cfg)
+	if len(warns) != 2 {
+		t.Fatalf("operatingHoursWarnings = %v, want exactly two (one per harness)", warns)
+	}
+	for _, w := range warns {
+		if !strings.Contains(w, "nothing can be attributed") {
+			t.Errorf("warning %q missing the attribution reason", w)
+		}
+	}
+}
+
+// TestOperatingHoursWarningImmediateShutdownNeverFlags pins that
+// hours_shutdown = "immediate" never trips the attribution warning — there is
+// nothing to attribute when the close never waits on turn state.
+func TestOperatingHoursWarningImmediateShutdownNeverFlags(t *testing.T) {
+	h := gatedHarness(t, "Mon-Fri 09:00-13:00")
+	h.Adapter = "generic"
+	h.HoursShutdown = core.HoursShutdownImmediate
+	cfg := gatedConfig(t, map[string]core.Harness{"immediate-generic": h})
+
+	if warns := operatingHoursWarnings(cfg); len(warns) != 0 {
+		t.Errorf("immediate shutdown on a generic adapter produced warnings: %v", warns)
+	}
+}
+
+// TestAppendOperatingHoursCheckRow proves the row itself, not just the
+// underlying warnings slice, actually appears — and that a nil config (load
+// failed) is silently skipped rather than panicking.
+func TestAppendOperatingHoursCheckRow(t *testing.T) {
+	if rows := appendOperatingHoursCheck(nil, nil); len(rows) != 0 {
+		t.Errorf("nil cfg produced rows: %v", rows)
+	}
+
+	h := gatedHarness(t, "Mon-Sun 00:00-24:00")
+	cfg := gatedConfig(t, map[string]core.Harness{"always-gated": h})
+	rows := appendOperatingHoursCheck(nil, cfg)
+	if len(rows) != 1 || rows[0].name != "operating_hours" || rows[0].level != cliui.LevelWarn {
+		t.Fatalf("appendOperatingHoursCheck = %+v, want one warn row named operating_hours", rows)
+	}
+	if rows[0].hint == "" {
+		t.Error("operating_hours row has no hint")
 	}
 }
