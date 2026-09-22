@@ -269,9 +269,17 @@ func (h *runHistory) prune(keep int) {
 	}
 }
 
-// pruneRunLogs deletes name's run logs that no record refers to, so history and
-// logs cannot drift. Only ids up to upTo are considered: a log newer than the
-// history this call saw belongs to a run opened since, and is not ours to judge.
+// pruneRunLogs deletes name's run artifacts that no record refers to, so
+// history and disk cannot drift. Only ids up to upTo are considered: a file
+// newer than the history this call saw belongs to a run opened since, and is
+// not ours to judge.
+//
+// "Artifacts" is both the run's log and its event file (SPEC-0014 REQ "Event
+// Delivery To The Run": the event file is pruned together with the record and
+// the log). Pruning only the log would leave every event file on disk forever,
+// which is the worse half to keep: a webhook body is attacker-supplied text,
+// and a directory of them accumulating is exactly what `keep_runs` exists to
+// stop.
 func (m *Manager) pruneRunLogs(name string, kept map[int]bool, upTo int) {
 	dir := m.runLogDir(name)
 	if dir == "" {
@@ -282,7 +290,7 @@ func (m *Manager) pruneRunLogs(name string, kept map[int]bool, upTo int) {
 		return
 	}
 	for _, e := range entries {
-		id, ok := runLogID(e.Name())
+		id, ok := runArtifactID(e.Name())
 		if !ok || id > upTo || kept[id] {
 			continue
 		}
@@ -305,9 +313,25 @@ func highestRunLog(dir string) int {
 	return highest
 }
 
-// runLogID parses "<id>.log".
+// runLogID parses "<id>.log". It is deliberately narrower than
+// runArtifactID: highestRunLog floors the next run id from it, and a run id
+// must be floored by a run that actually produced a log.
 func runLogID(file string) (int, bool) {
-	base, ok := strings.CutSuffix(file, ".log")
+	return runIDWithSuffix(file, ".log")
+}
+
+// runArtifactID parses any of a run's on-disk artifacts — "<id>.log" or
+// "<id>.event.json" — into its run id. Pruning walks this, so a new artifact
+// kind is one line here rather than a second loop that can forget one.
+func runArtifactID(file string) (int, bool) {
+	if id, ok := runIDWithSuffix(file, ".log"); ok {
+		return id, true
+	}
+	return runIDWithSuffix(file, ".event.json")
+}
+
+func runIDWithSuffix(file, suffix string) (int, bool) {
+	base, ok := strings.CutSuffix(file, suffix)
 	if !ok {
 		return 0, false
 	}

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -126,8 +127,54 @@ func unquote(s string) string {
 	return s
 }
 
+// RunEnv is the run-context environment a recorded run's process is spawned
+// with (SPEC-0014 REQ "Event Delivery To The Run"). Every field is an
+// identifier or a path — never a payload byte, a header value or a credential.
+//
+// The names are RESERVED: they are appended after `env_file`, so they win a
+// collision with one an operator set. A harness that set its own
+// HARNESS_RUN_ID would otherwise make the agent's own run correlation lie,
+// and the daemon's answer has to be the authoritative one.
+type RunEnv struct {
+	// RunID is the run's id, 0 for a start with no run record.
+	RunID int
+	// Trigger is what started the run: schedule, catch_up, manual, channel
+	// or webhook.
+	Trigger RunTrigger
+	// Source is the trigger source reference, empty when no source caused
+	// the run.
+	Source string
+	// EventFile is the absolute path of the run's 0600 event file, empty
+	// when the run carries no event.
+	EventFile string
+}
+
+// vars renders r as KEY=VALUE pairs, omitting the two that are meaningful only
+// for an event-driven run. Omission is the contract, not an empty string: REQ
+// "Event Delivery To The Run" says HARNESS_RUN_SOURCE and HARNESS_EVENT_FILE
+// are UNSET for a scheduled firing, and an agent testing `if [ -n "$X" ]`
+// cannot tell an empty value from a missing one — but one testing for the
+// variable's presence can.
+func (r RunEnv) vars() []string {
+	var out []string
+	if r.RunID > 0 {
+		out = append(out, "HARNESS_RUN_ID="+strconv.Itoa(r.RunID))
+	}
+	if r.Trigger != "" {
+		out = append(out, "HARNESS_RUN_TRIGGER="+string(r.Trigger))
+	}
+	if r.Source != "" {
+		out = append(out, "HARNESS_RUN_SOURCE="+r.Source)
+	}
+	if r.EventFile != "" {
+		out = append(out, "HARNESS_EVENT_FILE="+r.EventFile)
+	}
+	return out
+}
+
 // buildEnv composes the child environment: the daemon's own environment plus
-// the parsed env_file (env_file wins on key collisions, appended last).
+// the parsed env_file (env_file wins on key collisions, appended last), and
+// then the run context, which wins over both.
 //
 // The child runs under a real, color-capable PTY (xpty), so it must advertise
 // one: a daemon launched detached (launchd/systemd, a closed login shell) can
@@ -135,7 +182,7 @@ func unquote(s string) string {
 // full-screen harness apps render in black & white. We therefore guarantee
 // sane terminal defaults — a color-capable TERM and COLORTERM=truecolor —
 // for any key neither the daemon's environment nor the env_file already set.
-func buildEnv(h core.Harness) ([]string, error) {
+func buildEnv(h core.Harness, run RunEnv) ([]string, error) {
 	extra, err := parseEnvFile(h.EnvFile)
 	if err != nil {
 		return nil, err
@@ -143,6 +190,9 @@ func buildEnv(h core.Harness) ([]string, error) {
 	env := os.Environ()
 	env = ensureTermEnv(env)
 	env = append(env, extra...)
+	// Last, so exec.Cmd.Env's later-wins rule makes these authoritative over
+	// both the daemon's environment and env_file.
+	env = append(env, run.vars()...)
 	return env, nil
 }
 
@@ -293,7 +343,7 @@ func Workdir(h core.Harness) string { return expandHome(h.Workdir) }
 // undersized: the mux's recorded size already equals the client viewport, so
 // its resize policy sees no change and never pushes a TIOCSWINSZ, and the app
 // inside renders into an 80×24 box in the corner of a full-size window.
-func spawn(h core.Harness, cols, rows int) (*process, error) {
+func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
 	// Resolve prompt_file to its text BEFORE allocating anything: a missing
 	// instruction file must fail the start outright rather than leak a PTY and
 	// launch an agent with nothing to do (ADR-0018).
@@ -302,7 +352,7 @@ func spawn(h core.Harness, cols, rows int) (*process, error) {
 		return nil, err
 	}
 	workdir := Workdir(h)
-	env, err := buildEnv(h)
+	env, err := buildEnv(h, run)
 	if err != nil {
 		return nil, err
 	}

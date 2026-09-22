@@ -575,7 +575,7 @@ func (s *Supervisor) beginStart() {
 	// `^b s` from attached mode) must land in a PTY the size of the client
 	// that's watching it (ADR-0003; see spawn's note).
 	cols, rows := s.spawnSize()
-	proc, err := spawn(s.harness, cols, rows)
+	proc, err := spawn(s.harness, cols, rows, s.runEnv())
 	if err != nil {
 		// Treat a spawn failure like an immediate crash. It is still the
 		// latest run, so it gets a start: onProcessGone stamps LastExitAt,
@@ -720,12 +720,19 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		s.bus.Publish(Event{Kind: EventExited, Name: s.harness.Name, Time: now, Code: code})
 	}
 
-	// A scheduled harness is a cron one-shot: its schedule IS its retry
+	// A triggered harness is a one-shot: its firing source IS its retry
 	// mechanism (SPEC-0008 REQ "Firing And Overlap"). Respawning it here would
 	// double-drive the cadence, and a run that fails every time would retry as
 	// fast as it can fail rather than on the schedule. Land the exit and let
 	// the next firing be the retry — the scheduler starts from stopped and
 	// failed alike, so this re-arms nothing and disarms nothing.
+	//
+	// SPEC-0014 widens this from "has a schedule" to "is triggered", and the
+	// widening is load-bearing rather than tidy: `triggers` permits
+	// `restart = "on-failure"`, so a webhook one-shot that exits non-zero
+	// would otherwise fall through to the crash-loop respawn below and re-run
+	// itself with no event — the exact thing the `triggers` exclusions against
+	// `always`/`unless-stopped` exist to prevent, arriving by the back door.
 	//
 	// This MUST stay above the !s.enabled return below. A real firing always
 	// has enabled == false: the scheduler fires through StartTransient, which
@@ -743,7 +750,7 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 	// all — gracefulStop consumes the exit off exitCh itself and transitions
 	// to stopped directly — so `harness stop <sweep>` on a running sweep still
 	// lands in stopped, not failed, despite the SIGTERM exit code.
-	if s.harness.Schedule != "" {
+	if s.harness.Triggered() {
 		s.resetCrashState()
 		// RestartCount counts automatic respawns, and this branch is the
 		// reason a scheduled harness never has any — it returns above the

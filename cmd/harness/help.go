@@ -54,7 +54,7 @@ var helpText = struct {
 		{"restart NAME", "restart a harness (clears a failed latch)"},
 		{"logs NAME [--lines N] [--follow] [--raw] [--run N]", "show what a harness's latest run (or run N) did"},
 		{"jobs", "list scheduled harnesses: next run, last run, consecutive failures"},
-		{"trigger NAME [--wait]", "run a scheduled harness now (on_overlap applies); --wait exits with its exit code"},
+		{"trigger NAME [--wait] [--event FILE]", "run a triggered harness now (on_overlap applies); --wait exits with its exit code; --event replays an event envelope"},
 		{"runs NAME [--limit N]", "show a scheduled harness's run history"},
 		{"profiles", "list profiles (active one flagged)"},
 		{"use-profile NAME", "activate a profile"},

@@ -69,7 +69,15 @@ const (
 	// list already did for ProtoMinor 8's fields above. A daemon older than
 	// 10 omits every field above and never sends the event; a client older
 	// than 10 ignores them, exactly like any other unknown field.
-	ProtoMinor = 10
+	// ProtoMinor 11 added event triggers (ADR-0021 / SPEC-0014): Event on
+	// ControlReq (an event envelope supplied to trigger), Source and EventID
+	// on RunInfo, the trigger values "channel" and "webhook", and the
+	// invalid_event error code — additive only. A daemon older than 11
+	// answers not_scheduled for a harness whose only firing source is an
+	// event, and ignores Event, so `trigger --event` against one silently
+	// starts a run with no event; the client refuses the flag rather than
+	// letting that happen (see cmdTrigger).
+	ProtoMinor = 11
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -179,6 +187,14 @@ type ControlReq struct {
 	Run int `json:"run,omitempty"`
 	// Limit caps the records runs returns, newest first. Zero means 20.
 	Limit int `json:"limit,omitempty"`
+
+	// Event is an event envelope supplied to trigger (SPEC-0014 REQ "Manual
+	// Trigger With Event"), verbatim as the operator's file held it. It is a
+	// RawMessage rather than a decoded struct so the daemon validates one
+	// shape, on its side of the wire: a client that decoded and re-encoded it
+	// would silently normalize a field the daemon is about to judge, and a
+	// replayed file must be judged as it exists on disk.
+	Event json.RawMessage `json:"event,omitempty"`
 
 	// For is the optional length of an after-hours lease on start (SPEC-0012
 	// REQ "After-Hours Lease"), a Go duration string ("2h30m"). Additive, so
@@ -529,7 +545,7 @@ type ScratchRunData struct {
 // only — never environment, prompt or output (ADR-0008).
 type RunInfo struct {
 	RunID int `json:"run_id"`
-	// Trigger is "schedule", "manual" or "catch_up".
+	// Trigger is "schedule", "manual", "catch_up", "channel" or "webhook".
 	Trigger string `json:"trigger"`
 	// Outcome is "running", "success", "failed", "timed_out", "skipped",
 	// "replaced", "missed", "cancelled" or "interrupted".
@@ -549,6 +565,13 @@ type RunInfo struct {
 	Windows     int    `json:"windows,omitempty"`
 	// HasLog reports whether the run has a log to read with logs --run.
 	HasLog bool `json:"has_log,omitempty"`
+	// Source is the trigger source reference behind the run, e.g.
+	// "webhook.gitea-pr" (SPEC-0014 REQ "Run Record Fields").
+	Source string `json:"source,omitempty"`
+	// EventID identifies the event the run carried. An identifier only — a
+	// run record carries no byte of an event payload, no header value and no
+	// credential (ADR-0008).
+	EventID string `json:"event_id,omitempty"`
 }
 
 // JobInfo is one scheduled harness for the jobs op (SPEC-0008 REQ "Protocol
@@ -685,6 +708,10 @@ const (
 	// schedule. Distinct from unknown_harness so a script can tell a typo from
 	// pointing a job verb at a resident harness.
 	ErrNotScheduled ErrCode = "not_scheduled"
+	// ErrInvalidEvent: trigger was given an --event envelope that is
+	// malformed, too large for the harness, or names a source the harness
+	// does not bind (SPEC-0014 REQ "Manual Trigger With Event"). Nothing ran.
+	ErrInvalidEvent ErrCode = "invalid_event"
 	// ErrUnknownRun: a run selector named a run id the harness's history does
 	// not hold — never run, or pruned past keep_runs.
 	ErrUnknownRun ErrCode = "unknown_run"

@@ -18,14 +18,21 @@ package daemon
 // "Manual Trigger"; issue #120.
 //
 // @joestump-agent 09/11/2026 - Added for issue #120.
+//
+// @joestump 09/22/2026 - trigger now accepts any TRIGGERED harness, not only a
+// scheduled one, and an optional event envelope to replay into it (ADR-0021;
+// SPEC-0014 REQ "Manual Trigger With Event", REQ "Run Record Fields").
 
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/trigger"
 )
 
 // defaultRunsLimit is how many records runs returns when the request sets no
@@ -77,19 +84,36 @@ func (c *conn) opJobs() []protocol.JobInfo {
 	return out
 }
 
-// opTrigger starts a manual run of a scheduled harness.
+// opTrigger starts a manual run of a triggered harness, optionally replaying
+// an event into it.
+//
+// "Triggered", not "scheduled": SPEC-0014 REQ "Manual Trigger With Event" says
+// trigger accepts any harness with a `schedule`, `triggers`, or both, and
+// answers not_scheduled only for one with neither. A webhook-only harness that
+// could not be triggered by hand would have no way to be exercised at all
+// without a real delivery.
 func (c *conn) opTrigger(req protocol.ControlReq) {
 	h, _, ok := c.srv.mgr.HarnessRecord(req.Name)
 	if !ok {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
 		return
 	}
-	if h.Schedule == "" {
+	if !h.Triggered() {
 		_ = c.pc.WriteError(req.ID, protocol.ErrNotScheduled,
-			"harness %q has no schedule; trigger runs scheduled harnesses (use start for any other)", req.Name)
+			"harness %q has no schedule and no triggers; trigger runs triggered harnesses (use start for any other)", req.Name)
 		return
 	}
-	d, ok := c.srv.mgr.StartRun(req.Name, supervisor.RunRequest{Trigger: supervisor.TriggerManual})
+	run := supervisor.RunRequest{Trigger: supervisor.TriggerManual}
+	if len(req.Event) > 0 {
+		env, err := c.parseTriggerEvent(h, req.Event)
+		if err != nil {
+			_ = c.pc.WriteError(req.ID, protocol.ErrInvalidEvent, "%s", err.Error())
+			return
+		}
+		run.Source = env.Source
+		run.Event = env
+	}
+	d, ok := c.srv.mgr.StartRun(req.Name, run)
 	if !ok {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
 		return
@@ -114,6 +138,43 @@ func (c *conn) opTrigger(req protocol.ControlReq) {
 		out.Run = &info
 	}
 	c.respond(req, out)
+}
+
+// parseTriggerEvent validates a replayed envelope against the harness it is
+// being replayed into, and stamps it as a replay.
+//
+// Three checks, each refusing a different mistake:
+//
+//   - The SIZE cap is the largest `max_body` among the harness's webhook
+//     sources, or 1 MiB when it binds none. It is read before the decode, so a
+//     huge file costs a length check rather than a parse.
+//   - The SHAPE is validated by the envelope itself, so a hand-edited file
+//     cannot reach the run machinery with a kind and a source that disagree.
+//   - The SOURCE must be one the harness binds. This is the one an operator
+//     will actually hit: replaying `pr-review`'s event into `deploy-check`
+//     would otherwise record a run against a source that harness never listens
+//     to, and the run's own `HARNESS_RUN_SOURCE` would be a lie.
+//
+// Governing: SPEC-0014 REQ "Manual Trigger With Event".
+func (c *conn) parseTriggerEvent(h core.Harness, raw []byte) (*trigger.Envelope, error) {
+	env, err := trigger.ParseEnvelope(raw, trigger.MaxEventBytes(h, c.srv.mgr.Config()))
+	if err != nil {
+		return nil, err
+	}
+	if !trigger.Binds(h, env.Source) {
+		return nil, fmt.Errorf("harness %q does not bind %q (its triggers are %s)",
+			h.Name, env.Source, triggerList(h))
+	}
+	return env.Replay(time.Now()), nil
+}
+
+// triggerList renders a harness's bindings for an error message, so the
+// operator can see what they should have replayed into.
+func triggerList(h core.Harness) string {
+	if len(h.Triggers) == 0 {
+		return "none"
+	}
+	return strings.Join(h.Triggers, ", ")
 }
 
 // opRuns returns one harness's run history, newest first. Any known harness
@@ -211,6 +272,11 @@ func (c *conn) runInfo(name string, r supervisor.RunRecord) protocol.RunInfo {
 	if r.FirstWindow != nil {
 		info.FirstWindow = r.FirstWindow.Format(time.RFC3339)
 	}
+	// Identifiers only. The event's payload lives in the run's event file,
+	// which nothing projects onto the wire (ADR-0008; SPEC-0014 REQ "Run
+	// Record Fields").
+	info.Source = r.Source
+	info.EventID = r.EventID
 	if path := c.srv.mgr.RunLogPath(name, r.RunID); path != "" {
 		if _, err := os.Stat(path); err == nil {
 			info.HasLog = true

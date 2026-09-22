@@ -32,12 +32,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	clog "github.com/charmbracelet/log"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/trigger"
 )
 
 // RunTrigger names what started a run.
@@ -51,6 +53,11 @@ const (
 	// TriggerCatchUp is the single run `catch_up = true` gets for windows that
 	// elapsed while nobody was evaluating.
 	TriggerCatchUp RunTrigger = "catch_up"
+	// TriggerChannel is a `notifications/claude/channel` from a channel
+	// source (SPEC-0014 REQ "Run Record Fields").
+	TriggerChannel RunTrigger = "channel"
+	// TriggerWebhook is a verified delivery to a webhook source's route.
+	TriggerWebhook RunTrigger = "webhook"
 )
 
 // RunOutcome is how a run ended — or, for the outcomes that start no process,
@@ -108,15 +115,36 @@ type RunRecord struct {
 	FirstWindow *time.Time `json:"first_window,omitempty"`
 	// Windows counts the windows a missed record or a catch-up run covers.
 	Windows int `json:"windows,omitempty"`
+	// Source is the trigger source reference that caused this decision, e.g.
+	// "webhook.gitea-pr". Unset for a schedule, catch-up or bare manual run.
+	// Governing: SPEC-0014 REQ "Run Record Fields".
+	Source string `json:"source,omitempty"`
+	// EventID is the event's ID when the decision carried one: the sender's
+	// delivery ID, or a daemon-generated one for a scheme with no delivery
+	// header. It is an IDENTIFIER, never a payload — a record carries no byte
+	// of an event body, no header value and no credential (ADR-0008).
+	// Governing: SPEC-0014 REQ "Run Record Fields".
+	EventID string `json:"event_id,omitempty"`
 }
 
-// RunRequest asks for a run of a scheduled harness.
+// RunRequest asks for a run of a triggered harness.
 type RunRequest struct {
 	Trigger RunTrigger
 	// Window is the schedule window being honored (zero for manual).
 	Window time.Time
 	// Windows counts the missed windows a catch-up run stands in for.
 	Windows int
+	// Source is the trigger source reference behind this request, when one
+	// caused it. Governing: SPEC-0014 REQ "Run Record Fields".
+	Source string
+	// Event is the event to deliver to the run, or nil. It rides the request
+	// rather than being written when the event arrives, because a firing held
+	// under `on_overlap = "queue"` must not touch disk until it actually
+	// starts: a skipped or coalesced firing that had already written a file
+	// would leave an event file with no run, and a queued one needs the run
+	// id it does not have yet to name its file.
+	// Governing: SPEC-0014 REQ "Event Delivery To The Run".
+	Event *trigger.Envelope
 }
 
 // RunJournal stores run records. The Manager implements it; a supervisor with
@@ -160,14 +188,22 @@ type activeRun struct {
 	file  io.WriteCloser // per-run log; nil when none could be opened
 	evlog *clog.Logger   // lifecycle lines into file
 	timer *time.Timer    // timeout; nil when unlimited
+	// eventFile is the absolute path of the run's event file, or "" when the
+	// run carries no event (or the harness has no per-run log directory to
+	// put one in). It is read back out by runEnv, so a restart of the same
+	// run spawns with the same HARNESS_EVENT_FILE.
+	eventFile string
 }
 
 // decisionRecord builds the record of a decision that starts no process.
 func decisionRecord(req RunRequest, outcome RunOutcome, now time.Time) RunRecord {
-	rec := RunRecord{Trigger: req.Trigger, Outcome: outcome, StartedAt: now, EndedAt: &now, Windows: req.Windows}
+	rec := RunRecord{Trigger: req.Trigger, Outcome: outcome, StartedAt: now, EndedAt: &now, Windows: req.Windows, Source: req.Source}
 	if !req.Window.IsZero() {
 		w := req.Window
 		rec.Window = &w
+	}
+	if req.Event != nil {
+		rec.EventID = req.Event.EventID
 	}
 	return rec
 }
@@ -176,7 +212,12 @@ func decisionRecord(req RunRequest, outcome RunOutcome, now time.Time) RunRecord
 // scheduled, as a plain start otherwise. It returns the run's record as opened
 // (zero for an unscheduled harness).
 func (s *Supervisor) startProcess(req RunRequest) RunRecord {
-	if s.harness.Schedule != "" {
+	// Triggered, not scheduled: SPEC-0014 extends the run machinery to event
+	// sources, so a webhook-only harness gets a record, a log, `timeout`,
+	// `on_overlap` and `keep_runs` exactly as a cron one-shot does. A bare
+	// `Schedule != ""` here would read a triggered harness as an ordinary
+	// resident one and give its firings none of that.
+	if s.harness.Triggered() {
 		return s.beginRun(req)
 	}
 	s.beginStart()
@@ -194,8 +235,8 @@ func (s *Supervisor) startRun(req RunRequest) RunDecision {
 		s.clearFailLatch()
 		return RunDecision{Kind: DecisionStarted, Run: s.startProcess(req)}
 	}
-	if s.harness.Schedule == "" {
-		// No overlap policy without a schedule: already up is up.
+	if !s.harness.Triggered() {
+		// No overlap policy without a firing source: already up is up.
 		return RunDecision{Kind: DecisionSkipped}
 	}
 	switch s.harness.OnOverlap {
@@ -237,6 +278,20 @@ func (s *Supervisor) beginRun(req RunRequest) RunRecord {
 				run.file = f
 				run.evlog = newEventLogger(f)
 			}
+			// Written HERE, after the run id exists and before the process
+			// spawns, because the spawn's environment names this path. A
+			// failure to write it is logged and the run continues without an
+			// event file rather than being abandoned: an agent that finds no
+			// HARNESS_EVENT_FILE can still do its job, where a firing dropped
+			// for a disk error is work silently lost with nothing to
+			// re-deliver it.
+			if req.Event != nil {
+				if p, err := writeEventFile(eventPathFor(path), req.Event); err != nil {
+					s.logEvent("run event not saved", "run_id", rec.RunID, "err", err.Error())
+				} else {
+					run.eventFile = p
+				}
+			}
 		}
 	}
 	run.rec = rec
@@ -270,6 +325,75 @@ var openRunLog = func(path string) (io.WriteCloser, error) {
 		return nil, err
 	}
 	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+}
+
+// eventPathFor turns a run's log path into its event file path. One function,
+// so the write here and the prune in manager_runs cannot drift into disagreeing
+// about the name — a mismatch would leave every event file on disk forever
+// while `keep_runs` faithfully removed the logs beside them.
+func eventPathFor(logPath string) string {
+	if logPath == "" {
+		return ""
+	}
+	return strings.TrimSuffix(logPath, ".log") + ".event.json"
+}
+
+// writeEventFile writes env to path with mode 0600 and returns the absolute
+// path it can be named by.
+//
+// 0600 is the requirement, not a default: a webhook body is attacker-supplied
+// text, and the file sits in a jobs directory an operator may well have made
+// group-readable. It is written with O_EXCL — a run id is never reused, so an
+// existing file at this path is a bug or a collision worth hearing about
+// rather than something to overwrite.
+//
+// A variable so a test can observe the mode and the failure path.
+// Governing: SPEC-0014 REQ "Event Delivery To The Run"; ADR-0008.
+var writeEventFile = func(path string, env *trigger.Envelope) (string, error) {
+	if path == "" || env == nil {
+		return "", nil
+	}
+	b, err := env.Encode()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		// The relative path still names the file; the agent's cwd is the
+		// harness workdir, so prefer being honest over inventing one.
+		return path, nil
+	}
+	return abs, nil
+}
+
+// runEnv is the run-context environment the process in flight is spawned with.
+// It is derived from the run rather than stored, so a respawn of the same run
+// gets the same values.
+// Governing: SPEC-0014 REQ "Event Delivery To The Run".
+func (s *Supervisor) runEnv() RunEnv {
+	if s.run == nil {
+		return RunEnv{}
+	}
+	return RunEnv{
+		RunID:     s.run.rec.RunID,
+		Trigger:   s.run.rec.Trigger,
+		Source:    s.run.rec.Source,
+		EventFile: s.run.eventFile,
+	}
 }
 
 // armRunTimeout schedules the run's timeout, delivered to the loop.
