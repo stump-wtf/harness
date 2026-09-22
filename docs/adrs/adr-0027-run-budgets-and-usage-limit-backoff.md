@@ -32,10 +32,15 @@ multiply it". Harness offers the time ceiling and nothing else.
 **Quota exhaustion is treated as a crash.** On 2026-09-14 a provider quota
 emptied and four supervised agents failed every model call for about twenty
 hours while `harness list` said `running` (ADR-0020). On 2026-09-19 it happened
-again, and this time the harnesses went through the restart policy's backoff to
-the terminal `failed` latch, which nothing clears when the quota resets
-(the 2026-09-19 quota-exhaustion postmortem). The supervisor did exactly what
-SPEC-0003 says: a process that keeps exiting is crash-looping. But a provider
+again: an upstream ran out of credits, every agent failed with `Payment
+Required: You're out of credits`, and each harness spent its restart budget
+(14, 16 and 55 restarts) and latched the terminal `stopped` or `failed` state,
+which nothing clears when the quota comes back. The fleet stayed down for about
+19 hours, until a human noticed (the 2026-09-19 quota-exhaustion postmortem).
+The give-up itself is right: it was chosen after an earlier incident in which a
+harness restarted 6,212 times and exhausted the same provider's weekly quota.
+The supervisor did exactly what SPEC-0003 says: a process that keeps exiting is
+crash-looping. But a provider
 refusing a spent account is not a crash. Restarting does not fix it, it has a
 reset time outside our control, and it usually hits every harness that shares
 the account at the same moment. For a triggered one-shot (ADR-0021) it is worse:
@@ -75,8 +80,10 @@ what a provider is?
 * **Durable, and not multiplied.** Counters survive a daemon restart. A crash
   loop, a retry or a duplicate delivery cannot mint extra budget.
 * **Quota is not a crash.** An exhausted quota never spends the restart budget,
-  never lands a harness in `failed`, and releases the harness by itself when the
-  allowance resets.
+  never lands a harness in `failed` or a give-up `stopped`, and releases the
+  harness by itself when the allowance resets. The give-up stays exactly as it
+  is for real crashes, so neither the 6,212-restart burn nor the 19-hour outage
+  can recur.
 * **`enabled` stays intent.** As in ADR-0019, a budget or a quota never
   overwrites what the operator asked for. It holds a harness beside its intent.
 * **The operator can always override**, with one command that ends by itself.
