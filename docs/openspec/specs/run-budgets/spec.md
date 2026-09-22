@@ -28,6 +28,9 @@ This spec amends, by reference and without editing them:
 * **SPEC-0012 REQ "Gate Enforcement"**: `held` becomes a set of hold reasons
   (REQ-14). SPEC-0012 is not edited while #412 is open; a follow-up folds this
   in once it merges.
+* **SPEC-0012 REQ "Operating Hours Visibility"**: the projection's `held`
+  boolean is removed and replaced by `hold_reasons` (REQ-16), with no
+  transition period.
 * **SPEC-0014 REQ "Run Record Fields"**: skip `reason` gains `quota_parked`,
   `budget` and `concurrency` (REQ-5, REQ-6, REQ-13).
 * **SPEC-0008 REQ "Run Timeout"**: a run can also end in a budget stop (REQ-9).
@@ -513,13 +516,22 @@ resets <time>` for a budget hold, and `waiting <in flight>/<cap>` for a firing
 queued on concurrency. No column SHALL be added. The harness projection SHALL
 gain `hold_reasons`, `parked_until`, `park_rule`, `park_group` and a `budget`
 object (`runs_today`, `max_runs_per_day`, `cost_today_usd`, `daily_cost_usd`,
-`cost_source`), each omitted when it does not apply.
+`cost_source`), each omitted when it does not apply. The projection SHALL NOT
+carry `held`: `hold_reasons` replaces it outright, and no derived field SHALL be
+kept for older clients. The implementing change SHALL carry an upgrade note in
+the release notes naming the removed field.
 
 #### Scenario: A parked harness in the list
 
 - **GIVEN** `crush-sb` parked until 15:00
 - **WHEN** the operator runs `harness list`
 - **THEN** its STATE reads `parked`, its NEXT reads `resets 15:00`, and `--json` carries `parked_until` and `hold_reasons: ["quota"]`
+
+#### Scenario: No `held` field
+
+- **GIVEN** a harness held for `hours`
+- **WHEN** a client reads its projection
+- **THEN** it carries `hold_reasons: ["hours"]` and no `held` field
 
 ### REQ-17: Doctor
 

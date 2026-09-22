@@ -138,9 +138,10 @@ tests, and the #385 display machinery (`off-hours`) extends to `parked` and
 `over-budget` rather than growing a parallel branch.
 
 **Migration**: `hold()` today logs `reason=operating_hours`; the log line keeps
-that wording for hours and gains `quota` and `budget`. SPEC-0012's `held`
-remains true iff `hours ∈ holds`, so nothing that reads it today changes
-meaning.
+that wording for hours and gains `quota` and `budget`. The projection's `held`
+boolean (SPEC-0012 REQ "Operating Hours Visibility") is removed in the same
+change and replaced by `hold_reasons`. No derived `held` is kept for older
+clients: Harness is pre-1.0, and the client and daemon ship in one binary.
 
 ### One classifier, moved to `internal/modelerr`
 
@@ -218,7 +219,7 @@ releases a slot and pops the oldest entry whose harness still passes checks
 coalesced `skipped` record (reason `concurrency`) through the existing
 coalescing path.
 
-### Protocol changes (additive)
+### Protocol changes
 
 * `start` and `trigger` ops gain `over_budget bool`. The control-socket handler
   accepts it. The MCP surface's `harness_start` handler never sets it, and a
@@ -226,6 +227,11 @@ coalescing path.
 * The harness projection gains `hold_reasons []string`, `parked_until`,
   `park_rule`, `park_group`, and `budget {runs_today, max_runs_per_day,
   cost_today_usd, daily_cost_usd, cost_source}`, all `omitempty`.
+* The harness projection loses `held`. `hold_reasons` containing `hours` is
+  what `held` meant. It rides the same `ProtoMinor` bump: an older client reads
+  the missing field as `false` and loses the `off-hours` label, nothing worse,
+  so a major bump that refuses every older client would cost more than it
+  saves.
 * A new event `harness_hold_changed {name, hold_reasons, next}`.
 * Errors `over_budget` and `parked` carry the Decision's `Detail`, which the CLI
   prints verbatim.
@@ -325,8 +331,11 @@ stateDiagram-v2
 2. `state.json` gains `parks` additively; an older daemon ignores it.
 3. The classifier move lands as a pure refactor after #407, with no behaviour
    change and its tests moved with it.
-4. `held` → `hold_reasons` keeps a derived `held` field in the projection for one
-   release, so older clients keep rendering `off-hours`.
+4. `held` is removed from the projection in the same change that adds
+   `hold_reasons`, with no transition release. Upgrade note (release notes):
+   the harness projection's `held` field is gone; read `hold_reasons`. A client
+   older than the daemon shows a held harness without its `off-hours` label
+   until it is upgraded.
 5. Rollback: removing the keys disables budgets; parks expire by themselves, and
    a downgraded daemon ignores `parks` (a parked resident would then start on
    boot and re-park on its first refusal).
