@@ -336,6 +336,13 @@ func toEventMsg(ev supervisor.Event) protocol.EventMsg {
 		if !ev.NextRun.IsZero() {
 			m.NextRunAt = ev.NextRun.Format(time.RFC3339)
 		}
+	case supervisor.EventHoursChanged:
+		// SPEC-0012 REQ "Operating Hours Visibility".
+		m.Kind = protocol.EvHoursChanged
+		m.InHours = ev.InHours
+		if !ev.HoursNext.IsZero() {
+			m.HoursNext = ev.HoursNext.Format(time.RFC3339)
+		}
 	}
 	return m
 }

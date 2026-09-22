@@ -133,8 +133,9 @@ func TestScheduleColumnStylesSurviveWrapping(t *testing.T) {
 		tbl := NewTable(&buf, "NAME", "STATE", "SCHEDULE", "NEXT", "RESTARTS", "DESCRIPTION")
 		// Force the styled path: a real TTY colors, a *bytes.Buffer does not.
 		tbl.colored = true
-		tbl.Row("stumpcloud-sweep", tbl.stateCell("stopped", "CRON_TZ=UTC 0 10 * * *"),
-			tbl.scheduleCell("CRON_TZ=UTC 0 10 * * *"), tbl.nextRunCell("CRON_TZ=UTC 0 10 * * *", next),
+		tbl.Row("stumpcloud-sweep", tbl.stateCell("stopped", "CRON_TZ=UTC 0 10 * * *", false, false),
+			tbl.scheduleCell("CRON_TZ=UTC 0 10 * * *", ""),
+			tbl.nextRunCell(protocol.HarnessInfo{Schedule: "CRON_TZ=UTC 0 10 * * *", NextRun: next}),
 			"0", tbl.dimPlain(base[:n]))
 		if err := tbl.Flush(); err != nil {
 			t.Fatalf("flush: %v", err)
@@ -191,8 +192,8 @@ func TestStateCellArmedForScheduledStopped(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tbl.stateCell(tc.state, tc.schedule); got != tc.want {
-				t.Errorf("stateCell(%q, %q)\n got %q\nwant %q",
+			if got := tbl.stateCell(tc.state, tc.schedule, false, false); got != tc.want {
+				t.Errorf("stateCell(%q, %q, false, false)\n got %q\nwant %q",
 					tc.state, tc.schedule,
 					strings.ReplaceAll(got, "\x1b", "<ESC>"),
 					strings.ReplaceAll(tc.want, "\x1b", "<ESC>"))
@@ -207,10 +208,10 @@ func TestStateCellArmedForScheduledStopped(t *testing.T) {
 func TestStateCellUncoloredArmedLabel(t *testing.T) {
 	tbl := NewTable(&bytes.Buffer{}, "NAME", "STATE")
 	tbl.colored = false
-	if got, want := tbl.stateCell("stopped", "0 */6 * * *"), schedfmt.ScheduleGlyph+" armed"; got != want {
+	if got, want := tbl.stateCell("stopped", "0 */6 * * *", false, false), schedfmt.ScheduleGlyph+" armed"; got != want {
 		t.Errorf("stateCell = %q, want %q", got, want)
 	}
-	if got, want := tbl.stateCell("stopped"), core.StateStopped.Glyph()+" stopped"; got != want {
+	if got, want := tbl.stateCell("stopped", "", false, false), core.StateStopped.Glyph()+" stopped"; got != want {
 		t.Errorf("stateCell = %q, want %q", got, want)
 	}
 }

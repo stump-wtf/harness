@@ -237,6 +237,78 @@ zone-prefixed schedule's cadence carries the zone (`daily 09:00 UTC`). The
 [cockpit](./tui#the-dashboard) tags the row `(scheduled)` with the same
 countdown, and carries the cadence on the row's sub-line.
 
+## Operating hours
+
+`operating_hours` gives a **resident** harness a weekly window it is allowed
+to run in — ADR-0019's daemon-owned alternative to an external launchd/cron
+timer calling `harness start`/`harness stop`. Outside its windows the gate
+holds the harness down (stops the process, `enabled` untouched) and starts it
+again when a window opens:
+
+```toml
+[harness.night-owl]
+harness = "claude-code"
+args = ["--remote-control", "--continue"]
+enabled = true
+operating_hours = "TZ=America/Los_Angeles Mon-Fri 09:00-13:00"
+hours_shutdown = "graceful"          # default; or "immediate"
+hours_shutdown_timeout = "15m"       # default; the most a graceful close may overrun
+```
+
+Rules:
+
+- Global config only — project files reject the key, like `schedule`.
+- Mutually exclusive with `schedule`: a scheduled one-shot is already
+  time-gated by its own cron expression, and two time gates on one harness
+  would disagree.
+- `enabled` still means "the operator wants this running". Hours sit beside
+  it, never overwrite it: a held harness stays `enabled = true`, and
+  `harness stop` always stops the harness and clears `enabled`, whatever
+  state it is in.
+
+### Grammar and time zones
+
+`operating_hours` is one string: an optional `TZ=<zone>` or `CRON_TZ=<zone>`
+prefix (same resolution as `schedule`'s — defaults to the daemon's own zone
+when omitted), then one or more `;`-separated windows of
+`[day-spec] HH:MM-HH:MM`:
+
+| Written | Means |
+| --- | --- |
+| `09:00-13:00` | every day, 09:00 up to (not including) 13:00 |
+| `Mon-Fri 09:00-13:00` | weekdays |
+| `Mon-Fri 09:00-12:00; Mon-Fri 13:00-17:00` | a lunch break |
+| `Sat,Sun 10:00-12:00` | a day list |
+| `Sun-Thu 22:00-02:00` | overnight — an end at or before its start runs into the next day |
+| `Mon-Sun 00:00-24:00` | always in hours (valid, and `harness doctor` warns that it gates nothing) |
+
+A blank value, an unknown day or zone, or a window whose start equals its end
+fails config load with an error naming the harness and the key.
+
+### Closing: graceful by default
+
+`hours_shutdown = "graceful"` (the default) lets the harness finish its
+current turn before stopping it, capped by `hours_shutdown_timeout` (default
+`15m`); `"immediate"` stops it at the close without waiting. Either way the
+stop is not a crash: no restart, no restart-count increment, no flap, and
+`enabled` survives. Graceful shutdown depends on the daemon reading turn-end
+markers from the harness's own agent-trace; a harness with nothing
+attributable to it (a `generic` adapter, or no `workdir`) always closes
+immediately, and `harness doctor` warns when `hours_shutdown = "graceful"` is
+set on one anyway.
+
+### Overrides: an after-hours lease
+
+`harness start <name>` outside a gated harness's hours starts it under a
+bounded **after-hours lease** — one hour by default, `harness start <name>
+--for 3h` for a chosen length. The gate stops it at the lease's end exactly as
+it would at a close; if hours open first, the lease simply ends and the
+harness keeps running as an ordinary in-hours one. See
+[CLI → Operating hours](./cli#operating-hours) for how a gated harness's
+state, lease and close in flight show on every listing surface (`off-hours`,
+`closing`, `lease until …`) — no extra column, the existing STATE/SCHEDULE/NEXT
+columns carry it.
+
 ## Agent adapters
 
 The `harness` key is a **required** enum selecting the adapter (ADR-0011,

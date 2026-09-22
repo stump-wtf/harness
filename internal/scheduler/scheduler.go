@@ -189,6 +189,21 @@ type Options struct {
 	// tick (gate.go). Without it gated harnesses are not enforced.
 	// Governing: ADR-0019, SPEC-0012 REQ "Gate Evaluation".
 	Gate Gate
+	// HoursChanged, if set, is told whenever a gated harness's in_hours flips:
+	// the gate pass compares each tick's evaluation against its own
+	// last-observed value (kept only for this purpose — no decision reads
+	// it) and calls back on a real change, never on the unchanged common
+	// case. next is zero when the expression has no next flip (it covers the
+	// entire week). The daemon relays it as harness_hours_changed. Governing:
+	// SPEC-0012 REQ "Operating Hours Visibility".
+	HoursChanged func(name string, inHours bool, next time.Time)
+	// LeaseEnded, if set, is told whenever a gated harness's after-hours
+	// lease ends — expired, or discarded because hours opened first —
+	// tracked the same way HoursChanged is, and independently of it (a lease
+	// can end with no matching in_hours flip). The daemon writes it to the
+	// harness's durable log. Governing: SPEC-0012 REQ "Operating Hours
+	// Visibility", REQ "After-Hours Lease".
+	LeaseEnded func(name string)
 }
 
 // entry is one armed schedule.
@@ -213,6 +228,10 @@ type Scheduler struct {
 	recorder Recorder
 	// nextChanged is Options.NextChanged.
 	nextChanged func(name string, next time.Time)
+	// hoursChanged is Options.HoursChanged.
+	hoursChanged func(name string, inHours bool, next time.Time)
+	// leaseEnded is Options.LeaseEnded.
+	leaseEnded func(name string)
 
 	mu       sync.Mutex
 	entries  map[string]*entry
@@ -223,13 +242,20 @@ type Scheduler struct {
 	// config's gated harnesses; ungated names harnesses a reload removed
 	// hours from, each owed one release; gating marks a decision in flight;
 	// armed remembers the close instant each harness's turn-state watch was
-	// warmed for, so a minute of ticks arms once instead of once per tick.
+	// warmed for, so a minute of ticks arms once instead of once per tick;
+	// lastIn remembers each gated harness's last-observed in_hours so the
+	// pass can tell a real flip from an unchanged tick (SPEC-0012 REQ
+	// "Operating Hours Visibility") — in-memory only, and read by nothing but
+	// that comparison.
 	gate      Gate
 	gates     map[string]gateEntry
 	gateOrder []string
 	ungated   map[string]bool
 	gating    map[string]bool
 	armed     map[string]time.Time
+	lastIn    map[string]bool
+	// wasLeased is lastIn's twin for lease-end tracking (gate.go's leaseEnd).
+	wasLeased map[string]bool
 
 	runMu   sync.Mutex
 	stop    chan struct{}
@@ -249,8 +275,10 @@ func New(opts Options) *Scheduler {
 		recorder: opts.Recorder,
 		entries:  make(map[string]*entry),
 
-		nextChanged: opts.NextChanged,
-		gate:        opts.Gate,
+		nextChanged:  opts.NextChanged,
+		gate:         opts.Gate,
+		hoursChanged: opts.HoursChanged,
+		leaseEnded:   opts.LeaseEnded,
 	}
 	if s.start == nil {
 		s.start = func(Firing) {}
@@ -381,6 +409,26 @@ func (s *Scheduler) NextFire(name string) (time.Time, bool) {
 	return e.next, true
 }
 
+// HoursStatus reports name's live operating-hours evaluation for the
+// projection (SPEC-0012 REQ "Operating Hours Visibility"): whether the gate
+// is open now, and the next flip. ok is false for a harness with no
+// operating_hours registered; hasNext is false when the expression covers
+// the entire week (no flip to report — hours_next is omitted on the wire).
+// Read-only: it evaluates the gate's own expression against the scheduler's
+// clock and touches no gate-pass state (gating/armed/lastIn), so calling it
+// from outside a tick — a control-plane list/describe request racing the
+// scheduler goroutine — is always safe.
+func (s *Scheduler) HoursStatus(name string) (in bool, next time.Time, hasNext bool, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	g, gated := s.gates[name]
+	if !gated {
+		return false, time.Time{}, false, false
+	}
+	in, next, hasNext = g.expr.In(s.now())
+	return in, next, hasNext, true
+}
+
 // Start begins evaluating: once immediately — a daemon that boots after a
 // window it was down for decides it now, exactly as a wake would — and then on
 // every tick. Entries applied while running take effect on the next tick.
@@ -471,10 +519,12 @@ func (s *Scheduler) evaluate() {
 	s.persist(put, nil)
 	// The operating-hours pass decides on the same reading as the schedules:
 	// no second clock read, no second ticker (SPEC-0012 REQ "Gate Evaluation").
-	gateActs := s.gatePass(now)
+	gateActs, hoursChanges, leaseEnds := s.gatePass(now)
 	s.mu.Unlock()
 
 	s.notifyNext(changes)
+	s.notifyHours(hoursChanges)
+	s.notifyLeaseEnds(leaseEnds)
 	for _, a := range gateActs {
 		s.dispatchGate(a)
 	}
@@ -599,6 +649,33 @@ func (s *Scheduler) notifyNext(changes []nextChange) {
 	}
 	for _, c := range changes {
 		s.safely("next-window callback", c.name, func() { s.nextChanged(c.name, c.next) })
+	}
+}
+
+// notifyHours reports in_hours flips to HoursChanged. Called without the
+// lock held, and synchronously (unlike dispatchGate's actions) — a
+// harness_hours_changed notification names no Gate call and must never
+// participate in the gating in-flight guard (hoursChange's doc explains why).
+// Governing: SPEC-0012 REQ "Operating Hours Visibility".
+func (s *Scheduler) notifyHours(changes []hoursChange) {
+	if s.hoursChanged == nil {
+		return
+	}
+	for _, c := range changes {
+		s.safely("hours-changed callback", c.name, func() { s.hoursChanged(c.name, c.in, c.next) })
+	}
+}
+
+// notifyLeaseEnds reports lease ends to LeaseEnded. Called without the lock
+// held, and synchronously, for the same reason notifyHours is (leaseEnd's
+// doc explains why it must not go through dispatchGate). Governing:
+// SPEC-0012 REQ "Operating Hours Visibility".
+func (s *Scheduler) notifyLeaseEnds(ends []leaseEnd) {
+	if s.leaseEnded == nil {
+		return
+	}
+	for _, e := range ends {
+		s.safely("lease-end callback", e.name, func() { s.leaseEnded(e.name) })
 	}
 }
 

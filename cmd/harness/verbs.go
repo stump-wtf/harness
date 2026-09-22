@@ -77,15 +77,15 @@ func printHarnessTable(w io.Writer, hs []protocol.HarnessInfo) error {
 	for _, h := range hs {
 		// A stalled session (issue #347) reads healthy in every process
 		// signal; the marker is the one place the truth shows in `list`.
-		state := t.stateCell(h.State, h.Schedule)
+		state := t.stateCell(h.State, h.Schedule, h.Held, h.ClosingUntil != "")
 		if h.SessionStalled {
 			state += " ⚠ session stalled"
 		}
 		t.Row(
 			h.Name,
 			state,
-			t.scheduleCell(h.Schedule),
-			t.nextRunCell(h.Schedule, h.NextRun),
+			t.scheduleCell(h.Schedule, h.OperatingHours),
+			t.nextRunCell(h),
 			fmt.Sprintf("%d", h.RestartCount),
 			t.dimPlain(h.Description),
 		)
@@ -117,7 +117,7 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	// Pass the schedule: without it describe renders "stopped" in pink for the
 	// same harness `harness list` shows as amber "armed" (#268, #331). schedfmt exists
 	// so the surfaces cannot phrase one harness two ways.
-	t.Row("state", t.stateCell(h.State, h.Schedule))
+	t.Row("state", t.stateCell(h.State, h.Schedule, h.Held, h.ClosingUntil != ""))
 	// A scheduled harness is always enabled = false (SPEC-0008 REQ "Schedule
 	// Exclusions"), so printing "enabled no" says nothing true about it: the
 	// schedule is its intent. Show whether it is armed instead (#331).
@@ -146,12 +146,28 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 		t.Row("auto_accept", t.faintPlain("true"))
 	}
 	t.Row("backend", t.faintPlain(h.Backend))
-	if h.Schedule != "" {
+	switch {
+	case h.Schedule != "":
 		t.Row("schedule", t.faintPlain(h.Schedule))
 		if h.NextRun != "" {
 			if next, err := time.Parse(time.RFC3339, h.NextRun); err == nil {
 				t.Row("next run", t.faintPlain(fmt.Sprintf("%s (%s)", next.Format("Mon Jan 2 15:04"), nextRunSuffix(h.NextRun))))
 			}
+		}
+	case h.OperatingHours != "":
+		// SPEC-0012 REQ "Operating Hours Visibility": describe carries the raw
+		// expression (zone-trimmed the same way `list`'s SCHEDULE column is),
+		// the effective close mode, the next transition in the same wording
+		// NEXT uses, and the lease end when one is active.
+		t.Row("operating_hours", t.faintPlain(schedfmt.HoursExprLabel(h.OperatingHours, schedfmt.DaemonZoneName())))
+		if h.HoursShutdown != "" {
+			t.Row("hours_shutdown", t.faintPlain(h.HoursShutdown))
+		}
+		if next := schedfmt.HoursNext(h.Held, h.ClosingUntil != "", h.LeaseUntil, h.ClosingUntil, h.HoursNext); next != "" {
+			t.Row("next", t.faintPlain(next))
+		}
+		if h.LeaseUntil != "" {
+			t.Row("lease_until", t.faintPlain(h.LeaseUntil))
 		}
 	}
 	t.Row("restarts", fmt.Sprintf("%d", h.RestartCount))

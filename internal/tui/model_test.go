@@ -1001,6 +1001,61 @@ func TestRenderRowIdleForScheduledStopped(t *testing.T) {
 	}
 }
 
+// TestRenderRowOffHoursDistinctFromStoppedAndFailed pins SPEC-0012 REQ
+// "Operating Hours Visibility": a gated harness the hours gate has shut down
+// reads "off-hours", not "stopped" — stopped is the same latch a give-up
+// produces (core.StateStopped), and conflating the two would make
+// stumpcloud/stumpcloud#440's alerting lie. A close in flight reads
+// "closing" instead, distinct from both. All three must be textually
+// distinguishable from one another in the rendered row.
+func TestRenderRowOffHoursDistinctFromStoppedAndFailed(t *testing.T) {
+	m := New(Options{})
+	m.w, m.h = 100, 40
+
+	offHours := m.renderRow(protocol.HarnessInfo{
+		Name: "claude-src", State: "stopped", Held: true,
+		OperatingHours: "Mon-Fri 09:00-13:00", HoursNext: "2026-09-28T09:00:00-07:00",
+	}, false)
+	if !strings.Contains(offHours, "off-hours") {
+		t.Errorf("held gated row = %q, want it to read off-hours", offHours)
+	}
+	if strings.Contains(offHours, "stopped") {
+		t.Errorf("held gated row = %q, must not still say stopped", offHours)
+	}
+
+	closing := m.renderRow(protocol.HarnessInfo{
+		Name: "claude-src", State: "running", Held: true,
+		OperatingHours: "Mon-Fri 09:00-13:00", ClosingUntil: "2026-09-22T13:15:00-07:00",
+	}, false)
+	if !strings.Contains(closing, "closing") {
+		t.Errorf("closing gated row = %q, want it to read closing", closing)
+	}
+	if strings.Contains(closing, "off-hours") || strings.Contains(closing, "stopped") {
+		t.Errorf("closing gated row = %q, must not read off-hours or stopped", closing)
+	}
+
+	// An operator-stopped harness (never gated) still reads plain "stopped",
+	// and a gated harness that genuinely failed still reads "failed" — hours
+	// never rename either.
+	plain := m.renderRow(protocol.HarnessInfo{Name: "backup-watch", State: "stopped"}, false)
+	if !strings.Contains(plain, "stopped") || strings.Contains(plain, "off-hours") {
+		t.Errorf("plain stopped row = %q, want stopped and not off-hours", plain)
+	}
+	failedGated := m.renderRow(protocol.HarnessInfo{
+		Name: "claude-src", State: "failed", OperatingHours: "Mon-Fri 09:00-13:00",
+	}, false)
+	if !strings.Contains(failedGated, "failed") || strings.Contains(failedGated, "off-hours") {
+		t.Errorf("failed gated row = %q, want failed and not off-hours", failedGated)
+	}
+
+	// The three renderings must not collide textually with each other.
+	for _, pair := range [][2]string{{offHours, plain}, {offHours, failedGated}, {closing, offHours}} {
+		if pair[0] == pair[1] {
+			t.Errorf("two distinct states rendered identically: %q", pair[0])
+		}
+	}
+}
+
 // Scheduled Harness Icon And Status Line
 //
 // Two surfaces still derived their presentation from the bare state after

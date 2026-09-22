@@ -131,6 +131,33 @@ func (m *Manager) PublishScheduleChanged(name string, next time.Time) {
 	m.bus.Publish(Event{Kind: EventScheduleChanged, Name: name, Time: time.Now(), NextRun: next})
 }
 
+// PublishHoursChanged announces a gated harness's in_hours flip on the
+// lifecycle bus (SPEC-0012 REQ "Operating Hours Visibility"); next is zero
+// when the expression has no next flip (it covers the entire week). The
+// scheduler's gate pass detects the flip — comparing each tick's evaluation
+// to its own last-observed value — and the Manager owns the bus, so the
+// daemon wires this in as the scheduler's HoursChanged, the same way
+// PublishScheduleChanged is wired to NextChanged.
+func (m *Manager) PublishHoursChanged(name string, inHours bool, next time.Time) {
+	m.bus.Publish(Event{Kind: EventHoursChanged, Name: name, Time: time.Now(), InHours: inHours, HoursNext: next})
+}
+
+// LogLifecycle writes msg as a lifecycle line to name's durable log (ADR-0007)
+// with the given key/value pairs, via Supervisor.LogEvent — on the actor
+// loop, exactly like hold/release/closeStep's own lines. It is the seam for a
+// lifecycle event decided outside the loop itself — an after-hours lease
+// start/end, decided by StartFor's caller and by the gate pass's Lease query
+// — to land in the same durable record those write to (SPEC-0012 REQ
+// "Operating Hours Visibility"). ok is false for an unknown harness.
+func (m *Manager) LogLifecycle(name, msg string, kv ...any) bool {
+	s := m.get(name)
+	if s == nil {
+		return false
+	}
+	s.LogEvent(msg, kv...)
+	return true
+}
+
 // ConsecutiveFailures counts runs, newest first, that failed or timed out, back
 // to the latest success. Records that pass no verdict on the harness — running,
 // skipped, missed, replaced, cancelled, interrupted — neither count nor break

@@ -59,23 +59,31 @@ func restartMarker(count int) string {
 
 // nextActionText renders the right-hand "uptime / next-action" column. A
 // harness waiting to retry shows its backoff countdown; a scheduled one shows
-// how long until its cron next fires; otherwise it's blank (uptime is filled
-// by the caller which knows start time). This is the shared bit the
+// how long until its cron next fires; a gated one shows its operating-hours
+// phrasing (opens/closes/lease/stops by); otherwise it's blank (uptime is
+// filled by the caller which knows start time). This is the shared bit the
 // degraded-row expansion also uses.
 //
-// Backoff wins over the schedule when both are live: a harness bouncing right
-// now is the more urgent fact, and the cadence is still on the meta line
-// beneath the row.
+// Backoff wins over the schedule or the hours phrasing when more than one is
+// live: a harness bouncing right now is the more urgent fact, and the
+// cadence is still on the meta line beneath the row. A scheduled one-shot is
+// never gated (ADR-0019 exclusions), so schedule and hours never compete with
+// each other.
 //
 // The countdown is what makes "stopped (scheduled)" mean something. Without
 // it a cron job that fires in ten minutes and one whose daemon never armed it
 // render identically — the dashboard asserted a harness was scheduled but
 // could not say when, which is the question an operator actually has (#160).
+// SPEC-0012 REQ "Operating Hours Visibility" asks the same of "off-hours".
 func nextActionText(h protocol.HarnessInfo) string {
-	if h.NextRetryInMs > 0 {
+	switch {
+	case h.NextRetryInMs > 0:
 		return "retry in " + humanizeMs(h.NextRetryInMs)
+	case h.OperatingHours != "":
+		return schedfmt.HoursNext(h.Held, h.ClosingUntil != "", h.LeaseUntil, h.ClosingUntil, h.HoursNext)
+	default:
+		return nextRunText(h.NextRun)
 	}
-	return nextRunText(h.NextRun)
 }
 
 // nextRunText phrases the daemon's resolved next-fire stamp for the row's
@@ -141,8 +149,15 @@ func harnessMeta(h protocol.HarnessInfo) (what string, rest []string) {
 	// same thing twice. This is the half that answers "how often" — and it
 	// falls back to the raw cron, because a schedule too irregular to
 	// paraphrase is exactly the one worth reading verbatim (#160).
-	if h.Schedule != "" {
+	switch {
+	case h.Schedule != "":
 		rest = append(rest, schedfmt.LabelOrRaw(h.Schedule))
+	case h.OperatingHours != "":
+		// Same idea, for a gated resident harness (ADR-0019): the window, not
+		// the countdown nextActionText already showed above, zone-trimmed the
+		// same way `list`'s SCHEDULE column is (SPEC-0012 REQ "Operating
+		// Hours Visibility").
+		rest = append(rest, schedfmt.HoursExprLabel(h.OperatingHours, schedfmt.DaemonZoneName()))
 	}
 	rest = append(rest,
 		orDefault(h.Backend, "native"),

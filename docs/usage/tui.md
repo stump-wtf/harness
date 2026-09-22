@@ -25,6 +25,14 @@ carries the cadence (`daily 09:30`, or the cron expression verbatim when it is
 too irregular to paraphrase). A harness bouncing in restart backoff shows that
 countdown instead — the imminent event wins the column.
 
+A [gated](./configuration#operating-hours) resident harness gets the same
+treatment for its hours: held reads `off-hours` (not `stopped` — that would
+read as a give-up, not an hours gate), and a graceful close in flight reads
+`closing`. The right-hand column follows: `opens Mon 09:00` while held,
+`closes 13:00` while running in hours, `lease until 21:00` for an after-hours
+lease (`harness start <name> --for 3h`), and `stops by 13:15` for a close's
+own deadline while it is in flight.
+
 Beside the list, the **preview pane** is a live read-only view of the selected
 harness's screen and nothing else — move the selection and it follows, without
 attaching. The list takes only the width its rows need, so the preview gets

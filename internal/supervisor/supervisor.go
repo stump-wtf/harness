@@ -47,6 +47,7 @@ const (
 	cmdHold      // operating hours closed: stop without touching enabled (hours.go)
 	cmdRelease   // operating hours opened: start a held harness (hours.go)
 	cmdCloseStep // operating hours graceful close: advance one step (hours.go)
+	cmdLogEvent  // a durable-log line decided outside the loop (Manager.LogLifecycle)
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -90,7 +91,13 @@ type command struct {
 	mode    core.HoursShutdownMode
 	closeAt time.Time
 	step    *closeStepReq // cmdCloseStep payload
-	done    chan struct{}
+	// cmdLogEvent payload: logEvent is loop-owned state (s.evlog), so a
+	// lifecycle line decided outside the loop — an after-hours lease start/end
+	// (Manager.LogLifecycle) — is written on the loop like every other
+	// mutation, never called directly from the caller's goroutine.
+	logMsg string
+	logKV  []any
+	done   chan struct{}
 }
 
 // Snapshot is a race-free copy of a harness's observable runtime state, for the
@@ -303,6 +310,17 @@ func (s *Supervisor) Stop() { s.send(command{kind: cmdStop}) }
 // processed.
 func (s *Supervisor) Restart() { s.send(command{kind: cmdRestart}) }
 
+// LogEvent writes msg as a durable-log lifecycle line (ADR-0007), with the
+// given key/value pairs, on the actor loop — the same path hold/release/
+// closeStep already write through (logEvent touches loop-owned state, s.evlog,
+// so nothing may call it off-loop). It is Manager.LogLifecycle's seam for a
+// lifecycle event decided outside the loop, such as an after-hours lease
+// start or end (SPEC-0012 REQ "Operating Hours Visibility"). Blocks until
+// processed.
+func (s *Supervisor) LogEvent(msg string, kv ...any) {
+	s.send(command{kind: cmdLogEvent, logMsg: msg, logKV: kv})
+}
+
 // ApplyConfig stages a new definition. If the process is running it is left
 // untouched and the change is flagged to apply on next (re)start (SPEC-0003 REQ
 // "Config Change Application"); if not running it takes effect immediately.
@@ -465,6 +483,8 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.release()
 	case cmdCloseStep:
 		s.closeStep(c.step)
+	case cmdLogEvent:
+		s.logEvent(c.logMsg, c.logKV...)
 	case cmdSignal:
 		// Governing: stump.wtf/harness#182 — the kernel only raises SIGWINCH on
 		// an actual dimension change, so a resize applied while the guest was
