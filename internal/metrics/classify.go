@@ -114,11 +114,24 @@ var adapterRules = map[string][]rule{
 		rx(ClassTimeout, `litellm\.timeout`),
 		rx(ClassTransport, `litellm\.(apiconnectionerror|serviceunavailableerror|internalservererror)`),
 	},
-	// Claude Code prints its own summaries over the API error.
+	// Claude Code prints its own summaries over the API error. agent-trace
+	// (stump.wtf/agent-trace#104) prefixes each error mark with the record's
+	// error code and HTTP status — "rate_limit (429): …", "server_error: …"
+	// with no status when the request never got a response — and the code is
+	// what names the failure when the text does not.
 	"claude-code": {
+		// A throttle the provider says is not the account's own limit has no
+		// reset time on the account; it clears like overload, so it is
+		// transport — checked before the shared 429 → quota rule.
+		rx(ClassTransport, `not your usage limit`),
 		rx(ClassQuota, `usage limit reached|credit balance is too low`),
 		rx(ClassAuth, `please run /login|oauth token (has )?expired`),
-		rx(ClassTimeout, `request timed out`),
+		rx(ClassTimeout, `request timed out|^server_error \((408|504)\)`),
+		// Every other server_error is the provider failing to serve: the
+		// connection-failure notes carry no status and no phrase the shared
+		// table knows ("ConnectionRefused" has no space), so without this
+		// they all read as unclassified.
+		rx(ClassTransport, `^server_error\b`),
 	},
 	// Codex reports stream and retry failures in its own words.
 	"codex": {

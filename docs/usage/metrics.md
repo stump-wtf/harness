@@ -161,9 +161,11 @@ Only a harness whose adapter writes a readable transcript (`claude-code`,
 omits values it cannot compute rather than reporting a zero, which would look
 like a healthy, idle agent.
 
-Today, only Crush records provider errors in its transcript (as a failed
-turn). Claude Code and Codex successes are counted, but their provider errors
-do not appear yet.
+Crush records provider errors in its transcript as a failed turn. Claude Code
+records them as flagged API-error records, which appear once Harness is built
+against an agent-trace version that reads them; the classifier already knows
+their shape (`rate_limit (429): …`, `server_error: …`). Codex successes are
+counted, but its provider errors do not appear yet.
 
 ### Error classes
 
