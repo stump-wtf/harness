@@ -52,8 +52,9 @@ Related ADRs:
 
 - **Durable buffering.** Harness is a trigger, not a queue. Switchboard is the
   queue.
-- **Routing languages.** `events` is an allowlist on one header. jq over bodies,
-  verified-actor checks and label routing belong to Switchboard.
+- **Routing languages.** `events` is an allowlist on one event name: a header,
+  or Standard Webhooks' `type`. jq over bodies, verified-actor checks and label
+  routing belong to Switchboard.
 - **Calling upstream tools.** The daemon never claims, completes or lists. The
   agent does.
 - **Stdio channel servers.** Supervising them is ADR-0010's broker.
@@ -228,13 +229,77 @@ them.
 
 ### Verification presets, not a scheme language
 
-Five `verify` values, three of them presets that fix headers. `hmac-sha256` with
+Six `verify` values, four of them presets that fix headers. `hmac-sha256` with
 configurable headers and `bearer` cover the long tail.
 
 **Rationale:** a preset makes a GitHub or Gitea route a three-line table and
 removes the most common misconfiguration (a wrong header name or prefix).
-Timestamped schemes (Standard Webhooks, Stripe, Slack) need replay-window logic,
-and are deferred until someone needs one.
+Timestamped schemes need replay-window logic, so they wait until someone needs
+one. Stripe and Slack still wait.
+
+### Standard Webhooks, because Switchboard's notify hooks use it
+
+*Added 2026-09-22.* Switchboard ADR-0029 (accepted) gives each Switchboard
+endpoint outbound **notify hooks**: a signed, payload-free POST sent when a todo
+lands on one of its queues. It fixes their signing as Standard Webhooks. The
+hook exists to wake a consumer that has no live session, which is exactly what a
+triggered harness is. Without this scheme, a Switchboard-to-Harness hook could
+only be received on a `hmac-sha256` route. That route cannot express
+`id.timestamp.body`, so it would fail every delivery.
+
+The config for that path:
+
+```toml
+[server]
+webhook_listen = "127.0.0.1:8484"      # behind a TLS-terminating reverse proxy
+
+[webhook.switchboard]
+verify = "standard-webhooks"
+env_file = "~/.config/harness/env/sb-notify.env"
+secret = "${SB_NOTIFY_SECRET}"          # whsec_…, shown once by create_notify_hook
+events = ["todo.ready"]                 # the body's "type"
+
+[harness.sb-drain]
+harness = "claude-code"
+prompt_file = "~/agents/sb-drain.md"    # "claim_next until empty, then stop"
+triggers = ["webhook.switchboard"]
+schedule = "@every 1h"                  # safety net: the hook is best-effort
+```
+
+The details follow the specification and its reference libraries. They are not
+our own choices:
+
+- **The key is the decoded secret.** A `whsec_` secret is base64 of 24 to 64
+  random bytes, and the HMAC key is those bytes. Keying on the string would
+  verify nothing any conforming sender produced. The format is checked at load,
+  so a pasted hex secret fails there rather than as a 401 on every delivery.
+- **5 minutes of tolerance, both ways.** This is the reference libraries'
+  default. It absorbs ordinary clock skew and a sender's short retry backoff,
+  and it bounds replay independently of the in-memory de-duplication set, which
+  a restart empties.
+- **Every `v1` entry is tried.** A sender rotating its secret signs with both
+  the old and the new one for a while. Trying every entry lets the operator
+  update `env_file` at any point in that window, and needs no second secret on
+  our side. `v1a` (ed25519) entries are skipped, not rejected, so a sender that
+  adds an asymmetric signature beside the symmetric one keeps working.
+- **The event name is the body's `type`.** The specification defines no event
+  header; it puts a dotted `type` in the payload, and Switchboard's body carries
+  `"type": "todo.ready"`. Reading one top-level string after verification keeps
+  `events` a one-field allowlist. It does not become a body routing language.
+- **`webhook-id` is the delivery ID.** The specification requires it to stay
+  the same across retries, and it is inside the signature, so it is a
+  trustworthy de-duplication key.
+
+**Alternatives considered:**
+
+- *A generic "timestamped HMAC" scheme with configurable signed-content
+  template, timestamp header and tolerance.* That is the scheme language this
+  design rejects. It would also cover Stripe and Slack only in part, since each
+  has its own header grammar.
+- *Ask Switchboard to sign notify hooks the GitHub way (`hmac-sha256` over the
+  body).* That throws away replay protection on the one path that is built to
+  be internet-reachable. It would also break ADR-0029's stated reason for
+  choosing Standard Webhooks: two Switchboards chain without glue.
 
 ### Credentials resolve from the source's own `env_file`, never the daemon's environment
 
@@ -416,8 +481,15 @@ behaves exactly as before.
   bulk edits? A burst mostly coalesces anyway, so the limit mainly protects the
   daemon.
 - Should the listener serve an optional `GET /hooks/<name>` probe for senders
-  that validate a URL with a GET before saving it? None of the three presets
+  that validate a URL with a GET before saving it? None of the four presets
   needs one today.
+- Two things the Switchboard notify-hook path depends on belong to Switchboard's
+  notify-hook spec, not this one. First, the minted secret must be a real
+  Standard Webhooks secret: `whsec_` plus base64, signed with the decoded bytes.
+  Switchboard's inbound webhook secrets today are `whsec_` plus hex. Second,
+  `rotate_notify_hook` should sign with both the old and the new secret for a
+  grace window. Without that, rotation 401s every delivery until the operator
+  updates `env_file`.
 - Pool dispatch (`dispatch = "one"`): route each event to one idle bound harness.
   Revisit when a single drainer with `claim_next`-until-empty measurably cannot
   keep up.

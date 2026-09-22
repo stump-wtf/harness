@@ -120,6 +120,16 @@ Chosen options: **1B** (the daemon holds the channel), **2A** (a daemon-owned
 webhook listener), **3A** (source tables and a `triggers` key), and **4B** (the
 event as a file, never as prompt text).
 
+> **Amendment (2026-09-22).** The deferral of timestamped signature schemes is
+> lifted for **Standard Webhooks only**: `verify = "standard-webhooks"` joins
+> the table below. Switchboard ADR-0029 (accepted 2026-09-21) signs its
+> per-endpoint notify hooks with Standard Webhooks (`webhook-id`,
+> `webhook-timestamp`, and `webhook-signature: v1,…` over `id.timestamp.body`).
+> Those hooks exist to wake a consumer that has no live session, which is what a
+> triggered harness is. Without the scheme, Harness could not verify them at
+> all. Stripe and Slack stay deferred. SPEC-0014 REQ "Standard Webhooks
+> Verification" specifies the scheme.
+
 In one sentence: a **triggered harness** is an ADR-0011 prompt harness carrying
 `schedule`, `triggers`, or both. Each event from a bound source enters the same
 `StartRun` a cron firing uses, and the event reaches the agent as a private file
@@ -141,7 +151,7 @@ headers = { Authorization = "Bearer ${SWITCHBOARD_TOKEN}" }
 
 # A webhook source: POST /hooks/gitea-pr on the listener above.
 [webhook.gitea-pr]
-verify = "gitea"                        # bearer | hmac-sha256 | github | gitea | gitlab
+verify = "gitea"                        # bearer | hmac-sha256 | github | gitea | gitlab | standard-webhooks
 env_file = "~/.config/harness/env/hooks.env"
 secret = "${GITEA_WEBHOOK_SECRET}"
 events = ["pull_request"]               # optional allowlist on the event header
@@ -301,6 +311,7 @@ there is no unauthenticated option:
 | `github` | `X-Hub-Signature-256: sha256=…`; event `X-GitHub-Event`; delivery `X-GitHub-Delivery` |
 | `gitea` | `X-Gitea-Signature`; event `X-Gitea-Event`; delivery `X-Gitea-Delivery` |
 | `gitlab` | `X-Gitlab-Token` equality; event `X-Gitlab-Event` |
+| `standard-webhooks` | `webhook-signature: v1,…` over `id.timestamp.body` with a 5-minute timestamp tolerance; delivery `webhook-id`; event is the body's `type` (added by the amendment above) |
 
 `secret` must be a `${NAME}` reference, resolved from the table's own `env_file`
 when the config loads. A literal secret is a config error. Resolving from a file
@@ -489,8 +500,8 @@ Acceptance tests include:
 * **`cmd` one-shots on triggers.** `schedule` requires a prompt, and `triggers`
   keeps parity with it.
 * **Synchronous webhook responses and result callbacks**, timestamped schemes
-  (Standard Webhooks, Stripe, Slack), and de-duplication that survives a
-  restart.
+  other than Standard Webhooks (Stripe, Slack), and de-duplication that
+  survives a restart.
 * **An SSH exec trigger** (`ssh host trigger <name>` with a per-key scope). It is
   cheap to add later; see option 2C.
 

@@ -94,10 +94,10 @@ project-file rejection as REQ "Channel Source Table".
 
 | Key | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `verify` | enum | yes | `bearer`, `hmac-sha256`, `github`, `gitea` or `gitlab` (REQ "Webhook Verification") |
+| `verify` | enum | yes | `bearer`, `hmac-sha256`, `github`, `gitea`, `gitlab` or `standard-webhooks` (REQ "Webhook Verification") |
 | `secret` | string | yes | Exactly one `${NAME}` reference (REQ "Credential Resolution") |
 | `env_file` | path | yes | The file `secret` resolves from |
-| `events` | list of strings | no | Allowlist matched against the event header (REQ "Webhook Filtering") |
+| `events` | list of strings | no | Allowlist matched against the event name (REQ "Webhook Filtering") |
 | `signature_header` | string | only for `hmac-sha256` | Header carrying the signature |
 | `signature_prefix` | string | no (`hmac-sha256` only, default `""`) | Prefix stripped before decoding, e.g. `sha256=` |
 | `event_header` | string | no (`bearer`/`hmac-sha256` only) | Header naming the event type |
@@ -107,10 +107,12 @@ project-file rejection as REQ "Channel Source Table".
 | `enabled` | bool | no (default `true`) | `false` keeps the table, and its route answers `404` |
 | `description` | string | no | Operator prose |
 
-The presets `github`, `gitea` and `gitlab` fix their headers. Setting
-`signature_header`, `signature_prefix`, `event_header` or `delivery_header`
-alongside a preset SHALL be a parse error. `events` with `bearer` or
-`hmac-sha256` SHALL require `event_header`.
+The presets `github`, `gitea`, `gitlab` and `standard-webhooks` fix their
+headers. Setting `signature_header`, `signature_prefix`, `event_header` or
+`delivery_header` alongside a preset SHALL be a parse error. `events` with
+`bearer` or `hmac-sha256` SHALL require `event_header`. A `standard-webhooks`
+source SHALL also require its resolved secret to be in the Standard Webhooks
+secret format (REQ "Standard Webhooks Verification").
 
 #### Scenario: GitHub preset
 
@@ -119,10 +121,26 @@ alongside a preset SHALL be a parse error. `events` with `bearer` or
 - **THEN** the config parses, and the route `POST /hooks/gh` verifies
   `X-Hub-Signature-256`
 
+#### Scenario: Standard Webhooks preset
+
+- **WHEN** a config declares `[webhook.switchboard]` with
+  `verify = "standard-webhooks"`, `env_file`, and
+  `secret = "${SB_NOTIFY_SECRET}"`, and the file defines `SB_NOTIFY_SECRET` as a
+  `whsec_` value
+- **THEN** the config parses, and the route `POST /hooks/switchboard` verifies
+  `webhook-signature` over `webhook-id`, `webhook-timestamp` and the body
+
 #### Scenario: Preset with an overridden header
 
 - **WHEN** a `verify = "gitea"` table also sets `signature_header`
 - **THEN** config parsing fails, naming the source and `signature_header`
+
+#### Scenario: Standard Webhooks with an event header
+
+- **WHEN** a `verify = "standard-webhooks"` table sets `event_header`
+- **THEN** config parsing fails, naming the source and `event_header`, because
+  the scheme reads its event name from the body (REQ "Standard Webhooks
+  Verification")
 
 #### Scenario: Event filter without an event header
 
@@ -317,11 +335,12 @@ The file SHALL hold one JSON object, the *event envelope*:
 | `webhook` | `kind = webhook`: `{event, delivery, content_type, headers, body \| body_text \| body_base64}` |
 
 `webhook.headers` SHALL contain only `Content-Type`, `User-Agent`, and the
-scheme's event and delivery headers. It SHALL never contain `Authorization`,
-the signature or token header, or `Cookie`. The body SHALL be stored as `body`
-(a JSON value) when the content type is JSON and the body parses. Otherwise it
-SHALL be stored as `body_text` when the body is valid UTF-8, and as
-`body_base64` when it is not.
+scheme's event and delivery headers; for `standard-webhooks` those are
+`webhook-id` and `webhook-timestamp`. It SHALL never contain `Authorization`,
+the signature or token header (`webhook-signature` included), or `Cookie`. The
+body SHALL be stored as `body` (a JSON value) when the content type is JSON and
+the body parses. Otherwise it SHALL be stored as `body_text` when the body is
+valid UTF-8, and as `body_base64` when it is not.
 
 Every run of a triggered harness that has a run record SHALL be spawned with:
 
@@ -591,6 +610,7 @@ anywhere other than a counter. The daemon SHALL read the body within `max_body`
 | `github` | `X-Hub-Signature-256: sha256=<hex HMAC-SHA256>` | `X-GitHub-Event` | `X-GitHub-Delivery` |
 | `gitea` | `X-Gitea-Signature: <hex HMAC-SHA256>` | `X-Gitea-Event` | `X-Gitea-Delivery` |
 | `gitlab` | `X-Gitlab-Token: <secret>` | `X-Gitlab-Event` | `X-Gitlab-Event-UUID` |
+| `standard-webhooks` | `webhook-signature: v1,<base64 HMAC-SHA256>` over `<webhook-id>.<webhook-timestamp>.<body>`, with a timestamp tolerance (REQ "Standard Webhooks Verification") | none; the body's `type` | `webhook-id` |
 
 Comparisons SHALL be constant-time. A missing, malformed or wrong signature or
 token SHALL be answered `401` with the same body in every case. It SHALL be
@@ -613,13 +633,124 @@ presented.
 - **WHEN** a delivery's body exceeds the route's `max_body`
 - **THEN** the response is `413`, and the signature is not evaluated
 
+### Requirement: Standard Webhooks Verification
+
+The `standard-webhooks` scheme SHALL implement the symmetric (`v1`) signature of
+the [Standard Webhooks](https://www.standardwebhooks.com/) specification. It is
+the scheme Switchboard signs its notify hooks with (Switchboard ADR-0029), and
+any sender that follows the specification can use it.
+
+1. **Secret format.** The value `secret` resolves to SHALL be `whsec_`
+   followed by the standard, padded base64 encoding (RFC 4648 §4) of between 24
+   and 64 bytes. The HMAC key SHALL be the decoded bytes, never the string. A
+   value without the prefix, one whose remainder does not decode, and one that
+   decodes to fewer than 24 or more than 64 bytes SHALL each be a parse error
+   naming the source and the reference, never the value (REQ "Credential
+   Resolution").
+2. **Headers.** A delivery SHALL carry `webhook-id`, `webhook-timestamp` and
+   `webhook-signature`, matched case-insensitively as HTTP header names are.
+   `webhook-id` MUST be 1 to 256 bytes of visible ASCII (`0x21`–`0x7E`).
+   `webhook-timestamp` MUST be a decimal integer count of seconds since the
+   Unix epoch.
+3. **Timestamp tolerance.** `webhook-timestamp` MUST lie within 5 minutes
+   (300 seconds) of the daemon's wall clock, in either direction. The check
+   SHALL use the time the request was received.
+4. **Signed content.** The expected signature SHALL be the HMAC-SHA256, keyed as
+   in item 1, of the `webhook-id` value, a `.`, the `webhook-timestamp` value,
+   a `.`, and the raw body, all byte-for-byte as received.
+5. **Signature list.** `webhook-signature` is a list of
+   `<version>,<base64 signature>` entries separated by single spaces. The
+   delivery SHALL pass when at least one `v1` entry's decoded signature equals
+   the expected signature under a constant-time comparison. Every `v1` entry
+   SHALL be compared, so a sender that signs with both its old and its new
+   secret while it rotates verifies against a route holding either one. An
+   entry with any other version (for example `v1a`, the asymmetric variant)
+   SHALL be ignored, not rejected. An entry whose signature does not decode
+   SHALL be skipped. A header with no `v1` entry SHALL fail.
+6. **Delivery ID and event name.** `webhook-id` SHALL be the delivery ID: the
+   de-duplication key (REQ "Webhook Filtering"), the envelope's `event_id`, and
+   its `webhook.delivery`. Because the ID is signed, altering it to slip past
+   de-duplication SHALL fail verification. The event name SHALL be the body's
+   top-level `type` member, read only after verification passes, when the body
+   is a JSON object whose `type` is a string. Otherwise the delivery has no
+   event name.
+
+A failure at any item from 2 to 5 SHALL be answered `401` with the same body as
+every other verification failure (REQ "Webhook Verification") and counted as
+`unauthorized` (REQ "Trigger Metrics"). The log line SHALL carry the route, the
+peer address, and one reason (`missing_header`, `malformed_header`,
+`timestamp_out_of_tolerance` or `bad_signature`), and SHALL NOT carry any
+header value.
+
+#### Scenario: A Switchboard notify hook verifies
+
+- **WHEN** a `standard-webhooks` route whose secret resolves to a valid
+  `whsec_` value receives a delivery with `webhook-id: msg_1`, the current time
+  in `webhook-timestamp`, and a `v1` signature of `msg_1.<timestamp>.<body>`
+  under that secret
+- **THEN** it passes verification, and a run it starts has `event_id` `msg_1`
+
+#### Scenario: Secret rotation on the sender
+
+- **WHEN** a delivery's `webhook-signature` is
+  `v1,<signature under the old secret> v1,<signature under the new secret>`
+- **THEN** it passes verification on a route holding the new secret, and on a
+  route still holding the old one
+
+#### Scenario: Stale timestamp
+
+- **WHEN** a correctly signed delivery's `webhook-timestamp` is 6 minutes in
+  the past
+- **THEN** the response is `401`, nothing fires, and the log line carries reason
+  `timestamp_out_of_tolerance` and no header value
+
+#### Scenario: Timestamp from the future
+
+- **WHEN** a correctly signed delivery's `webhook-timestamp` is 6 minutes ahead
+  of the daemon's clock
+- **THEN** the response is `401`, and nothing fires
+
+#### Scenario: Replay inside the tolerance
+
+- **WHEN** a verified delivery with `webhook-id: msg_1` fires, and the identical
+  request is sent again 30 seconds later
+- **THEN** the second response is `202` with decision `duplicate`, and nothing
+  fires
+
+#### Scenario: Altered delivery ID
+
+- **WHEN** a captured delivery is resent with its `webhook-id` changed and its
+  signature unchanged
+- **THEN** the response is `401`, and nothing fires
+
+#### Scenario: Only an asymmetric signature
+
+- **WHEN** a delivery's `webhook-signature` carries only `v1a,…` entries
+- **THEN** the response is `401`
+
+#### Scenario: Secret in the wrong format
+
+- **WHEN** a `standard-webhooks` source's secret resolves to a value without the
+  `whsec_` prefix, such as a bare hex string
+- **THEN** config parsing fails, naming the source and the reference, and the
+  error does not echo the value
+
+#### Scenario: Event name from the body
+
+- **WHEN** a `standard-webhooks` route sets `events = ["todo.ready"]`, and a
+  verified delivery's body is `{"type": "todo.created", …}`
+- **THEN** the response is `202` with decision `ignored`, and nothing fires
+
 ### Requirement: Webhook Filtering
 
 After verification, the daemon SHALL apply, in order:
 
-1. **Events.** When the source sets `events`, a delivery whose event header
-   value is not in the list SHALL be answered `202` with decision `ignored`. It
-   SHALL fire nothing and SHALL make no record.
+1. **Events.** When the source sets `events`, a delivery whose event name is
+   not in the list SHALL be answered `202` with decision `ignored`. It SHALL
+   fire nothing and SHALL make no record. The event name is the value of the
+   scheme's event header, or for `standard-webhooks` the body's `type` (REQ
+   "Standard Webhooks Verification"). A delivery with no event name is not in
+   the list.
 2. **De-duplication.** When the scheme has a delivery header and the delivery
    carries one, a delivery ID seen on this route in the last 24 hours, among
    the last 1024 IDs kept, SHALL be answered `202` with decision `duplicate`. It
@@ -976,6 +1107,19 @@ verified, filtered deliveries (REQ "Webhook Rate Limit"). The listener as a
 whole is bounded to 64 concurrent requests and to the slow-client timeouts in
 REQ "Webhook Listener". Firings are further bounded per harness by the overlap
 policy, which holds at most one pending run.
+
+### Replay Protection
+
+A captured delivery is a valid request until something refuses it. For the
+`bearer`, `hmac-sha256`, `github`, `gitea` and `gitlab` schemes, the only
+defense is the in-memory de-duplication set (REQ "Webhook Filtering"). It
+covers 24 hours and 1024 IDs, it is empty after a restart, and it needs the
+sender to supply a delivery ID. The `standard-webhooks` scheme signs a
+timestamp as well as the delivery ID, so a captured delivery is refused once it
+is 5 minutes old, restart or not. Inside those 5 minutes, de-duplication
+refuses it unless the daemon restarted in between (REQ "Standard Webhooks
+Verification"). Operators who can choose a scheme for an internet-reachable
+route SHOULD prefer `standard-webhooks`.
 
 ### Security Headers
 
