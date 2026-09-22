@@ -12,9 +12,16 @@ package supervisor
 // Governing: ADR-0019, SPEC-0012 REQ "After-Hours Lease"; issue #383.
 //
 // @joestump-agent 09/21/2026 - Added for stump.wtf/harness#383.
+//
+// @joestump-agent 09/22/2026 - Asserted the write-before-start order at the
+// spawn itself; the existing durability tests pass with it reversed.
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -337,5 +344,48 @@ func TestLeaseSurvivesAFailingRun(t *testing.T) {
 	ph := waitPersisted(t, statePath, h.Name, core.StateStopped)
 	if ph.LeaseUntil == nil {
 		t.Fatal("the run failed but the lease is not on disk — ordering broke")
+	}
+}
+
+// The ordering itself (design.md § "Leases in state.json": write
+// lease_until, THEN start): at the instant the leased process is spawned,
+// state.json on disk already carries the lease. The SizeFor hook runs on the
+// actor loop inside the spawn, so it reads the file between "decided to
+// start" and "process exists" — the window a crash would freeze. Neither
+// TestLeaseSurvivesAFailingRun nor the round trip above can see the order: the
+// debounced persist loop writes the lease a moment after the start anyway, so
+// both pass with the Save moved after the Start.
+func TestStartForWritesTheLeaseBeforeTheSpawn(t *testing.T) {
+	h := gatedWithHours(t, "night", leaseWindow(-2*time.Hour, -1*time.Hour)) // closed now
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+
+	var mu sync.Mutex
+	spawns, leasedAtSpawn := 0, 0
+	sizeFor := func(name string) (int, int) {
+		data, err := os.ReadFile(statePath)
+		var ps persistedState
+		leased := err == nil && json.Unmarshal(data, &ps) == nil && ps.Harnesses[name].LeaseUntil != nil
+		mu.Lock()
+		spawns++
+		if leased {
+			leasedAtSpawn++
+		}
+		mu.Unlock()
+		return 80, 24
+	}
+	m := NewManager(managerCfg(h), ManagerOptions{Policy: fastPolicy(), StatePath: statePath, LogDir: filepath.Join(dir, "logs"), SizeFor: sizeFor})
+	t.Cleanup(m.Close)
+
+	if err := m.StartFor(h.Name, time.Hour); err != nil {
+		t.Fatalf("StartFor: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if spawns == 0 {
+		t.Fatal("the spawn hook never ran: this test observed nothing")
+	}
+	if leasedAtSpawn != spawns {
+		t.Fatalf("state.json carried the lease at %d of %d spawns; the lease must be durable before the process starts", leasedAtSpawn, spawns)
 	}
 }
