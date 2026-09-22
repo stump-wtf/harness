@@ -31,9 +31,9 @@ events), SPEC-0006 (prompt source and argv, which are unchanged), SPEC-0012
 (hours gating before the claim) and SPEC-0013 (metrics).
 
 The Switchboard side of the contract is Switchboard SPEC-0034 (attempt history,
-written in parallel). REQ-19 defines behaviour against a server that predates
-it. Harness budgets (Harness SPEC-0021, in flight) plug into REQ-4 as admission
-checks.
+written in parallel). Relay requires it: REQ-19 refuses a lease source whose
+server predates it, with no degraded mode. Harness budgets (Harness SPEC-0021,
+in flight) plug into REQ-4 as admission checks.
 
 Terms:
 
@@ -166,9 +166,8 @@ SHALL call `claim_next` on the lease source with:
 
 * `queue`, when the lease source sets it;
 * `lease_ttl_seconds` from `lease_ttl`;
-* `require_fence: true`, when the server's schema declares it (REQ-19);
-* `claimant`: `harness/<host>/<harness>/run-<run_id>`, truncated to 128 bytes,
-  when the server's schema declares it (REQ-19).
+* `require_fence: true`;
+* `claimant`: `harness/<host>/<harness>/run-<run_id>`, truncated to 128 bytes.
 
 The claim SHALL use `claim_next` for every trigger, including channel and
 webhook firings whose event names a todo. The daemon SHALL NOT parse an event
@@ -179,8 +178,11 @@ payload to choose a todo (ADR-0025, option 4A).
 * If the call fails (transport error, `forbidden`, or any error code), the daemon
   SHALL record the run `skipped` with reason `claim_failed` and the error code,
   and SHALL spawn nothing.
-* On success the daemon SHALL hold the todo id, the lease token when present,
-  the attempt number and `max_attempts`, and SHALL proceed to REQ-6.
+* On success the daemon SHALL hold the todo id, the lease token, the attempt
+  number and `max_attempts`, and SHALL proceed to REQ-6. A success response
+  without a lease token SHALL be treated as a failed claim (`claim_failed`,
+  code `no_fence`): the daemon SHALL spawn nothing and SHALL let the lease
+  lapse.
 
 The run SHALL count as in flight for `on_overlap` from the moment the claim is
 sent.
@@ -214,8 +216,7 @@ pruned with the run's record and log. It SHALL hold one JSON object:
 | `version` | `1` |
 | `todo` | The claimed todo as Switchboard returned it: `id`, `queue`, `title`, `kind`, `source`, `payload`, `work_order`, `created_at` |
 | `attempt` | `{seq, number, max, claimed_at, lease_ttl_seconds}` |
-| `prior_attempts` | The claim response's prior attempts, newest first, each `{seq, number, outcome, died, claimant, claimed_at, ended_at, summary, artifact}`; `null` when the server does not provide them (REQ-19) |
-| `attempt_history` | `"supported"` or `"unsupported"` |
+| `prior_attempts` | The claim response's prior attempts, newest first, each `{seq, number, outcome, died, claimant, claimed_at, ended_at, summary, artifact}`; an empty array on a first attempt |
 | `untrusted` | The list of JSON paths holding text the daemon did not author: at least `todo.title`, `todo.payload`, `todo.work_order` and `prior_attempts[].summary` |
 | `summary_file` | The path of the attempt summary file (REQ-11) |
 
@@ -254,7 +255,7 @@ The Run"); the context file is authoritative for which todo the attempt is for.
 
 While an attempt is in flight (claimed and not yet reported), the daemon SHALL
 call `heartbeat` on the lease source every `heartbeat_interval`, passing the todo
-id, `lease_ttl_seconds` and the lease token when one is held. Each successful
+id, `lease_ttl_seconds` and the lease token. Each successful
 heartbeat SHALL move the lease deadline to its response time plus `lease_ttl`.
 A heartbeat that fails with a transport error SHALL be retried with jittered
 backoff, and retries SHALL NOT be spaced further apart than
@@ -347,18 +348,18 @@ completed` with no exit code. Any other result SHALL proceed to REQ-6.
 ### REQ-10: Report
 
 After the verdict, the daemon SHALL call `complete` (success) or `fail`
-(failure) on the lease source with the todo id, the lease token when held, the
+(failure) on the lease source with the todo id, the lease token, the
 REQ-11 `summary`, the REQ-12 `artifact` when one exists, and a `result` object:
 
 ```json
 {"harness": {"host": "…", "harness": "…", "run_id": 42, "attempt": 2,
              "agent_exit": 0, "agent_outcome": "success", "duration_s": 724,
-             "check_exit": 1, "check_runs": 1, "reason": "check_failed"},
- "summary": "…", "artifact": "…"}
+             "check_exit": 1, "check_runs": 1, "reason": "check_failed"}}
 ```
 
-`result.summary` and `result.artifact` SHALL duplicate the top-level arguments
-so that a server without attempt history still stores them (REQ-19).
+The summary and artifact SHALL be sent only as the top-level `summary` and
+`artifact` arguments that Switchboard SPEC-0034 defines. They SHALL NOT be
+duplicated inside `result`.
 
 A report that fails with a transport error SHALL be retried with jittered
 backoff until it is accepted or the lease deadline passes, with REQ-7
@@ -490,9 +491,9 @@ died (Switchboard SPEC-0034).
 When a `fail` response reports `dead_letter: true`, the daemon SHALL record
 `relay_outcome = dead_lettered`, SHALL emit a `relay_reported` event carrying
 that outcome, and SHALL count it (REQ-21). The daemon SHALL NOT send a
-notification of its own; notifying a human is Switchboard's. When the response
-carries no `dead_letter` field (REQ-19), the daemon SHALL infer a dead letter
-from `state = "failed"` with `attempt >= max_attempts`.
+notification of its own; notifying a human is Switchboard's. The daemon SHALL
+read the dead letter only from `dead_letter`, and SHALL NOT infer one from
+`state` or attempt counts.
 
 #### Scenario: Last attempt fails
 
@@ -534,34 +535,60 @@ client SHALL NOT include request headers or arguments containing a token.
 - **THEN** it shows the lease source's name, URL, header names and the attempt's
   todo id, and no header value or token
 
-### REQ-19: Older Switchboard Compatibility
+### REQ-19: Required Switchboard Capabilities
 
-Switchboard's tool input schemas forbid unknown properties, so an argument a
-server does not declare fails the whole call. The daemon SHALL therefore read
-each drain verb's input schema from `tools/list` when the lease client session
-initializes, and SHALL send an optional argument (`require_fence`, `claimant`,
-`lease_token`, `summary`, `artifact`) only when that verb's schema declares it.
+Relay SHALL require a lease source whose server implements Switchboard
+SPEC-0034's attempt history. There SHALL be no degraded mode for a server that
+predates it, because the fence is what stops an agent holding the same endpoint
+credential from closing its own attempt.
 
-When a claim response carries no lease token, no attempt sequence and no prior
-attempts, the daemon SHALL continue the attempt without a fence: it SHALL send
-`heartbeat`, `complete` and `fail` without a token, SHALL write
-`attempt_history = "unsupported"` and `prior_attempts = null` in the context
-file, SHALL send `summary` and `artifact` inside `result` only, and SHALL log one
-warning per lease source per daemon start. It SHALL NOT fail the attempt for
-this reason.
+When the lease client session initializes (REQ-17), and again on every
+re-initialize, the daemon SHALL read each drain verb's input schema from
+`tools/list` and SHALL check that:
+
+* `claim_next` declares `require_fence` and `claimant`;
+* `heartbeat` declares `lease_token`;
+* `complete` and `fail` declare `lease_token`, `summary` and `artifact`.
+
+`release` is optional, because it is a verb an endpoint may or may not be
+granted (REQ-14). When `release` is advertised, its schema SHALL declare
+`lease_token` and `summary`.
+
+When any check fails, the lease source SHALL be marked unsupported. While it is,
+the daemon SHALL NOT call `claim_next` on it. Each firing of a harness bound to
+it SHALL be recorded `skipped` with reason `lease_source_unsupported`, and SHALL
+spawn nothing. `harness doctor` SHALL show a `fail` row for the source, naming
+every missing verb argument and stating that relay needs a Switchboard release
+that carries SPEC-0034. The daemon SHALL log one ERROR per source each time the
+session initializes unsupported. It SHALL NOT fall back to unfenced claims,
+SHALL NOT send `summary` or `artifact` anywhere but their SPEC-0034 arguments,
+and SHALL NOT infer a dead letter (REQ-16).
+
+Because Switchboard's tool schemas forbid unknown properties, reading the
+schemas is an exact statement of what the server accepts. The daemon SHALL NOT
+read the server's version string for this check.
 
 #### Scenario: A server that predates attempt history
 
 - **WHEN** a lease source's server advertises `claim_next` without
   `require_fence` or `claimant` in its input schema
-- **THEN** the daemon's `claim_next` carries neither argument, the attempt runs
-  and reports, the context file says `"attempt_history": "unsupported"`, and
-  `harness doctor` warns
+- **THEN** a firing of a harness bound to it makes no `claim_next` call, the
+  run is recorded `skipped` / `lease_source_unsupported`, no process starts,
+  and `harness doctor` shows a `fail` row naming `claim_next.require_fence` and
+  `claim_next.claimant`
+
+#### Scenario: The server is upgraded
+
+- **GIVEN** a lease source marked unsupported
+- **WHEN** the server is upgraded and the session re-initializes with the
+  SPEC-0034 schemas
+- **THEN** the next firing claims with `require_fence: true`, and the doctor row
+  clears
 
 #### Scenario: Schema declares the fence
 
 - **WHEN** the server's `heartbeat` schema declares `lease_token`
-- **THEN** every heartbeat for a fenced attempt carries the token
+- **THEN** every heartbeat for the attempt carries the token
 
 ### REQ-20: Run Record Fields and Events
 
@@ -576,7 +603,8 @@ Run records (SPEC-0008) of a leased harness SHALL gain:
 | `check_exit` | A check ran | The last check exit code |
 | `artifact` | A handle was reported | The reported handle |
 
-`skipped` reasons SHALL gain `no_work`, `claim_failed` and `lease_disabled`.
+`skipped` reasons SHALL gain `no_work`, `claim_failed`, `lease_disabled` and
+`lease_source_unsupported`.
 The daemon SHALL publish `relay_claimed` (todo id, attempt), `relay_reported`
 (relay outcome, dead letter) and `relay_lease_lost` events. The additions are
 additive, and `ProtoMinor` SHALL be bumped once. A record SHALL NOT carry a
@@ -596,7 +624,8 @@ summary, a payload byte, a header value or a token.
   and lease deadline.
 * `harness doctor` SHALL call `tools/list` on each bound lease source and SHALL
   flag: a missing `claim_next`, `heartbeat`, `complete` or `fail`; a missing
-  `release` (as a notice); the absence of attempt history (REQ-19); and a lease
+  `release` (as a notice); a server without the REQ-19 capabilities (as a
+  `fail`, naming each missing argument); and a lease
   source bound to a harness whose channel trigger points at a different `url`
   (as a warning, because a doorbell for one endpoint cannot be claimed on
   another).

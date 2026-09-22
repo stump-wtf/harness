@@ -65,9 +65,11 @@ Harness would not call Switchboard.**
   ADR-0021 specifies, and the channel listener still calls no tools.
 * **Never burn an attempt on a run that will not start.** Every admission check
   runs before the claim.
-* **Works against the Switchboard people actually run.** Customers run older
-  releases than `main`, so relay must degrade, not fail, when the server lacks
-  attempt history.
+* **Fail closed on a Switchboard without attempt history.** The fence is what
+  stops an agent from closing its own attempt, so relay does not run without
+  it. Harness and Switchboard are both pre-1.0, so there is no compatibility
+  path for older servers: the fix for a stale server is a Switchboard release
+  (Switchboard ADR-0032), not a degraded relay.
 * **Secure by default** (ADR-0008). Credentials resolve from an `env_file`, and
   the agent must not be able to close its own attempt.
 
@@ -313,20 +315,26 @@ depend on it.
   A usage limit is not the work's fault, so the attempt should not read as a
   verdict on the work.
 
-### Against an older Switchboard
+### A Switchboard without attempt history is refused
 
-The drain verbs exist in every released Switchboard. Against a server without
-attempt history, relay still claims, heartbeats and reports. There is no fence,
-the context file says attempt history is unsupported, and the summary is sent
-only inside the structured `result`. `harness doctor` warns, naming the missing
-capability.
+Relay requires the attempt-history surface of Switchboard ADR-0039 / SPEC-0034:
+the fence (`require_fence`, `lease_token`), `claimant`, prior attempts on claim,
+and `summary`, `artifact` and `dead_letter` on the report verbs. There is no
+degraded mode. Without the fence, nothing stops an agent holding the same
+endpoint credential from closing its own attempt, and running unfenced would
+make the attempt record a claim instead of a fact. Both products are pre-1.0, so
+Harness carries no compatibility path for a server that predates SPEC-0034.
 
-Feature detection reads the verbs' input schemas from `tools/list`, not the
-server's version string. Switchboard's tool schemas forbid unknown properties
-(its SDK infers `additionalProperties: false` for every input struct), so an
-argument such as `require_fence` sent to an older server would fail the whole
-call. Harness therefore sends an optional argument only when the verb's schema
-declares it.
+The check reads the verbs' input schemas from `tools/list` when the lease client
+session initializes, not the server's version string. Switchboard's tool schemas
+forbid unknown properties (its SDK infers `additionalProperties: false` for
+every input struct), so the schema is an exact statement of what the server
+accepts. When a required argument is missing, Harness claims nothing: each
+firing of a harness bound to that source is recorded `skipped` with reason
+`lease_source_unsupported`, `harness doctor` fails the source, naming every
+missing argument, and the error says which Switchboard release is required.
+`release` stays optional, because it is a verb the endpoint may or may not be
+granted, not a version difference.
 
 ### Security and tenancy
 
@@ -371,8 +379,8 @@ declares it.
   `dead_lettered`), `check_exit` and `artifact`. They still carry no payload
   (ADR-0008).
 * `harness describe` shows the lease source and its last claim and heartbeat.
-  `harness doctor` checks the verbs the endpoint advertises, and whether the
-  server supports attempt history.
+  `harness doctor` checks the verbs the endpoint advertises, and fails a
+  source whose server lacks attempt history.
 * New events, `relay_claimed`, `relay_reported` and `relay_lease_lost`, are
   additive, so `ProtoMinor` takes one bump.
 * SPEC-0013 gains `harness_relay_attempts_total{harness,outcome}` and
@@ -394,8 +402,8 @@ declares it.
   having died.
 * Good, because pools of one-shot workers need no new dispatcher.
 * Bad, because Harness now depends on Switchboard's API for leased harnesses.
-  That is a contract to track across releases, and the older-server path is code
-  to keep working.
+  That is a contract to track across releases, and relay cannot run at all
+  until a Switchboard release carries SPEC-0034. The upgrade note says so.
 * Bad, because every attempt pays an agent cold start, and a flapping check can
   spend the whole attempt budget quickly. The budget and backoff are
   Switchboard's to tune.
@@ -430,8 +438,9 @@ SPEC-0019 (`relay-attempts`) makes this testable. Acceptance tests include:
   the run log, `state.json`, a protocol frame or a log line.
 * A `fail` response with `dead_letter: true` records `dead_lettered` and sends no
   notification from Harness.
-* Against a server without attempt history, the attempt still completes, and
-  `harness doctor` warns.
+* Against a server without attempt history, no `claim_next` is sent, every
+  firing is recorded `skipped` / `lease_source_unsupported`, and `harness
+  doctor` fails the source.
 
 ### Deferred
 

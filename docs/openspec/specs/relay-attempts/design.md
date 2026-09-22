@@ -44,7 +44,8 @@ Switchboard ADR-0039 / SPEC-0034; Cairn ADR-0027 / SPEC-0021.
   running".
 - Admission before claim, so an attempt is never burned on a run that will not
   start.
-- Honest degradation against a Switchboard without attempt history.
+- Refuse, loudly, a Switchboard without attempt history. There is no degraded
+  mode and no compatibility path for older servers; both products are pre-1.0.
 - One run machinery: an attempt is a SPEC-0008 run with extra phases, not a
   second lifecycle.
 
@@ -91,19 +92,21 @@ ADR-0027 lands) budgets. Only a request that would start a process enters
 Switchboard ADR-0035, one unit of the queue's admission budget. Neither is
 refunded.
 
-### A separate lease client session, schema-driven arguments
+### A separate lease client session, with a schema capability check
 
 **Choice**: `internal/relay/client.go` reuses SPEC-0014's narrow Streamable
 HTTP client for `initialize` and `notifications/initialized`, then issues
 `tools/list` and `tools/call` over POST. It never opens the GET stream. At
 initialize (and on every re-initialize) it records each drain verb's input
-schema, and it sends an optional argument only when the schema declares it.
+schema, and checks that every argument SPEC-0019 REQ-19 requires is declared.
+A source that fails the check is marked unsupported and is never claimed on.
 
 **Rationale**: an open GET stream makes a session a doorbell target, so the
 lease client must not have one. The schema check is needed because
 Switchboard's tool inputs are inferred with `additionalProperties: false`, so an
-undeclared argument fails the call; reading the schema detects the feature
-directly, where a version string would only suggest it.
+undeclared argument fails the call; reading the schema detects the capability
+directly, where a version string would only suggest it. The check refuses; it
+never selects a reduced argument set.
 
 **Alternatives considered**:
 - *Reuse the channel listener's session for tool calls*: rejected. It couples
@@ -244,8 +247,9 @@ type HarnessRelay struct { // on HarnessConfig, nil when lease is unset
 | `fail` | `id`, `result`, `summary`†, `artifact`†, `lease_token`† | `state`, `attempt`, `max_attempts`, `dead_letter`†, `next_retry_at`† |
 | `release` | `id`, `summary`†, `lease_token`† | success or error code; optional verb |
 
-† Defined by Switchboard SPEC-0034. Sent only when the verb's schema declares
-it, and read only when present.
+† Defined by Switchboard SPEC-0034 and required: a lease source whose schemas
+do not declare the † arguments is refused (SPEC-0019 REQ-19). `release` is the
+one optional verb, because an endpoint may not be granted it.
 
 ### Component view
 
@@ -331,7 +335,6 @@ stateDiagram-v2
      "claimed_at": "2026-09-22T14:05:00Z", "ended_at": "2026-09-22T14:21:30Z",
      "summary": null, "artifact": null}
   ],
-  "attempt_history": "supported",
   "untrusted": ["todo.title", "todo.payload", "todo.work_order", "prior_attempts[].summary"],
   "summary_file": "/home/u/.local/state/harness/jobs/ci-fixer/43.summary"
 }
@@ -353,16 +356,23 @@ stateDiagram-v2
 - **Prompt injection between attempts** → the file boundary, the `untrusted`
   list, the 2048-byte cap and redaction bound it. The operator's prompt must
   still say that prior summaries are data.
-- **The agent completes its own attempt** → prevented by `require_fence` when the
-  server supports it. Against an older server it is prevented only by giving the
-  agent no drain verbs, and `harness doctor` cannot see what the agent holds.
-- **Contract drift with Switchboard** → schema-driven arguments, and a contract
-  test against a fake that implements both the pre- and post-SPEC-0034 schemas.
+- **The agent completes its own attempt** → prevented by `require_fence`, which
+  relay requires. A server without it is refused rather than run unfenced.
+- **Contract drift with Switchboard** → the REQ-19 schema check, and a contract
+  test against a fake with SPEC-0034's schemas, plus one without them that must
+  be refused with no `claim_next` sent.
+- **Relay waits on a Switchboard release** → relay cannot run against any
+  Switchboard released before SPEC-0034. That is the intended order; the stack
+  installer's manifest (Harness ADR-0024) pins a release that carries it.
 
 ## Migration Plan
 
-Purely additive. A config without `[queue.*]` or `lease` behaves exactly as it
-does today, and the protocol change is additive (one `ProtoMinor` bump). The
+Additive for Harness. A config without `[queue.*]` or `lease` behaves exactly
+as it does today, and the protocol change is additive (one `ProtoMinor` bump).
+The implementing PR's upgrade note in the release notes says: relay (`lease`)
+requires a Switchboard release that includes SPEC-0034 attempt history; against
+an older server every firing is skipped as `lease_source_unsupported` and
+`harness doctor` fails the source. The
 feature depends on SPEC-0014's trigger sources being built first. Its lease
 client can be built in parallel, and its relay behaviour lands once firings
 exist. Rolling back means removing `lease` from config; in-flight attempts are
