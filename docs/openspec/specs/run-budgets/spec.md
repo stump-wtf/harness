@@ -155,6 +155,10 @@ decide:
 4. a spent `max_runs_per_day` (REQ-5);
 5. no free concurrency slot, for a triggered one-shot only (REQ-6).
 
+A hold another spec defines, such as SPEC-0020's model hold (skip reason
+`model_hold`), SHALL be evaluated between checks 1 and 2, so that a harness is
+never admitted past a refusal that depends on neither the meter nor the clock.
+
 The admission decision and the run's `run_opened` ledger record (SPEC-0022)
 SHALL be made under one lock, so that two starts cannot both take the last unit
 of a budget. If the ledger append fails, a harness that has any REQ-1 budget key,
@@ -444,7 +448,8 @@ classified as quota exhaustion. The park SHALL NOT be stored with any error text
 ### REQ-14: Release and hold reasons
 
 A harness's hold SHALL be a set of reasons drawn from `hours`, `quota` and
-`budget`. The gate tick SHALL clear `quota` when the park's reset instant is
+`budget`, and SHALL admit reasons other specs define (SPEC-0020's model hold is
+one) without changing the release rule below. The gate tick SHALL clear `quota` when the park's reset instant is
 reached, and `budget` when the budget day rolls over or the spent cap is raised
 by a reload. A harness whose last hold reason clears SHALL go back through
 admission (REQ-4); it SHALL start only if admission passes and `enabled` is true.
