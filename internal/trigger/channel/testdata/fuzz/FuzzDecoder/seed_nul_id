@@ -1,0 +1,2 @@
+go test fuzz v1
+string("id: \x00bad\ndata: x\n\n")
