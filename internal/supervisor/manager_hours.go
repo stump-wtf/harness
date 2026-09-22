@@ -20,6 +20,9 @@ package supervisor
 // watcher", § "Hold and Release on the Manager".
 //
 // @joestump-agent 09/21/2026 - Added for stump.wtf/harness#384.
+//
+// @joestump-agent 09/22/2026 - Hold follows with the anchor the actor loop
+// settled on, so an unanchored close is watched until its real deadline.
 
 import (
 	"os"
@@ -77,7 +80,13 @@ func (m *Manager) Hold(name string, mode core.HoursShutdownMode, closeAt time.Ti
 	}
 	s.Hold(mode, closeAt)
 	if snap := s.Snapshot(); snap.Closing {
-		m.follow(name, closeAt)
+		// Follow with the anchor the actor loop settled on, not the
+		// caller's: an unanchored hold (closeAt zero) is capped from now
+		// there, and the watch's linger backstop must be bounded by that
+		// same instant rather than by the zero time, which would retire
+		// the watch on its first poll and end the close as "graceful
+		// unavailable".
+		m.follow(name, snap.CloseAt)
 	}
 }
 
