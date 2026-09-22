@@ -30,6 +30,7 @@ import (
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/supervisor"
 	"github.com/stump-wtf/harness/internal/trigger"
+	"github.com/stump-wtf/harness/internal/trigger/channel"
 )
 
 // Runner is the run entry point a firing reaches. *supervisor.Manager
@@ -53,6 +54,18 @@ type Options struct {
 	// Log is where firings and failures are reported. Defaults to the
 	// package logger.
 	Log *log.Logger
+	// Dial opens a channel session. Defaults to a real client; a test
+	// substitutes one to steer the transport.
+	Dial func(core.ChannelSource) *channel.Client
+	// OnState is called for every source state CHANGE, with the new status.
+	// It is the seam `trigger_source_changed` hangs off (#476) — and it is
+	// what makes the state SEQUENCE observable, which a snapshot cannot be:
+	// a source that briefly reported `connected` before settling on `error`
+	// looks identical to one that never did, if all anyone reads is the
+	// final state.
+	//
+	// It is called without m.mu held, so a handler may call back in.
+	OnState func(Status)
 }
 
 // Decision is what happened to one harness in a fan-out. It is the shape a
@@ -79,11 +92,24 @@ type Manager struct {
 	config func() *core.Config
 	log    *log.Logger
 
+	// dial opens a channel session. A field so a test can substitute a
+	// transport without reaching for the network.
+	dial dialer
+	// onState is notified of every source state change.
+	onState func(Status)
+
 	mu       sync.Mutex
 	closed   bool
 	ctx      context.Context
 	cancel   context.CancelFunc
 	inFlight sync.WaitGroup
+	// sources is every declared source's reported state, keyed by reference.
+	// Guarded by mu, and read by Status while sessions write to it.
+	sources map[string]*sourceState
+	// sessions counts the channel session goroutines, so Close can wait for
+	// them rather than leaving one reading a stream after the daemon thinks
+	// it has shut down.
+	sessions sync.WaitGroup
 }
 
 // New builds a Manager. It does nothing until Start.
@@ -96,7 +122,20 @@ func New(opts Options) *Manager {
 	if cfg == nil {
 		cfg = func() *core.Config { return &core.Config{} }
 	}
-	return &Manager{runner: opts.Runner, config: cfg, log: logger}
+	dial := opts.Dial
+	if dial == nil {
+		dial = func(src core.ChannelSource) *channel.Client {
+			return channel.New(channel.Options{Source: src, Log: logger})
+		}
+	}
+	return &Manager{
+		runner:  opts.Runner,
+		config:  cfg,
+		log:     logger,
+		dial:    dial,
+		onState: opts.OnState,
+		sources: map[string]*sourceState{},
+	}
 }
 
 // Start makes the Manager accept firings, and ties its lifetime to ctx.
@@ -111,6 +150,10 @@ func (m *Manager) Start(ctx context.Context) {
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.closed = false
+	// Sessions are opened under the same lock that publishes m.ctx, so a
+	// Fire racing with Start either sees the manager closed or sees a live
+	// context — never a half-built one.
+	m.openChannelsLocked(m.ctx)
 }
 
 // Close stops accepting firings and waits for those in progress to reach the
@@ -134,6 +177,10 @@ func (m *Manager) Close() {
 	if cancel != nil {
 		cancel()
 	}
+	// Sessions first: one may be mid-firing, and Fire is what inFlight
+	// counts. Waiting the other way round would return while a doorbell was
+	// still on its way to StartRun.
+	m.closeChannels()
 	m.inFlight.Wait()
 }
 
