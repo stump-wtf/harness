@@ -231,7 +231,7 @@ it.
 * **`harness doctor`**: a fail row for every held harness or recent mismatch,
   and a warn row for `attest = "model"` pins.
 * **Metrics**, as additions under SPEC-0013's registry and cardinality cap:
-  `harness_model_attestations_total{harness,outcome}` (`attested`, `mismatch`,
+  `harness_model_calls_attested_total{harness,outcome}` (`attested`, `mismatch`,
   `unattested`), `harness_model_mismatch_total{harness,kind}` (`model`,
   `provider`), and `harness_model_pin_held{harness}`. SPEC-0013's reachability
   series say whether a model answered. These say whether it was the right one.
