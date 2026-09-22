@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 decision-makers: [joestump]
 extends: [ADR-0011, ADR-0020]
-related: [ADR-0008, ADR-0013, ADR-0021]
+related: [ADR-0008, ADR-0013, ADR-0021, ADR-0023, ADR-0024, ADR-0025]
 ---
 
 # ADR-0026: Fail-closed model pinning — render the route, attest what was served
@@ -462,13 +462,14 @@ flowchart LR
   scrubbing), **[ADR-0013](adr-0013-scheduled-one-shot-jobs.md)** and
   **[ADR-0021](adr-0021-on-demand-one-shots.md)** (runs, skips, holds on
   firings).
-* **Records written in parallel (cited here, and linked in frontmatter once
-  they merge):** ADR-0023 (the `command` kind, whose pins are attestation-only
-  through `transcripts`, and the `pi`/`omp` adapters this renders for),
-  ADR-0028 (the run ledger that carries `model_mismatch` and the served model),
-  ADR-0027 (budgets, which share the observer's per-call usage items),
-  ADR-0025 (supervisor-held leases, which fail the todo on a mismatch), and
-  ADR-0022 (telemetry export, PR #408).
+* **Related records accepted with this one (2026-09-22):** [ADR-0023](adr-0023-command-one-shots-and-templating.md) (the
+  `command` kind, whose pins are attestation-only through `transcripts`, and
+  the `pi`/`omp` adapters this renders for), [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md) (supervisor-held
+  leases, which fail the todo on a mismatch) and [ADR-0024](adr-0024-stack-installer-and-central-management.md) (the installer
+  renders pins), linked in this ADR's front matter; [ADR-0028](adr-0028-run-history-ledger.md) (the run ledger
+  that carries `model_mismatch` and the served model) and [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets,
+  which share the observer's per-call usage items), which carry the edge to
+  this ADR. ADR-0022 (telemetry export) is still in review as #548, the replay of #408, so it stays cited by number.
 * **Upstream:** stump.wtf/agent-trace#105, per-message usage items with model,
   provider and generation ID.
 * **Docs:** `docs/usage/configuration.md`, "Model routing and provider

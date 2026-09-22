@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 decision-makers: [joestump]
 extends: [ADR-0021, ADR-0013, ADR-0008]
-related: [ADR-0019, ADR-0020, ADR-0011, ADR-0006]
+related: [ADR-0019, ADR-0020, ADR-0011, ADR-0006, ADR-0023]
 ---
 
 # ADR-0025: Supervisor-held leases and relay attempts — Harness claims, heartbeats and reports around a fresh one-shot
@@ -635,12 +635,14 @@ sequenceDiagram
 * **Related [ADR-0011](adr-0011-agent-adapters.md)** and
   **[ADR-0006](adr-0006-configuration-and-profiles.md).** The prompt and argv are
   unchanged, and the config gains `[queue.*]`, `[cairn.*]` and harness keys.
-* **Records in flight, cited here by number until they merge:** Harness
-  ADR-0022 (telemetry export, PR #408), ADR-0023 (command kind; relay wraps the
-  run, so it applies to that kind too), ADR-0027 (budgets) and ADR-0028 (run
-  history). Switchboard ADR-0039 / SPEC-0034 (attempt history, this ADR's
-  sibling), ADR-0029 / SPEC-0024, ADR-0034 / SPEC-0029, ADR-0035 / SPEC-0030
-  and ADR-0038 / SPEC-0033. Cairn ADR-0023, ADR-0027 and ADR-0029.
+* **Related records accepted with this one (2026-09-22):** [ADR-0023](adr-0023-command-one-shots-and-templating.md)
+  (command kind; relay wraps the run, so it applies to that kind too), linked in
+  this ADR's front matter; [ADR-0026](adr-0026-fail-closed-model-pinning.md), [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets) and [ADR-0028](adr-0028-run-history-ledger.md)
+  (run history), which carry the `related` edge to this ADR. ADR-0022 (telemetry export) is still in review as #548, the replay of #408, so it stays cited by number.
+* **Cross-repo records, cited by number (accepted in the same review):**
+  Switchboard ADR-0039 / SPEC-0034 (attempt history, this ADR's sibling),
+  ADR-0029 / SPEC-0024, ADR-0034 / SPEC-0029, ADR-0035 / SPEC-0030 and
+  ADR-0038 / SPEC-0033. Cairn ADR-0023, ADR-0027 and ADR-0029.
 * **SPEC-0019 (`relay-attempts`)** formalizes this ADR.
 * The one-shot relay pattern (a fresh agent per attempt, with notes passed
   forward) was raised in a community discussion.

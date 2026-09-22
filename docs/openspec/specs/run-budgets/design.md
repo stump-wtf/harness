@@ -17,8 +17,9 @@ store, and how they compose with the machinery that already exists:
   agent activity in the daemon;
 * the **error classifier** (SPEC-0013 REQ-3, `internal/metrics/classify.go` on
   #407), which already maps error text to `quota|auth|timeout|transport|other`;
-* the **run ledger** (SPEC-0022, ADR-0028, in flight in parallel), which stores
-  every run record and hosts the usage accumulator.
+* the **run ledger** (SPEC-0022, ADR-0028, accepted with this spec on
+  2026-09-22 and not yet built), which stores every run record and hosts the
+  usage accumulator.
 
 ## Goals / Non-Goals
 

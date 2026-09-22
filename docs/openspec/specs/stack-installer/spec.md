@@ -3,7 +3,7 @@ status: approved
 date: 2026-09-22
 implements: [ADR-0024]
 extends: [SPEC-0006]
-requires: [SPEC-0008, SPEC-0010, SPEC-0014]
+requires: [SPEC-0008, SPEC-0010, SPEC-0014, SPEC-0017, SPEC-0021, SPEC-0022, SPEC-0023]
 ---
 
 # SPEC-0018: Stack Installer and Centralized Stack Management
@@ -33,11 +33,11 @@ ADR-0006, ADR-0011, ADR-0019 and ADR-0021.
 
 It requires SPEC-0008 (the run machinery the self-test's one-shot uses),
 SPEC-0010 (the command tree and environment layer the new commands join), and
-SPEC-0014 (the channel source the self-test binds). Records written in
-parallel are cited by number: SPEC-0017 (the command kind), SPEC-0021 (run
-budgets), SPEC-0022 (run history), SPEC-0023 (dev-channels auto-confirm);
-Switchboard SPEC-0025 (doorbell acknowledgement and `doctor`), SPEC-0027
-(release and version contract) and SPEC-0033 (teams); Cairn SPEC-0023 (teams).
+SPEC-0014 (the channel source the self-test binds), SPEC-0017 (the command
+kind), SPEC-0021 (run budgets), SPEC-0022 (run history) and SPEC-0023
+(dev-channels auto-confirm). Cross-repo records are cited by number: Switchboard
+SPEC-0025 (doorbell acknowledgement and `doctor`), SPEC-0027 (release and
+version contract) and SPEC-0033 (teams); Cairn SPEC-0023 (teams).
 
 Terms: an **instance** is one deployment of Switchboard and Cairn. The
 **operator** runs an instance; a **user** has an account on one. A **persona**

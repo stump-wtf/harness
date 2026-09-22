@@ -19,9 +19,10 @@ SPEC-0017.
 
 Related specs: SPEC-0006 (adapters, prompt source, run correlation), SPEC-0008
 (run records), SPEC-0014 (triggers, envelope), SPEC-0013 (metrics), SPEC-0002
-(protocol). Related ADRs: ADR-0011, ADR-0013, ADR-0018, ADR-0021. Parallel
-records cited in prose only until they merge: ADR-0026 (model pinning), ADR-0027
-(budgets), ADR-0028 (run ledger).
+(protocol). Related ADRs: ADR-0011, ADR-0013, ADR-0018, ADR-0021. Records
+accepted with this one on 2026-09-22: ADR-0026 (model pinning; SPEC-0020
+requires this spec for `transcripts` and the `pi`/`omp` adapters), ADR-0027
+(budgets) and ADR-0028 (run ledger).
 
 ## Goals / Non-Goals
 

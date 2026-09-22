@@ -15,10 +15,10 @@ mismatch, and a `doctor --models` canary. Governing spec: SPEC-0020.
 
 Related specs: SPEC-0006 (adapters), SPEC-0013 (metrics; PR #407 implements
 it), SPEC-0008 (run records), SPEC-0003 (state machine), SPEC-0002 (protocol).
-Parallel records cited in prose until they merge: ADR-0023/SPEC-0017 (the
-`command` kind, `transcripts`, and the `pi`/`omp` adapters), ADR-0028 (the run
-ledger), ADR-0027 (budgets, which share the observer's usage items), and
-ADR-0025 (supervisor-held leases).
+Records accepted with this one on 2026-09-22: ADR-0023/SPEC-0017 (the
+`command` kind, `transcripts`, and the `pi`/`omp` adapters), ADR-0028/SPEC-0022
+(the run ledger), ADR-0027 (budgets, which share the observer's usage items),
+and ADR-0025 (supervisor-held leases).
 
 ## Goals / Non-Goals
 

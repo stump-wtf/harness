@@ -2,7 +2,7 @@
 status: approved
 date: 2026-09-22
 implements: [ADR-0027]
-requires: [SPEC-0003, SPEC-0008, SPEC-0012, SPEC-0013, SPEC-0014]
+requires: [SPEC-0003, SPEC-0008, SPEC-0012, SPEC-0013, SPEC-0014, SPEC-0022]
 ---
 
 # SPEC-0021: Run Budgets and Usage-Limit Backoff
@@ -26,8 +26,8 @@ REQ-3 defines.
 This spec amends, by reference and without editing them:
 
 * **SPEC-0012 REQ "Gate Enforcement"**: `held` becomes a set of hold reasons
-  (REQ-14). SPEC-0012 is not edited while #412 is open; a follow-up folds this
-  in once it merges.
+  (REQ-14). SPEC-0012 is not edited here. #412 has since merged, and story
+  #488 folds this amendment into SPEC-0012 when REQ-14 ships.
 * **SPEC-0012 REQ "Operating Hours Visibility"**: the projection's `held`
   boolean is removed and replaced by `hold_reasons` (REQ-16), with no
   transition period.

@@ -3,7 +3,7 @@ status: approved
 date: 2026-09-22
 implements: [ADR-0025]
 extends: [SPEC-0014, SPEC-0008]
-requires: [SPEC-0002, SPEC-0006, SPEC-0012, SPEC-0013]
+requires: [SPEC-0002, SPEC-0006, SPEC-0012, SPEC-0013, SPEC-0021, SPEC-0022]
 ---
 
 # SPEC-0019: Relay Attempts With Supervisor-Held Leases
@@ -28,12 +28,13 @@ without `lease` is unchanged.
 This spec extends SPEC-0014 (triggered harnesses, firing, event files) and
 SPEC-0008 (the run machinery). It requires SPEC-0002 (protocol operations and
 events), SPEC-0006 (prompt source and argv, which are unchanged), SPEC-0012
-(hours gating before the claim) and SPEC-0013 (metrics).
+(hours gating before the claim), SPEC-0013 (metrics), SPEC-0021 (budgets, which
+plug into REQ-4 as admission checks) and SPEC-0022 (the run ledger, which
+carries the relay fields of REQ-20).
 
 The Switchboard side of the contract is Switchboard SPEC-0034 (attempt history,
-written in parallel). Relay requires it: REQ-19 refuses a lease source whose
-server predates it, with no degraded mode. Harness budgets (Harness SPEC-0021,
-in flight) plug into REQ-4 as admission checks.
+accepted in the same 2026-09-22 review). Relay requires it: REQ-19 refuses a
+lease source whose server predates it, with no degraded mode.
 
 Terms:
 

@@ -3,7 +3,7 @@ status: accepted
 date: 2026-09-22
 decision-makers: [joestump]
 extends: [ADR-0006, ADR-0008, ADR-0011]
-related: [ADR-0004, ADR-0009, ADR-0010, ADR-0013, ADR-0016, ADR-0017, ADR-0018, ADR-0019, ADR-0021]
+related: [ADR-0004, ADR-0009, ADR-0010, ADR-0013, ADR-0016, ADR-0017, ADR-0018, ADR-0019, ADR-0021, ADR-0023]
 ---
 
 # ADR-0024: Stack installer and centralized stack management — `harness init` connects, `harness stack` operates
@@ -687,13 +687,15 @@ sequenceDiagram
   scratchpad one-shot the self-test resembles. ADR-0018: why secrets never ride
   argv. ADR-0021: the channel and webhook sources the self-test and the
   templates bind.
-* Parallel records cited by number (their front-matter edges are added once
-  they merge): Harness ADR-0022 (telemetry), ADR-0023 (command kind), ADR-0026
-  (model pinning, which `init` will render once it lands), ADR-0027 (budgets),
-  ADR-0028 (run history), ADR-0029 (dev-channels auto-confirm, which `init`
-  writes for a resident Claude Code persona only when the user opts in for that
-  persona, with its warning); Switchboard
-  ADR-0030, ADR-0032, ADR-0034, ADR-0038 and SPEC-0024; Cairn ADR-0025 and
-  ADR-0029.
+* Harness records accepted with this one (2026-09-22), linked by `related`
+  edges in the newer record's front matter: [ADR-0023](adr-0023-command-one-shots-and-templating.md) (command kind),
+  [ADR-0026](adr-0026-fail-closed-model-pinning.md) (model pinning, which `init` will render once it lands),
+  [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets), [ADR-0028](adr-0028-run-history-ledger.md) (run history), and [ADR-0029](adr-0029-auto-confirm-dev-channels.md)
+  (dev-channels auto-confirm, which `init` writes for a resident Claude Code
+  persona only when the user opts in for that persona, with its warning).
+  ADR-0022 (telemetry export) is still in review as #548, the replay of #408, so it stays cited by number.
+* Cross-repo records, cited by number (accepted in the same review):
+  Switchboard ADR-0030, ADR-0032, ADR-0034, ADR-0038 and SPEC-0024; Cairn
+  ADR-0025 and ADR-0029.
 * The canonical stack page, layered onboarding, glossary and `llms.txt` are
   planned as docs work in this repository, linked from Switchboard and Cairn.

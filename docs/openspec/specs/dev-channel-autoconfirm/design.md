@@ -21,8 +21,8 @@ SPEC-0023.
 
 Related specs: SPEC-0003 (lifecycle; the attention flag sits beside the
 state), SPEC-0006 (adapters), SPEC-0002 (protocol), SPEC-0013 (metrics).
-Related records written in parallel, cited in prose: Switchboard ADR-0030
-(doorbell acknowledgement and doctor).
+Cross-repo record, cited by number (accepted in the same 2026-09-22 review):
+Switchboard ADR-0030 (doorbell acknowledgement and doctor).
 
 ## Goals / Non-Goals
 
