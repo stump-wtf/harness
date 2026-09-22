@@ -511,14 +511,31 @@ func (m *Manager) Release(name string) bool {
 // ended (or its hours opened first, which discards it) the answer reverts to
 // "none" and the pass enforces the gate as usual. Governing: SPEC-0012 REQ
 // "After-Hours Lease".
+//
+// Lease reads the wall clock (monotonic reading stripped, as the scheduler's
+// tick is). The gate pass never uses it: it asks LeaseAt with its own tick's
+// time, so lease validity and hours are judged at one instant.
 func (m *Manager) Lease(name string) (until time.Time, ok bool) {
-	return m.leaseState(name, time.Now())
+	return m.leaseState(name, time.Now().Round(0))
+}
+
+// LeaseAt is Lease judged at now — the scheduler tick's clock, which is the
+// only time source the operating-hours gate may decide on (design.md § "A
+// pure internal/hours package": the clock seam stays the only time source).
+// The gate pass calls it for every gated harness on every tick, in hours or
+// not, and the call is what retires a lease: one that has ended at now is
+// dropped with its end remembered as the close's anchor, and one whose hours
+// have opened is discarded. Governing: SPEC-0012 REQ "After-Hours Lease", REQ
+// "Gate Evaluation".
+func (m *Manager) LeaseAt(name string, now time.Time) (until time.Time, ok bool) {
+	return m.leaseState(name, now)
 }
 
 // leaseState is Lease against an injectable clock, so the discard rules —
 // expired, hours opened, hours removed — are testable at minute boundaries
 // without waiting on the wall clock. It mutates the lease map (a discard is
-// durable bookkeeping, not a read).
+// durable bookkeeping, not a read). A lease ends AT its end instant: the
+// pass holds when !now.Before(until), and so the record is spent then too.
 func (m *Manager) leaseState(name string, now time.Time) (time.Time, bool) {
 	m.mu.Lock()
 	until, ok := m.leases[name]
@@ -527,7 +544,7 @@ func (m *Manager) leaseState(name string, now time.Time) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	h := m.cfg.Harnesses[name]
-	if now.After(until) {
+	if !now.Before(until) {
 		// Expired: the pass will hold on this very tick. Drop the record so
 		// state.json stops carrying a dead lease, and remember the end — the
 		// instant the harness went out of hours, which anchors the close's
@@ -595,7 +612,10 @@ func (m *Manager) StartFor(name string, forDur time.Duration) error {
 		m.mu.Unlock()
 		return fmt.Errorf("%w: %s is in hours now", ErrNoLease, name)
 	}
-	until := time.Now().Add(forDur)
+	// Wall clock only: a monotonic reading on until would make a comparison
+	// with another monotonic time ignore a suspend (the monotonic clock stops
+	// while the host sleeps), so the lease would outlast its wall-clock end.
+	until := time.Now().Round(0).Add(forDur)
 	m.leases[name] = until
 	// The lease governs the gate from here: an expired-lease anchor (if one
 	// was remembered) is superseded, and a close waiting on turn state is

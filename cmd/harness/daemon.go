@@ -305,7 +305,9 @@ type hoursGate struct{ mgr *supervisor.Manager }
 
 func (g hoursGate) Status(name string) (up, held, closing, ok bool) { return g.mgr.GateStatus(name) }
 
-func (g hoursGate) Lease(name string) (time.Time, bool) { return g.mgr.Lease(name) }
+func (g hoursGate) Lease(name string, now time.Time) (time.Time, bool) {
+	return g.mgr.LeaseAt(name, now)
+}
 
 func (g hoursGate) CloseAt(name string, now time.Time) (time.Time, bool) {
 	return g.mgr.CloseAt(name, now)

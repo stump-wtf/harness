@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -145,10 +146,10 @@ func TestDaemonSchedulerEnforcesOperatingHours(t *testing.T) {
 }
 
 // The graceful half of the wiring: the daemon's Gate passes the close instant
-// through Hold, the scheduler's ticks step the close through CloseStep, and
-// the Manager's turn-state watch — with nothing attributable to a generic
-// harness — makes the first step stop at once, logged as unavailable
-// (SPEC-0012 REQ "Graceful Shutdown", "no attributable trace" scenario).
+// through Hold, the scheduler steps the close through CloseStep on the same
+// tick, and the Manager's turn-state watch — with nothing attributable to a
+// generic harness — makes that first step stop at once, logged as unavailable
+// (SPEC-0012 REQ "Graceful Shutdown", "Generic harness" scenario).
 func TestDaemonSchedulerClosesGracefully(t *testing.T) {
 	tmp := t.TempDir()
 	statePath := filepath.Join(tmp, "state.json")
@@ -186,26 +187,22 @@ func TestDaemonSchedulerClosesGracefully(t *testing.T) {
 		return s.State == core.StateRunning
 	})
 
-	// Monday 20:00 UTC: the window closed at 13:00, so the close's deadline
-	// is 13:15 — long past. The hold marks the harness closing; the next
-	// tick's CloseStep stops it.
-	clock := &stubClock{now: time.Date(2026, 9, 21, 20, 0, 0, 0, time.UTC), ticks: make(chan time.Time)}
+	// Monday 13:00:30 UTC: thirty seconds into a close whose cap is 13:15.
+	// Only the attribution can end it this early, and a generic harness has
+	// nothing attributable, so the first evaluation — the one that begins
+	// the close — stops it.
+	clock := &stubClock{now: time.Date(2026, 9, 21, 13, 0, 30, 0, time.UTC), ticks: make(chan time.Time)}
 	sched := startDaemonScheduler(mgr, cfg, clock)
 	t.Cleanup(sched.Close)
 
-	waitUntil(t, "marked closing by the daemon's gate pass", func() bool {
+	waitUntil(t, "stopped by the close's first step", func() bool {
 		s, _ := mgr.Snapshot(h.Name)
-		return s.Closing && s.Held && s.State == core.StateRunning
+		return s.State == core.StateStopped && !s.Closing && s.Held
 	})
 	snap, _ := mgr.Snapshot(h.Name)
 	if !snap.Enabled {
 		t.Error("the close touched enabled intent")
 	}
-	clock.ticks <- clock.Now().Add(time.Second)
-	waitUntil(t, "stopped by the close step", func() bool {
-		s, _ := mgr.Snapshot(h.Name)
-		return s.State == core.StateStopped && !s.Closing && s.Held
-	})
 	waitUntil(t, "state.json records the close", func() bool {
 		_, st, ok := persistedEnabled(t, statePath, h.Name)
 		return ok && st == string(core.StateStopped)
@@ -213,7 +210,11 @@ func TestDaemonSchedulerClosesGracefully(t *testing.T) {
 	if enabled, _, _ := persistedEnabled(t, statePath, h.Name); !enabled {
 		t.Error("state.json enabled = false after a graceful close")
 	}
-	if _, err := os.Stat(filepath.Join(opts.LogDir, h.Name+".log")); err != nil {
+	data, err := os.ReadFile(filepath.Join(opts.LogDir, h.Name+".log"))
+	if err != nil {
 		t.Fatalf("durable log missing after the close: %v", err)
+	}
+	if !strings.Contains(string(data), "graceful unavailable") {
+		t.Errorf("durable log does not say graceful shutdown was unavailable:\n%s", data)
 	}
 }
