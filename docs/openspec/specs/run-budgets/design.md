@@ -355,8 +355,10 @@ left open.
   only if field data asks.
 - **The run-log text fallback.** Resolved (design review 2026-09-22): accepted
   as temporary. Matching the last 4 KiB of a non-zero exit's sanitized run log
-  stays until stump.wtf/agent-trace#104 surfaces claude-code API errors as
-  marks, then it is removed.
+  stays until claude-code API errors arrive as marks, then it is removed.
+  stump.wtf/agent-trace#104 closed on 2026-09-22 (agent-trace PR #111), but
+  Harness still pins an agent-trace from 2026-08-10, so the fallback retires
+  with the dependency bump that picks the marks up.
 - **Should `--over-budget` on a resident default to the remaining operating
   window instead of 1h?** Resolved (design review 2026-09-22): no; it stays 1h,
   as proposed.
