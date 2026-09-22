@@ -11,10 +11,10 @@ package source
 // self-sustaining rebuild loop, once a minute, on hosts whose streams were in
 // fact delivering. Absence of evidence is not evidence of a dead stream.
 //
-// Reconnection, catch-up and reload reconciliation are #474. Here a session
-// that fails or ends settles into its terminal state and stays there until the
-// daemon restarts; that is the seam the next story replaces, and saying so is
-// better than a retry loop written twice.
+// A session reconnects on jittered backoff, re-initializes when the server
+// forgets it, and retries an unfixable failure at the ceiling rather than at
+// speed. It runs one `catch_up` firing when it returns from an outage long
+// enough that the server's own re-rings cannot have covered it.
 //
 // Governing: ADR-0021; SPEC-0014 REQ "Channel Listener Session", REQ "Channel
 // Notification Handling", REQ "Firing".
@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/scheduler"
+	"github.com/stump-wtf/harness/internal/supervisor"
 	"github.com/stump-wtf/harness/internal/trigger"
 	"github.com/stump-wtf/harness/internal/trigger/channel"
 )
@@ -60,6 +62,15 @@ type sourceState struct {
 	status Status
 	cancel context.CancelFunc
 	done   chan struct{}
+	// identity is what the session was built for. A reload compares against
+	// it to decide whether the live session still serves the source, which is
+	// what lets a byte-identical rewrite leave an open stream alone.
+	identity identity
+	// deliberate marks a close the reconciler ordered. REQ "Channel
+	// Reconnection" says a reload-caused reconnect is not an outage, so the
+	// replacement session's first connect must not be credited with one —
+	// otherwise every token rotation would fire a catch-up run.
+	deliberate bool
 }
 
 // dialer opens a channel session. It is a field on the Manager so a test can
@@ -89,18 +100,34 @@ func (m *Manager) openChannelsLocked(ctx context.Context) {
 			m.setStatusLocked(ref, core.SourceKindChannel, trigger.StateUnbound, "")
 			continue
 		}
-		m.startSessionLocked(ctx, ref, src)
+		m.startSessionLocked(ctx, ref, src, sessionSeed{downSince: m.now()})
 	}
 }
 
+// sessionSeed carries what a session needs to know about the one it replaces.
+//
+// It exists for one requirement: "A reconnection caused by a reload SHALL NOT
+// count as an outage for REQ Channel Catch-Up". A replacement session is a
+// fresh goroutine with fresh locals, so without a seed its first connect would
+// look exactly like the daemon's first connect — and every token rotation
+// would fire a catch-up run on every bound harness.
+type sessionSeed struct {
+	// connectedBefore suppresses the first-connect catch-up.
+	connectedBefore bool
+	// downSince is when the source stopped being connected. A reload sets it
+	// to now, so the replacement's outage measures zero.
+	downSince time.Time
+}
+
 // startSessionLocked runs one source's session on its own goroutine.
-func (m *Manager) startSessionLocked(ctx context.Context, ref string, src core.ChannelSource) {
+func (m *Manager) startSessionLocked(ctx context.Context, ref string, src core.ChannelSource, seed sessionSeed) {
 	sctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	m.sources[ref] = &sourceState{
-		status: Status{Source: ref, Kind: core.SourceKindChannel, State: trigger.StateConnecting, Since: time.Now()},
-		cancel: cancel,
-		done:   done,
+		status:   Status{Source: ref, Kind: core.SourceKindChannel, State: trigger.StateConnecting, Since: time.Now()},
+		cancel:   cancel,
+		done:     done,
+		identity: identityOf(src),
 	}
 	m.sessions.Add(1)
 	go func() {
@@ -111,7 +138,7 @@ func (m *Manager) startSessionLocked(ctx context.Context, ref string, src core.C
 		// in the order they happened. A `go notify` from here would race the
 		// session's own synchronous reports and could land after them.
 		m.notifyStatus(ref)
-		m.runSession(sctx, ref, src)
+		m.runSession(sctx, ref, src, seed)
 	}()
 }
 
@@ -129,10 +156,28 @@ func (m *Manager) notifyStatus(ref string) {
 	}
 }
 
-// runSession initializes, listens, and records what happened.
-func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSource) {
-	client := m.dial(src)
+// runSession is one source's connect loop: initialize, listen, and on any
+// failure wait and try again until the context is cancelled.
+//
+// The loop owns three pieces of state that only make sense together, which is
+// why they are locals rather than fields: the backoff, whether this is the
+// first connect since the daemon started, and when the source was last
+// disconnected. The last two are what decide a catch-up firing.
+func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSource, seed sessionSeed) {
+	var (
+		bo          = &channel.Backoff{Rand: m.rand}
+		client      *channel.Client
+		firstDone   = seed.connectedBefore // has this source ever connected?
+		downSince   = seed.downSince       // when it stopped being connected
+		everStarted bool                   // has an attempt run yet?
+	)
+	if downSince.IsZero() {
+		downSince = m.now()
+	}
 	defer func() {
+		if client == nil {
+			return
+		}
 		// Best effort, and on a context of its own: the session context is
 		// already cancelled by the time a shutdown gets here, and a DELETE on
 		// a cancelled context never leaves.
@@ -141,34 +186,141 @@ func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSo
 		_ = client.Close(dctx)
 	}()
 
-	if err := client.Initialize(ctx); err != nil {
+	for ctx.Err() == nil {
+		if client == nil {
+			client = m.dial(src)
+		}
+		if everStarted {
+			m.setState(ref, trigger.StateConnecting, "")
+		}
+		everStarted = true
+
+		openFor, err := m.attempt(ctx, ref, src, client, &firstDone, &downSince, bo)
 		if ctx.Err() != nil {
+			// A deliberate close — shutdown, or the reconciler ending this
+			// session. Never an outage, so the next session's first connect
+			// is not credited with one.
 			return
 		}
-		m.setState(ref, terminalState(err), err.Error())
-		m.log.Warn("channel session failed", "source", ref, "err", err.Error())
-		return
+		bo.ResetAfter(openFor)
+
+		state, delay := trigger.StateBackoff, bo.Next()
+		reason := "the server closed the stream"
+		if err != nil {
+			reason = err.Error()
+			if terminalState(err) == trigger.StateError {
+				// A wrong credential, a server that is not a channel server,
+				// a protocol violation: trying sooner will not fix it, and
+				// hammering an auth endpoint is its own problem.
+				state, delay = trigger.StateError, bo.Ceiling()
+			}
+		}
+		if errors.Is(err, channel.ErrSessionExpired) {
+			// The server has forgotten this session id. A fresh client is
+			// the only way back: reusing this one would keep sending the
+			// dead id and keep getting 404.
+			client = nil
+		}
+		m.setState(ref, state, reason)
+		m.log.Warn("channel session down; retrying",
+			"source", ref, "state", string(state), "retry_in", delay.String(), "err", reason)
+
+		if !m.sleep(ctx, delay) {
+			return
+		}
+	}
+}
+
+// attempt runs one connect-and-listen. It returns how long the stream stayed
+// open (zero when it never did) and why it ended.
+func (m *Manager) attempt(
+	ctx context.Context,
+	ref string,
+	src core.ChannelSource,
+	client *channel.Client,
+	firstDone *bool,
+	downSince *time.Time,
+	bo *channel.Backoff,
+) (time.Duration, error) {
+	if client.SessionID() == "" {
+		if err := client.Initialize(ctx); err != nil {
+			return 0, err
+		}
 	}
 
+	var openedAt time.Time
 	err := client.Listen(ctx, &sessionHandler{m: m, ref: ref, src: src}, func() {
 		// The one place `connected` is set: the stream is open and about to
 		// be read.
+		openedAt = m.now()
 		m.setState(ref, trigger.StateConnected, "")
-		m.log.Info("channel connected", "source", ref)
+		m.log.Info("channel connected", "source", ref, "attempts", bo.Attempts())
+		m.onConnected(ref, src, firstDone, *downSince)
 	})
+	if openedAt.IsZero() {
+		// Never opened: the source has been down continuously, so downSince
+		// keeps its earlier value and a long outage stays long.
+		return 0, err
+	}
+	open := m.now().Sub(openedAt)
+	*downSince = m.now()
+	return open, err
+}
+
+// onConnected decides whether this connection owes a catch-up firing.
+//
+// Two cases, and the second is the one with a number attached: the first
+// connect after the daemon started, and a return from an outage longer than
+// the scheduler's LateGrace.
+//
+// Reusing LateGrace rather than picking a threshold here is deliberate. A
+// doorbell lost to a brief blip is re-rung by the server within minutes, so
+// only a long gap or a restart can outlast the re-rings; and "late" then means
+// one thing across the daemon rather than two numbers that drift. A flapping
+// link cannot produce a run per flap either, because the backoff stretches the
+// very outages this measures.
+// Governing: SPEC-0014 REQ "Channel Catch-Up"; SPEC-0008 REQ "Missed Window
+// Handling".
+func (m *Manager) onConnected(ref string, src core.ChannelSource, firstDone *bool, downSince time.Time) {
+	first := !*firstDone
+	*firstDone = true
+	outage := m.now().Sub(downSince)
 	switch {
-	case ctx.Err() != nil:
-		// A deliberate close — shutdown, or the source going away. Not an
-		// outage, and #474 must not treat it as one for catch-up purposes.
-		return
-	case err != nil:
-		m.setState(ref, terminalState(err), err.Error())
-		m.log.Warn("channel stream ended", "source", ref, "err", err.Error())
+	case first:
+		m.log.Info("channel connected for the first time since start; catching up", "source", ref)
+	case outage > scheduler.LateGrace:
+		m.log.Info("channel reconnected after an outage; catching up",
+			"source", ref, "outage", outage.Round(time.Second).String())
 	default:
-		// A clean end of stream: the server closed. Not success — there is
-		// nothing to hear until a reconnect (#474).
-		m.setState(ref, trigger.StateBackoff, "the server closed the stream")
-		m.log.Info("channel stream closed by the server", "source", ref)
+		// A blip. The server's own re-rings cover it, and a catch-up run per
+		// flap would be worse than the gap it papers over.
+		return
+	}
+	m.catchUp(ref)
+}
+
+// catchUp starts one catch_up run for every bound harness that asked for one.
+//
+// The run carries NO event file: there is no event — the point is that
+// something may have been missed, and only the agent can find out what. It
+// goes through on_overlap like any other firing, so a catch-up that lands on a
+// run already in flight is held or skipped rather than stacking.
+// Governing: SPEC-0014 REQ "Channel Catch-Up".
+func (m *Manager) catchUp(ref string) {
+	cfg := m.config()
+	for _, name := range cfg.BoundHarnesses(ref) {
+		h, ok := cfg.Harnesses[name]
+		if !ok || !h.CatchUp {
+			continue
+		}
+		if _, ok := m.runner.StartRun(name, supervisor.RunRequest{
+			Trigger: supervisor.TriggerCatchUp,
+			Source:  ref,
+		}); !ok {
+			m.log.Warn("catch-up fired for a harness the daemon does not know", "harness", name, "source", ref)
+			continue
+		}
+		m.log.Info("catch-up run started", "harness", name, "source", ref)
 	}
 }
 

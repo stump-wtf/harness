@@ -271,6 +271,9 @@ func runDaemon(o daemonOpts) {
 	// live config per firing, so a reload's change to a harness's `triggers`
 	// applies from the next event (REQ "Source Reconciliation On Reload").
 	sources := startDaemonSources(mgr)
+	// After startDaemonScheduler, which registered its own hook: this
+	// composes onto it rather than replacing it (see wireSourceReload).
+	wireSourceReload(mgr, sources, func() { sched.Apply(mgr.Config()) })
 
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
@@ -410,6 +413,30 @@ func startDaemonSources(mgr *supervisor.Manager) *source.Manager {
 	return sm
 }
 
+// wireSourceReload composes source reconciliation onto the Manager's reload
+// hook, preserving whatever was already registered.
+//
+// SetReloadHook takes one callback and is documented as set-once during boot,
+// so composing here is how two consumers share it without either having to
+// know about the other. Getting this wrong is silent in the worst way: a
+// replacement would stop the scheduler being re-applied on reload, and
+// schedules would simply stop tracking the config with nothing in the log to
+// say so.
+//
+// Reconciliation runs AFTER the scheduler's re-apply, matching the order they
+// appear in runDaemon. Nothing depends on the order; a stable one is just one
+// less thing to wonder about when reading a log.
+//
+// Governing: ADR-0021; SPEC-0014 REQ "Source Reconciliation On Reload".
+func wireSourceReload(mgr *supervisor.Manager, sources *source.Manager, prev func()) {
+	mgr.SetReloadHook(func() {
+		if prev != nil {
+			prev()
+		}
+		sources.Reconcile(mgr.Config())
+	})
+}
+
 // startDaemonScheduler builds, applies and starts the scheduler the daemon
 // runs, and registers it to re-apply after every config reload. It is a
 // function rather than inline in runDaemon so a test can drive THE DAEMON'S
@@ -479,6 +506,10 @@ func startDaemonScheduler(mgr *supervisor.Manager, cfg *core.Config, clock sched
 	// onReload carries the daemon's other reload reactions: the Manager
 	// holds one hook, so a second SetReloadHook would silently replace this
 	// one and stop schedules re-applying.
+	//
+	// runDaemon then composes trigger-source reconciliation onto this same
+	// hook (wireSourceReload), so there is one definition of "the config
+	// changed" rather than two that can disagree about which reload counted.
 	mgr.SetReloadHook(func() {
 		sched.Apply(mgr.Config())
 		for _, fn := range onReload {
