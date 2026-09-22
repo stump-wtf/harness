@@ -147,3 +147,103 @@ func TestDaemonWiringDeliversAnEventToTheRun(t *testing.T) {
 		t.Error("the event payload reached the run's log")
 	}
 }
+
+// TestDaemonWiringFansAFiringOutToBoundHarnesses drives the source manager
+// THE DAEMON builds — startDaemonSources — into the Manager the daemon builds,
+// and follows one event all the way to two started runs with their own records
+// and their own event files.
+//
+// Both halves have to be the daemon's own, for the #315 reason: a test that
+// assembled either would pass against a daemon that wired neither.
+//
+// Governing: ADR-0021; SPEC-0014 REQ "Firing", REQ "Event Delivery To The
+// Run", REQ "Concurrency Safety".
+func TestDaemonWiringFansAFiringOutToBoundHarnesses(t *testing.T) {
+	tmp := t.TempDir()
+	reg := attach.NewRegistry(100)
+	opts := daemonManagerOptions(reg)
+	opts.StatePath = filepath.Join(tmp, "state.json")
+	opts.LogDir = filepath.Join(tmp, "logs")
+	opts.JobsDir = filepath.Join(tmp, "jobs")
+	opts.Policy.StopGrace = 200 * time.Millisecond
+
+	bound := func(name string) core.Harness {
+		return core.Harness{
+			Name: name, Adapter: "generic", Backend: core.BackendNative,
+			Args: []string{"-c", "true"}, Restart: core.RestartNo,
+			Triggers: []string{"webhook.gitea-pr"},
+			Timeout:  core.DefaultRunTimeout, OnOverlap: core.OverlapQueue, KeepRuns: core.DefaultKeepRuns,
+		}
+	}
+	// A third harness binds a DIFFERENT source, so a fan-out that simply
+	// started everything would fail here rather than passing quietly.
+	other := bound("unrelated")
+	other.Triggers = []string{"channel.sb"}
+
+	cfg := &core.Config{
+		Harnesses: map[string]core.Harness{
+			"pr-review": bound("pr-review"),
+			"pr-labels": bound("pr-labels"),
+			"unrelated": other,
+		},
+		Profiles:     map[string]core.Profile{},
+		HarnessOrder: []string{"pr-review", "pr-labels", "unrelated"},
+		Webhooks:     map[string]core.WebhookSource{"gitea-pr": {Name: "gitea-pr", Verify: core.VerifyGitea, MaxBody: core.DefaultWebhookMaxBody}},
+		WebhookOrder: []string{"gitea-pr"},
+	}
+
+	mgr := supervisor.NewManager(cfg, opts)
+	t.Cleanup(mgr.Close)
+	reg.SetController(mgr)
+	if err := mgr.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	sources := startDaemonSources(mgr)
+	t.Cleanup(sources.Close)
+
+	ev := &trigger.Envelope{
+		Version:    trigger.EnvelopeVersion,
+		Kind:       trigger.KindWebhook,
+		Source:     "webhook.gitea-pr",
+		EventID:    "fanned-1",
+		ReceivedAt: time.Now().UTC(),
+		Webhook:    &trigger.WebhookEvent{Event: "pull_request", Delivery: "fanned-1", ContentType: "application/json"},
+	}
+	ev.Webhook.SetBody("application/json", []byte(`{"n":1}`))
+
+	got := sources.Fire(ev)
+	if len(got) != 2 {
+		t.Fatalf("the firing reached %+v, want exactly the two harnesses that bind the source", got)
+	}
+	if got[0].Harness != "pr-review" || got[1].Harness != "pr-labels" {
+		t.Errorf("fan-out order = %v, want config order", []string{got[0].Harness, got[1].Harness})
+	}
+
+	for _, name := range []string{"pr-review", "pr-labels"} {
+		deadline := time.Now().Add(10 * time.Second)
+		var rec supervisor.RunRecord
+		for {
+			runs := mgr.Runs(name)
+			if len(runs) == 1 && runs[0].Outcome != supervisor.OutcomeRunning {
+				rec = runs[0]
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: the run never finished: %+v", name, runs)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if rec.Trigger != supervisor.TriggerWebhook || rec.Source != "webhook.gitea-pr" || rec.EventID != "fanned-1" {
+			t.Errorf("%s: record = %+v", name, rec)
+		}
+		// Each harness gets its OWN event file, under its own directory.
+		eventFile := strings.TrimSuffix(mgr.RunLogPath(name, rec.RunID), ".log") + ".event.json"
+		if _, err := os.Stat(eventFile); err != nil {
+			t.Errorf("%s: no event file at %s: %v", name, eventFile, err)
+		}
+	}
+	if runs := mgr.Runs("unrelated"); len(runs) != 0 {
+		t.Errorf("a harness bound to another source was fired: %+v", runs)
+	}
+}

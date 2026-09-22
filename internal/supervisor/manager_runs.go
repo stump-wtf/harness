@@ -80,6 +80,43 @@ func (m *Manager) AppendRun(name string, rec RunRecord) (RunRecord, error) {
 	return rec, m.Save()
 }
 
+// CoalesceRun implements RunJournal: it increments Coalesced on name's stored
+// record with this id and persists, returning the updated record.
+//
+// It emits NO lifecycle event, by design (SPEC-0014 REQ "Overlap Skip
+// Coalescing"): the first skip already announced itself, and 199 more
+// announcements are exactly the noise coalescing exists to remove.
+//
+// A missing record is an error rather than a silent no-op, because the caller
+// uses that answer to decide whether to open a fresh record — swallowing it
+// would lose the skip entirely.
+func (m *Manager) CoalesceRun(name string, id int) (RunRecord, error) {
+	m.mu.Lock()
+	var rec RunRecord
+	found := false
+	if h := m.runs[name]; h != nil {
+		for i := range h.Runs {
+			if h.Runs[i].RunID != id {
+				continue
+			}
+			if h.Runs[i].Coalesced < 1 {
+				// A record written before this field existed, or restored
+				// from an older state.json: the record itself stands for the
+				// first firing, so counting from 1 keeps the total honest.
+				h.Runs[i].Coalesced = 1
+			}
+			h.Runs[i].Coalesced++
+			rec, found = h.Runs[i], true
+			break
+		}
+	}
+	m.mu.Unlock()
+	if !found {
+		return RunRecord{}, fmt.Errorf("supervisor: no run %d for %q to coalesce into", id, name)
+	}
+	return rec, m.Save()
+}
+
 // CloseRun implements RunJournal.
 func (m *Manager) CloseRun(name string, rec RunRecord) error {
 	m.mu.Lock()
@@ -108,7 +145,16 @@ func (m *Manager) StartRun(name string, req RunRequest) (RunDecision, bool) {
 		return RunDecision{}, false
 	}
 	if s.Snapshot().State == core.StateStopping {
-		rec, _ := m.AppendRun(name, decisionRecord(req, OutcomeSkipped, time.Now()))
+		// Recorded here rather than sent to the loop, and so NOT coalesced:
+		// the loop's open-skip map is keyed to the run in flight, and there
+		// is no run in flight during a stop. A burst arriving mid-stop is
+		// bounded by the stop grace, which is seconds — unlike a burst during
+		// a long run, which is what coalescing exists for.
+		// Governing: SPEC-0014 REQ "Firing", REQ "Run Record Fields".
+		rec := decisionRecord(req, OutcomeSkipped, time.Now())
+		rec.Reason = ReasonStopping
+		rec.Coalesced = 1
+		rec, _ = m.AppendRun(name, rec)
 		m.publishRun(EventRunFinished, name, rec)
 		return RunDecision{Kind: DecisionSkipped, Run: rec}, true
 	}

@@ -60,6 +60,27 @@ const (
 	TriggerWebhook RunTrigger = "webhook"
 )
 
+// RunReason says why a decision that started no process was taken. It
+// qualifies OutcomeSkipped, whose bare presence in a history answers "did it
+// run?" but not "why not?" — and the three answers want different responses
+// from an operator.
+// Governing: SPEC-0014 REQ "Run Record Fields", REQ "Overlap Skip Coalescing".
+type RunReason string
+
+const (
+	// ReasonOverlap: a run was already in flight and the overlap policy
+	// dropped this firing.
+	ReasonOverlap RunReason = "overlap"
+	// ReasonStopping: the harness was mid-stop, so the firing had nowhere to
+	// go.
+	ReasonStopping RunReason = "stopping"
+	// ReasonOutsideHours: the firing arrived outside the harness's
+	// operating_hours window. Defined here with its siblings so the
+	// vocabulary is in one place; the gate that produces it is SPEC-0014 REQ
+	// "Operating Hours On Triggered Harnesses", not yet implemented.
+	ReasonOutsideHours RunReason = "outside_hours"
+)
+
 // RunOutcome is how a run ended — or, for the outcomes that start no process,
 // what the daemon decided instead.
 type RunOutcome string
@@ -115,6 +136,16 @@ type RunRecord struct {
 	FirstWindow *time.Time `json:"first_window,omitempty"`
 	// Windows counts the windows a missed record or a catch-up run covers.
 	Windows int `json:"windows,omitempty"`
+	// Reason says WHY a decision that started no process was taken. Present
+	// only on a skipped record.
+	// Governing: SPEC-0014 REQ "Run Record Fields".
+	Reason RunReason `json:"reason,omitempty"`
+	// Coalesced counts the firings one skipped record covers. It starts at 1
+	// and increments once per further skip that matches the same open key,
+	// so a burst of 200 firings during one run leaves one record rather than
+	// 199 that flush `keep_runs` and take the real history with them.
+	// Governing: SPEC-0014 REQ "Overlap Skip Coalescing".
+	Coalesced int `json:"coalesced,omitempty"`
 	// Source is the trigger source reference that caused this decision, e.g.
 	// "webhook.gitea-pr". Unset for a schedule, catch-up or bare manual run.
 	// Governing: SPEC-0014 REQ "Run Record Fields".
@@ -157,6 +188,12 @@ type RunJournal interface {
 	CloseRun(name string, rec RunRecord) error
 	// AppendRun records a decision that started no process and persists.
 	AppendRun(name string, rec RunRecord) (RunRecord, error)
+	// CoalesceRun increments Coalesced on the stored record with this run id
+	// and persists, returning the updated record. It deliberately has no
+	// event: SPEC-0014 REQ "Overlap Skip Coalescing" says later increments
+	// emit none, because the point of coalescing is that a burst produces one
+	// notification rather than 199.
+	CoalesceRun(name string, id int) (RunRecord, error)
 }
 
 // RunDecisionKind names what StartRun did with a request.
@@ -247,14 +284,14 @@ func (s *Supervisor) startRun(req RunRequest) RunDecision {
 			s.logEvent("run queued", "trigger", string(req.Trigger))
 			return RunDecision{Kind: DecisionQueued}
 		}
-		return RunDecision{Kind: DecisionSkipped, Run: s.recordDecision(req, OutcomeSkipped)}
+		return RunDecision{Kind: DecisionSkipped, Run: s.recordSkip(req, ReasonOverlap)}
 	case core.OverlapReplace:
 		s.gracefulStop()
 		s.finishRun(OutcomeReplaced, &s.lastExitCode)
 		s.clearFailLatch()
 		return RunDecision{Kind: DecisionStarted, Run: s.beginRun(req)}
 	default:
-		return RunDecision{Kind: DecisionSkipped, Run: s.recordDecision(req, OutcomeSkipped)}
+		return RunDecision{Kind: DecisionSkipped, Run: s.recordSkip(req, ReasonOverlap)}
 	}
 }
 
@@ -530,6 +567,10 @@ func (s *Supervisor) finishRun(outcome RunOutcome, code *int) {
 		}
 	}
 	s.publishRun(EventRunFinished, run.rec)
+	// The run this record's skips were "during" is over, so the next skip
+	// opens a new record (REQ "Overlap Skip Coalescing": "When the run in
+	// flight ends, the next skip SHALL create a new record").
+	clear(s.openSkips)
 	switch outcome {
 	case OutcomeCancelled, OutcomeInterrupted:
 		return // the caller has already dealt with the queue
@@ -556,7 +597,15 @@ func (s *Supervisor) dropQueued(outcome RunOutcome) {
 // recordDecision records a firing that starts no process, and returns the
 // record.
 func (s *Supervisor) recordDecision(req RunRequest, outcome RunOutcome) RunRecord {
+	return s.recordDecisionWithReason(req, outcome, "")
+}
+
+func (s *Supervisor) recordDecisionWithReason(req RunRequest, outcome RunOutcome, reason RunReason) RunRecord {
 	rec := decisionRecord(req, outcome, time.Now())
+	rec.Reason = reason
+	if outcome == OutcomeSkipped {
+		rec.Coalesced = 1
+	}
 	if s.journal != nil {
 		appended, err := s.journal.AppendRun(s.harness.Name, rec)
 		rec = appended
@@ -564,8 +613,61 @@ func (s *Supervisor) recordDecision(req RunRequest, outcome RunOutcome) RunRecor
 			s.logEvent("run history not saved", "run_id", rec.RunID, "err", err.Error())
 		}
 	}
-	s.logEvent("run "+string(outcome), "run_id", rec.RunID, "trigger", string(req.Trigger))
+	kv := []any{"run_id", rec.RunID, "trigger", string(req.Trigger)}
+	if reason != "" {
+		kv = append(kv, "reason", string(reason))
+	}
+	s.logEvent("run "+string(outcome), kv...)
 	s.publishRun(EventRunFinished, rec)
+	return rec
+}
+
+// skipKey identifies the class of skip a record covers. Two skips coalesce
+// only when all three agree, so a burst from one webhook and a burst from a
+// second source stay distinguishable in the history — which is the whole
+// reason an operator reads it.
+// Governing: SPEC-0014 REQ "Overlap Skip Coalescing".
+type skipKey struct {
+	trigger RunTrigger
+	source  string
+	reason  RunReason
+}
+
+// recordSkip records a skipped firing, coalescing it into the open record for
+// its class when one exists.
+//
+// It lives on the actor loop for the reason the overlap decision does: the two
+// are one decision. A separate ingress-side debouncer would be a second
+// decision-maker that can disagree with the first, and the disagreement would
+// show up as a history that does not add up.
+//
+// The open keys are per RUN, not per harness: they are cleared when the run in
+// flight ends (finishRun), so the next skip opens a new record. Without that,
+// a harness skipping once a day would keep incrementing one record forever and
+// the history would never show WHEN the skips happened.
+// Governing: SPEC-0014 REQ "Overlap Skip Coalescing".
+func (s *Supervisor) recordSkip(req RunRequest, reason RunReason) RunRecord {
+	key := skipKey{trigger: req.Trigger, source: req.Source, reason: reason}
+	if s.journal != nil {
+		if id, open := s.openSkips[key]; open {
+			rec, err := s.journal.CoalesceRun(s.harness.Name, id)
+			if err == nil {
+				// No event, and no log line per firing: 200 of either is the
+				// noise coalescing exists to remove.
+				return rec
+			}
+			// The record went away under us (pruned, or a history reset).
+			// Fall through and open a new one rather than losing the skip.
+			delete(s.openSkips, key)
+		}
+	}
+	rec := s.recordDecisionWithReason(req, OutcomeSkipped, reason)
+	if s.journal != nil && rec.RunID > 0 {
+		if s.openSkips == nil {
+			s.openSkips = map[skipKey]int{}
+		}
+		s.openSkips[key] = rec.RunID
+	}
 	return rec
 }
 
