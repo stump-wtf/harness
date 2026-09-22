@@ -5,6 +5,9 @@
 // Governing: SPEC-0006 REQ "Run Correlation".
 //
 // @joestump-agent 09/11/2026 - Added for harness#302 and harness#89.
+//
+// @joestump-agent 09/21/2026 - AppendCrushMessages and RewriteLastCrushMessage,
+// so a test can grow a live session between observer ticks (harness#390).
 package runtracetest
 
 import (
@@ -43,7 +46,7 @@ func WriteCrushDB(tb testing.TB, path string, sessions ...CrushSession) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		tb.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", writerDSN(path))
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -94,6 +97,61 @@ func WriteCrushDB(tb testing.TB, path string, sessions ...CrushSession) {
 			}
 		}
 	}
+}
+
+// AppendCrushMessages adds messages to an existing session the way a live
+// crush does: each row is a new insert (so its rowid follows every row already
+// there), and the session's updated_at moves to the newest message — crush's
+// message-count trigger touches the session row on every insert, which fires
+// its updated_at trigger. That is what discovery's activity filter reads.
+func AppendCrushMessages(tb testing.TB, path, sessionID string, msgs ...CrushMessage) {
+	tb.Helper()
+	db, err := sql.Open("sqlite", writerDSN(path))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer db.Close()
+	ctx := context.Background()
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE session_id = ?`, sessionID).Scan(&n); err != nil {
+		tb.Fatal(err)
+	}
+	for i, m := range msgs {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO messages (id, session_id, role, parts, model, created_at, updated_at) VALUES (?, ?, ?, ?, 'test/model', ?, ?)`,
+			fmt.Sprintf("%s-%d", sessionID, n+i), sessionID, m.Role, m.Parts, m.At.Unix(), m.At.Unix()); err != nil {
+			tb.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx,
+			`UPDATE sessions SET message_count = message_count + 1, updated_at = MAX(updated_at, ?) WHERE id = ?`,
+			m.At.Unix(), sessionID); err != nil {
+			tb.Fatal(err)
+		}
+	}
+}
+
+// RewriteLastCrushMessage replaces the parts of a session's newest message in
+// place, the way crush streams into an assistant row: the row is updated, not
+// re-inserted, so neither its rowid nor the session's updated_at moves.
+func RewriteLastCrushMessage(tb testing.TB, path, sessionID, parts string) {
+	tb.Helper()
+	db, err := sql.Open("sqlite", writerDSN(path))
+	if err != nil {
+		tb.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(context.Background(),
+		`UPDATE messages SET parts = ? WHERE rowid = (SELECT MAX(rowid) FROM messages WHERE session_id = ?)`,
+		parts, sessionID); err != nil {
+		tb.Fatal(err)
+	}
+}
+
+// writerDSN opens a store for writing with a busy timeout, as crush does: a
+// test that grows a session while an observer is polling it must wait out the
+// reader's shared lock rather than fail with SQLITE_BUSY.
+func writerDSN(path string) string {
+	return "file:" + path + "?_pragma=busy_timeout(5000)"
 }
 
 // ToolCall is an assistant message's tool_call part.
