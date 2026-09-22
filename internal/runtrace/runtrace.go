@@ -25,6 +25,10 @@
 // claimant checks resolve symlinked workdirs and count a peer whose history is
 // unknown at the session's start; a session reached through two sources is
 // counted once.
+//
+// @joestump-agent 09/21/2026 - ClaimantAt asks the claimant rule at the moment
+// of an activity rather than the session's start, for the daemon-side agent
+// event observer (harness#390); Claimant is ClaimantAt at the start.
 package runtrace
 
 import (
@@ -485,14 +489,35 @@ func CouldWrite(adapter, kind string) bool {
 // work under another's name.
 func Claimant(meta tail.SessionMeta, scopes []Scope, now time.Time) (string, bool) {
 	started, ok := meta.Started()
-	cwd := clean(meta.Cwd)
-	if !ok || cwd == "" {
+	if !ok {
 		return "", false
+	}
+	name, _ := ClaimantAt(meta, started, scopes, now)
+	return name, name != ""
+}
+
+// ClaimantAt is Claimant's rule asked at an arbitrary instant instead of the
+// session's start: which harness could have been writing into this session at
+// at. It returns the attributable harness ("" when there is none) and the name
+// of every harness the rule could not rule out, so a caller can tell a
+// contested session (two or more candidates) from one nobody claims.
+//
+// The question differs from Claimant's for a session that outlives the run
+// that opened it. A crush harness resumes its one session across restarts
+// (issue #347), so the session's start sits in a run long gone and the
+// start-time rule never attributes it again — exactly the long-lived worker
+// whose live errors a daemon-side observer exists to report (issue #390).
+// Asked at the moment of the activity, the same three signals (kind, workdir
+// and store, a covering run) answer for what is being written now.
+func ClaimantAt(meta tail.SessionMeta, at time.Time, scopes []Scope, now time.Time) (string, []string) {
+	cwd := clean(meta.Cwd)
+	if at.IsZero() || cwd == "" {
+		return "", nil
 	}
 	kind := string(meta.Harness)
 	var found []Scope
 	for _, s := range scopes {
-		if CouldWrite(s.Adapter, kind) && SameDir(s.Workdir, cwd) && s.mayHaveRun(started, now) {
+		if CouldWrite(s.Adapter, kind) && SameDir(s.Workdir, cwd) && s.mayHaveRun(at, now) {
 			found = append(found, s)
 		}
 	}
@@ -511,10 +536,15 @@ func Claimant(meta tail.SessionMeta, scopes []Scope, now time.Time) (string, boo
 			found = owners
 		}
 	}
-	if len(found) != 1 || found[0].Adapter != kind || !found[0].covers(started, now) {
-		return "", false
+	names := make([]string, 0, len(found))
+	for _, s := range found {
+		names = append(names, s.Name)
 	}
-	return found[0].Name, true
+	sort.Strings(names)
+	if len(found) != 1 || found[0].Adapter != kind || !found[0].covers(at, now) {
+		return "", names
+	}
+	return found[0].Name, names
 }
 
 // EntryKind classifies one activity entry.

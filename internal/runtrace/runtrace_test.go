@@ -590,3 +590,43 @@ func TestClaimantPrefersTheSessionsOwnStore(t *testing.T) {
 		t.Errorf("Claimant = %q, %v; want no claimant when nothing names a store", got, ok)
 	}
 }
+
+// TestClaimantAt: the rule asked at the moment of an activity. The session
+// below opened a week before the run that is writing into it now — a crush
+// harness resumes its one session across restarts (#347) — so Claimant, which
+// asks at the session's start, credits nobody, while ClaimantAt at the
+// activity credits the running harness. Contested and unclaimed stay distinct
+// in the candidate list, which is what lets the observer count ambiguity.
+func TestClaimantAt(t *testing.T) {
+	run := Window{Start: spawn}
+	resumed := tail.SessionMeta{Harness: tail.HarnessCrush, Cwd: "/w", StartedAt: spawn.Add(-7 * 24 * time.Hour).Format(time.RFC3339)}
+	activity := spawn.Add(10 * time.Minute)
+	now := spawn.Add(11 * time.Minute)
+	worker := Scope{Name: "worker", Adapter: "crush", Workdir: "/w", Runs: []Window{run}, KnownSince: spawn}
+
+	if got, ok := Claimant(resumed, []Scope{worker}, now); ok {
+		t.Fatalf("Claimant = %q; the start-time rule should credit nobody for a resumed session, or this test proves nothing", got)
+	}
+	for _, tc := range []struct {
+		name      string
+		scopes    []Scope
+		at        time.Time
+		want      string
+		wantCands []string
+	}{
+		{"running harness at the activity", []Scope{worker}, activity, "worker", []string{"worker"}},
+		{"contested", []Scope{worker, {Name: "sibling", Adapter: "crush", Workdir: "/w", Runs: []Window{run}, KnownSince: spawn}}, activity, "", []string{"sibling", "worker"}},
+		// Before KnownSince the worker's history is unknown: a possible author,
+		// never an attributable one.
+		{"before known history", []Scope{worker}, spawn.Add(-time.Hour), "", []string{"worker"}},
+		{"exited before the activity", []Scope{{Name: "worker", Adapter: "crush", Workdir: "/w", Runs: []Window{{Start: spawn, End: spawn.Add(time.Minute)}}, KnownSince: spawn}}, activity, "", []string{}},
+		{"zero instant", []Scope{worker}, time.Time{}, "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, cands := ClaimantAt(resumed, tc.at, tc.scopes, now)
+			if got != tc.want || !reflect.DeepEqual(cands, tc.wantCands) {
+				t.Errorf("ClaimantAt = %q, %v; want %q, %v", got, cands, tc.want, tc.wantCands)
+			}
+		})
+	}
+}
