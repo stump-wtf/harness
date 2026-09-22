@@ -134,7 +134,8 @@ func printJobsTable(w io.Writer, jobs []protocol.JobInfo, now time.Time) error {
 	for _, j := range jobs {
 		t.Row(
 			j.Name,
-			t.stateCell(j.State, j.Schedule),
+			// A scheduled one-shot is never gated (ADR-0019 exclusions).
+			t.stateCell(j.State, j.Schedule, false, false),
 			schedfmt.LabelOrRaw(j.Schedule),
 			jobNextCell(j, now),
 			jobLastCell(j, now),

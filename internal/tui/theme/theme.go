@@ -215,6 +215,18 @@ func (t *Theme) IdleStyle() lipgloss.Style {
 	return t.style().Foreground(t.resolve(t.Palette.Amber))
 }
 
+// ClosingStyle is the cyan a harness wears while a graceful operating-hours
+// close is in flight — the same transient-state color starting/restarting/
+// stopping already use (design.md § "Presentation reuses the schedule
+// machinery": "closing ... in the transient-state styling"). Not in
+// stateColor because closing is not a core.State either: the state machine
+// still reports whatever it was doing (running, degraded, ...), and only the
+// presentation layer renames it (schedfmt). Governing: ADR-0019, SPEC-0012
+// REQ "Operating Hours Visibility".
+func (t *Theme) ClosingStyle() lipgloss.Style {
+	return t.style().Foreground(t.resolve(t.Palette.Cyan))
+}
+
 // StateStyle returns the colored style for a state's glyph/label.
 func (t *Theme) StateStyle(s core.State) lipgloss.Style {
 	return t.style().Foreground(t.resolve(t.stateColor(s)))
@@ -241,18 +253,28 @@ func (t *Theme) RenderState(s core.State) string {
 // RenderHarnessState renders "<glyph> <label>" for a harness, honouring the
 // scheduled-harness presentation: the clock glyph for anything cron-fired,
 // "armed" instead of "stopped" between firings, and amber instead of the
-// stopped pink to carry it.
+// stopped pink to carry it — plus a gated harness's operating-hours
+// presentation (SPEC-0012 REQ "Operating Hours Visibility"): "off-hours"
+// instead of "stopped", amber like armed, and "closing" (outranking
+// off-hours) in the transient-state cyan while a graceful close is in
+// flight. A scheduled harness is never gated (ADR-0019 exclusions), so the
+// two never compete for one row.
 //
 // RenderState above takes a bare core.State and cannot know any of that — it
 // is right for surfaces that genuinely have only a state (the start/stop
 // progress TUI). Anywhere a whole harness is in hand, this is the one to
 // call, so the cockpit and `harness list` cannot describe it two ways.
-func (t *Theme) RenderHarnessState(state, schedule string) string {
+func (t *Theme) RenderHarnessState(state, schedule string, held, closing bool) string {
 	style := t.StateStyle(core.State(state))
-	if schedfmt.IsArmed(state, schedule) {
+	switch {
+	case closing:
+		style = t.ClosingStyle()
+	case schedfmt.IsOffHours(state, held):
+		style = t.IdleStyle()
+	case schedfmt.IsArmed(state, schedule):
 		style = t.IdleStyle()
 	}
-	return style.Render(schedfmt.Glyph(state, schedule) + " " + schedfmt.StateLabel(state, schedule))
+	return style.Render(schedfmt.Glyph(state, schedule) + " " + schedfmt.StateLabel(state, schedule, held, closing))
 }
 
 // RenderGlyph renders just the colored glyph (row-leading marker). Even alone

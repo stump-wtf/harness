@@ -155,7 +155,7 @@ func TestTableColorKeysOffActualWriter(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	tt := NewTable(&buf, "NAME", "STATE")
-	tt.Row("demo", tt.stateCell("running"))
+	tt.Row("demo", tt.stateCell("running", "", false, false))
 	_ = tt.Flush()
 	if strings.Contains(buf.String(), "\x1b[") {
 		t.Errorf("Table emitted ANSI to a non-TTY writer (M2 regression):\n%q", buf.String())

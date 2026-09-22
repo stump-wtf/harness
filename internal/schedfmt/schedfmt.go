@@ -32,6 +32,7 @@ package schedfmt
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -384,11 +385,47 @@ func IsArmed(state, schedule string) bool {
 	return schedule != "" && core.State(state) == core.StateStopped
 }
 
-// StateLabel renders a harness's state for humans, substituting "armed" for a
-// scheduled harness's "stopped". Every other state, and every unscheduled
-// harness, is returned unchanged.
-func StateLabel(state, schedule string) string {
-	if IsArmed(state, schedule) {
+// OffHoursLabel is what a held gated harness is called instead of "stopped".
+//
+// stopped is the same latch a give-up produces (core.StateStopped), and
+// conflating the two would make stumpcloud/stumpcloud#440's alerting lie: an
+// operating-hours hold is not a failure, and paging on it would be wrong in
+// the other direction from missing a real one. Governing: ADR-0019,
+// SPEC-0012 REQ "Operating Hours Visibility".
+const OffHoursLabel = "off-hours"
+
+// ClosingLabel is what a harness reads while a graceful close is in flight
+// (SPEC-0012 REQ "Graceful Shutdown"): still up underneath — running,
+// degraded, whatever it was doing — and stopping as soon as its agent's turn
+// ends, it goes quiet, or the close's deadline passes, whichever lands first.
+const ClosingLabel = "closing"
+
+// IsOffHours reports whether state/held is the one combination StateLabel
+// renames to off-hours: a gated harness the operating-hours gate has shut
+// down, sitting in the same core.StateStopped a give-up latch would produce.
+// Closing is deliberately not part of this test — a close in flight is still
+// up, so its state is never StateStopped, but StateLabel checks closing
+// first anyway so a caller can never observe the two labels disagree.
+func IsOffHours(state string, held bool) bool {
+	return held && core.State(state) == core.StateStopped
+}
+
+// StateLabel renders a harness's state for humans: "closing" for a graceful
+// close in flight (still up, about to stop), "off-hours" for a held gated
+// harness ("stopped" would read as a give-up, not an hours gate), "armed" for
+// a scheduled harness's "stopped", and every other state and harness
+// unchanged. closing outranks off-hours because a closing harness is also
+// held (SPEC-0012: Held is set from the moment a graceful close begins, not
+// only once the process actually stops) but its true state is not yet
+// StateStopped, so IsOffHours never matches it anyway — the order here just
+// keeps that reasoning in one place instead of relying on it implicitly.
+func StateLabel(state, schedule string, held, closing bool) string {
+	switch {
+	case closing:
+		return ClosingLabel
+	case IsOffHours(state, held):
+		return OffHoursLabel
+	case IsArmed(state, schedule):
 		return ArmedLabel
 	}
 	return state
@@ -417,4 +454,93 @@ func Glyph(state, schedule string) string {
 		return "·"
 	}
 	return s.Glyph()
+}
+
+// Operating Hours Presentation
+//
+// design.md § "Presentation reuses the schedule machinery": operating hours
+// adds a state label (above) and reuses the SCHEDULE/NEXT columns rather than
+// adding a new one (#343). HoursNext renders NEXT's four phrasings; below it,
+// HoursExprLabel renders SCHEDULE's zone-trimmed expression.
+//
+// Governing: ADR-0019 (operating hours), SPEC-0012 REQ "Operating Hours
+// Visibility".
+//
+// @joestump-agent 09/22/2026 - Added for stump.wtf/harness#385.
+
+// HoursNext renders the NEXT column's phrasing for a gated harness, the four
+// forms design.md fixes:
+//
+//   - closing: "stops by 13:15" — the close's OWN deadline (closingUntil),
+//     not the window it started from. A graceful close can outrun the window
+//     by up to hours_shutdown_timeout, so the window's own close time would
+//     read as already past.
+//   - leaseUntil set: "lease until 21:00" — running past the close on an
+//     after-hours lease.
+//   - held: "opens Mon 09:00" — waiting on hoursNext, the day is worth
+//     stating because the open can be days away.
+//   - otherwise (in hours, plain): "closes 13:00" — hoursNext is the window's
+//     own close for a running gated harness.
+//
+// Every timestamp is RFC 3339; an empty or unparsable one, or none of the
+// above applying, renders "" so the caller's existing blank handling is
+// unchanged — exactly NextIn's contract.
+func HoursNext(held, closing bool, leaseUntil, closingUntil, hoursNext string) string {
+	switch {
+	case closing:
+		return hoursNextAt("stops by", closingUntil, "15:04")
+	case leaseUntil != "":
+		return hoursNextAt("lease until", leaseUntil, "15:04")
+	case held:
+		return hoursNextAt("opens", hoursNext, "Mon 15:04")
+	default:
+		return hoursNextAt("closes", hoursNext, "15:04")
+	}
+}
+
+// hoursNextAt parses stamp (RFC 3339) and renders "verb HH:MM" (or "verb Mon
+// HH:MM" for layout "Mon 15:04"). "" on an empty or unparsable stamp.
+func hoursNextAt(verb, stamp, layout string) string {
+	if stamp == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, stamp)
+	if err != nil {
+		return ""
+	}
+	return verb + " " + t.Format(layout)
+}
+
+// DaemonZoneName is schedfmt's best-effort name for "the daemon's zone": the
+// TZ environment variable, when set — the same convention an unprefixed
+// operating_hours window already resolves against (ADR-0019: "the caller's
+// zone — the daemon's local zone in production"). "" when TZ is unset, which
+// HoursExprLabel treats as "unknown" and declines to trim, never as a false
+// match — the same conservative-decline choice Label makes for a cadence it
+// cannot state plainly.
+//
+// This is a real limitation, not a shortcut: Go's time.Local.String() always
+// returns the literal string "Local", never the system's actual IANA zone
+// name (there is no portable stdlib way to recover it), so TZ is the only
+// signal available without reading OS-specific files. Every supported
+// deployment today runs the CLI on the same host as the daemon (ADR-0004: a
+// local Unix socket), so the CLI's own environment is the daemon's.
+func DaemonZoneName() string {
+	return os.Getenv("TZ")
+}
+
+// HoursExprLabel renders operating_hours for the SCHEDULE column: the
+// expression as configured, with a leading TZ=/CRON_TZ= prefix dropped when
+// it names the SAME zone as daemonZone (typically DaemonZoneName()) — so
+// "TZ=America/Los_Angeles Mon-Fri 09:00-13:00" reads as "Mon-Fri 09:00-13:00"
+// on a daemon already in that zone, and a window pinned to a DIFFERENT zone
+// keeps its prefix, which is the fact worth stating. An empty daemonZone (the
+// daemon's zone is unknown) or a mismatched one leaves the expression as
+// written — trimming is conservative, exactly like Label's fallback to "".
+func HoursExprLabel(operatingHours, daemonZone string) string {
+	zone, expr := splitZone(operatingHours)
+	if zone == "" || daemonZone == "" || zone != daemonZone {
+		return operatingHours
+	}
+	return expr
 }
