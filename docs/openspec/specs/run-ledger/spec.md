@@ -29,7 +29,7 @@ This spec amends, by reference and without editing them:
   outcome set gains `budget_exceeded`, `quota_parked`, `model_mismatch` and
   `model_unattested`, and
   `cancelled` covers any deliberate stop with a `reason` (REQ-5). The bounded
-  `state.json` history becomes a projection of the ledger (REQ-13).
+  `state.json` history is removed; the ledger replaces it (REQ-13).
 * **SPEC-0008 REQ "Protocol Operations"** and **SPEC-0002 REQ "Control
   Operations"**: the `runs` op gains a query and NAME becomes optional (REQ-15).
 * **SPEC-0013 REQ-4**: `harness_scheduled_runs_total` is counted from committed
@@ -376,8 +376,8 @@ whose day ended more than `retention` ago, then the oldest remaining files until
 the total is at most `max_mb`, never deleting today's file. Before deleting a file
 that holds the `opened` line of a run still open, it SHALL write a fresh
 `opened` line for that run into today's file. `keep_runs` SHALL continue to bound
-per-run logs and the `state.json` projection; a record whose per-run log was
-deleted SHALL read `log_pruned: true`.
+per-run logs only; a record whose per-run log was deleted SHALL read
+`log_pruned: true`.
 
 #### Scenario: Old files go
 
@@ -397,27 +397,39 @@ deleted SHALL read `log_pruned: true`.
 - **WHEN** `harness runs NAME` lists run 1
 - **THEN** it is listed with `log pruned`, and `harness logs NAME --run 1` says the log was pruned
 
-### REQ-13: The `state.json` projection
+### REQ-13: Run history leaves `state.json`
 
-The daemon SHALL keep writing the bounded SPEC-0008 run history in `state.json`
-in the same run-journal call that writes the ledger, so `jobs`, `trigger --wait`
-and `logs --run` behave as before. At boot, when the ledger holds records for a
-harness, the daemon SHALL rebuild that harness's `state.json` history from the
-ledger's newest `keep_runs` records. On the first boot with no `ledger/`
-directory, it SHALL import each harness's existing `state.json` history into the
-ledger as `decided`/`closed` lines marked `imported: true`, exactly once.
+The ledger SHALL be the only run history. The daemon SHALL NOT write SPEC-0008
+run records to `state.json`; each harness's `state.json` entry SHALL keep only
+`last_run_id`, the run id allocator. `jobs`, `trigger --wait`, `logs --run` and
+the `runs` op SHALL read run records from the ledger, and SHALL behave as
+SPEC-0008 specifies for the fields they show. There SHALL be no projection, no
+dual write and no compatibility path for a daemon that predates this spec.
+
+On the first boot with no `ledger/` directory, the daemon SHALL import each
+harness's existing `state.json` history into the ledger as `decided`/`closed`
+lines marked `imported: true`, exactly once, and SHALL then drop the record list
+from `state.json`. The implementing change SHALL carry an upgrade note in the
+release notes saying that run history now lives only in `ledger/` and that
+`keep_runs` bounds only per-run logs.
 
 #### Scenario: Upgrading a daemon with history
 
 - **GIVEN** a `state.json` holding 20 runs for `nightly`, written before this spec
 - **WHEN** the upgraded daemon boots
-- **THEN** the ledger holds those 20 runs marked `imported`, `harness runs nightly` lists them, and a second boot imports nothing
+- **THEN** the ledger holds those 20 runs marked `imported`, `harness runs nightly` lists them, `state.json` holds no run records for `nightly` but keeps its `last_run_id`, and a second boot imports nothing
 
-#### Scenario: The projection cannot drift
+#### Scenario: jobs reads the ledger
 
-- **GIVEN** a `state.json` history edited by hand to disagree with the ledger
-- **WHEN** the daemon boots
-- **THEN** the history is rebuilt from the ledger
+- **GIVEN** `nightly`'s last run failed and `state.json` holds no run records
+- **WHEN** the operator runs `harness jobs`
+- **THEN** `nightly`'s row shows the failed run's id, time and outcome, read from the ledger
+
+#### Scenario: Run ids continue
+
+- **GIVEN** an upgraded daemon whose `state.json` records `last_run_id = 20` for `nightly`
+- **WHEN** `nightly` next fires
+- **THEN** its run id is 21
 
 ### REQ-14: `harness runs`
 
@@ -546,6 +558,5 @@ The journal, the accumulator and the query path SHALL:
 
 ## Out of Scope
 
-* Retiring the `state.json` run projection (ADR-0028 Deferred).
 * Per-run log files for resident harnesses.
 * Shipping the ledger anywhere beyond the run feed, telemetry export and `--json`.

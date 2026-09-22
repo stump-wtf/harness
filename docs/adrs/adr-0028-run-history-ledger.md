@@ -76,8 +76,11 @@ loop wait on a database and without storing anything ADR-0008 forbids?
   daemon crashed.
 * **No secrets, no content** (ADR-0008): outcomes, times, codes, counts, names,
   identifiers. Never environment, prompt, output or payload.
-* **Extend, don't replace.** `harness runs NAME`, `state.json` history,
-  `keep_runs`, per-run logs and the run id rules keep working exactly as they do.
+* **Replace, don't shadow.** `harness runs NAME`, `keep_runs`, per-run logs and
+  the run id rules keep working. The bounded `state.json` run history is
+  removed outright rather than kept as a projection. Harness is pre-1.0, so
+  there is no dual-write, no retirement window and no rollback path for it;
+  the release notes carry an upgrade note instead.
 
 ## Considered Options
 
@@ -140,7 +143,7 @@ A run record is the fold of the ledger lines that share `(harness, run_id)`:
 ### Outcome classes
 
 The existing SPEC-0008 values keep their names and meanings, so no consumer of
-`harness runs --json` or `state.json` breaks: `success`, `failed`, `timed_out`,
+`harness runs --json` breaks: `success`, `failed`, `timed_out`,
 `skipped`, `replaced`, `missed`, `cancelled`, `interrupted`, with `running` while
 in flight. (What an operator calls "timeout" is the existing `timed_out`.)
 Four are added:
@@ -208,8 +211,7 @@ consumer through this one path:
 | --- | --- | --- |
 | **SPEC-0013 metrics** | the run feed, for `harness_runs_total{outcome}`, durations, tokens and cost; and `harness_scheduled_runs_total`, which moves off the lifecycle bus | counted from committed records only |
 | **ADR-0027 budgets** | running totals maintained by the journal itself, synchronously, and rebuilt from the ledger at boot | the admission decision and the `opened` append share one lock |
-| **`harness runs`, `jobs`** | the ledger (recent records from memory, older from files) | it is the ledger |
-| **`state.json` history** | written in the same `RunJournal` call, rebuilt from the ledger at boot | a projection, not a second record |
+| **`harness runs`, `jobs`, `trigger --wait`, `logs --run`** | the ledger (recent records from memory, older from files) | it is the ledger |
 | **Telemetry export** (ADR-0022, #408) | the run feed, as one OTLP log record per closed run | optional and lossy by design, and says so |
 | **Lossless consumers** (ADR-0025's lease completion, a sweep) | replay by `seq` from the ledger | durable and replayable |
 
@@ -254,8 +256,8 @@ trace_url = "https://grafana.example.com/explore?traceId={trace_id}"  # optional
 Pruning runs at boot and after each UTC day rollover, and deletes whole day
 files. A run still open when its `opened` line's file is pruned is carried
 forward first: the journal writes a fresh `opened` snapshot into today's file.
-`keep_runs` keeps bounding per-run logs and the `state.json` projection, so a
-ledger record can outlive its log, and `harness runs` says `log pruned`.
+`keep_runs` now bounds only per-run logs, so a ledger record can outlive its
+log, and `harness runs` says `log pruned`.
 
 ### `harness runs`
 
@@ -326,10 +328,10 @@ harness runs [NAME...] [--harness NAME]... [--since DUR|TIME] [--until TIME]
 * Bad, because every resident start and exit now costs a synced append. At a
   handful per minute at most, that is noise, but a disk that stops accepting
   writes now affects admission for budgeted harnesses (ADR-0027).
-* Bad, because there are two on-disk histories for one-shots for as long as the
-  `state.json` projection is kept. It is rebuilt from the ledger at boot, so the
-  two cannot disagree after a restart, and it can be retired once `jobs` and
-  `trigger --wait` read the ledger.
+* Bad, because `state.json` stops carrying run history in the same change, so
+  a daemon downgraded past this ADR starts with none. That is the pre-1.0
+  trade: one history, no projection to keep in step, and an upgrade note
+  rather than a rollback path.
 * Bad, because usage fields depend on agent-trace#105; until it lands, records
   carry outcomes, times, codes, sessions and error counts, but no tokens, cost
   or served model.
@@ -354,13 +356,12 @@ reconciliation, feed, retention and CLI as testable requirements. Acceptance:
   the prune is still foldable.
 * `harness runs` with the daemon stopped reads the files and warns on stderr.
 * A `state.json` written before this ADR imports its run history into the ledger
-  on first boot, once.
+  on first boot, once, and the upgraded daemon writes no run records to
+  `state.json` afterwards.
 * No ledger line contains an `env_file` value, a prompt or an event payload.
 
 ### Deferred
 
-* **Retiring the `state.json` run projection** once `jobs`, `trigger --wait` and
-  `logs --run` read the ledger.
 * **Per-run logs for residents.** Their output stays in the durable log.
 * **Exporting the ledger** (to Cairn, S3, or a tracker) beyond the telemetry
   feed and `--json`.
@@ -444,13 +445,12 @@ flowchart LR
     ACC -->|"updated<br/>(≤30s checkpoints)"| J
 
     J["RunJournal<br/>(single writer)"] -->|"append + sync"| L[("ledger<br/>day files · JSONL")]
-    J -->|"same call"| SJ["state.json<br/>run projection"]
     L -->|"after sync"| FEED["run feed<br/>(non-blocking, drops counted)"]
 
     FEED --> MET["metrics endpoint<br/>runs · duration · tokens · cost"]
     FEED --> TEL["telemetry export<br/>(ADR-0022)"]
     J --> BUD["budget totals<br/>(ADR-0027)"]
-    L -->|"query · offline read"| CLI["harness runs / jobs"]
+    L -->|"query · offline read"| CLI["harness runs · jobs ·<br/>trigger --wait · logs --run"]
     L -->|"replay by seq"| LOSSLESS["lease completion (ADR-0025)<br/>· sweeps"]
     OBS --> REACH["metrics: model reachability<br/>(SPEC-0013, unchanged)"]
 ```

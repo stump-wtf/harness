@@ -26,7 +26,9 @@ live and how they fit the machinery that already exists:
 ### Goals
 
 - Extend `RunJournal` into the single writer of a ledger covering residents and
-  one-shots, without changing any existing SPEC-0008 behaviour.
+  one-shots, and make the ledger the only run history: `state.json` stops
+  carrying run records in the same change. `harness runs NAME`, `jobs`,
+  `trigger --wait` and `logs --run` keep their behaviour, read from the ledger.
 - A post-commit feed and a replay, so consumers never need the lossy bus for run
   facts.
 - A usage accumulator that turns observer activity into per-run usage.
@@ -36,7 +38,6 @@ live and how they fit the machinery that already exists:
 ### Non-Goals
 
 - A database. The access pattern does not need one (ADR-0028).
-- Retiring the `state.json` projection in this spec.
 - Per-run log files for residents.
 
 ## Decisions
@@ -153,6 +154,26 @@ already construct:
 allocator is generalized to every harness, keeping the floor-at-logs rule for
 one-shots. Residents do not create `jobs/<harness>/<id>.log` files; their
 record's `log` is the durable log path.
+
+### `state.json` keeps only the run id counter
+
+The `RunJournal` methods stop writing run records to `state.json`. Each
+harness's entry keeps `last_run_id`, the id allocator, and nothing else from
+SPEC-0008 run history: the record list and its `keep_runs` bound go. The
+consumers that read the list today move to the ledger's index in the same
+change:
+
+| Consumer | Today | After |
+| --- | --- | --- |
+| `runs` op / `harness runs NAME` | `state.json` history | ledger index, then day files (REQ-15) |
+| `jobs` (last run, last outcome) | `state.json` history | ledger index: the harness's newest folded record |
+| `trigger --wait` | polls the `runs` op, which reads `state.json` | polls the same op, now served from the ledger |
+| `logs --run N` | `state.json` history for the log path | ledger record's `log` and `log_pruned` |
+| boot reconciliation | `state.json` open records | ledger open records (REQ-7) |
+
+`keep_runs` bounds only per-run log files. There is no projection, no dual
+write and no rollback path: a daemon downgraded past this change finds no run
+history in `state.json`. The implementing PR's upgrade note says so.
 
 ### The fold and the in-memory index
 
@@ -286,7 +307,6 @@ sequenceDiagram
     M->>W: Append(closed, sync) with final usage
     W->>F: flush updated + closed, fdatasync
     W-->>M: seq
-    M->>M: state.json projection (same call)
     W-->>Sub: Committed(closed)
 ```
 
@@ -322,8 +342,10 @@ erDiagram
 - **A synced append per resident start and exit** → one `fdatasync` on a
   dedicated goroutine, bounded to 2 seconds, never on the actor loop for an
   unbudgeted harness.
-- **Two histories for one-shots while the projection lives** → rebuilt from the
-  ledger at boot, written in the same call; retired in a later spec.
+- **No downgrade path for run history** → `state.json` stops carrying run
+  records in the same change, so a downgraded daemon starts with none. Harness
+  is pre-1.0; the release notes carry an upgrade note rather than a projection
+  kept for rollback.
 - **Clock jumps** → day files are chosen by the line's UTC `at`; a backwards jump
   can append an earlier `at` to a later file, which readers tolerate because they
   fold by `seq`, not by file.
@@ -335,13 +357,16 @@ erDiagram
 
 ## Migration Plan
 
-1. The ledger is created on first boot; `state.json` history is imported once.
-2. Resident records start appearing immediately; nothing reads them yet except
-   `harness runs`.
+1. The ledger is created on first boot; `state.json` history is imported once,
+   and the run record list is dropped from `state.json` in the same boot. Only
+   `last_run_id` stays.
+2. `jobs`, `trigger --wait`, `logs --run` and the `runs` op read the ledger from
+   the first release that writes it. Resident records appear immediately.
 3. After #407 merges, the metrics collector moves `harness_scheduled_runs_total`
    to the feed and adds the REQ-11 series.
-4. Rollback: an older daemon ignores `ledger/` and keeps using `state.json`,
-   which the new daemon kept writing.
+4. Upgrade note (release notes of the version that ships it): run history now
+   lives only in `ledger/`; `state.json` no longer carries it, and `keep_runs`
+   bounds only per-run logs. Downgrading loses the view of run history.
 
 ## Open Questions
 
