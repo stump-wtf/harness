@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-22
 decision-makers: [joestump]
 extends: [ADR-0005, ADR-0011]

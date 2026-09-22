@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 date: 2026-09-22
 implements: [ADR-0029]
 extends: [SPEC-0003, SPEC-0006]
