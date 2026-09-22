@@ -343,6 +343,14 @@ type Harness struct {
 	// OperatingHours == "". Same supervision-key contract as HoursShutdown.
 	// Governing: ADR-0019; SPEC-0012 REQ "Shutdown Mode".
 	HoursShutdownTimeout time.Duration
+	// ExportTelemetry is the per-harness telemetry opt-in: nil follows
+	// [telemetry] export_all, and an explicit value wins over it either way,
+	// so an operator can export the fleet but one harness. A project file may
+	// set it false but never true — a cloned repository does not get to
+	// publish its transcripts to the operator's collector. Read per item, so a
+	// reload applies without a restart; it never affects the spawn. Governing:
+	// ADR-0022; SPEC-0015 REQ-1, REQ-2.
+	ExportTelemetry *bool
 }
 
 // ReadPromptFile reads the instruction text a PromptFile names. It is the one
@@ -472,6 +480,8 @@ type Config struct {
 	Server ServerConfig
 	// Daemon is the optional [daemon] configuration (issue #98).
 	Daemon DaemonConfig
+	// Telemetry is the optional global [telemetry] table (SPEC-0015 REQ-2).
+	Telemetry TelemetryConfig
 }
 
 // DaemonConfig carries optional daemon-level settings ([daemon] table).
@@ -480,15 +490,6 @@ type DaemonConfig struct {
 	// per-harness env files for changes and auto-reloads (issue #98). Default
 	// is true (watching on); set watch_config = false to opt out.
 	WatchConfig *bool
-	// OTelEndpoint is the OTLP/HTTP endpoint the daemon ships agent traces to
-	// (e.g. "https://cairn.stump.wtf/v1/traces" or a Honeycomb/Tempo
-	// endpoint). When set, the daemon builds OTel traces from harvested
-	// sessions via agent-trace's otel.BuildTrace and POSTs them as standard
-	// OTLP JSON. Any OTLP-compatible endpoint works — Harness does not know
-	// or care what is on the other end. Per-harness opt-in via
-	// harvest_trajectory still gates which harnesses contribute traces.
-	// Governing: ADR-0008 (secrets), SPEC-0006 REQ "Trajectory Discovery".
-	OTelEndpoint string
 }
 
 // WatchConfigEnabled reports whether config watching is enabled, defaulting

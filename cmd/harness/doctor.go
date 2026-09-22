@@ -31,6 +31,7 @@ import (
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/settings"
 	"github.com/stump-wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/telemetry"
 )
 
 // check is one row in the doctor table.
@@ -55,12 +56,20 @@ type doctorResult struct {
 	Autostart      *checkResult `json:"autostart,omitempty"`
 	Ssh            *checkResult `json:"ssh,omitempty"`
 	OperatingHours *checkResult `json:"operating_hours,omitempty"`
+	// TelemetryCheck is the warning row for a [telemetry] config that does
+	// not resolve (the daemon would refuse to start).
+	TelemetryCheck *checkResult `json:"telemetry_check,omitempty"`
 	// Settings reports every process setting with the source that supplied it,
 	// so "which one won — my flag, HARNESS_*, the file, or the default?" is
 	// answerable without reading code. It is not a health check and does not
 	// affect the tally (SPEC-0010 REQ "Source Attribution").
 	Settings map[string]settingResult `json:"settings,omitempty"`
-	Summary  summaryResult            `json:"summary"`
+	// Telemetry is the resolved [telemetry] export settings, per signal:
+	// enabled, endpoint or path, compression, timeout, and each header as
+	// name -> fingerprint, never its value (SPEC-0015 REQ-14). Present only
+	// when a destination is configured; not a health check.
+	Telemetry map[string]settingResult `json:"telemetry,omitempty"`
+	Summary   summaryResult            `json:"summary"`
 }
 
 // settingResult is one resolved process setting in the --json report.
@@ -124,6 +133,18 @@ func runDoctor(o verbOpts) int {
 		})
 	}
 
+	// Resolved telemetry export settings (SPEC-0015 REQ-14). Resolved before
+	// the daemon is dialled so the section shows even when it is down —
+	// which is when a refused [telemetry] config is most worth seeing.
+	var telem []telemetrySetting
+	if cfg != nil {
+		var row *check
+		telem, row = telemetryReport(cfg.Telemetry, telemetry.ProcessEnv(buildinfo.Version))
+		if row != nil {
+			rows = append(rows, *row)
+		}
+	}
+
 	// --- Check 2: daemon reachable -----------------------------------------
 	// Governing: ADR-0002 (thin client dials the Unix socket); ADR-0004.
 	c, daemonErr := client.Dial(o.socket, buildinfo.Version, nil)
@@ -153,7 +174,7 @@ func runDoctor(o verbOpts) int {
 		// is non-fatal but reported — see resolvedSettings.
 		rows, resolved := resolvedSettings(rows)
 
-		emitDoctor(os.Stdout, os.Stderr, rows, resolved)
+		emitDoctor(os.Stdout, os.Stderr, rows, resolved, telem)
 		return 1
 	}
 	defer c.Close()
@@ -299,7 +320,7 @@ func runDoctor(o verbOpts) int {
 	// non-fatal but reported — see resolvedSettings.
 	rows, resolved := resolvedSettings(rows)
 
-	emitDoctor(os.Stdout, os.Stderr, rows, resolved)
+	emitDoctor(os.Stdout, os.Stderr, rows, resolved, telem)
 
 	// Exit non-zero if any row failed.
 	for _, r := range rows {
@@ -415,17 +436,18 @@ func operatingHoursWarnings(cfg *core.Config) []string {
 // emitDoctor renders the rows either as JSON on stdout (when --json) or as
 // a human tabular report on stderr. Split out so it can be unit-tested with
 // an injected writer.
-func emitDoctor(stdout, stderr io.Writer, rows []check, resolved []settings.Resolved) {
+func emitDoctor(stdout, stderr io.Writer, rows []check, resolved []settings.Resolved, telem []telemetrySetting) {
 	if cliui.JSON() {
-		emitDoctorJSON(stdout, rows, resolved)
+		emitDoctorJSON(stdout, rows, resolved, telem...)
 		return
 	}
 	printDoctorTable(stderr, rows)
 	printSettingsTable(stderr, resolved)
+	printTelemetryTable(stderr, telem)
 }
 
 // emitDoctorJSON serializes the check rows as a doctorResult object.
-func emitDoctorJSON(w io.Writer, rows []check, resolved []settings.Resolved) {
+func emitDoctorJSON(w io.Writer, rows []check, resolved []settings.Resolved, telem ...telemetrySetting) {
 	var (
 		pass, warn, fail int
 		res              doctorResult
@@ -469,12 +491,21 @@ func emitDoctorJSON(w io.Writer, rows []check, resolved []settings.Resolved) {
 		case "operating_hours":
 			c := cr
 			res.OperatingHours = &c
+		case "telemetry":
+			c := cr
+			res.TelemetryCheck = &c
 		}
 	}
 	if len(resolved) > 0 {
 		res.Settings = make(map[string]settingResult, len(resolved))
 		for _, r := range resolved {
 			res.Settings[r.Setting.Name] = settingResult{Value: r.String(), Source: string(r.Source)}
+		}
+	}
+	if len(telem) > 0 {
+		res.Telemetry = make(map[string]settingResult, len(telem))
+		for _, ts := range telem {
+			res.Telemetry[ts.Name] = settingResult{Value: ts.Value, Source: ts.Source}
 		}
 	}
 	res.Summary = summaryResult{Passed: pass, Warned: warn, Failed: fail}

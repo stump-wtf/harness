@@ -124,6 +124,12 @@ type HarnessForm struct {
 	// OperatingHours (Validate mirrors the parser).
 	HoursShutdown        string
 	HoursShutdownTimeout string
+	// ExportTelemetry is the tri-state telemetry opt-in (SPEC-0015 REQ-1):
+	// "" leaves the key out (follow [telemetry] export_all), "true"/"false"
+	// write it. A string rather than a bool because "unset" and "false" mean
+	// different things once export_all is on. Round-trip field (issue #161):
+	// dropping an explicit false would start publishing that harness.
+	ExportTelemetry string
 }
 
 // NewHarnessForm is a blank form for `n` with sane defaults (native backend).
@@ -139,6 +145,11 @@ func NewHarnessForm() HarnessForm {
 func (f HarnessForm) Validate() error {
 	if strings.TrimSpace(f.Name) == "" {
 		return fmt.Errorf("name is required")
+	}
+	switch strings.TrimSpace(f.ExportTelemetry) {
+	case "", "true", "false":
+	default:
+		return fmt.Errorf("export_telemetry must be blank, true or false")
 	}
 	// Either prompt source makes this an agent one-shot; the parser's rules
 	// below all key off that, not off an inline prompt alone.
@@ -402,6 +413,9 @@ func (f HarnessForm) TOML() string {
 			fmt.Fprintf(&b, "hours_shutdown_timeout = %s\n", strconv.Quote(hst))
 		}
 	}
+	if et := strings.TrimSpace(f.ExportTelemetry); et == "true" || et == "false" {
+		fmt.Fprintf(&b, "export_telemetry = %s\n", et)
+	}
 	return b.String()
 }
 
@@ -503,6 +517,9 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.description = h.Description
 	fi.enabled = h.Enabled
 	fi.harvestTrajectory = h.HarvestTrajectory
+	if h.ExportTelemetry != nil {
+		fi.exportTelemetry = strconv.FormatBool(*h.ExportTelemetry)
+	}
 	fi.mcpAllow = strings.Join(h.MCPAllow, " ")
 	fi.operatingHours = h.OperatingHours
 	if h.OperatingHours != "" {
@@ -545,6 +562,7 @@ func (fi formInputs) toForm() HarnessForm {
 		OperatingHours:       strings.TrimSpace(fi.operatingHours),
 		HoursShutdown:        strings.TrimSpace(fi.hoursShutdown),
 		HoursShutdownTimeout: strings.TrimSpace(fi.hoursShutdownTimeout),
+		ExportTelemetry:      strings.TrimSpace(fi.exportTelemetry),
 	}
 	if args, err := shlex.Split(fi.args, true); err == nil && len(args) > 0 {
 		f.Args = args

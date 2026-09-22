@@ -13,6 +13,11 @@ see what happened:
 - `harness doctor` for the health of the whole setup;
 - the **SSH cockpit** for all of it from another machine.
 
+Running Harness as a production service with a log pipeline or a trace backend
+already in place? The daemon can also ship every tool call and provider error
+as OTLP logs and traces, or to a local JSONL file for a log shipper: see
+[Production observability](/usage/production-observability).
+
 ## `harness logs`: what did that run actually do?
 
 ```sh

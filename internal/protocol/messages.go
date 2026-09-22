@@ -244,6 +244,11 @@ type ProjectHarness struct {
 	// global config's `enabled` gates autostart (SPEC-0004 REQ "Project File
 	// Schema": identical field meanings).
 	Enabled bool `json:"enabled,omitempty"`
+	// ExportTelemetry carries a project file's telemetry opt-OUT (SPEC-0015
+	// REQ-2): only false is meaningful. The daemon discards true, so a
+	// hand-built client cannot opt a project harness in; the parser already
+	// refuses it in the file.
+	ExportTelemetry *bool `json:"export_telemetry,omitempty"`
 }
 
 // ControlResp is a successful control-plane response. Data holds the op-specific

@@ -88,6 +88,9 @@ type persistedProjectHarness struct {
 	Description    string `json:"description,omitempty"`
 	Enabled        bool   `json:"enabled,omitempty"`
 	TmuxSocket     string `json:"tmux_socket,omitempty"`
+	// ExportTelemetry is a project's telemetry opt-out, kept so a daemon
+	// restart does not quietly re-include the harness (SPEC-0015 REQ-2).
+	ExportTelemetry *bool `json:"export_telemetry,omitempty"`
 }
 
 // toPersistedProject captures a project record's definitions in persisted
@@ -101,23 +104,24 @@ func toPersistedProjectHarness(h core.Harness) persistedProjectHarness {
 		quiet = &q
 	}
 	return persistedProjectHarness{
-		Name:           h.Name,
-		Harness:        h.Adapter,
-		Args:           h.Args,
-		Prompt:         h.Prompt,
-		PromptFile:     h.PromptFile,
-		Model:          h.Model,
-		AutoAccept:     h.AutoAccept,
-		MaxTurns:       h.MaxTurns,
-		Quiet:          quiet,
-		Workdir:        h.Workdir,
-		EnvFile:        h.EnvFile,
-		RestartDelayMs: h.RestartDelay.Milliseconds(),
-		Restart:        string(h.Restart),
-		Backend:        string(h.Backend),
-		Description:    h.Description,
-		Enabled:        h.Enabled,
-		TmuxSocket:     h.TmuxSocket,
+		Name:            h.Name,
+		Harness:         h.Adapter,
+		Args:            h.Args,
+		Prompt:          h.Prompt,
+		PromptFile:      h.PromptFile,
+		Model:           h.Model,
+		AutoAccept:      h.AutoAccept,
+		MaxTurns:        h.MaxTurns,
+		Quiet:           quiet,
+		Workdir:         h.Workdir,
+		EnvFile:         h.EnvFile,
+		RestartDelayMs:  h.RestartDelay.Milliseconds(),
+		Restart:         string(h.Restart),
+		Backend:         string(h.Backend),
+		Description:     h.Description,
+		Enabled:         h.Enabled,
+		TmuxSocket:      h.TmuxSocket,
+		ExportTelemetry: h.ExportTelemetry,
 	}
 }
 
@@ -141,23 +145,24 @@ func (p persistedProjectHarness) toCore() core.Harness {
 		quiet = *p.Quiet
 	}
 	return core.Harness{
-		Name:         p.Name,
-		Adapter:      p.Harness,
-		Args:         p.Args,
-		Prompt:       p.Prompt,
-		PromptFile:   p.PromptFile,
-		Model:        p.Model,
-		AutoAccept:   p.AutoAccept,
-		MaxTurns:     p.MaxTurns,
-		Quiet:        quiet,
-		Workdir:      p.Workdir,
-		EnvFile:      p.EnvFile,
-		RestartDelay: time.Duration(p.RestartDelayMs) * time.Millisecond,
-		Restart:      restart,
-		Backend:      backend,
-		Description:  p.Description,
-		Enabled:      p.Enabled,
-		TmuxSocket:   p.TmuxSocket,
+		Name:            p.Name,
+		Adapter:         p.Harness,
+		Args:            p.Args,
+		Prompt:          p.Prompt,
+		PromptFile:      p.PromptFile,
+		Model:           p.Model,
+		AutoAccept:      p.AutoAccept,
+		MaxTurns:        p.MaxTurns,
+		Quiet:           quiet,
+		Workdir:         p.Workdir,
+		EnvFile:         p.EnvFile,
+		RestartDelay:    time.Duration(p.RestartDelayMs) * time.Millisecond,
+		Restart:         restart,
+		Backend:         backend,
+		Description:     p.Description,
+		Enabled:         p.Enabled,
+		TmuxSocket:      p.TmuxSocket,
+		ExportTelemetry: p.ExportTelemetry,
 	}
 }
 

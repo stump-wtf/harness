@@ -539,3 +539,31 @@ func TestScratchRunRoundTrip(t *testing.T) {
 		t.Errorf("code = %s, want invalid_project", code)
 	}
 }
+
+// TestHarnessFromWireTelemetryOptOutOnly: only a project's opt-out survives
+// the wire. A hand-built client sending export_telemetry = true must not opt
+// a project harness in — the parser refuses it in the file, and the daemon
+// does not trust the client to have parsed (SPEC-0015 REQ-2).
+func TestHarnessFromWireTelemetryOptOutOnly(t *testing.T) {
+	yes, no := true, false
+	for _, tc := range []struct {
+		name string
+		in   *bool
+		want *bool
+	}{{"unset", nil, nil}, {"opt-out", &no, &no}, {"opt-in dropped", &yes, nil}} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(protocol.ProjectHarness{Name: "a", Harness: "crush", ExportTelemetry: tc.in})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded protocol.ProjectHarness
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			got := harnessFromWire(decoded).ExportTelemetry
+			if (got == nil) != (tc.want == nil) || (got != nil && *got != *tc.want) {
+				t.Fatalf("ExportTelemetry = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
