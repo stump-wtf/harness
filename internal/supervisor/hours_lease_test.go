@@ -339,3 +339,22 @@ func TestLeaseSurvivesAFailingRun(t *testing.T) {
 		t.Fatal("the run failed but the lease is not on disk — ordering broke")
 	}
 }
+
+// A lease end carries no monotonic reading. The monotonic clock stops while
+// the host sleeps, so a lease end compared against another monotonic time
+// would outlast its wall-clock end by however long the host was suspended;
+// the scheduler strips its tick for the same reason (SPEC-0008 REQ
+// "Suspend-Safe Schedule Evaluation").
+func TestStartForLeaseEndIsWallClockOnly(t *testing.T) {
+	h := gatedWithHours(t, "night", leaseWindow(-2*time.Hour, -1*time.Hour)) // closed now
+	m, _ := newStateManager(t, managerCfg(h), fastPolicy())
+	if err := m.StartFor(h.Name, time.Hour); err != nil {
+		t.Fatalf("StartFor: %v", err)
+	}
+	m.mu.Lock()
+	until := m.leases[h.Name]
+	m.mu.Unlock()
+	if until != until.Round(0) {
+		t.Fatalf("lease end %v carries a monotonic reading", until)
+	}
+}
