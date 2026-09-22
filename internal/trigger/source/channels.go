@@ -170,6 +170,9 @@ func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSo
 		firstDone   = seed.connectedBefore // has this source ever connected?
 		downSince   = seed.downSince       // when it stopped being connected
 		everStarted bool                   // has an attempt run yet?
+		// reinitSpent guards the one immediate re-initialize an expired
+		// session earns. Cleared whenever a stream opens.
+		reinitSpent bool
 	)
 	if downSince.IsZero() {
 		downSince = m.now()
@@ -203,6 +206,11 @@ func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSo
 			return
 		}
 		bo.ResetAfter(openFor)
+		if openFor > 0 {
+			// The stream opened, so the server is reachable and whatever
+			// killed the session is worth one fast re-initialize.
+			reinitSpent = false
+		}
 
 		state, delay := trigger.StateBackoff, bo.Next()
 		reason := "the server closed the stream"
@@ -220,10 +228,35 @@ func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSo
 			// the only way back: reusing this one would keep sending the
 			// dead id and keep getting 404.
 			client = nil
+			// And it is worth going back AT ONCE rather than waiting out the
+			// backoff. An expired session is not a connectivity failure —
+			// the server answered, it simply does not know this id — so the
+			// delay the ladder had reached describes an outage that is over.
+			//
+			// Found in a live run against a real Switchboard: after it
+			// restarted, the daemon had escalated to a two-minute delay
+			// during the outage, saw the 404 that means "re-initialize", and
+			// then sat idle for two more minutes with the server back up.
+			// REQ "Channel Reconnection" says to re-initialize; waiting out a
+			// backoff earned by a different failure is not that.
+			//
+			// Once, though. A server that answers 404 to every session id
+			// would otherwise spin: the second expiry in a row falls back to
+			// the ladder, and a stream that opens in between earns the fast
+			// path again.
+			if !reinitSpent {
+				reinitSpent = true
+				delay = 0
+				reason = "the session expired; re-initializing"
+			}
 		}
 		m.setState(ref, state, reason)
-		m.log.Warn("channel session down; retrying",
-			"source", ref, "state", string(state), "retry_in", delay.String(), "err", reason)
+		if delay == 0 {
+			m.log.Info("channel session expired; re-initializing at once", "source", ref)
+		} else {
+			m.log.Warn("channel session down; retrying",
+				"source", ref, "state", string(state), "retry_in", delay.String(), "err", reason)
+		}
 
 		if !m.sleep(ctx, delay) {
 			return

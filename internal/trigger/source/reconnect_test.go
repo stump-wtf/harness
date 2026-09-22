@@ -554,3 +554,82 @@ func initializes(srv *testserver.Server) int {
 	}
 	return n
 }
+
+// TestExpiredSessionReinitializesAtOnce is a regression test for a defect a
+// LIVE run against a real Switchboard surfaced, and which no test here had
+// caught.
+//
+// The sequence: Switchboard was stopped for 90 seconds, the daemon escalated
+// its backoff to a two-minute delay against a refused connection, Switchboard
+// came back, and the next attempt got the 404 that means "your session id is
+// gone, re-initialize". The daemon then sat idle for two more minutes — with
+// the server up the whole time — because it waited out a delay earned by a
+// completely different failure.
+//
+// REQ "Channel Reconnection" says a 404 on a request carrying the session id
+// SHALL re-initialize. Waiting out an unrelated backoff first is not that: the
+// server answered, so there is no outage left to back off from.
+//
+// The fast path is spent once per streak, so a server that 404s every session
+// id cannot spin — and a stream that opens in between earns it back.
+func TestExpiredSessionReinitializesAtOnce(t *testing.T) {
+	srv := testserver.New(testserver.Options{})
+	t.Cleanup(srv.Close)
+
+	clk := newClock()
+	held := holding(channelCfg(srv.URL, true, "one"))
+	_, states := reconnectManager(t, &fakeRunner{}, held.get, clk)
+	states.waitSubsequence(t, "the source connects", trigger.StateConnected)
+
+	// Escalate the backoff the way a real outage does, then expire the
+	// session — the shape of a server restart.
+	srv.ExpireSessions()
+	srv.CloseStreams()
+
+	states.waitSubsequence(t, "the source reconnects",
+		trigger.StateConnected, trigger.StateBackoff, trigger.StateConnected)
+
+	// The re-initialize must not have waited: every delay before the
+	// reconnect is either the stream-closed backoff or the zero the expiry
+	// earns, and at least one zero must be there.
+	slept := clk.Slept()
+	sawImmediate := false
+	for _, d := range slept {
+		if d == 0 {
+			sawImmediate = true
+		}
+	}
+	if !sawImmediate {
+		t.Errorf("the expired session waited out a backoff instead of re-initializing at once: delays %v", slept)
+	}
+	if got := initializes(srv); got < 2 {
+		t.Errorf("the session was not re-initialized: %d initializes", got)
+	}
+}
+
+// TestRepeatedExpiryFallsBackToBackoff is the other half: the fast path is
+// spent once, so a server that answers 404 to every session id cannot make the
+// daemon spin.
+func TestRepeatedExpiryFallsBackToBackoff(t *testing.T) {
+	srv := testserver.New(testserver.Options{ExpireEveryStream: true})
+	t.Cleanup(srv.Close)
+
+	clk := newClock()
+	held := holding(channelCfg(srv.URL, true, "one"))
+	_, states := reconnectManager(t, &fakeRunner{}, held.get, clk)
+	states.waitSubsequence(t, "the source keeps failing",
+		trigger.StateBackoff, trigger.StateConnecting, trigger.StateBackoff)
+
+	waitFor(t, 5*time.Second, "several attempts have been made", func() bool {
+		return len(clk.Slept()) >= 4
+	})
+	zeros := 0
+	for _, d := range clk.Slept() {
+		if d == 0 {
+			zeros++
+		}
+	}
+	if zeros > 1 {
+		t.Errorf("a server expiring every session produced %d immediate retries; the fast path is spent once", zeros)
+	}
+}

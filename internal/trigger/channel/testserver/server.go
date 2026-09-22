@@ -47,6 +47,9 @@ type Options struct {
 	// StreamResponses answers POSTs with a one-message SSE stream instead of
 	// JSON, which is the other shape the transport allows.
 	StreamResponses bool
+	// ExpireEveryStream answers every standalone GET with 404, the shape of a
+	// server that has forgotten every session id it is offered.
+	ExpireEveryStream bool
 }
 
 // Server is a fake channel server.
@@ -56,6 +59,7 @@ type Server struct {
 	opts Options
 
 	mu       sync.Mutex
+	expired  bool
 	requests []Request
 	// streams is the set of open GET stream writers, so a test can push a
 	// notification into a live stream.
@@ -129,6 +133,15 @@ func (s *Server) PushNotification(params string) {
 // PushRequest writes a server request expecting a reply.
 func (s *Server) PushRequest(id int, method string) {
 	s.Push(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":%q}`, id, method))
+}
+
+// ExpireSessions makes the next standalone GET answer 404, the way a restarted
+// server answers a session id it has never heard of. Cleared by the next
+// initialize, as a real server's new session would be.
+func (s *Server) ExpireSessions() {
+	s.mu.Lock()
+	s.expired = true
+	s.mu.Unlock()
 }
 
 // CloseStreams ends every open GET stream, as a server restart would.
@@ -214,6 +227,10 @@ func (s *Server) handlePost(w http.ResponseWriter, body []byte) {
 	})
 	resp, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(m.ID), "result": json.RawMessage(result)})
 
+	s.mu.Lock()
+	s.expired = false
+	s.mu.Unlock()
+
 	w.Header().Set("Mcp-Session-Id", s.opts.SessionID)
 	if s.opts.StreamResponses {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -231,6 +248,15 @@ func (s *Server) handlePost(w http.ResponseWriter, body []byte) {
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	if s.opts.RefuseStream {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	s.mu.Lock()
+	expired := s.expired || s.opts.ExpireEveryStream
+	s.mu.Unlock()
+	if expired {
+		// The shape of a restarted server: it answered, it simply does not
+		// know this session id.
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	flusher, ok := w.(http.Flusher)
