@@ -612,13 +612,19 @@ flowchart TD
 * **Related [ADR-0021](adr-0021-on-demand-one-shots.md)**: skip reasons
   `quota_parked`, `budget` and `concurrency` join SPEC-0014's `overlap`,
   `stopping` and `outside_hours`.
-* **Related, accepted with this ADR (2026-09-22)**: [ADR-0023](adr-0023-command-one-shots-and-templating.md) (command
-  kind, whose `transcripts` key decides whether a cap is measurable),
-  [ADR-0024](adr-0024-stack-installer-and-central-management.md) (the installer's templates set `max_runs_per_day`), [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md)
-  (supervisor-held leases) and [ADR-0026](adr-0026-fail-closed-model-pinning.md) (model pinning, the other consumer
-  of the served-model data), linked in this ADR's front matter; [ADR-0028](adr-0028-run-history-ledger.md)
-  (run history ledger, the counters' store and the usage accumulator), which
-  carries the edge to this ADR. ADR-0022 (telemetry export) is still in review as #548, the replay of #408, so it stays cited by number.
+* **Related, accepted with this ADR (2026-09-22)**:
+  [ADR-0023](adr-0023-command-one-shots-and-templating.md) (command kind,
+  whose `transcripts` key decides whether a cap is measurable),
+  [ADR-0024](adr-0024-stack-installer-and-central-management.md) (the
+  installer's templates set `max_runs_per_day`),
+  [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md)
+  (supervisor-held leases) and
+  [ADR-0026](adr-0026-fail-closed-model-pinning.md) (model pinning, the other
+  consumer of the served-model data), linked in this ADR's front matter;
+  [ADR-0028](adr-0028-run-history-ledger.md) (run history ledger, the
+  counters' store and the usage accumulator), which carries the edge to this
+  ADR. ADR-0022 (telemetry export, #408) is not on `main` yet, so it stays
+  cited by number.
 * **Depends on** stump.wtf/agent-trace#105 (usage, cost, model and provider
   items) for token and cost caps, and on stump.wtf/agent-trace#104 (claude-code
   API errors as marks) to retire the run-log fallback.

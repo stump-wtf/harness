@@ -31,7 +31,7 @@ SPEC-0006 (prompt and argv), SPEC-0012 (hours), SPEC-0013 (metrics).
 
 Related ADRs: ADR-0021 (partly reversed), ADR-0013, ADR-0008, ADR-0019, and,
 accepted with this one on 2026-09-22, ADR-0023, ADR-0027 and ADR-0028. Harness
-ADR-0022 is still in review (#548). Cross-repo, by number: Switchboard
+ADR-0022 (#408) is not on `main` yet. Cross-repo, by number: Switchboard
 ADR-0039 / SPEC-0034; Cairn ADR-0027 / SPEC-0021.
 
 ## Goals / Non-Goals

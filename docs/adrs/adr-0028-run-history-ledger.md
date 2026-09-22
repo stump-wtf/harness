@@ -471,13 +471,20 @@ flowchart LR
   trigger `release`.
 * **Related [ADR-0002](adr-0002-daemon-client-architecture.md)**: the `runs` op
   gains a query, and NAME becomes optional.
-* **Related, accepted with this ADR (2026-09-22)**: [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets,
-  which read the ledger and set two outcomes), [ADR-0026](adr-0026-fail-closed-model-pinning.md) (model pinning,
-  which sets `model_mismatch` and `model_unattested` and the skip reason
-  `model_hold`), [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md) (supervisor-held leases, which supply `todo_id`
-  and replay the ledger), [ADR-0023](adr-0023-command-one-shots-and-templating.md) (the `template_unresolved` skip) and
-  [ADR-0024](adr-0024-stack-installer-and-central-management.md) (the installer's self-test asserts a run record).
-* **Related, not yet on `main`**: ADR-0022 (telemetry export) is still in review as #548, the replay of #408, so it stays cited by number. The SPEC-0013 implementation (#407),
-  whose `harness_scheduled_runs_total` this re-sources, is also still open.
+* **Related, accepted with this ADR (2026-09-22)**:
+  [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets, which
+  read the ledger and set two outcomes),
+  [ADR-0026](adr-0026-fail-closed-model-pinning.md) (model pinning, which sets
+  `model_mismatch` and `model_unattested` and the skip reason `model_hold`),
+  [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md)
+  (supervisor-held leases, which supply `todo_id` and replay the ledger),
+  [ADR-0023](adr-0023-command-one-shots-and-templating.md) (the
+  `template_unresolved` skip) and
+  [ADR-0024](adr-0024-stack-installer-and-central-management.md) (the
+  installer's self-test asserts a run record).
+* **Related, not yet on `main`**: ADR-0022 (telemetry export, #408) is not on
+  `main` yet, so it stays cited by number. The SPEC-0013 implementation
+  (#407), whose `harness_scheduled_runs_total` this re-sources, is also still
+  open.
 * **Depends on** stump.wtf/agent-trace#105 for tokens, cost and served model.
 * **SPEC-0022** (`run-ledger`) holds the requirements.

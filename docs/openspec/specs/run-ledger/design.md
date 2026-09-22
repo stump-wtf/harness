@@ -383,5 +383,5 @@ left open.
   parsing, which this ADR exists to retire.
 - **Trace push and `internal/cairnexport`.** Resolved (design review
   2026-09-22): delete the unused `internal/cairnexport` package once ADR-0022's
-  telemetry export (#408, in review as #548) lands; #499 tracks it. Runs link to
+  telemetry export (#408) lands on `main`; #499 tracks it. Runs link to
   traces through `trace_url`, not through that package.

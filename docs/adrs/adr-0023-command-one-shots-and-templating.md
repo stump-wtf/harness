@@ -609,15 +609,20 @@ flowchart TD
   persisted), **[ADR-0010](adr-0010-local-mcp-surface.md)** (the facade's
   prompt side-loading is a different, agent-driven channel), and
   **[ADR-0020](adr-0020-prometheus-metrics-endpoint.md)** (render counters).
-* **Related records accepted with this one (2026-09-22).** The `related`
-  edges sit in the newer record's front matter. [ADR-0026](adr-0026-fail-closed-model-pinning.md), fail-closed model
+* **Related records accepted with this one (2026-09-22).** The `related` edges
+  sit in the newer record's front matter.
+  [ADR-0026](adr-0026-fail-closed-model-pinning.md), fail-closed model
   pinning, which renders pins through these adapters and attests through
-  `transcripts`. [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md), supervisor-held leases and relay attempts, whose
-  one-shots are typically `command` or templated harnesses. [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md),
-  budgets, which cannot cap tokens on a `command` harness without
-  `transcripts`. [ADR-0028](adr-0028-run-history-ledger.md), the run ledger, which records the
-  `template_unresolved` skip. [ADR-0024](adr-0024-stack-installer-and-central-management.md), the stack installer, whose persona
-  templates may use `prompt_template`.
+  `transcripts`.
+  [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md),
+  supervisor-held leases and relay attempts, whose one-shots are typically
+  `command` or templated harnesses.
+  [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md), budgets, which
+  cannot cap tokens on a `command` harness without `transcripts`.
+  [ADR-0028](adr-0028-run-history-ledger.md), the run ledger, which records
+  the `template_unresolved` skip.
+  [ADR-0024](adr-0024-stack-installer-and-central-management.md), the stack
+  installer, whose persona templates may use `prompt_template`.
 * **Upstream:** first-class Pi and OMP depend on agent-trace's Pi reader
   handling OMP's session layout. The adapter story checks this with a fixture.
 * **Governing spec:** SPEC-0017 (`docs/openspec/specs/command-one-shots/`).

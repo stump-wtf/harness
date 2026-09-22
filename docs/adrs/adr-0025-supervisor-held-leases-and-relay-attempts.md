@@ -635,10 +635,14 @@ sequenceDiagram
 * **Related [ADR-0011](adr-0011-agent-adapters.md)** and
   **[ADR-0006](adr-0006-configuration-and-profiles.md).** The prompt and argv are
   unchanged, and the config gains `[queue.*]`, `[cairn.*]` and harness keys.
-* **Related records accepted with this one (2026-09-22):** [ADR-0023](adr-0023-command-one-shots-and-templating.md)
-  (command kind; relay wraps the run, so it applies to that kind too), linked in
-  this ADR's front matter; [ADR-0026](adr-0026-fail-closed-model-pinning.md), [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets) and [ADR-0028](adr-0028-run-history-ledger.md)
-  (run history), which carry the `related` edge to this ADR. ADR-0022 (telemetry export) is still in review as #548, the replay of #408, so it stays cited by number.
+* **Related records accepted with this one (2026-09-22):**
+  [ADR-0023](adr-0023-command-one-shots-and-templating.md) (command kind;
+  relay wraps the run, so it applies to that kind too), linked in this ADR's
+  front matter; [ADR-0026](adr-0026-fail-closed-model-pinning.md),
+  [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets) and
+  [ADR-0028](adr-0028-run-history-ledger.md) (run history), which carry the
+  `related` edge to this ADR. ADR-0022 (telemetry export, #408) is not on
+  `main` yet, so it stays cited by number.
 * **Cross-repo records, cited by number (accepted in the same review):**
   Switchboard ADR-0039 / SPEC-0034 (attempt history, this ADR's sibling),
   ADR-0029 / SPEC-0024, ADR-0034 / SPEC-0029, ADR-0035 / SPEC-0030 and

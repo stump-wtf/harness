@@ -385,11 +385,14 @@ stateDiagram-v2
   **[ADR-0019](adr-0019-operating-hours.md)** (hours releases are unattended
   starts), and **[ADR-0021](adr-0021-on-demand-one-shots.md)** (the no-flag
   path for one-shots).
-* **Related records accepted with this one (2026-09-22):** [ADR-0023](adr-0023-command-one-shots-and-templating.md) (a
-  `command` harness cannot use this key) and [ADR-0024](adr-0024-stack-installer-and-central-management.md) (`harness init`
-  writes the key only for a persona whose user opted in), both linked in the
-  front matter. Switchboard ADR-0030 (doorbell acknowledgement and doctor, the
-  delivery proof this feature lacks) is cross-repo and stays cited by number.
+* **Related records accepted with this one (2026-09-22):**
+  [ADR-0023](adr-0023-command-one-shots-and-templating.md) (a `command`
+  harness cannot use this key) and
+  [ADR-0024](adr-0024-stack-installer-and-central-management.md) (`harness
+  init` writes the key only for a persona whose user opted in), both linked in
+  the front matter. Switchboard ADR-0030 (doorbell acknowledgement and doctor,
+  the delivery proof this feature lacks) is cross-repo and stays cited by
+  number.
 * **References:** the
   [Channels reference](https://code.claude.com/docs/en/channels-reference) (the
   development flag, its confirmation, "skips the allowlist only") and
