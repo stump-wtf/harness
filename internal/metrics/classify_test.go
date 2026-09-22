@@ -82,6 +82,18 @@ func TestClassifyClaudeCode(t *testing.T) {
 		{"API Error: Connection error.", ClassTransport, true},
 		{"Prompt is too long", ClassOther, true},
 		{"Something unexpected happened", ClassOther, false},
+		// agent-trace's error-mark notes (stump.wtf/agent-trace#104):
+		// "<code> (<status>): <text>", the status absent when no response came.
+		{"rate_limit (429): You've hit your session limit · resets 3pm", ClassQuota, true},
+		{"rate_limit (429): API Error: Server is temporarily limiting requests (not your usage limit)", ClassTransport, true},
+		{"authentication_failed (401): Failed to authenticate. API Error: 401 Invalid authentication credentials", ClassAuth, true},
+		{"authentication_failed: Failed to authenticate", ClassAuth, true},
+		{"server_error (529): API Error: Repeated 529 Overloaded errors", ClassTransport, true},
+		{"server_error: API Error: Unable to connect to API (ConnectionRefused)", ClassTransport, true},
+		{"server_error: API Error: Can't reach the API", ClassTransport, true},
+		{"server_error (521): API Error: 521 Web server is down", ClassTransport, true},
+		{"server_error (504): API Error: upstream took too long", ClassTimeout, true},
+		{"unknown: API Error: Overloaded", ClassTransport, true},
 	})
 }
 
