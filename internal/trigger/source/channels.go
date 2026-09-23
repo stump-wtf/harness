@@ -151,8 +151,13 @@ func (m *Manager) startSessionLocked(ctx context.Context, ref string, src core.C
 // disconnected. The last two are what decide a catch-up firing.
 func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSource, seed sessionSeed) {
 	var (
-		bo          = &channel.Backoff{Rand: m.rand}
-		client      *channel.Client
+		bo     = &channel.Backoff{Rand: m.rand}
+		client *channel.Client
+		// ready is whether client completed Initialize. Not SessionID() != "":
+		// Initialize stores the session id BEFORE the capability check and
+		// the initialized notification, so a failed initialize leaves one
+		// behind, and a retry keyed on it would skip straight to the GET.
+		ready       bool
 		firstDone   = seed.connectedBefore // has this source ever connected?
 		downSince   = seed.downSince       // when it stopped being connected
 		everStarted bool                   // has an attempt run yet?
@@ -164,32 +169,37 @@ func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSo
 		downSince = m.now()
 	}
 	defer func() {
-		if client == nil {
-			return
+		if client != nil {
+			closeClient(ctx, client)
 		}
-		// Best effort, and on a context of its own: the session context is
-		// already cancelled by the time a shutdown gets here, and a DELETE on
-		// a cancelled context never leaves.
-		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-		defer cancel()
-		_ = client.Close(dctx)
 	}()
 
 	for ctx.Err() == nil {
 		if client == nil {
-			client = m.dial(src)
+			client, ready = m.dial(src), false
 		}
 		if everStarted {
 			m.setState(ref, trigger.StateConnecting, "")
 		}
 		everStarted = true
 
-		openFor, err := m.attempt(ctx, ref, src, client, &firstDone, &downSince, bo)
+		openFor, err := m.attempt(ctx, ref, src, client, &ready, &firstDone, &downSince, bo)
 		if ctx.Err() != nil {
 			// A deliberate close — shutdown, or the reconciler ending this
 			// session. Never an outage, so the next session's first connect
 			// is not credited with one.
 			return
+		}
+		if !ready {
+			// Initialize failed part-way. Whatever session id it was handed
+			// belongs to a half-built session — possibly one whose server
+			// lacks the channel capability — so the retry starts from a fresh
+			// client and re-runs every check. The half-built session is ended
+			// best effort; the server may never hear of it again otherwise.
+			if client.SessionID() != "" {
+				closeClient(ctx, client)
+			}
+			client = nil
 		}
 		bo.ResetAfter(openFor)
 		if openFor > 0 {
@@ -250,6 +260,16 @@ func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSo
 	}
 }
 
+// closeClient ends a session with a best-effort DELETE.
+//
+// On a context of its own: the session context is already cancelled by the
+// time a shutdown gets here, and a DELETE on a cancelled context never leaves.
+func closeClient(ctx context.Context, client *channel.Client) {
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	_ = client.Close(dctx)
+}
+
 // attempt runs one connect-and-listen. It returns how long the stream stayed
 // open (zero when it never did) and why it ended.
 func (m *Manager) attempt(
@@ -257,14 +277,16 @@ func (m *Manager) attempt(
 	ref string,
 	src core.ChannelSource,
 	client *channel.Client,
+	ready *bool,
 	firstDone *bool,
 	downSince *time.Time,
 	bo *channel.Backoff,
 ) (time.Duration, error) {
-	if client.SessionID() == "" {
+	if !*ready {
 		if err := client.Initialize(ctx); err != nil {
 			return 0, err
 		}
+		*ready = true
 	}
 
 	var openedAt time.Time
