@@ -309,19 +309,20 @@ func TestCodexPromptCommand(t *testing.T) {
 	}
 }
 
-func TestGenericPromptCommandFallsBackToCrush(t *testing.T) {
+// Generic has no prompt mode. It used to delegate to Crush, which is how
+// `generic` + `prompt` silently ran an agent nobody configured. Whatever the
+// options, it must hand back nothing to exec. SPEC-0017 REQ "Generic Kind
+// Rejects Prompts".
+func TestGenericPromptCommandSynthesizesNothing(t *testing.T) {
 	a := &Generic{}
-	cmd, args := a.PromptCommand("do something", core.AgentOpts{Quiet: true})
-	// Generic has no native prompt mode; falls back to crush so prompt
-	// harnesses without an explicit agent key still work.
-	if cmd != "crush" {
-		t.Fatalf("cmd = %q, want crush fallback for generic", cmd)
-	}
-	if len(args) == 0 {
-		t.Fatal("expected non-empty args")
-	}
-	if args[len(args)-1] != "do something" {
-		t.Fatalf("last arg = %q, want prompt as final element", args[len(args)-1])
+	for _, opts := range []core.AgentOpts{
+		{},
+		{Quiet: true, AutoAccept: true, Model: "m", MaxTurns: 3},
+	} {
+		cmd, args := a.PromptCommand("do something", opts)
+		if cmd != "" || args != nil {
+			t.Fatalf("Generic.PromptCommand(%+v) = %q %q, want no argv (generic has no prompt synthesis)", opts, cmd, args)
+		}
 	}
 }
 
