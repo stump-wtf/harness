@@ -219,6 +219,27 @@ func Observable(h core.Harness) bool {
 	return false
 }
 
+// ErrorsObservable reports whether h's failed model calls reach the observer
+// as well as its successful ones: whether the agent-trace this daemon is
+// built against turns the adapter's provider errors into error marks. At the
+// pinned agent-trace only crush's do. Claude Code's API-error records arrive
+// with stump.wtf/agent-trace#104, and codex's not yet.
+//
+// For any other observable harness the error side — the error outcome of
+// harness_model_calls_total, every harness_model_call_errors_total class and
+// the unclassified control — is omitted, not reported as a zero that no
+// provider error could ever move (REQ-6). A quota alert over a series that
+// cannot rise reads as "no quota errors" through the very outage it exists to
+// catch. TestErrorsObservableMatchesAgentTrace pins this to the real parser,
+// so the agent-trace bump that brings Claude Code's error marks fails until
+// it is flipped here.
+//
+// @joestump-agent 09/23/2026 - Added in review (harness#589): claude-code and
+// codex emitted a permanent class="quota" 0.
+func ErrorsObservable(h core.Harness) bool {
+	return Observable(h) && h.Adapter == "crush"
+}
+
 // Outcomes of harness_model_calls_total and harness_scheduled_runs_total.
 const (
 	outcomeSuccess = "success"

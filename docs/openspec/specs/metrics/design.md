@@ -88,7 +88,11 @@ last-success timestamp is the item's own time and never moves backwards. Only
 harnesses whose adapter writes a readable transcript (`claude-code`, `crush`,
 `codex`) and that have a workdir get model series; for any other the values
 cannot be computed and are omitted (REQ-6). At this agent-trace version only
-crush records provider errors in its transcript.
+crush records provider errors in its transcript, so only crush harnesses get
+the error side (the `error` outcome, the classes and the unclassified
+control); the others omit it rather than report a zero no error could move
+(`ErrorsObservable`, pinned to the parser by a test that fails when the
+agent-trace bump carrying stump.wtf/agent-trace#104 lands).
 
 Classification is by per-adapter tables, then shared provider shapes.
 Overload (`529`, `503`) is `transport`, not `quota`: it is the provider's

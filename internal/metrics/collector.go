@@ -135,8 +135,11 @@ type agg struct {
 	consec     float64
 	up         bool
 	observable bool
-	scheduled  bool
-	next       time.Time
+	// errorsObservable: the adapter's provider errors reach the observer
+	// too (ErrorsObservable), so the error side is computable.
+	errorsObservable bool
+	scheduled        bool
+	next             time.Time
 }
 
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
@@ -189,6 +192,7 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		}
 		a.up = a.up || rw.snap.PID != 0
 		a.observable = a.observable || Observable(rw.def)
+		a.errorsObservable = a.errorsObservable || ErrorsObservable(rw.def)
 		if rw.snap.Scheduled {
 			a.scheduled = true
 			if rw.nextOK && !rw.next.IsZero() && (a.next.IsZero() || rw.next.Before(a.next)) {
@@ -258,11 +262,15 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 
 		if a.observable && reachable {
 			counter(descCalls, float64(s.calls[0]), lbl, outcomeSuccess)
-			counter(descCalls, float64(s.calls[1]), lbl, outcomeError)
-			for _, cl := range Classes {
-				counter(descErrors, float64(s.errors[cl]), lbl, string(cl))
+			// Omitted, not zeroed, where the adapter's errors never reach
+			// the observer (ErrorsObservable, REQ-6).
+			if a.errorsObservable {
+				counter(descCalls, float64(s.calls[1]), lbl, outcomeError)
+				for _, cl := range Classes {
+					counter(descErrors, float64(s.errors[cl]), lbl, string(cl))
+				}
+				counter(descUnclassified, float64(s.unclassified), lbl)
 			}
-			counter(descUnclassified, float64(s.unclassified), lbl)
 			// Omitted, not zeroed, until the first success (REQ-3): a zero
 			// reads as 1970 and puts 56 years of staleness on every panel.
 			if !s.lastSuccess.IsZero() {
