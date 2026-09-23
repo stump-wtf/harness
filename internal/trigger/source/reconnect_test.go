@@ -901,3 +901,24 @@ func TestConcurrentReloadsBuildOneSession(t *testing.T) {
 		}
 	}
 }
+
+// TestCatchUpPanicCostsOneHarness: a catch-up starts on the session
+// goroutine, inside the stream's onOpen, so a panic starting one harness must
+// be contained the way Fire contains one — costing that harness only, not the
+// other catch-ups, the session, or the daemon.
+func TestCatchUpPanicCostsOneHarness(t *testing.T) {
+	srv := testserver.New(testserver.Options{})
+	t.Cleanup(srv.Close)
+
+	clk := newClock()
+	r := &fakeRunner{panicOn: map[string]bool{"one": true}}
+	cfg := catchUpCfg(srv.URL, true, "one", "two")
+	m, _ := reconnectManager(t, r, func() *core.Config { return cfg }, clk)
+	waitState(t, m, "channel.sb", trigger.StateConnected)
+	waitFor(t, 5*time.Second, "both catch-ups were attempted", func() bool { _, c := r.counts(); return c == 2 })
+
+	// The session survived: a doorbell still fires the harness that did not
+	// panic.
+	srv.PushNotification(`{"content":"x"}`)
+	waitFor(t, 5*time.Second, "the doorbell still fires", func() bool { n, _ := r.counts(); return n == 4 })
+}
