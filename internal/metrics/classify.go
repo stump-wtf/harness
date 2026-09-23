@@ -93,6 +93,14 @@ var commonRules = []rule{
 	rx(ClassAuth, `invalid[ _-]?(x-)?api[ _-]?key|incorrect api key|api key not valid|(no|missing) api key`),
 	rx(ClassAuth, `authentication[ _]?(error|failed)|permission[ _]?(error|denied)|access denied|token (has )?expired|invalid[ _]token`),
 
+	// transport, ahead of timeout: a timeout while connecting — dialing, the
+	// TLS handshake, a proxy's upstream connect — is "could not be reached",
+	// not "accepted, then too slow". Without this, every network outage
+	// whose error says "timeout" read as the provider being slow.
+	//
+	// @joestump-agent 09/23/2026 - Added in review (harness#589).
+	rx(ClassTransport, `dial tcp[^\n]*timed? ?out|handshake time-?out|connect(ion)? timed? ?out|upstream connect error`),
+
 	// timeout — accepted, then too slow.
 	rx(ClassTimeout, `\b408\b|\b504\b|gateway time-?out|request time-?out|timed? ?out|deadline exceeded`),
 

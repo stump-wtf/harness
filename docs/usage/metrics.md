@@ -188,7 +188,8 @@ match provider wording:
 - **timeout**: the provider accepted the request but took too long (`408`,
   `504`, "deadline exceeded").
 - **transport**: the provider could not be reached or could not serve the
-  request: refused or reset connections, DNS and TLS errors, `500`, `502`,
+  request: refused or reset connections, DNS and TLS errors, timeouts while
+  connecting (`dial tcp …: i/o timeout`, a TLS handshake timeout), `500`, `502`,
   `503`, and provider overload (`529 overloaded_error`). Overload counts as
   transport, not quota. It reflects the provider's capacity, has no reset
   time, and clears on its own.
