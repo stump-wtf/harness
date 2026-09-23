@@ -162,8 +162,14 @@ func TestListenRequiresBearerToken(t *testing.T) {
 			t.Errorf("auth %q: body leaked metrics", auth)
 		}
 	}
-	if resp, _ := get(t, url, "Bearer s3cret-token"); resp.StatusCode != http.StatusOK {
-		t.Errorf("correct token: status %d", resp.StatusCode)
+	// The auth-scheme is case-insensitive (RFC 9110 §11.1); the token is not.
+	for _, auth := range []string{"Bearer s3cret-token", "bearer s3cret-token", "BEARER s3cret-token"} {
+		if resp, _ := get(t, url, auth); resp.StatusCode != http.StatusOK {
+			t.Errorf("correct token as %q: status %d", auth, resp.StatusCode)
+		}
+	}
+	if resp, _ := get(t, url, "Bearer S3CRET-TOKEN"); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("token with different case: status %d, want 401", resp.StatusCode)
 	}
 }
 

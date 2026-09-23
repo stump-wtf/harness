@@ -181,15 +181,19 @@ func (s *Server) Shutdown(ctx context.Context) error { return s.srv.Shutdown(ctx
 
 // requireToken wraps h in a constant-time bearer check. An empty token passes
 // everything through: loopback without a token file is unauthenticated by
-// design (REQ-1).
+// design (REQ-1). The scheme is matched case-insensitively, as RFC 9110
+// §11.1 requires of every auth-scheme; only the token is compared in
+// constant time.
+//
+// @joestump-agent 09/23/2026 - Case-insensitive scheme (review, harness#589).
 func requireToken(token string, h http.Handler) http.Handler {
 	if token == "" {
 		return h
 	}
-	want := []byte("Bearer " + token)
+	want := []byte(token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := []byte(r.Header.Get("Authorization"))
-		if subtle.ConstantTimeCompare(got, want) != 1 {
+		scheme, cred, _ := strings.Cut(r.Header.Get("Authorization"), " ")
+		if !strings.EqualFold(scheme, "Bearer") || subtle.ConstantTimeCompare([]byte(cred), want) != 1 {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="harness"`)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
