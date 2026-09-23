@@ -338,6 +338,10 @@ func TestLeaseSurvivesAFailingRun(t *testing.T) {
 	p := fastPolicy()
 
 	m1 := NewManager(cfg, ManagerOptions{Policy: p, StatePath: statePath, LogDir: dir + "/logs"})
+	// Closed before t.TempDir's cleanup runs (cleanups are LIFO): an open
+	// Manager's persist loop and log writer can still be writing into dir
+	// while RemoveAll walks it, which failed CI with "directory not empty".
+	t.Cleanup(m1.Close)
 	if err := m1.StartFor(h.Name, time.Hour); err != nil {
 		t.Fatalf("StartFor: %v", err)
 	}
