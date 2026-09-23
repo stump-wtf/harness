@@ -236,6 +236,15 @@ func (m *Manager) fireOne(name string, runTrigger supervisor.RunTrigger, ev *tri
 		m.log.Warn("trigger fired for a harness the daemon does not know", "harness", name, "source", ev.Source)
 		return Decision{Harness: name, Err: "unknown harness"}
 	}
+	if decision.Kind == "" {
+		// A supervisor that has already shut down (a reload removed the
+		// harness between the config read and here) decides nothing and
+		// says so with the zero decision. Reported as-is it would be a
+		// Decision with neither Kind nor Err, which this type promises
+		// never to produce.
+		m.log.Warn("trigger fired for a harness that has shut down", "harness", name, "source", ev.Source)
+		return Decision{Harness: name, Err: "harness has shut down"}
+	}
 	m.log.Info("trigger fired",
 		"harness", name, "source", ev.Source, "event_id", ev.EventID,
 		"decision", string(decision.Kind), "run_id", decision.Run.RunID)

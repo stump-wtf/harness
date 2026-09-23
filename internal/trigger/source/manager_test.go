@@ -32,7 +32,10 @@ type fakeRunner struct {
 	calls   []call
 	panicOn map[string]bool
 	unknown map[string]bool
-	block   chan struct{} // when non-nil, StartRun waits on it
+	// shutDown names harnesses whose supervisor has already shut down: the
+	// real Manager answers those with a zero decision and ok = true.
+	shutDown map[string]bool
+	block    chan struct{} // when non-nil, StartRun waits on it
 }
 
 type call struct {
@@ -54,12 +57,16 @@ func (f *fakeRunner) StartRun(name string, req supervisor.RunRequest) (superviso
 	n := len(f.calls)
 	shouldPanic := f.panicOn[name]
 	isUnknown := f.unknown[name]
+	isShutDown := f.shutDown[name]
 	f.mu.Unlock()
 	if shouldPanic {
 		panic("boom in " + name)
 	}
 	if isUnknown {
 		return supervisor.RunDecision{}, false
+	}
+	if isShutDown {
+		return supervisor.RunDecision{}, true
 	}
 	return supervisor.RunDecision{
 		Kind: supervisor.DecisionStarted,
@@ -381,6 +388,30 @@ func TestCloseAbandonsTheRestOfAFanOutInProgress(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Err != "" || got[1].Err == "" {
 		t.Errorf("decisions = %+v, want the first fired and the second abandoned with a reason", got)
+	}
+}
+
+// TestAShutDownHarnessIsAnErrorNotADecision: a supervisor that has already
+// shut down answers StartRun with a zero decision and ok = true. Reported
+// as-is that is a Decision with no Kind and no Err — which Decision's own
+// contract says cannot happen, and which a 202 body would render as a
+// firing that was neither started, queued, skipped nor refused.
+func TestAShutDownHarnessIsAnErrorNotADecision(t *testing.T) {
+	r := &fakeRunner{shutDown: map[string]bool{"gone": true}}
+	m := newManager(t, r, cfgWith(
+		[2]string{"gone", "webhook.gh"},
+		[2]string{"here", "webhook.gh"},
+	))
+
+	got := m.Fire(webhookEvent("webhook.gh", "d-1"))
+	if len(got) != 2 {
+		t.Fatalf("decisions = %+v", got)
+	}
+	if got[0].Kind != "" || got[0].Err == "" {
+		t.Errorf("shut-down harness decision = %+v, want an error and no kind", got[0])
+	}
+	if got[1].Err != "" || got[1].Kind != supervisor.DecisionStarted {
+		t.Errorf("the next harness = %+v, want started", got[1])
 	}
 }
 
