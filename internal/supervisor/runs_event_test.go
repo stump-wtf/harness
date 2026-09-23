@@ -261,6 +261,65 @@ func TestRunEnvOverridesEnvFile(t *testing.T) {
 	}
 }
 
+// TestRunEnvUnsetsWhatTheRunDoesNotHave covers the other half of the override
+// order: appending can only override, never unset, so a reserved name coming
+// from env_file or the daemon's own environment must be stripped for the
+// "unset when the run has no event" clause of REQ "Event Delivery To The Run"
+// to hold. A scheduled run that inherited HARNESS_EVENT_FILE would read some
+// other run's attacker-supplied file as its own event.
+func TestRunEnvUnsetsWhatTheRunDoesNotHave(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, "h.env")
+	if err := os.WriteFile(envFile,
+		[]byte("HARNESS_RUN_SOURCE=webhook.evil\nHARNESS_EVENT_FILE=/etc/passwd\nKEEP=mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A daemon started from inside a run carries that run's context.
+	t.Setenv("HARNESS_EVENT_FILE", "/stale/41.event.json")
+	t.Setenv("HARNESS_RUN_ID", "41")
+
+	lookup := func(env []string, key string) (string, bool) {
+		val, found := "", false
+		for _, kv := range env {
+			if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+				val, found = v, true
+			}
+		}
+		return val, found
+	}
+
+	// A scheduled run: no source and no event, so both names are ABSENT —
+	// not the env_file's value and not the daemon's.
+	got, err := buildEnv(core.Harness{Name: "x", EnvFile: envFile}, RunEnv{RunID: 3, Trigger: TriggerSchedule})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"HARNESS_RUN_SOURCE", "HARNESS_EVENT_FILE"} {
+		if v, ok := lookup(got, k); ok {
+			t.Errorf("a scheduled run was spawned with %s=%q; it has none, so it must be unset", k, v)
+		}
+	}
+	if v, _ := lookup(got, "HARNESS_RUN_ID"); v != "3" {
+		t.Errorf("HARNESS_RUN_ID = %q, want 3", v)
+	}
+	if v, _ := lookup(got, "KEEP"); v != "mine" {
+		t.Errorf("stripping the reserved names took an ordinary env_file key with it: KEEP = %q", v)
+	}
+
+	// A resident harness: no run context at all. The daemon's inherited run
+	// context must not leak into it; its own env_file still stands.
+	got, err = buildEnv(core.Harness{Name: "x", EnvFile: envFile}, RunEnv{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := lookup(got, "HARNESS_RUN_ID"); ok {
+		t.Errorf("the daemon's own HARNESS_RUN_ID=%q leaked into a resident harness", v)
+	}
+	if v, _ := lookup(got, "HARNESS_EVENT_FILE"); v != "/etc/passwd" {
+		t.Errorf("a resident harness's env_file HARNESS_EVENT_FILE = %q, want its own value to stand", v)
+	}
+}
+
 // TestEventFilePrunedWithTheRun covers the REQ "Event Delivery To The Run"
 // scenario "Pruned with the run". Asserted by the file's ABSENCE on disk: the
 // record going away proves nothing about what is still in the jobs directory,
