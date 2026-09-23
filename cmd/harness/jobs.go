@@ -34,6 +34,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/stump-wtf/harness/internal/client"
+	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/schedfmt"
 	"github.com/stump-wtf/harness/internal/trigger"
@@ -250,21 +251,36 @@ func runExitCell(r protocol.RunInfo) string {
 	return strconv.Itoa(*r.ExitCode)
 }
 
+// readEventArg reads and shape-checks a --event file locally before dialling,
+// so an operator who mistyped a path or pointed at a log file hears about it
+// here rather than as an invalid_event from the daemon. The daemon validates
+// it again, against the harness, and that check is the authoritative one —
+// this is only about a better error for the common mistake.
+//
+// The local size cap is the CEILING any harness may have
+// (core.MaxWebhookMaxBody), not the 1 MiB default: the client does not know
+// the harness's sources, and capping at the default here would refuse, before
+// the daemon ever saw it, a replay of a delivery that a `max_body = "5MiB"`
+// route legitimately accepted. The per-harness cap is the daemon's.
+// Governing: SPEC-0014 REQ "Manual Trigger With Event".
+func readEventArg(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("--event: %w", err)
+	}
+	if _, err := trigger.ParseEnvelope(b, core.MaxWebhookMaxBody); err != nil {
+		return nil, fmt.Errorf("--event %s: %w", path, err)
+	}
+	return b, nil
+}
+
 // cmdTrigger starts a manual run and, with --wait, follows it to the end.
 func cmdTrigger(c *client.Client, o verbOpts) error {
 	var event []byte
 	if o.eventFile != "" {
-		// Read and shape-check locally before dialling, so an operator who
-		// mistyped a path or pointed at a log file hears about it here rather
-		// than as an invalid_event from the daemon. The daemon validates it
-		// again, against the harness, and that check is the authoritative one
-		// — this is only about a better error for the common mistake.
-		b, err := os.ReadFile(o.eventFile)
+		b, err := readEventArg(o.eventFile)
 		if err != nil {
-			return fmt.Errorf("--event: %w", err)
-		}
-		if _, err := trigger.ParseEnvelope(b, 0); err != nil {
-			return fmt.Errorf("--event %s: %w", o.eventFile, err)
+			return err
 		}
 		event = b
 	}
