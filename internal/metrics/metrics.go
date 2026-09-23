@@ -222,8 +222,8 @@ func Observable(h core.Harness) bool {
 // ErrorsObservable reports whether h's failed model calls reach the observer
 // as well as its successful ones: whether the agent-trace this daemon is
 // built against turns the adapter's provider errors into error marks. At the
-// pinned agent-trace only crush's do. Claude Code's API-error records arrive
-// with stump.wtf/agent-trace#104, and codex's not yet.
+// pinned agent-trace crush's and Claude Code's do (Claude Code's API-error
+// records since stump.wtf/agent-trace#104); codex's do not yet.
 //
 // For any other observable harness the error side — the error outcome of
 // harness_model_calls_total, every harness_model_call_errors_total class and
@@ -236,8 +236,11 @@ func Observable(h core.Harness) bool {
 //
 // @joestump-agent 09/23/2026 - Added in review (harness#589): claude-code and
 // codex emitted a permanent class="quota" 0.
+//
+// @joestump-agent 09/23/2026 - claude-code flipped with the agent-trace
+// v0.4.0 bump, which parses its API-error records into error marks.
 func ErrorsObservable(h core.Harness) bool {
-	return Observable(h) && h.Adapter == "crush"
+	return Observable(h) && (h.Adapter == "crush" || h.Adapter == "claude-code")
 }
 
 // Outcomes of harness_model_calls_total and harness_scheduled_runs_total.

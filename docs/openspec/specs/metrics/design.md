@@ -87,12 +87,13 @@ tool call is a successful model call and an agent error mark a failed one; the
 last-success timestamp is the item's own time and never moves backwards. Only
 harnesses whose adapter writes a readable transcript (`claude-code`, `crush`,
 `codex`) and that have a workdir get model series; for any other the values
-cannot be computed and are omitted (REQ-6). At this agent-trace version only
-crush records provider errors in its transcript, so only crush harnesses get
-the error side (the `error` outcome, the classes and the unclassified
-control); the others omit it rather than report a zero no error could move
-(`ErrorsObservable`, pinned to the parser by a test that fails when the
-agent-trace bump carrying stump.wtf/agent-trace#104 lands).
+cannot be computed and are omitted (REQ-6). At this agent-trace version
+crush and Claude Code provider errors reach the observer (Claude Code's since
+stump.wtf/agent-trace#104, picked up with the v0.4.0 bump), so those harnesses
+get the error side (the `error` outcome, the classes and the unclassified
+control); codex omits it rather than report a zero no error could move
+(`ErrorsObservable`, pinned to the parser by a test that fails when an
+agent-trace bump changes what an adapter emits).
 
 Classification is by per-adapter tables, then shared provider shapes.
 Overload (`529`, `503`) is `transport`, not `quota`: it is the provider's

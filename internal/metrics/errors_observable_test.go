@@ -7,6 +7,9 @@ package metrics
 // than a class="quota" zero that no outage could ever move.
 //
 // @joestump-agent 09/23/2026 - Added in review (harness#589).
+//
+// @joestump-agent 09/23/2026 - claude-code moved to the observable side with
+// the agent-trace v0.4.0 bump; codex is the remaining absent control.
 
 import (
 	"context"
@@ -37,10 +40,12 @@ func TestErrorSeriesOnlyWhereErrorsAreObservable(t *testing.T) {
 			t.Errorf("%s: session_active missing", h)
 		}
 	}
-	if _, ok := fams.get("harness_model_call_errors_total", lbls("harness", "crush-worker", "class", "quota")); !ok {
-		t.Error("crush-worker: class=quota missing; crush errors are observable")
+	for _, h := range []string{"crush-worker", "cc-worker"} {
+		if _, ok := fams.get("harness_model_call_errors_total", lbls("harness", h, "class", "quota")); !ok {
+			t.Errorf("%s: class=quota missing; its adapter's errors are observable", h)
+		}
 	}
-	for _, h := range []string{"cc-worker", "codex-worker"} {
+	for _, h := range []string{"codex-worker"} {
 		if v, ok := fams.get("harness_model_calls_total", lbls("harness", h, "outcome", "error")); ok {
 			t.Errorf("%s: outcome=error reported as %v; its errors never reach the observer, so it must be absent", h, v)
 		}

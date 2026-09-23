@@ -162,15 +162,14 @@ omits values it cannot compute rather than reporting a zero, which would look
 like a healthy, idle agent.
 
 Crush records provider errors in its transcript as a failed turn. Claude Code
-records them as flagged API-error records, which appear once Harness is built
-against an agent-trace version that reads them; the classifier already knows
-their shape (`rate_limit (429): …`, `server_error: …`). Codex successes are
+records them as flagged API-error records (`rate_limit (429): …`,
+`server_error: …`), which the daemon reads and classifies. Codex successes are
 counted, but its provider errors do not appear yet.
 
 Until an adapter's errors do appear, its harnesses have no error-side series:
 `harness_model_calls_total{outcome="error"}`, `harness_model_call_errors_total`
-and `harness_model_call_errors_unclassified_total` are **absent** for
-`claude-code` and `codex` harnesses today, not zero. A zero would say "no quota
+and `harness_model_call_errors_unclassified_total` are **absent** for `codex`
+harnesses today, not zero. A zero would say "no quota
 errors" through the very outage the quota alert exists to catch. For those
 harnesses, the staleness alert on `harness_last_successful_call_timestamp` is
 the one that fires.
