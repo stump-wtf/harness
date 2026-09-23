@@ -43,10 +43,15 @@ func TestDaemonWiringFiresAHarnessFromAChannelDoorbell(t *testing.T) {
 	opts.LogDir = filepath.Join(tmp, "logs")
 	opts.JobsDir = filepath.Join(tmp, "jobs")
 	opts.Policy.StopGrace = 200 * time.Millisecond
+	fields := filepath.Join(tmp, "fields")
 
 	h := core.Harness{
 		Name: "pr-review", Adapter: "generic", Backend: core.BackendNative,
-		Args:    []string{"-c", `printf 'F:EVENT=[%s]\n' "${HARNESS_EVENT_FILE-unset}"`},
+		// The value is teed to a sidecar file as well as printed: the run's
+		// log interleaves the daemon's own lifecycle lines with the PTY's
+		// output, and under load a "state changed" line lands inside the
+		// hard-wrapped path, so the log cannot be where it is read.
+		Args:    []string{"-c", `printf 'F:EVENT=[%s]\n' "${HARNESS_EVENT_FILE-unset}" | tee '` + fields + `'`},
 		Restart: core.RestartNo,
 
 		Triggers:  []string{"channel.sb"},
@@ -136,9 +141,12 @@ func TestDaemonWiringFiresAHarnessFromAChannelDoorbell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	flat := strings.NewReplacer("\n", "", "\r", "").Replace(string(runLog))
-	if !strings.Contains(flat, "F:EVENT=["+eventFile+"]") {
-		t.Errorf("the spawned process did not receive HARNESS_EVENT_FILE:\n%s", runLog)
+	got, err := os.ReadFile(fields)
+	if err != nil {
+		t.Fatalf("the spawned process wrote no fields file: %v", err)
+	}
+	if want := "F:EVENT=[" + eventFile + "]"; !strings.Contains(string(got), want) {
+		t.Errorf("the spawned process did not receive HARNESS_EVENT_FILE:\nwant %q\ngot  %q", want, got)
 	}
 	if strings.Contains(string(runLog), sentinel) {
 		t.Error("the doorbell's text reached the run's log")
