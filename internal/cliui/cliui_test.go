@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -14,7 +15,9 @@ import (
 
 	"github.com/charmbracelet/colorprofile"
 
+	"github.com/stump-wtf/harness/internal/client"
 	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
@@ -25,6 +28,10 @@ func newTestPrinter(json bool, buf *bytes.Buffer) *Printer {
 	return NewPrinter(Options{JSON: json, Out: buf})
 }
 
+// TestClassifyDaemonDown: a missing socket file is classified as a missing
+// SOCKET, not a missing daemon. Issue #578 is what happens when the two are
+// conflated — the daemon was up and supervising, and this message sent the
+// operator to `systemctl start` on a running unit.
 func TestClassifyDaemonDown(t *testing.T) {
 	t.Parallel()
 	_, err := net.Dial("unix", "/tmp/harness-does-not-exist-test.sock")
@@ -35,17 +42,134 @@ func TestClassifyDaemonDown(t *testing.T) {
 	if level != LevelError {
 		t.Errorf("level = %v, want LevelError", level)
 	}
-	if title != "daemon not running" {
-		t.Errorf("title = %q, want %q", title, "daemon not running")
+	if title != "daemon socket missing" {
+		t.Errorf("title = %q, want %q", title, "daemon socket missing")
 	}
-	if !strings.Contains(msg, "can't reach") {
-		t.Errorf("msg = %q, want it to mention daemon unreachable", msg)
+	if strings.Contains(title, "not running") {
+		t.Errorf("title = %q asserts the daemon is down; a missing socket does not say that (#578)", title)
+	}
+	if !strings.Contains(msg, "may still be running") {
+		t.Errorf("msg = %q, want it to say the daemon may still be up", msg)
 	}
 	if !strings.Contains(msg, "/tmp/harness-does-not-exist-test.sock") {
 		t.Errorf("msg = %q, want socket path included", msg)
 	}
-	if hint == "" {
-		t.Errorf("want non-empty hint")
+	if strings.Contains(msg, "XDG_RUNTIME_DIR") {
+		t.Errorf("msg = %q, want no fallback-path note for an explicit socket", msg)
+	}
+	// ENOENT is also what a cleanly stopped daemon leaves (Close removes its
+	// socket), so the hint still has to say how to start one.
+	if !strings.Contains(hint, "start it with: harness daemon") {
+		t.Errorf("hint = %q, want it to say how to start a daemon", hint)
+	}
+}
+
+// TestClassifyMissingDefaultSocketNamesTheRuntimeDirTrap: with
+// $XDG_RUNTIME_DIR unset the client defaults to the state-home path while a
+// daemon started with it set listens under /run/user/N. Same error message,
+// completely different cause, and an hour of chasing a phantom (#578).
+func TestClassifyMissingDefaultSocketNamesTheRuntimeDirTrap(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "hrt")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("XDG_STATE_HOME", dir)
+
+	socket := protocol.DefaultSocketPath()
+	if _, dialErr := net.Dial("unix", socket); dialErr == nil {
+		t.Fatalf("expected no daemon at %s", socket)
+	} else {
+		_, _, msg, _ := classify(dialErr)
+		if !strings.Contains(msg, "XDG_RUNTIME_DIR") {
+			t.Errorf("msg = %q, want it to name the unset $XDG_RUNTIME_DIR", msg)
+		}
+	}
+}
+
+// TestClassifyStaleSocket is the case where "daemon not running" IS true: the
+// socket file is there and nothing has it open.
+func TestClassifyStaleSocket(t *testing.T) {
+	t.Parallel()
+	dir, err := os.MkdirTemp("/tmp", "hcl")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "stale.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	// Leave the file behind, the way a hard-killed daemon does.
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	_, dialErr := net.Dial("unix", socket)
+	if dialErr == nil {
+		t.Fatal("expected ECONNREFUSED against a stale socket")
+	}
+	_, title, msg, hint := classify(dialErr)
+	if title != "daemon not running" {
+		t.Errorf("title = %q, want %q", title, "daemon not running")
+	}
+	if !strings.Contains(msg, "nothing is listening") {
+		t.Errorf("msg = %q, want it to say nothing is listening", msg)
+	}
+	if !strings.Contains(hint, "harness daemon") {
+		t.Errorf("hint = %q, want it to say how to start one", hint)
+	}
+}
+
+// TestClassifyDaemonNotAnswering is the third state: something is bound to the
+// socket and never answered. Telling the operator to start a daemon here adds
+// a second one to a box that already has one.
+//
+// The two shapes read differently. A peer that held the connection until the
+// handshake deadline is running and not serving; a peer that hung up is what a
+// daemon in the middle of shutting down looks like, and calling that "stuck"
+// would send the operator to restart a daemon that is already on its way out.
+func TestClassifyDaemonNotAnswering(t *testing.T) {
+	t.Parallel()
+	const socket = "/run/user/1000/harness.sock"
+	cases := []struct {
+		name      string
+		cause     error
+		want      string
+		forbidden string
+	}{
+		{"held silent until the deadline", os.ErrDeadlineExceeded, "not serving", "hung up"},
+		{"hung up", io.EOF, "hung up", "stuck"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := fmt.Errorf("harness list: %w", &client.NoHandshakeError{Socket: socket, Err: tc.cause})
+			level, title, msg, hint := classify(err)
+			if level != LevelError {
+				t.Errorf("level = %v, want LevelError", level)
+			}
+			if title != "daemon not answering" {
+				t.Errorf("title = %q, want %q", title, "daemon not answering")
+			}
+			if !strings.Contains(msg, socket) {
+				t.Errorf("msg = %q, want the socket path included", msg)
+			}
+			if !strings.Contains(msg, tc.want) {
+				t.Errorf("msg = %q, want it to say %q", msg, tc.want)
+			}
+			if strings.Contains(msg, tc.forbidden) {
+				t.Errorf("msg = %q, must not say %q for this shape", msg, tc.forbidden)
+			}
+			if strings.Contains(hint, "start it with") {
+				t.Errorf("hint = %q tells the operator to start a second daemon", hint)
+			}
+			if hint == "" {
+				t.Errorf("want non-empty hint")
+			}
+		})
 	}
 }
 
@@ -421,7 +545,7 @@ func TestClassifySurvivesVerbContextWrap(t *testing.T) {
 	}
 	wrapped := fmt.Errorf("harness ps: %w", dialErr)
 	_, title, _, _ := classify(wrapped)
-	if title != "daemon not running" {
-		t.Errorf("classify(wrapped dial error) title = %q, want %q", title, "daemon not running")
+	if title != "daemon socket missing" {
+		t.Errorf("classify(wrapped dial error) title = %q, want %q", title, "daemon socket missing")
 	}
 }

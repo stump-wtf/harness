@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/signal"
@@ -200,6 +201,16 @@ func runDaemon(o daemonOpts) {
 
 	configureDaemonLogger(o.logLevel, o.logFile)
 
+	// Refuse a live socket BEFORE anything with side effects runs. Listen
+	// probes again below, but by then Restore and Autostart have started this
+	// daemon's copies of the live daemon's harnesses, and the mgr.Close on
+	// the refusal path flushes its state.json over the live one's (#578).
+	if err := daemon.CheckSocketFree(o.socketPath); err != nil {
+		logListenFailure(o.socketPath, err)
+		signalDetached('e') // tell the waiting parent we failed
+		os.Exit(1)
+	}
+
 	// A missing config file is not an error: SPEC-0010 REQ "Fileless Operation"
 	// requires a container configured entirely through HARNESS_* to come up and
 	// serve, reporting zero harnesses. A file that EXISTS but does not parse
@@ -284,7 +295,7 @@ func runDaemon(o daemonOpts) {
 		Version:    buildinfo.Version,
 	})
 	if err := srv.Listen(); err != nil {
-		log.Error("listen failed", "socket", o.socketPath, "err", err)
+		logListenFailure(o.socketPath, err)
 		signalDetached('e') // tell the waiting parent we failed
 		mgr.Close()
 		os.Exit(1)
@@ -654,4 +665,21 @@ func configureDaemonLogger(level, logFile string) {
 	default:
 		log.SetLevel(log.InfoLevel)
 	}
+}
+
+// logListenFailure reports why the daemon could not take its socket.
+//
+// A socket another daemon answers on is a refusal, not a bind failure, and it
+// needs its own line: the old behaviour removed that socket and bound over it,
+// which is how tars ended up with a live daemon nobody could reach (#578).
+func logListenFailure(socketPath string, err error) {
+	if errors.Is(err, daemon.ErrSocketInUse) {
+		log.Error("refusing to start: another harness daemon is already listening",
+			"socket", socketPath,
+			"err", err,
+			"hint", "talk to it (`harness daemon status`), or stop it first (`harness daemon stop`)",
+		)
+		return
+	}
+	log.Error("listen failed", "socket", socketPath, "err", err)
 }

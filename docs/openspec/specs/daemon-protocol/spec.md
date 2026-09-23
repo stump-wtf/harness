@@ -225,6 +225,33 @@ host-key verification.
 - **THEN** snapshot-on-attach, backpressure, and resize policy behave
   identically to a local attach
 
+### Requirement: Socket Lifecycle
+
+The socket file SHALL keep naming the listener of the daemon that bound it for
+as long as that daemon serves. A daemon SHALL NOT unlink a socket that another
+process answers on — at startup or at shutdown — and SHALL refuse to start when
+one does, naming the holder. A serving daemon SHALL detect that its socket path
+no longer resolves to its own listener and re-bind it, except when another live
+listener has taken the path, which it SHALL report and leave alone.
+
+A client SHALL distinguish a missing socket file from a socket nobody is
+listening on and from a daemon that accepted the connection without answering;
+it SHALL NOT report a daemon as not running on evidence that only shows the
+socket is unreachable.
+
+#### Scenario: Second daemon on a live socket
+
+- **WHEN** a second `harness daemon` starts against a socket a live daemon is
+  serving
+- **THEN** it refuses to start, leaves the socket file untouched, and the first
+  daemon stays reachable
+
+#### Scenario: Socket removed under a live daemon
+
+- **WHEN** the socket file is deleted while the daemon is serving
+- **THEN** the daemon re-binds it (mode `0600`) within a tick, logs that it did,
+  and clients can reach it again without a restart
+
 ## Non-goals (v1)
 
 - A stable public API for third-party clients (the CLI is the supported

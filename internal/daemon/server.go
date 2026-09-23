@@ -60,7 +60,21 @@ type Server struct {
 	pingInterval    time.Duration
 	livenessTimeout time.Duration
 
-	ln   net.Listener
+	// watchInterval is how often the socket watchdog re-asserts that the
+	// socket path still names ln (socket.go). Seeded from
+	// defaultSocketWatchInterval; tests shrink it so a pass runs in
+	// milliseconds.
+	watchInterval time.Duration
+
+	// lnMu guards ln and bound, which the socket watchdog replaces underneath
+	// the accept loop when the socket file is removed out from under a live
+	// daemon (#578). bound is the identity (dev+inode) of the socket file ln
+	// is listening on, so "the path exists" is never mistaken for "the path is
+	// still mine".
+	lnMu  sync.Mutex
+	ln    net.Listener
+	bound os.FileInfo
+
 	done chan struct{}
 	once sync.Once
 	wg   sync.WaitGroup
@@ -100,6 +114,11 @@ type Options struct {
 	// tests shrink them so the reaper runs in milliseconds.
 	PingInterval    time.Duration
 	LivenessTimeout time.Duration
+
+	// SocketWatchInterval overrides how often the socket watchdog checks that
+	// the socket path still names this server's listener (socket.go). Zero —
+	// the production case — means defaultSocketWatchInterval.
+	SocketWatchInterval time.Duration
 }
 
 // NewServer builds a Server. It does not listen until Listen is called.
@@ -112,6 +131,10 @@ func NewServer(opts Options) *Server {
 	if liveness <= 0 {
 		liveness = defaultLivenessTimeout
 	}
+	watch := opts.SocketWatchInterval
+	if watch <= 0 {
+		watch = defaultSocketWatchInterval
+	}
 	return &Server{
 		mgr:             opts.Manager,
 		reg:             opts.Registry,
@@ -122,35 +145,24 @@ func NewServer(opts Options) *Server {
 		started:         time.Now(),
 		pingInterval:    ping,
 		livenessTimeout: liveness,
+		watchInterval:   watch,
 		done:            make(chan struct{}),
 		subs:            make(map[chan protocol.EventMsg]struct{}),
 		conns:           make(map[*conn]struct{}),
 	}
 }
 
-// Listen binds the Unix socket at the configured path with mode 0600 (ADR-0008),
-// removing any stale socket file first. The parent directory is created (0700)
-// when it is a fallback location without $XDG_RUNTIME_DIR.
-func (s *Server) Listen() error {
-	if err := protocol.EnsureSocketDir(s.socketPath); err != nil {
-		return err
-	}
-	// A leftover socket from a crashed daemon would make Listen fail with
-	// "address already in use"; remove it (it is ours, under our 0700 dir).
-	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	ln, err := net.Listen("unix", s.socketPath)
-	if err != nil {
-		return err
-	}
-	if err := os.Chmod(s.socketPath, protocol.SocketMode); err != nil {
-		_ = ln.Close()
-		return err
-	}
-	s.ln = ln
-	return nil
-}
+// Listen binds the Unix socket at the configured path with mode 0600 (ADR-0008).
+// The parent directory is created (0700) when it is a fallback location without
+// $XDG_RUNTIME_DIR.
+//
+// A stale socket left by a crashed daemon is removed so the bind succeeds, but
+// only after a probe shows nothing answers on it: an unconditional remove here
+// lets a second `harness daemon` unlink a live daemon's socket, which leaves
+// the first one supervising happily and unreachable by every client (#578).
+// When something does answer, Listen returns an error wrapping ErrSocketInUse
+// and binds nothing.
+func (s *Server) Listen() error { return s.bind() }
 
 // SocketPath returns the bound socket path.
 func (s *Server) SocketPath() string { return s.socketPath }
@@ -173,29 +185,68 @@ func (s *Server) Remote() (string, int) {
 }
 
 // Serve accepts connections until Close. It also starts the event relay that
-// fans Manager lifecycle events out to subscribed connections. Blocks until the
-// listener is closed.
+// fans Manager lifecycle events out to subscribed connections, and the socket
+// watchdog that re-binds the socket if it is removed under a live daemon
+// (socket.go). Blocks until the listener is closed.
+//
+// Starting the watchdog here rather than at the call site is deliberate: every
+// daemon that serves gets it, and there is no wiring for a future caller to
+// forget.
 func (s *Server) Serve() {
-	s.wg.Add(1)
-	go s.relayLoop()
+	s.goInternal(s.relayLoop)
+	s.goInternal(s.watchSocket)
 	for {
-		conn, err := s.ln.Accept()
+		ln := s.listener()
+		if ln == nil {
+			return // Serve without Listen; nothing to accept on
+		}
+		conn, err := ln.Accept()
 		if err != nil {
 			select {
 			case <-s.done:
 				return // closing
 			default:
 			}
-			// Transient accept error; a closed listener falls through the
-			// done check above, so this is safe to retry.
+			// The watchdog re-bound: our listener was closed on purpose and
+			// the replacement is already published, so pick it up.
+			if s.listener() != ln {
+				continue
+			}
+			// A listener closed with no replacement is a shutdown we did not
+			// see on `done`; retrying would spin on it forever.
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			// Transient accept error; safe to retry.
 			continue
 		}
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			s.handleConn(conn)
-		}()
+		if !s.goInternal(func() { s.handleConn(conn) }) {
+			_ = conn.Close() // accepted as Close ran; nobody will serve it
+		}
 	}
+}
+
+// goInternal starts one of the server's own goroutines and registers it with
+// the shutdown WaitGroup, reporting false (and starting nothing) when the
+// server is already closing.
+//
+// The registration happens under connMu — the lock Close takes before it waits
+// — so an Add can never land after Wait has started. Adding from inside the
+// goroutine that `go srv.Serve()` spawned is a WaitGroup misuse the race
+// detector fails on, and worse, a Close racing a starting goroutine returns
+// without waiting for it.
+func (s *Server) goInternal(fn func()) bool {
+	s.connMu.Lock()
+	defer s.connMu.Unlock()
+	if s.closing {
+		return false
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		fn()
+	}()
+	return true
 }
 
 // Close stops accepting, tears down the listener + socket file, closes every
@@ -207,10 +258,13 @@ func (s *Server) Serve() {
 func (s *Server) Close() {
 	s.once.Do(func() {
 		close(s.done)
-		if s.ln != nil {
-			_ = s.ln.Close()
+		if ln := s.listener(); ln != nil {
+			_ = ln.Close()
 		}
-		_ = os.Remove(s.socketPath)
+		// Only unlink the socket when it is still ours: an unconditional
+		// remove at shutdown is the startup foot-gun pointed the other way —
+		// daemon A exiting would delete daemon B's socket (#578).
+		s.removeOwnSocket()
 		s.connMu.Lock()
 		s.closing = true
 		for c := range s.conns {
@@ -256,7 +310,6 @@ func (s *Server) ConnCount() int {
 // protocol EventMsg to every subscribed connection (SPEC-0002 REQ "Event
 // Subscription").
 func (s *Server) relayLoop() {
-	defer s.wg.Done()
 	events, cancel := s.mgr.Events()
 	defer cancel()
 	for {

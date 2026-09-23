@@ -25,11 +25,14 @@ import (
 	"net"
 	"os"
 	"strings"
+	"syscall"
 
 	"charm.land/lipgloss/v2"
 	"golang.org/x/term"
 
+	"github.com/stump-wtf/harness/internal/client"
 	"github.com/stump-wtf/harness/internal/config"
+	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
@@ -395,11 +398,10 @@ func classify(err error) (Level, string, string, string) {
 		return LevelError, "permission denied",
 			"can't access the harness daemon socket.",
 			"the socket may be stale — stop any old harness daemon and restart it"
+	case isNotAnswering(err):
+		return daemonNotAnsweringDetail(err)
 	case isDaemonDown(err):
-		socket := socketFromError(err)
-		return LevelError, "daemon not running",
-			fmt.Sprintf("can't reach the harness daemon%s.", where(socket)),
-			"start it with: harness daemon"
+		return daemonDownDetail(err)
 	case isMissingConfig(err):
 		path := pathFromError(err)
 		return LevelError, "no config file",
@@ -412,6 +414,93 @@ func classify(err error) (Level, string, string, string) {
 	default:
 		return LevelError, "error", cleanMessage(err.Error()), ""
 	}
+}
+
+// Unreachable Daemon Messages
+//
+// "can't reach the daemon" is three states, not one, and the single message
+// they used to share asserted the daemon was not running. On tars that was
+// false for twenty minutes — the daemon was up and supervising with its socket
+// deleted — and the message sent the operator to `systemctl start` on a
+// running unit (#578).
+//
+// The distinguishing fact goes in the MESSAGE, not the hint: Report's non-TTY
+// form prints "harness <title>: <message>" and drops the hint entirely, and
+// scripts and agents are exactly the callers who cannot afford to be told the
+// daemon is down when it isn't.
+//
+// @joestump 09/22/2026 - Split out of classify for issue #578.
+
+// daemonDownDetail names which dial failure happened. ENOENT means only that
+// the socket file is gone, which says nothing about the process; ECONNREFUSED
+// means the file is there and no daemon has it open, which is the one case
+// where "not running" is true.
+func daemonDownDetail(err error) (Level, string, string, string) {
+	socket := socketFromError(err)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return LevelError, "daemon socket missing",
+			fmt.Sprintf("no socket%s. That is the socket file, not the daemon: it may still be running and supervising.%s",
+				where(socket), runtimeDirNote(socket)),
+			"if no daemon is running, start it with: harness daemon — check first (pgrep -fl 'harness daemon'): a running daemon re-creates a deleted socket within a second, so one that stays missing is usually a stopped daemon or an older build"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return LevelError, "daemon not running",
+			fmt.Sprintf("nothing is listening%s — the socket file is there, but no daemon has it open.", where(socket)),
+			"start it with: harness daemon"
+	default:
+		return LevelError, "daemon unreachable",
+			fmt.Sprintf("can't reach the harness daemon%s: %s", where(socket), cleanMessage(err.Error())),
+			"check whether it is running (systemctl --user status harness) before starting another"
+	}
+}
+
+// daemonNotAnsweringDetail is the third state: the connection was accepted, so
+// something is bound to that socket, and then no HELLO came back. Telling the
+// operator to start one would add a second daemon to a box that already has
+// one.
+//
+// It says which of the two shapes it saw, because they point different ways.
+// Holding the connection open in silence until the handshake deadline is a
+// daemon that is running and not serving. Hanging up is what a daemon does
+// while it shuts down (Close refuses new connections), so calling that one
+// "stuck" and prescribing a restart would be a guess dressed as a finding.
+func daemonNotAnsweringDetail(err error) (Level, string, string, string) {
+	var silent *client.NoHandshakeError
+	if !errors.As(err, &silent) {
+		silent = &client.NoHandshakeError{}
+	}
+	if silent.TimedOut() {
+		return LevelError, "daemon not answering",
+			fmt.Sprintf("the daemon%s accepted the connection but sent nothing for %s — it is running, and not serving.",
+				where(silent.Socket), client.HandshakeTimeout),
+			"read its log, then restart it: systemctl --user restart harness"
+	}
+	return LevelError, "daemon not answering",
+		fmt.Sprintf("the daemon%s accepted the connection and hung up without answering — it may be shutting down or restarting.",
+			where(silent.Socket)),
+		"retry in a moment; if it keeps happening, read the daemon's log"
+}
+
+// isNotAnswering reports whether err is the bound-but-silent state.
+func isNotAnswering(err error) bool {
+	var silent *client.NoHandshakeError
+	return errors.As(err, &silent)
+}
+
+// runtimeDirNote warns about the trap where the CLIENT resolved a different
+// default socket path than the daemon did. DefaultSocketPath falls back to the
+// state home when $XDG_RUNTIME_DIR is unset (ADR-0008), and it is routinely
+// unset in a non-login shell while set in the session systemd runs the daemon
+// in — the same "socket missing" error for a completely different reason.
+//
+// Only for a path the client defaulted to: an explicit --socket that does not
+// exist is exactly what the operator asked for, and telling them about the
+// fallback there would be noise about a path they never used.
+func runtimeDirNote(socket string) string {
+	if os.Getenv("XDG_RUNTIME_DIR") != "" || socket != protocol.DefaultSocketPath() {
+		return ""
+	}
+	return " ($XDG_RUNTIME_DIR is unset in this shell, so this is the fallback path; a daemon running where it is set listens somewhere else — pass --socket PATH.)"
 }
 
 // isDaemonDown reports whether err looks like a failed dial of the Unix

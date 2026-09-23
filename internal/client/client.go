@@ -10,12 +10,55 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/stump-wtf/harness/internal/protocol"
 )
+
+// HandshakeTimeout bounds the HELLO exchange in Dial. A daemon answers HELLO
+// from the connection's own goroutine the moment it reads one, so anything
+// near this long is a daemon that is not serving. Without a bound, a wedged
+// daemon — the kernel still accepts into its backlog — hangs every CLI call
+// and the TUI's startup forever, and the "not answering" state this package
+// reports could only ever be reached by a daemon that hung up. A var so tests
+// can shrink it.
+var HandshakeTimeout = 10 * time.Second
+
+// NoHandshakeError is the "socket present, nobody answering" state: the dial
+// succeeded — something is bound to the socket — and then the daemon never
+// sent its HELLO. It is neither "no daemon" nor a working one, and a CLI that
+// calls it either is telling the operator something false (#578).
+//
+// Err says which of the two ways it failed: a timeout (os.ErrDeadlineExceeded,
+// see TimedOut) is a peer that holds the connection and says nothing; EOF or
+// EPIPE is a peer that hung up, which a daemon in the middle of shutting down
+// does too.
+//
+// Socket is filled in by Dial, which is the layer that knows the path.
+type NoHandshakeError struct {
+	Socket string
+	Err    error
+}
+
+func (e *NoHandshakeError) Error() string {
+	where := ""
+	if e.Socket != "" {
+		where = " at " + e.Socket
+	}
+	return fmt.Sprintf("client: the daemon%s accepted the connection but did not answer the handshake: %v", where, e.Err)
+}
+
+// TimedOut reports whether the peer held the connection open without answering
+// for HandshakeTimeout, as opposed to hanging up on it.
+func (e *NoHandshakeError) TimedOut() bool {
+	return errors.Is(e.Err, os.ErrDeadlineExceeded)
+}
+
+func (e *NoHandshakeError) Unwrap() error { return e.Err }
 
 // Client is a connected control-plane client. It is not safe for concurrent
 // control Calls (the scriptable CLI is one request at a time); the attach data
@@ -37,9 +80,21 @@ func Dial(socketPath, clientVersion string, wants []string) (*Client, error) {
 		return nil, fmt.Errorf("client: dial %s: %w", socketPath, err)
 	}
 	c := &Client{pc: protocol.NewConn(raw), raw: raw}
+	// The deadline covers the handshake only; it is cleared before the
+	// connection is handed back, since an attach or events stream is
+	// legitimately silent for as long as it likes.
+	_ = raw.SetDeadline(time.Now().Add(HandshakeTimeout))
 	if err := c.handshake(clientVersion, wants); err != nil {
 		_ = raw.Close()
+		var silent *NoHandshakeError
+		if errors.As(err, &silent) {
+			silent.Socket = socketPath
+		}
 		return nil, err
+	}
+	if err := raw.SetDeadline(time.Time{}); err != nil {
+		_ = raw.Close()
+		return nil, fmt.Errorf("client: clearing handshake deadline: %w", err)
 	}
 	return c, nil
 }
@@ -51,12 +106,18 @@ func (c *Client) handshake(clientVersion string, wants []string) error {
 		ClientVersion: clientVersion,
 		Wants:         wants,
 	}
+	// Both halves of the exchange fail the same way for the operator: the dial
+	// worked, so something is bound to that socket, and it is not talking.
+	// Which of the two failed is a timing detail (a peer that hangs up can
+	// surface as EPIPE on the write or EOF on the read), so both carry the
+	// same type — typed, not text, because the CLI branches on it to avoid
+	// calling a bound daemon "not running" (#578).
 	if err := c.pc.WriteJSON(protocol.TypeHello, &hello); err != nil {
-		return err
+		return &NoHandshakeError{Err: err}
 	}
 	f, err := c.pc.ReadFrame()
 	if err != nil {
-		return fmt.Errorf("client: reading daemon HELLO: %w", err)
+		return &NoHandshakeError{Err: err}
 	}
 	if f.Type == protocol.TypeError {
 		return decodeError(f.Payload)
