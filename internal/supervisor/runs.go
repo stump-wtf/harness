@@ -543,6 +543,13 @@ func (p *process) killStragglers(deadline time.Time) {
 // timeout, replace, operator stop and restart, daemon shutdown — so this is the
 // one place the run's log file is closed.
 func (s *Supervisor) finishRun(outcome RunOutcome, code *int) {
+	// The process these skips were "during" is over, so the next skip opens
+	// a new record (REQ "Overlap Skip Coalescing": "When the run in flight
+	// ends, the next skip SHALL create a new record"). Cleared BEFORE the
+	// no-run return: every caller has just ended the process, and a skip
+	// against a process with no run (a harness a reload made triggered while
+	// it was up) must not stay open into the next run.
+	clear(s.openSkips)
 	run := s.run
 	if run == nil {
 		return
@@ -578,10 +585,6 @@ func (s *Supervisor) finishRun(outcome RunOutcome, code *int) {
 		}
 	}
 	s.publishRun(EventRunFinished, run.rec)
-	// The run this record's skips were "during" is over, so the next skip
-	// opens a new record (REQ "Overlap Skip Coalescing": "When the run in
-	// flight ends, the next skip SHALL create a new record").
-	clear(s.openSkips)
 	switch outcome {
 	case OutcomeCancelled, OutcomeInterrupted:
 		return // the caller has already dealt with the queue

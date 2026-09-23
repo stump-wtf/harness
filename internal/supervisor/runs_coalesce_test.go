@@ -325,3 +325,52 @@ func TestCoalescingSurvivesAStateSaveFailure(t *testing.T) {
 		t.Errorf("coalesced = %d, want 10", skips[0].Coalesced)
 	}
 }
+
+// TestAProcessWithNoRunDoesNotLeaveASkipOpen: a harness that becomes
+// triggered by a reload while a resident process is up (a schedule is not
+// run-affecting, so it applies at once) skips firings against a process that
+// has no run. finishRun is where the open skips were cleared, and finishRun
+// returns early when there is no run — so the skip stayed open past that
+// process's exit, and the first skip of the NEXT run incremented it instead
+// of opening its own record (REQ "Overlap Skip Coalescing": "When the run in
+// flight ends, the next skip SHALL create a new record").
+func TestAProcessWithNoRunDoesNotLeaveASkipOpen(t *testing.T) {
+	e := newRunsEnv(t)
+	resident := shHarness("busy", "sleep 30", 0)
+	resident.Restart = core.RestartNo
+	m, _ := e.manager(t, sweepCfg(resident), fastPolicy())
+
+	if !m.Start("busy") {
+		t.Fatal("Start returned false for a known harness")
+	}
+	waitFor(t, 5*time.Second, "the resident process is up", func() bool {
+		return m.get("busy").Snapshot().State == core.StateRunning
+	})
+
+	scheduled := coalesceSweep("busy")
+	scheduled.OnOverlap = core.OverlapSkip
+	m.Reload(sweepCfg(scheduled))
+
+	req := RunRequest{Trigger: TriggerSchedule}
+	if d, _ := m.StartRun("busy", req); d.Kind != DecisionSkipped {
+		t.Fatalf("a firing against the resident process = %+v, want skipped", d)
+	}
+	m.Stop("busy")
+	waitFor(t, 5*time.Second, "the resident process ends", func() bool {
+		return m.get("busy").Snapshot().State == core.StateStopped
+	})
+
+	m.StartRun("busy", req)
+	waitRuns(t, m, "busy", "a run is in flight", func(rs []RunRecord) bool {
+		return len(rs) > 0 && rs[len(rs)-1].Outcome == OutcomeRunning
+	})
+	m.StartRun("busy", req)
+
+	skips := skippedRecords(m.Runs("busy"))
+	if len(skips) != 2 {
+		t.Fatalf("the history holds %d skipped records, want 2 — the run's skip coalesced into one from before it started", len(skips))
+	}
+	if skips[0].Coalesced != 1 || skips[1].Coalesced != 1 {
+		t.Errorf("coalesced counts = %d and %d, want 1 and 1", skips[0].Coalesced, skips[1].Coalesced)
+	}
+}
