@@ -87,9 +87,10 @@ func (m *Manager) AppendRun(name string, rec RunRecord) (RunRecord, error) {
 // Coalescing"): the first skip already announced itself, and 199 more
 // announcements are exactly the noise coalescing exists to remove.
 //
-// A missing record is an error rather than a silent no-op, because the caller
-// uses that answer to decide whether to open a fresh record — swallowing it
-// would lose the skip entirely.
+// A missing record is errNoRunToCoalesce rather than a silent no-op, because
+// the caller uses that answer to decide whether to open a fresh record —
+// swallowing it would lose the skip entirely. Any other error is a failed
+// Save: the increment HAS landed, and the returned record carries it.
 func (m *Manager) CoalesceRun(name string, id int) (RunRecord, error) {
 	m.mu.Lock()
 	var rec RunRecord
@@ -112,7 +113,7 @@ func (m *Manager) CoalesceRun(name string, id int) (RunRecord, error) {
 	}
 	m.mu.Unlock()
 	if !found {
-		return RunRecord{}, fmt.Errorf("supervisor: no run %d for %q to coalesce into", id, name)
+		return RunRecord{}, fmt.Errorf("%w: run %d of %q", errNoRunToCoalesce, id, name)
 	}
 	return rec, m.Save()
 }

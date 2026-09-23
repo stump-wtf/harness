@@ -29,6 +29,7 @@ package supervisor
 // stop cannot orphan an MCP child that ignores SIGTERM and SIGHUP.
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -193,8 +194,18 @@ type RunJournal interface {
 	// event: SPEC-0014 REQ "Overlap Skip Coalescing" says later increments
 	// emit none, because the point of coalescing is that a burst produces one
 	// notification rather than 199.
+	//
+	// A record that no longer exists is errNoRunToCoalesce; any other error
+	// means the increment landed but did not persist, and the returned
+	// record carries it.
 	CoalesceRun(name string, id int) (RunRecord, error)
 }
+
+// errNoRunToCoalesce is CoalesceRun's answer when the open record has gone
+// (pruned, or a history reset) — the one case in which the skip must open a
+// new record. It is distinct from a failed Save, after which the increment
+// has already landed: treating that as "gone" too counted the firing twice.
+var errNoRunToCoalesce = errors.New("supervisor: no run to coalesce into")
 
 // RunDecisionKind names what StartRun did with a request.
 type RunDecisionKind string
@@ -651,9 +662,15 @@ func (s *Supervisor) recordSkip(req RunRequest, reason RunReason) RunRecord {
 	if s.journal != nil {
 		if id, open := s.openSkips[key]; open {
 			rec, err := s.journal.CoalesceRun(s.harness.Name, id)
-			if err == nil {
+			if !errors.Is(err, errNoRunToCoalesce) {
 				// No event, and no log line per firing: 200 of either is the
-				// noise coalescing exists to remove.
+				// noise coalescing exists to remove. A failed save is the
+				// exception worth a line — the increment landed in memory
+				// but not on disk — and it stays coalesced: opening a new
+				// record here would count this firing twice.
+				if err != nil {
+					s.logEvent("run history not saved", "run_id", rec.RunID, "err", err.Error())
+				}
 				return rec
 			}
 			// The record went away under us (pruned, or a history reset).
