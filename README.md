@@ -40,7 +40,7 @@ repo.
 ### Homebrew
 
 ```sh
-brew install --HEAD stump-wtf/tap/harness
+brew install stump-wtf/tap/harness
 ```
 
 Installing by the fully qualified name is a one-liner and the only form that
@@ -50,8 +50,12 @@ that one formula rather than the tap and everything it may ever contain. The old
 `brew tap stump-wtf/tap` + `brew install harness` form now fails because the
 short name needs the tap loaded and the tap is untrusted.
 
-`--HEAD` builds `main`; the tap's tagged formula can lag behind the features the
-docs describe.
+That installs the latest tagged release. To build unreleased work from `main`
+instead, add `--HEAD`:
+
+```sh
+brew install --HEAD stump-wtf/tap/harness
+```
 
 ### From source
 
@@ -90,7 +94,7 @@ reference and every verb are in the docs above.
 
 ## Status
 
-**Alpha — and self-hosting.** `v0.4.0` is the latest tag, and Harness supervises
+**Alpha — and self-hosting.** `v0.5.0` is the latest tag, and Harness supervises
 real work daily. Everything in the docs is implemented and exercised on `main`,
 but the TOML schema and daemon protocol can still change before v1.
 

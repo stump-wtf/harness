@@ -157,7 +157,7 @@ harness doctor
 CHECK         STATUS      DETAIL
 config        ok          /home/you/.config/harness/harness.toml — 4 harnesses
 daemon        ok          listening at /run/user/1000/harness.sock
-version       ok          client v0.4.0 · daemon v0.4.0
+version       ok          client v0.5.0 · daemon v0.5.0
 ssh           ok          off (not enabled in config)
 harnesses     warn        1/4 degraded: sb-worker
                           → check `harness logs <name>` for the failure
