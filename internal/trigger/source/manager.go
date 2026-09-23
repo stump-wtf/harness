@@ -192,6 +192,15 @@ func (m *Manager) Fire(ev *trigger.Envelope) []Decision {
 
 	out := make([]Decision, 0, len(bound))
 	for _, name := range bound {
+		// Checked per harness, not once per event: a Close that lands while
+		// an earlier harness is inside StartRun must abandon the ones after
+		// it, which have not reached the run entry point and so have no
+		// record to leave dangling (REQ "Concurrency Safety").
+		if ctx != nil && ctx.Err() != nil {
+			m.log.Debug("trigger firing abandoned: shutting down", "harness", name, "source", ev.Source)
+			out = append(out, Decision{Harness: name, Err: "abandoned: the daemon is shutting down"})
+			continue
+		}
 		out = append(out, m.fireOne(name, runTrigger, ev))
 	}
 	return out

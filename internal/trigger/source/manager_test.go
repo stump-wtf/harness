@@ -338,6 +338,52 @@ func TestCloseAbandonsLaterFiringsAndWaitsForOne(t *testing.T) {
 	}
 }
 
+// TestCloseAbandonsTheRestOfAFanOutInProgress: Close arriving while a
+// fan-out is parked on its FIRST harness must abandon the harnesses after it,
+// which have not reached the run entry point — Start's contract ("firings
+// that have not reached the run entry point are abandoned") is per harness,
+// not per event. Checking the context once, before the loop, fired every
+// remaining harness during shutdown.
+func TestCloseAbandonsTheRestOfAFanOutInProgress(t *testing.T) {
+	r := &fakeRunner{block: make(chan struct{})}
+	m := New(Options{
+		Runner: r,
+		Config: func() *core.Config {
+			return cfgWith([2]string{"first", "webhook.gh"}, [2]string{"second", "webhook.gh"})
+		},
+		Log: log.New(discard{}),
+	})
+	m.Start(context.Background())
+
+	fired := make(chan []Decision, 1)
+	go func() { fired <- m.Fire(webhookEvent("webhook.gh", "d-1")) }()
+	waitFor(t, 2*time.Second, "the first harness reaches the runner", func() bool {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		return len(r.calls) == 1
+	})
+
+	closed := make(chan struct{})
+	go func() { m.Close(); close(closed) }()
+	// Close cancels before it waits; give it the moment to do so while the
+	// first firing is still parked.
+	waitFor(t, 2*time.Second, "Close cancels the context", func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.ctx.Err() != nil
+	})
+	close(r.block)
+	<-closed
+	got := <-fired
+
+	if names := r.names(); len(names) != 1 {
+		t.Errorf("the runner saw %v, want only the harness already in flight when Close began", names)
+	}
+	if len(got) != 2 || got[0].Err != "" || got[1].Err == "" {
+		t.Errorf("decisions = %+v, want the first fired and the second abandoned with a reason", got)
+	}
+}
+
 // waitFor polls until pred holds or the deadline passes.
 func waitFor(t *testing.T, d time.Duration, what string, pred func() bool) {
 	t.Helper()
