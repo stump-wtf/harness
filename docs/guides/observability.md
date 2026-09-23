@@ -232,4 +232,4 @@ ssh -p 23234 your-host
 - The server's host key is generated once and kept under
   `~/.local/state/harness/`, so clients see a stable fingerprint.
 
-Next: [how Harness, Switchboard and Cairn fit together](./harness-switchboard-cairn).
+Next: [the stack: how Harness, Switchboard and Cairn fit together](./harness-switchboard-cairn).

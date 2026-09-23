@@ -11,6 +11,11 @@ anything unhealthy". In Harness a sweep is a harness with a `prompt` and a
 `schedule`. The daemon owns the cron. Each firing starts one agent run with your
 instruction, waits for it to exit, and records the outcome.
 
+Sweeps are not a stopgap for event triggers: the two are complementary, and
+one harness can carry both. A sweep is the right answer when nobody will send
+you an event for the work. See
+[when to use which](./harness-switchboard-cairn#events-and-schedules-are-complementary).
+
 This guide covers the config, then the part that decides whether sweeps are
 useful: how to design one so that a run that went wrong never looks like one
 that went right.
