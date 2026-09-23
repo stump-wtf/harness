@@ -263,8 +263,17 @@ func runExitCell(r protocol.RunInfo) string {
 // the daemon ever saw it, a replay of a delivery that a `max_body = "5MiB"`
 // route legitimately accepted. The per-harness cap is the daemon's.
 // Governing: SPEC-0014 REQ "Manual Trigger With Event".
+//
+// The read itself is bounded one byte past the cap, so pointing --event at a
+// multi-gigabyte log costs a cap's worth of memory rather than the whole file;
+// ParseEnvelope then refuses the over-cap result by length.
 func readEventArg(path string) ([]byte, error) {
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("--event: %w", err)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, core.MaxWebhookMaxBody+1))
+	_ = f.Close()
 	if err != nil {
 		return nil, fmt.Errorf("--event: %w", err)
 	}
