@@ -162,7 +162,9 @@ func TestPlantedIncidentIsStoppedAtExactlyN(t *testing.T) {
 
 // TestLegitimatePatternIsNeverStopped is the control, through the same path:
 // the same tool twice with one issue's arguments, then twice with the next's,
-// for four times the threshold's worth of calls.
+// for four times the threshold's worth of calls. It is also #621's defect: that
+// guard keyed an MCP call on its Summary, which ignores the arguments, and
+// stopped this worker at its eighth comment.
 func TestLegitimatePatternIsNeverStopped(t *testing.T) {
 	const n = DefaultThreshold
 	r := newLoopRig(t, n)
