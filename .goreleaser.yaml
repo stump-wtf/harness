@@ -4,11 +4,17 @@
 #
 # Gitea (gitea.stump.rocks/stump.wtf/harness) is the origin of truth; GitHub
 # (github.com/stump-wtf/harness) is a push mirror. Push mirrors carry git refs
-# ONLY — a tag travels, its release and attachments do not. So releases exist on
-# Gitea alone unless someone adds a second publish target on purpose.
+# ONLY — a tag travels, its release and attachments do not. So a second publish
+# target has to exist on purpose, and one does: `.github/workflows/release.yml`
+# runs on the mirrored tag and builds from THIS config, skipping its `release:`
+# block and publishing through `gh` instead. Keep the builds and archives host
+# agnostic; anything Gitea specific belongs under `release:` or `gitea_urls:`.
 #
 # Local dry run (no tag, no upload, artifacts land in dist/):
 #   make release-snapshot
+#
+# @joestump-agent 09/23/2026 - Noted the GitHub publish target now that one
+# exists, and what that means for editing this file.
 version: 2
 
 project_name: harness

@@ -1,0 +1,106 @@
+---
+# harness — publish a GitHub Release for a tag that arrived on the mirror.
+#
+# Gitea (gitea.stump.rocks/stump.wtf/harness) is canonical, and
+# `.gitea/workflows/release.yaml` cuts the release there. A push mirror carries
+# git REFS ONLY: the tag travels, its release and attachments do not. So a
+# GitHub Release only exists if something on GitHub creates one — which is why
+# v0.3.0 had one (cut by hand) and v0.4.0 had none until this file.
+#
+# This workflow is that something, and it stands on its own: it rebuilds from
+# the tag with the same `.goreleaser.yaml` and publishes with the run's own
+# GITHUB_TOKEN. No cross-host secret to provision, and nothing here has to
+# reach the private Gitea — which a GitHub-hosted runner cannot do anyway.
+#
+# TRIGGER: the mirror's tag push fires this. Mirror pushes authenticate with a
+# PAT, and PAT pushes do start workflows — pages.yml has been running on
+# mirrored `main` pushes all along. `workflow_dispatch` is the manual path for
+# a tag that predates this file, or a mirror sync that has not come round yet.
+#
+# ARTIFACTS ARE NOT BYTE-IDENTICAL to Gitea's, on purpose and harmlessly: this
+# run compiles on a GitHub runner, so gzip stamps and toolchain patch versions
+# differ from the Gitea act_runner's. The two sets serve disjoint audiences —
+# the Homebrew tap builds from the source tarball, the install scripts point at
+# the Gitea generic registry, and these are for people who found the repo on
+# GitHub. Publishing one set to both hosts would mean handing a GitHub PAT to
+# the Gitea runner; a second build is the cheaper trade.
+#
+# Notes come from goreleaser's generated `dist/CHANGELOG.md`, the same one that
+# lands on the Gitea release, so the two read alike without a second source of
+# truth to keep in sync.
+#
+# @joestump-agent 09/23/2026 - Added, after v0.4.0 shipped on Gitea with no
+# GitHub Release behind it. v0.3.0's was cut by hand; nothing was ever going to
+# do it for v0.4.0.
+name: release (GitHub mirror)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release, e.g. v0.4.0"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: github-release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: build + publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          # GoReleaser derives the version and changelog from tag history, so
+          # the default shallow clone is not enough.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The Gitea pipeline gates PRs and main, but a tag can be pushed at any
+      # commit — so re-run the correctness gate here rather than releasing on
+      # trust, exactly as the Gitea release workflow does.
+      - name: Test
+        run: go test ./...
+
+      # Build and archive only. `.goreleaser.yaml`'s `release:` block targets
+      # Gitea, so publishing from here is left to `gh` below; that keeps ONE
+      # goreleaser config for both hosts instead of a second one to drift.
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean --skip=publish,announce
+
+      # Refuse rather than quietly diverge: a re-run against an already
+      # published tag stops here, the same way the Gitea registry upload fails
+      # loudly on a 409. Delete the GitHub release first if a re-cut is real.
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::a GitHub release for ${TAG} already exists — delete it first to re-cut"
+            exit 1
+          fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes-file dist/CHANGELOG.md \
+            --verify-tag \
+            dist/*.tar.gz dist/checksums.txt
+          echo "published ${TAG} at ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
