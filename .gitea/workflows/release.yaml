@@ -29,6 +29,10 @@
 # @joestump-agent 09/23/2026 - Replaced the claim that gitea.token is enough on
 # 1.26+ with what v0.4.0 actually did, and made the upload prefer an explicit
 # credential over an actor-bound one.
+# @joestump-agent 09/23/2026 - Review: the credential reached curl's argv via
+# -H "Authorization: …", readable from /proc while the upload ran; it now goes
+# into a mktemp header file (-H @file) instead, so no process listing ever
+# shows it.
 name: release
 
 on:
@@ -105,6 +109,12 @@ jobs:
             echo "::warning::no REGISTRY_TOKEN secret — falling back to the per-run token, whose package scope follows ${ACTOR}"
           fi
 
+          # The credential goes into a header FILE, not into curl's argv, so it
+          # is invisible to /proc for the lifetime of the upload.
+          hdr=$(mktemp)
+          trap 'rm -f "$hdr"' EXIT
+          printf 'Authorization: token %s\n' "$token" > "$hdr"
+
           version="${REF_NAME#v}"   # v0.1.0 → 0.1.0
           base="https://gitea.stump.rocks/api/packages/stump.wtf/generic/harness/${version}"
           for f in dist/*.tar.gz dist/checksums.txt; do
@@ -112,7 +122,7 @@ jobs:
             name=$(basename "$f")
             echo "→ ${base}/${name}"
             code=$(curl -sS -o /dev/null -w '%{http_code}' \
-              -H "Authorization: token ${token}" \
+              -H @"$hdr" \
               --upload-file "$f" \
               "${base}/${name}")
             case "$code" in
