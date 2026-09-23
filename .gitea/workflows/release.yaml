@@ -10,13 +10,17 @@
 #       https://gitea.stump.rocks/api/packages/stump.wtf/generic/harness/<version>/<file>
 #     which is what an install script or an Ansible get_url wants to point at.
 #
-# AUTH: both steps use the automatic per-run `gitea.token` — no PAT, no repo
-# secret. That is only true on Gitea >= 1.26, where Actions tokens can carry
-# package scope; this instance is on 1.27. (See stump.wtf/switchboard's
-# build.yaml, which still carries a REGISTRY_TOKEN PAT workaround written for
-# the pre-1.26 behaviour and can now drop it.) The `permissions:` block below is
-# what grants the token `contents: write` (create the release) and
-# `packages: write` (upload to the registry).
+# AUTH: the release step uses the automatic per-run `gitea.token`, which can
+# create a release. The registry upload CANNOT: this instance's package
+# registry rejects the per-run token with 401 (v0.4.0's run died there, and the
+# generic registry has no 0.4.0), the same way its container registry does
+# (see stump.wtf/ci's go-service.yaml). So the upload uses the stump.wtf org
+# secret REGISTRY_TOKEN, the purpose-scoped write:package PAT the shared CI
+# already pushes images with. The `permissions:` block still grants the
+# per-run token `contents: write` for the release itself.
+#
+# @joestump 09/23/2026 - Moved the registry upload to REGISTRY_TOKEN after
+# v0.4.0's upload failed 401 on the per-run token.
 name: release
 
 on:
@@ -70,10 +74,14 @@ jobs:
       # version in the UI first if a genuine re-cut is needed.
       - name: Publish to the generic package registry
         env:
-          TOKEN: ${{ gitea.token }}
+          TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REF_NAME: ${{ gitea.ref_name }}
         run: |
           set -euo pipefail
+          if [ -z "${TOKEN}" ]; then
+            echo "::error::REGISTRY_TOKEN is not set — the per-run token is rejected by the package registry" >&2
+            exit 1
+          fi
           version="${REF_NAME#v}"   # v0.1.0 → 0.1.0
           base="https://gitea.stump.rocks/api/packages/stump.wtf/generic/harness/${version}"
           for f in dist/*.tar.gz dist/checksums.txt; do
