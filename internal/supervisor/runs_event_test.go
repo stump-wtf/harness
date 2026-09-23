@@ -147,8 +147,18 @@ func TestEventEnvironmentAndArgv(t *testing.T) {
 	// the run's PTY hard-wraps at 80 columns: an absolute path under a temp
 	// directory is reliably longer than that, so a bare Contains against the
 	// whole value fails on the wrap rather than on the value.
+	//
+	// The fields are ALSO written to a per-run sidecar file, and read from
+	// there: the run's log interleaves the daemon's lifecycle lines with the
+	// PTY's output, and under load a "state changed" line lands inside the
+	// wrapped path, which no amount of unwrapping undoes.
+	fieldsDir := t.TempDir()
 	script := `printf 'F:ID=[%s]\nF:TRIGGER=[%s]\nF:SOURCE=[%s]\nF:EVENT=[%s]\nF:ARGV=[%s]\n' \
-  "$HARNESS_RUN_ID" "$HARNESS_RUN_TRIGGER" "${HARNESS_RUN_SOURCE-unset}" "${HARNESS_EVENT_FILE-unset}" "$0"`
+  "$HARNESS_RUN_ID" "$HARNESS_RUN_TRIGGER" "${HARNESS_RUN_SOURCE-unset}" "${HARNESS_EVENT_FILE-unset}" "$0" \
+  | tee '` + fieldsDir + `'/"$HARNESS_RUN_ID".fields`
+	fieldsOf := func(id int) string {
+		return readText(t, filepath.Join(fieldsDir, strconv.Itoa(id)+".fields"))
+	}
 	e := newRunsEnv(t)
 	h := triggeredSweep("pr-review", script, "webhook.gitea-pr")
 	h.Schedule = "0 3 * * *" // both firing sources, so one harness covers both cases
@@ -158,6 +168,7 @@ func TestEventEnvironmentAndArgv(t *testing.T) {
 	m.StartRun("pr-review", RunRequest{Trigger: TriggerWebhook, Source: env.Source, Event: env})
 	recs := waitRuns(t, m, "pr-review", "the event run finishes", outcomesAre(OutcomeSuccess))
 	eventLog := readText(t, m.RunLogPath("pr-review", recs[0].RunID))
+	eventFields := fieldsOf(recs[0].RunID)
 
 	abs, err := filepath.Abs(eventPath(m, "pr-review", recs[0].RunID))
 	if err != nil {
@@ -170,31 +181,32 @@ func TestEventEnvironmentAndArgv(t *testing.T) {
 		"EVENT":   abs,
 	}
 	for k, v := range want {
-		if got := logField(eventLog, k); got != v {
+		if got := logField(eventFields, k); got != v {
 			t.Errorf("the event run's %s = %q, want %q", k, got, v)
 		}
 	}
 	// HARNESS_EVENT_FILE must be ABSOLUTE: an agent's working directory is
 	// the harness workdir, not the jobs directory, so a relative path would
 	// resolve to nothing on the far side.
-	if !filepath.IsAbs(logField(eventLog, "EVENT")) {
-		t.Errorf("HARNESS_EVENT_FILE is not an absolute path: %q", logField(eventLog, "EVENT"))
+	if !filepath.IsAbs(logField(eventFields, "EVENT")) {
+		t.Errorf("HARNESS_EVENT_FILE is not an absolute path: %q", logField(eventFields, "EVENT"))
 	}
 
 	// The same harness, fired by its schedule: no source, no event file.
 	m.StartRun("pr-review", RunRequest{Trigger: TriggerSchedule, Window: time.Now()})
 	recs = waitRuns(t, m, "pr-review", "the scheduled run finishes", outcomesAre(OutcomeSuccess, OutcomeSuccess))
 	schedLog := readText(t, m.RunLogPath("pr-review", recs[1].RunID))
-	if got := logField(schedLog, "TRIGGER"); got != "schedule" {
+	schedFields := fieldsOf(recs[1].RunID)
+	if got := logField(schedFields, "TRIGGER"); got != "schedule" {
 		t.Errorf("the scheduled run's trigger = %q, want schedule", got)
 	}
 	// "unset" is the shell's ${VAR-default}, which fires only when the
 	// variable is ABSENT — so this distinguishes unset from empty, which is
 	// what the requirement actually says.
-	if got := logField(schedLog, "SOURCE"); got != "unset" {
+	if got := logField(schedFields, "SOURCE"); got != "unset" {
 		t.Errorf("a scheduled firing set HARNESS_RUN_SOURCE = %q", got)
 	}
-	if got := logField(schedLog, "EVENT"); got != "unset" {
+	if got := logField(schedFields, "EVENT"); got != "unset" {
 		t.Errorf("a scheduled firing set HARNESS_EVENT_FILE = %q", got)
 	}
 	if strings.Contains(schedLog, sentinelPayload) || strings.Contains(eventLog, sentinelPayload) {
@@ -204,7 +216,7 @@ func TestEventEnvironmentAndArgv(t *testing.T) {
 	// argv is byte-identical across the two runs. That is the sentence in REQ
 	// "Event Delivery To The Run" that stops a delivery rewriting the
 	// instruction it fired.
-	if a, b := logField(eventLog, "ARGV"), logField(schedLog, "ARGV"); a == "" || a != b {
+	if a, b := logField(eventFields, "ARGV"), logField(schedFields, "ARGV"); a == "" || a != b {
 		t.Errorf("argv differs between an event run and a scheduled run: %q vs %q", a, b)
 	}
 }

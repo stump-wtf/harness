@@ -40,6 +40,7 @@ func TestDaemonWiringDeliversAnEventToTheRun(t *testing.T) {
 	// Only the stop grace is shrunk; everything else is what the daemon
 	// itself configures.
 	opts.Policy.StopGrace = 200 * time.Millisecond
+	fields := filepath.Join(tmp, "fields")
 
 	// A webhook-only harness: no schedule at all, so this also proves the run
 	// machinery keys off Triggered() rather than Schedule.
@@ -47,7 +48,11 @@ func TestDaemonWiringDeliversAnEventToTheRun(t *testing.T) {
 		Name:    "pr-review",
 		Adapter: "generic",
 		Backend: core.BackendNative,
-		Args:    []string{"-c", `printf 'EVENT=[%s]\n' "${HARNESS_EVENT_FILE-unset}"`},
+		// The value is written to a sidecar file as well as printed: the
+		// run's log interleaves the daemon's own lifecycle lines with the
+		// PTY's output, and under load a "state changed" line lands inside
+		// the hard-wrapped path, so the log cannot be the place it is read.
+		Args:    []string{"-c", `printf 'EVENT=[%s]\n' "${HARNESS_EVENT_FILE-unset}" | tee '` + fields + `'`},
 		Restart: core.RestartNo,
 
 		Triggers:  []string{"webhook.gitea-pr"},
@@ -135,13 +140,14 @@ func TestDaemonWiringDeliversAnEventToTheRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The run's PTY hard-wraps at 80 columns, so the path arrives split;
-	// unwrap before matching. The brackets the script prints are what make
-	// that safe.
-	flat := strings.NewReplacer("\n", "", "\r", "").Replace(string(log))
+	// Read from the sidecar the child wrote, not the log: see the script.
+	got, err := os.ReadFile(fields)
+	if err != nil {
+		t.Fatalf("the spawned process wrote no fields file: %v", err)
+	}
 	want := "EVENT=[" + eventFile + "]"
-	if !strings.Contains(flat, want) {
-		t.Errorf("the spawned process did not receive HARNESS_EVENT_FILE:\nwant %q\nin\n%s", want, log)
+	if !strings.Contains(string(got), want) {
+		t.Errorf("the spawned process did not receive HARNESS_EVENT_FILE:\nwant %q\ngot  %q", want, got)
 	}
 	if strings.Contains(string(log), sentinel) {
 		t.Error("the event payload reached the run's log")
