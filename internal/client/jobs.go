@@ -12,6 +12,7 @@ package client
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/stump-wtf/harness/internal/protocol"
 )
@@ -39,9 +40,19 @@ func (c *Client) Trigger(name string) (protocol.TriggerData, error) {
 // them. Decoding and re-encoding here would normalize a field the daemon is
 // about to judge — key order, an omitted optional, a number's spelling — so
 // the client would be validating a document the daemon never sees.
+//
+// A daemon older than ProtoMinor 11 does not know the Event field and would
+// silently drop it, starting a run with no event file — for a harness with a
+// schedule, a successful-looking replay that delivered nothing. So an event
+// sent to one is refused here, before anything runs.
 func (c *Client) TriggerWithEvent(name string, event []byte) (protocol.TriggerData, error) {
 	req := protocol.ControlReq{Op: protocol.OpTrigger, Name: name}
 	if len(event) > 0 {
+		if minor, ok := protoMinor(c.daemon.ProtoVersion); !ok || minor < eventTriggerMinor {
+			return protocol.TriggerData{}, fmt.Errorf(
+				"client: daemon proto %q predates trigger events (needs 1.%d); restart the daemon on this version to use --event",
+				c.daemon.ProtoVersion, eventTriggerMinor)
+		}
 		req.Event = json.RawMessage(event)
 	}
 	resp, err := c.call(req)
@@ -71,4 +82,17 @@ func (c *Client) RunLogs(name string, run, lines int) (protocol.LogsData, error)
 	}
 	var out protocol.LogsData
 	return out, json.Unmarshal(resp.Data, &out)
+}
+
+// eventTriggerMinor is the ProtoMinor that added ControlReq.Event.
+const eventTriggerMinor = 11
+
+// protoMinor parses the minor half of a "major.minor" proto version. A bare
+// major has no minor to speak of, which reports false.
+func protoMinor(version string) (int, bool) {
+	var maj, minor int
+	if _, err := fmt.Sscanf(version, "%d.%d", &maj, &minor); err != nil {
+		return 0, false
+	}
+	return minor, true
 }
