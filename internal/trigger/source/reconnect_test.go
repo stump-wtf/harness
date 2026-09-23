@@ -633,3 +633,36 @@ func TestRepeatedExpiryFallsBackToBackoff(t *testing.T) {
 		t.Errorf("a server expiring every session produced %d immediate retries; the fast path is spent once", zeros)
 	}
 }
+
+// TestFailedInitializeIsRetriedFromScratch: a server that answers initialize
+// with a session id but without the channel capability must stay `error` on
+// every retry, and must never be sent the standalone GET.
+//
+// Client.Initialize stores the Mcp-Session-Id before it checks the
+// capability, so a retry that decided "already initialized" from
+// SessionID() alone skipped the check, opened the stream against a server
+// that has no doorbells, and reported it `connected` — the state the
+// capability check exists to prevent (Scenario "Server without the channel
+// capability").
+func TestFailedInitializeIsRetriedFromScratch(t *testing.T) {
+	srv := testserver.New(testserver.Options{NoChannelCapability: true})
+	t.Cleanup(srv.Close)
+
+	clk := newClock()
+	held := holding(channelCfg(srv.URL, true, "one"))
+	_, states := reconnectManager(t, &fakeRunner{}, held.get, clk)
+	waitFor(t, 5*time.Second, "several retries have run", func() bool {
+		return len(clk.Slept()) >= 4 && initializes(srv) >= 4
+	})
+
+	for _, s := range states.snapshot() {
+		if s == trigger.StateConnected {
+			t.Fatalf("a server without the channel capability was reported connected: %v", states.snapshot())
+		}
+	}
+	for _, method := range srv.HTTPMethods() {
+		if method == "GET" {
+			t.Fatal("a server without the channel capability was sent the standalone GET")
+		}
+	}
+}
