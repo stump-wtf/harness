@@ -27,7 +27,7 @@ enabled = false
 
 | Field | Meaning |
 |-------|---------|
-| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `generic`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args: use `args = ["-c", "<command line>"]` to run an arbitrary command |
+| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `generic`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args: use `args = ["-c", "<command line>"]` to run an arbitrary command. `generic` takes no `prompt` or `prompt_file` — see [Agent adapters](#agent-adapters) |
 | `args` | argument list appended after the adapter's executable |
 | `workdir` | working directory (**required** for most commands) |
 | `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config) |
@@ -67,7 +67,7 @@ workdir = "~/src/my-project"
 
 | Field | Meaning |
 |-------|---------|
-| `prompt` | the agent instruction. Mutually exclusive with `args` and with `prompt_file`; stored verbatim (never placeholder-expanded) and synthesized into the agent argv at spawn from the same `harness` adapter |
+| `prompt` | the agent instruction. Mutually exclusive with `args` and with `prompt_file`, and not accepted on `harness = "generic"`; stored verbatim (never placeholder-expanded) and synthesized into the agent argv at spawn from the same `harness` adapter |
 | `prompt_file` | path to a file whose contents are the instruction — the alternative to an inline `prompt` for anything too long for one TOML line. See below |
 | `model` | which model the agent runs, e.g. `claude-opus-5`. Requires `prompt`; folded into the synthesized argv |
 | `auto_accept` | run unattended, bypassing the agent's permission prompts (the vendor's yolo flag). Requires `prompt`; fold into the synthesized argv |
@@ -88,7 +88,7 @@ is dropped, not emulated:
 | `crush` | `crush [--yolo] run [--quiet] [--model M] <prompt>` | `max_turns` (Crush has no turn cap) |
 | `claude-code` | `claude -p [--dangerously-skip-permissions] [--model M] [--max-turns N] --verbose --output-format stream-json <prompt>` | `quiet` (`-p` is already headless) |
 | `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
-| `generic` | same as `crush` | same as `crush` |
+| `generic` | none — a `prompt` or `prompt_file` on `generic` is a config error | — |
 
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
 it on trusted, headless runs.
@@ -329,6 +329,25 @@ arbitrary command is expressed as `args = ["-c", "<command line>"]`, and it
 reports no native trajectory (scrollback-only). Note that `args` are handed to
 `sh` itself: a bare `args = ["/usr/local/bin/thing"]` asks sh to *interpret*
 that file as a shell script, which fails on a compiled binary.
+
+`generic` takes **no prompt**. It runs `sh` and has no prompt synthesis, so a
+`generic` harness that sets `prompt` or `prompt_file` fails to load, in the
+global config, a `harness_d` drop-in or a project file, and `project up`, a
+scratchpad and the edit form refuse it too:
+
+```
+harness "triage": "generic" runs sh and has no prompt synthesis, so it takes no
+"prompt"; use harness = "crush"|"claude-code"|"codex" for a prompt one-shot
+```
+
+(It used to run `crush run <prompt>` instead, whether or not you had Crush.)
+
+Until the `command` kind and the `pi`/`omp` adapters ship
+([ADR-0023](/decisions/adr-0023-command-one-shots-and-templating), issue #500),
+the only way to run Pi, OMP or any other agent CLI not listed above is
+`harness = "generic"` with `args = ["-c", "omp …"]`, and **only as a
+long-running harness**. It cannot be scheduled or triggered: `schedule` and
+`triggers` need a `prompt`, which `generic` rejects.
 
 ```toml
 [harness.my-agent]
