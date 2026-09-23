@@ -528,3 +528,117 @@ func TestPostResponseMayBeAStream(t *testing.T) {
 		t.Fatalf("Initialize against a streaming server: %v", err)
 	}
 }
+
+// stallingServer answers initialize as a one-event SSE stream that it then
+// holds open, the way a server that never closes its POST response streams
+// would; answers `notifications/initialized` and every reply POST the same
+// way; and serves a GET stream the test can push into.
+//
+// MCP says a server SHOULD close a POST's stream after the response. SHOULD is
+// not MUST, and the daemon cannot let a server that doesn't wedge the session.
+type stallingServer struct {
+	*httptest.Server
+	push    chan string
+	release chan struct{}
+}
+
+func newStallingServer(t *testing.T) *stallingServer {
+	t.Helper()
+	s := &stallingServer{push: make(chan string, 8), release: make(chan struct{})}
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f := w.(http.Flusher)
+		switch r.Method {
+		case http.MethodPost:
+			body := make([]byte, 4096)
+			n, _ := r.Body.Read(body)
+			w.Header().Set("Mcp-Session-Id", "sess-stall")
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if strings.Contains(string(body[:n]), `"initialize"`) {
+				_, _ = w.Write([]byte(`data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{"claude/channel":{}}}}}` + "\n\n"))
+			}
+			f.Flush()
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			f.Flush()
+			for {
+				select {
+				case d := <-s.push:
+					_, _ = w.Write([]byte("data: " + d + "\n\n"))
+					f.Flush()
+				case <-s.release:
+					return
+				case <-r.Context().Done():
+					return
+				}
+			}
+		default:
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// Hold the POST's stream open until the test ends.
+		select {
+		case <-s.release:
+		case <-r.Context().Done():
+		}
+	}))
+	// Release before Close: httptest.Server.Close waits for the handlers.
+	t.Cleanup(func() { close(s.release); s.Close() })
+	return s
+}
+
+// TestInitializeDoesNotWaitForTheServerToCloseItsStream: initialize must
+// return once it has the response, not once the server closes the stream the
+// response arrived on. Otherwise a server that holds POST streams open parks
+// the source in `connecting` forever.
+func TestInitializeDoesNotWaitForTheServerToCloseItsStream(t *testing.T) {
+	srv := newStallingServer(t)
+	c := New(Options{Source: source(srv.URL, nil), Log: quietLog()})
+
+	done := make(chan error, 1)
+	go func() { done <- c.Initialize(context.Background()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Initialize is still waiting for the server to close a response stream it already read the answer from")
+	}
+}
+
+// TestAStalledReplyDoesNotStopTheStream: answering a server `ping` happens on
+// the goroutine that reads doorbells, so a reply POST whose response never
+// ends must not stall it.
+func TestAStalledReplyDoesNotStopTheStream(t *testing.T) {
+	srv := newStallingServer(t)
+	c := New(Options{Source: source(srv.URL, nil), Log: quietLog()})
+
+	initDone := make(chan error, 1)
+	go func() { initDone <- c.Initialize(context.Background()) }()
+	select {
+	case err := <-initDone:
+		if err != nil {
+			t.Fatalf("Initialize: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Initialize never returned")
+	}
+
+	rec := newRecorder()
+	opened, stop := listen(t, c, rec)
+	<-opened
+	defer stop()
+
+	srv.push <- `{"jsonrpc":"2.0","id":7,"method":"ping"}`
+	srv.push <- `{"jsonrpc":"2.0","method":"notifications/claude/channel","params":{"content":"after the ping"}}`
+	select {
+	case <-rec.got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the doorbell after a ping never arrived: the reply's response stalled the reader")
+	}
+	if content, _, _ := rec.snapshot(); len(content) != 1 || content[0] != "after the ping" {
+		t.Errorf("content = %v", content)
+	}
+}
