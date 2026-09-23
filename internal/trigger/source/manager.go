@@ -114,6 +114,13 @@ type Manager struct {
 	sleep func(context.Context, time.Duration) bool
 	rand  func() float64
 
+	// reconcileMu serializes Reconcile. Nothing upstream serializes reloads
+	// (SIGHUP, the config watcher and the reload control op each call
+	// Manager.Reload), and Reconcile drops mu while it waits for replaced
+	// sessions to end — so without this a second reload could start its own,
+	// unseeded session for a source the first was still replacing.
+	reconcileMu sync.Mutex
+
 	mu       sync.Mutex
 	closed   bool
 	ctx      context.Context

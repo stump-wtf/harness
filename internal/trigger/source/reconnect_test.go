@@ -781,3 +781,123 @@ func TestRotationAfterABlipDoesNotCatchUp(t *testing.T) {
 		t.Errorf("a rotation after a 10-second blip produced %d catch-ups, want only the start one: the replacement mistook itself for the daemon's first connect", c)
 	}
 }
+
+// TestNoChangeRewriteLeavesIdleSourcesAlone extends the no-change guarantee to
+// the sources with no session. A byte-identical rewrite must not report a
+// state change for a disabled or unbound source, nor reset its Since: that
+// notification is the trigger_source_changed seam (#476), and chezmoi's timer
+// would otherwise turn it into a periodic event meaning nothing.
+func TestNoChangeRewriteLeavesIdleSourcesAlone(t *testing.T) {
+	srv := testserver.New(testserver.Options{})
+	t.Cleanup(srv.Close)
+
+	build := func() *core.Config {
+		c := channelCfg(srv.URL, true, "one")
+		c.Channels["idle"] = core.ChannelSource{Name: "idle", URL: srv.URL + "/idle", Enabled: true}
+		c.Channels["off"] = core.ChannelSource{Name: "off", URL: srv.URL + "/off", Enabled: false}
+		c.ChannelOrder = append(c.ChannelOrder, "idle", "off")
+		return c
+	}
+	var (
+		mu       sync.Mutex
+		notified = map[string]int{}
+	)
+	held := holding(build())
+	clk := newClock()
+	m := New(Options{
+		Runner: &fakeRunner{},
+		Config: held.get,
+		Log:    log.New(discard{}),
+		Now:    clk.Now, Sleep: clk.Sleep, Rand: func() float64 { return 0 },
+		OnState: func(s Status) {
+			mu.Lock()
+			notified[s.Source]++
+			mu.Unlock()
+		},
+	})
+	m.Start(context.Background())
+	t.Cleanup(m.Close)
+	waitState(t, m, "channel.sb", trigger.StateConnected)
+	waitState(t, m, "channel.idle", trigger.StateUnbound)
+	waitState(t, m, "channel.off", trigger.StateDisabled)
+	// setStatusLocked notifies on a goroutine; let those land.
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	before := map[string]int{"channel.idle": notified["channel.idle"], "channel.off": notified["channel.off"]}
+	mu.Unlock()
+	idleSince, _ := m.StatusOf("channel.idle")
+	offSince, _ := m.StatusOf("channel.off")
+
+	for i := 0; i < 3; i++ {
+		next := build()
+		held.set(next)
+		m.Reconcile(next)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	for ref, n := range before {
+		if notified[ref] != n {
+			t.Errorf("%s: a no-change rewrite reported %d state changes", ref, notified[ref]-n)
+		}
+	}
+	if st, _ := m.StatusOf("channel.idle"); !st.Since.Equal(idleSince.Since) {
+		t.Error("channel.idle: a no-change rewrite reset Since")
+	}
+	if st, _ := m.StatusOf("channel.off"); !st.Since.Equal(offSince.Since) {
+		t.Error("channel.off: a no-change rewrite reset Since")
+	}
+}
+
+// TestConcurrentReloadsBuildOneSession: SIGHUP, the config watcher and the
+// reload control op all reach Reconcile with no lock between them. Two
+// reloads of the same rotation must still produce ONE replacement session,
+// seeded from the one it replaced — not a second, unseeded session started by
+// whichever reload arrived while the first was waiting for the old one to end.
+func TestConcurrentReloadsBuildOneSession(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		srv := testserver.New(testserver.Options{})
+		clk := newClock()
+		r := &fakeRunner{}
+		withToken := func(tok string) *core.Config {
+			c := catchUpCfg(srv.URL, true, "one")
+			src := c.Channels["sb"]
+			src.Headers = map[string]core.Secret{"Authorization": core.Secret("Bearer " + tok)}
+			c.Channels["sb"] = src
+			return c
+		}
+		held := holding(withToken("old"))
+		m := New(Options{
+			Runner: r, Config: held.get, Log: log.New(discard{}),
+			Now: clk.Now, Sleep: clk.Sleep, Rand: func() float64 { return 0 },
+		})
+		m.Start(context.Background())
+		waitState(t, m, "channel.sb", trigger.StateConnected)
+		waitFor(t, 5*time.Second, "the start catch-up fires", func() bool { _, c := r.counts(); return c == 1 })
+		before := initializes(srv)
+
+		rotated := withToken("new")
+		held.set(rotated)
+		var wg sync.WaitGroup
+		for j := 0; j < 2; j++ {
+			wg.Add(1)
+			go func() { defer wg.Done(); m.Reconcile(rotated) }()
+		}
+		wg.Wait()
+		waitState(t, m, "channel.sb", trigger.StateConnected)
+		time.Sleep(20 * time.Millisecond)
+
+		got := initializes(srv) - before
+		_, c := r.counts()
+		m.Close()
+		srv.Close()
+		if got != 1 {
+			t.Fatalf("iteration %d: two concurrent reloads of one rotation built %d sessions, want 1", i, got)
+		}
+		if c != 1 {
+			t.Fatalf("iteration %d: two concurrent reloads produced %d catch-ups, want only the start one", i, c)
+		}
+	}
+}
