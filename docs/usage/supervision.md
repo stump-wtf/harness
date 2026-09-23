@@ -121,10 +121,10 @@ Two launchd specifics worth knowing:
   for the mitigation.
 - **Agent events are observed, not just processes**: every 5 seconds the daemon
   reads the session transcripts its `crush`, `claude-code` and `codex`
-  harnesses write and picks up new tool calls and marks — for `crush`, that
-  includes the provider errors a quota wall leaves behind while the process
-  stays `running` (`claude-code` and `codex` transcripts do not record those as
-  errors yet). Only activity after the daemon started is reported, a
+  harnesses write and picks up new tool calls and marks — for `crush` and
+  `claude-code`, that includes the provider errors a quota wall leaves behind
+  while the process stays `running` (`codex` transcripts do not record those
+  as errors yet). Only activity after the daemon started is reported, a
   session two harnesses could have written is attributed to neither, and
   credentials in the text are masked before anything else in the daemon sees
   it. Nothing leaves the host yet: this is the feed the upcoming metrics and
