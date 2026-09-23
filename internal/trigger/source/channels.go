@@ -66,11 +66,11 @@ type sourceState struct {
 	// it to decide whether the live session still serves the source, which is
 	// what lets a byte-identical rewrite leave an open stream alone.
 	identity identity
-	// deliberate marks a close the reconciler ordered. REQ "Channel
-	// Reconnection" says a reload-caused reconnect is not an outage, so the
-	// replacement session's first connect must not be credited with one —
-	// otherwise every token rotation would fire a catch-up run.
-	deliberate bool
+	// exit is what the session knew when it ended: whether it ever
+	// connected, and when it last went down. Written by the session goroutine
+	// before it closes done, so it is safe to read after <-done. A reload
+	// that replaces the session hands it to the replacement (sessionSeed).
+	exit sessionSeed
 }
 
 // dialer opens a channel session. It is a field on the Manager so a test can
@@ -123,14 +123,15 @@ type sessionSeed struct {
 func (m *Manager) startSessionLocked(ctx context.Context, ref string, src core.ChannelSource, seed sessionSeed) {
 	sctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
-	m.sources[ref] = &sourceState{
+	st := &sourceState{
 		status:   Status{Source: ref, Kind: core.SourceKindChannel, State: trigger.StateConnecting, Since: time.Now()},
 		cancel:   cancel,
 		done:     done,
 		identity: identityOf(src),
 	}
+	m.sources[ref] = st
 	if m.onState != nil {
-		status := m.sources[ref].status
+		status := st.status
 		notify := m.onState
 		go notify(status)
 	}
@@ -138,7 +139,7 @@ func (m *Manager) startSessionLocked(ctx context.Context, ref string, src core.C
 	go func() {
 		defer m.sessions.Done()
 		defer close(done)
-		m.runSession(sctx, ref, src, seed)
+		st.exit = m.runSession(sctx, ref, src, seed)
 	}()
 }
 
@@ -148,8 +149,9 @@ func (m *Manager) startSessionLocked(ctx context.Context, ref string, src core.C
 // The loop owns three pieces of state that only make sense together, which is
 // why they are locals rather than fields: the backoff, whether this is the
 // first connect since the daemon started, and when the source was last
-// disconnected. The last two are what decide a catch-up firing.
-func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSource, seed sessionSeed) {
+// disconnected. The last two are what decide a catch-up firing, and they are
+// returned when the session ends so a replacement can carry them on.
+func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSource, seed sessionSeed) (exit sessionSeed) {
 	var (
 		bo     = &channel.Backoff{Rand: m.rand}
 		client *channel.Client
@@ -168,6 +170,10 @@ func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSo
 	if downSince.IsZero() {
 		downSince = m.now()
 	}
+	// A close with the stream open has already set downSince to now (see
+	// attempt), so a replacement measures no outage; a close mid-outage
+	// keeps the outage's real start, so it is not erased by the reload.
+	defer func() { exit = sessionSeed{connectedBefore: firstDone, downSince: downSince} }()
 	defer func() {
 		if client != nil {
 			closeClient(ctx, client)
@@ -258,6 +264,7 @@ func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSo
 			return
 		}
 	}
+	return
 }
 
 // closeClient ends a session with a best-effort DELETE.

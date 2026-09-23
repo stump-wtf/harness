@@ -112,9 +112,9 @@ func (m *Manager) Reconcile(cfg *core.Config) {
 	// acted on after it: ending a session waits for its goroutine, which
 	// takes the lock itself.
 	var toEnd []*sourceState
-	// Carried across a deliberate replacement, so the new session does not
-	// mistake itself for the daemon's first connect.
-	seeds := map[string]sessionSeed{}
+	// Sessions being replaced, so each replacement inherits its session's
+	// own history once that session has ended.
+	replaced := map[string]*sourceState{}
 	for ref, st := range m.sources {
 		if st.Kind() != core.SourceKindChannel {
 			continue
@@ -132,14 +132,8 @@ func (m *Manager) Reconcile(cfg *core.Config) {
 			// The endpoint or the credential changed: this is a different
 			// session, not the same one with a new label.
 			if st.cancel != nil {
-				st.deliberate = true
 				toEnd = append(toEnd, st)
-			}
-			// The replacement inherits "already connected once" and a zero
-			// outage, because a reload-caused reconnect is not an outage.
-			seeds[ref] = sessionSeed{
-				connectedBefore: st.status.State == trigger.StateConnected || st.status.Events > 0,
-				downSince:       m.now(),
+				replaced[ref] = st
 			}
 			delete(m.sources, ref)
 		default:
@@ -180,9 +174,15 @@ func (m *Manager) Reconcile(cfg *core.Config) {
 		case len(cfg.BoundHarnesses(ref)) == 0:
 			m.setStatusLocked(ref, core.SourceKindChannel, trigger.StateUnbound, "")
 		default:
-			seed, replacing := seeds[ref]
-			if !replacing {
-				seed = sessionSeed{downSince: m.now()}
+			// A replacement inherits the replaced session's own history,
+			// read after it ended: whether it ever connected, and when it
+			// went down. A session closed with its stream open went down
+			// "now", so a reload-caused reconnect measures no outage; one
+			// closed mid-outage keeps the outage's real start, because the
+			// reload does not make the doorbells it missed any less missed.
+			seed := sessionSeed{downSince: m.now()}
+			if old, ok := replaced[ref]; ok {
+				seed = old.exit
 			}
 			m.startSessionLocked(ctx, ref, src, seed)
 		}

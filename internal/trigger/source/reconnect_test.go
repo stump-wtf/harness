@@ -666,3 +666,118 @@ func TestFailedInitializeIsRetriedFromScratch(t *testing.T) {
 		}
 	}
 }
+
+// parkedManager is reconnectManager with a Sleep that PARKS until the session
+// ends, so a test can hold a source in `backoff` for as long as it likes and
+// then reload it — the state a real outage leaves a session in.
+func parkedManager(t *testing.T, r Runner, cfg func() *core.Config, clk *fakeClock) (*Manager, *stateLog) {
+	t.Helper()
+	states := &stateLog{}
+	m := New(Options{
+		Runner: r,
+		Config: cfg,
+		Log:    log.New(discard{}),
+		Now:    clk.Now,
+		Sleep: func(ctx context.Context, _ time.Duration) bool {
+			<-ctx.Done()
+			return false
+		},
+		Rand:    func() float64 { return 0 },
+		OnState: states.add,
+	})
+	m.Start(context.Background())
+	t.Cleanup(m.Close)
+	return m, states
+}
+
+// counts returns how many runs the fake runner has been asked for, and how
+// many of them were catch-ups.
+func (f *fakeRunner) counts() (all, catchUps int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.calls {
+		if c.req.Trigger == supervisor.TriggerCatchUp {
+			catchUps++
+		}
+	}
+	return len(f.calls), catchUps
+}
+
+// TestRotationDuringAnOutageStillCatchesUp and TestRotationAfterABlipDoesNot
+// pin the seed a reload hands a replacement session. It must be the replaced
+// session's OWN history — whether it ever connected, and when it went down —
+// not a guess from its status. A reload-caused reconnect is not an outage, but
+// it does not erase one that was already under way: rotating a revoked token
+// after hours in `error` is exactly when doorbells were missed.
+func TestRotationDuringAnOutageStillCatchesUp(t *testing.T) {
+	srv := testserver.New(testserver.Options{})
+	t.Cleanup(srv.Close)
+
+	clk := newClock()
+	r := &fakeRunner{}
+	withToken := func(tok string) *core.Config {
+		c := catchUpCfg(srv.URL, true, "one")
+		src := c.Channels["sb"]
+		src.Headers = map[string]core.Secret{"Authorization": core.Secret("Bearer " + tok)}
+		c.Channels["sb"] = src
+		return c
+	}
+	held := holding(withToken("old"))
+	m, states := parkedManager(t, r, held.get, clk)
+	waitState(t, m, "channel.sb", trigger.StateConnected)
+	waitFor(t, 5*time.Second, "the start catch-up fires", func() bool { _, c := r.counts(); return c == 1 })
+
+	// A doorbell arrives, so the source has events to its name.
+	srv.PushNotification(`{"content":"x"}`)
+	waitFor(t, 5*time.Second, "the doorbell fires", func() bool { n, _ := r.counts(); return n == 2 })
+
+	// The stream drops and stays down for 20 minutes.
+	srv.CloseStreams()
+	states.waitSubsequence(t, "the source is down", trigger.StateConnected, trigger.StateBackoff)
+	clk.Advance(20 * time.Minute)
+
+	// The operator rotates the token mid-outage.
+	rotated := withToken("new")
+	held.set(rotated)
+	m.Reconcile(rotated)
+	states.waitSubsequence(t, "the replacement connects",
+		trigger.StateBackoff, trigger.StateConnected)
+
+	waitFor(t, 5*time.Second, "the outage catch-up fires", func() bool { _, c := r.counts(); return c == 2 })
+}
+
+func TestRotationAfterABlipDoesNotCatchUp(t *testing.T) {
+	srv := testserver.New(testserver.Options{})
+	t.Cleanup(srv.Close)
+
+	clk := newClock()
+	r := &fakeRunner{}
+	withToken := func(tok string) *core.Config {
+		c := catchUpCfg(srv.URL, true, "one")
+		src := c.Channels["sb"]
+		src.Headers = map[string]core.Secret{"Authorization": core.Secret("Bearer " + tok)}
+		c.Channels["sb"] = src
+		return c
+	}
+	held := holding(withToken("old"))
+	m, states := parkedManager(t, r, held.get, clk)
+	waitState(t, m, "channel.sb", trigger.StateConnected)
+	waitFor(t, 5*time.Second, "the start catch-up fires", func() bool { _, c := r.counts(); return c == 1 })
+
+	// A 10-second blip — no doorbells, so the status carries no events —
+	// and the token rotates while the source is still in backoff.
+	srv.CloseStreams()
+	states.waitSubsequence(t, "the source is down", trigger.StateConnected, trigger.StateBackoff)
+	clk.Advance(10 * time.Second)
+
+	rotated := withToken("new")
+	held.set(rotated)
+	m.Reconcile(rotated)
+	states.waitSubsequence(t, "the replacement connects",
+		trigger.StateBackoff, trigger.StateConnected)
+
+	time.Sleep(100 * time.Millisecond)
+	if _, c := r.counts(); c != 1 {
+		t.Errorf("a rotation after a 10-second blip produced %d catch-ups, want only the start one: the replacement mistook itself for the daemon's first connect", c)
+	}
+}
