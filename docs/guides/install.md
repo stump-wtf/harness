@@ -11,27 +11,60 @@ Pick one of the two methods below, then verify with `harness doctor`.
 ## Homebrew (macOS and Linux)
 
 ```sh
-brew install --HEAD stump-wtf/tap/harness
+brew install stump-wtf/tap/harness
 ```
 
-Installing by the fully qualified name is a one-liner and the only form that
-works out of the box: since [Homebrew 6.0.0](https://brew.sh/2026/06/11/homebrew-6.0.0/)
+This installs the latest tagged release and reports its version. Installing by
+the fully qualified name is a one-liner and the only form that works out of the
+box: since [Homebrew 6.0.0](https://brew.sh/2026/06/11/homebrew-6.0.0/)
 non-official taps require explicit trust, and a fully qualified name trusts just
 that one formula rather than the tap and everything it may ever contain. The
 older `brew tap stump-wtf/tap` + `brew install harness` form now fails, because
 the short name needs the tap loaded and the tap is untrusted.
 
-`--HEAD` builds the latest `main` from the
-[GitHub repository](https://github.com/stump-wtf/harness). The tap's tagged
-formula can lag behind, and these guides use features that only exist on `main`.
 The formula compiles from source, so Homebrew pulls in Go as a build dependency
 and there is no Gatekeeper prompt on macOS.
 
-To update a `--HEAD` install later:
+To update later:
+
+```sh
+brew update && brew upgrade stump-wtf/tap/harness
+```
+
+### Opting in to the latest `main`
+
+`--HEAD` builds the tip of `main` instead of the tagged release, and is worth
+using only when a guide needs a feature that has not shipped yet:
+
+```sh
+brew install --HEAD stump-wtf/tap/harness
+```
+
+A `--HEAD` build reports the version it was built from, so it is no longer
+indistinguishable from an unreleased build. To update one:
 
 ```sh
 brew upgrade --fetch-HEAD stump-wtf/tap/harness
 ```
+
+### Running the daemon as a service
+
+The formula ships a `brew services` definition, which is the easiest way to keep
+the daemon running without hand-authoring a launchd plist:
+
+```sh
+brew services start harness
+```
+
+`brew services` starts the daemon in your GUI login session, so agents it
+launches inherit your login Keychain and a `claude-code` harness needs no
+`env_file`. One caveat: a service does not read your shell profile, and agent
+CLIs are looked up on the **daemon's** `PATH`, so an agent installed outside
+Homebrew (`~/.local/bin`, an npm or bun global prefix, mise or asdf shims) will
+not be found and the harness fails at spawn. See
+[the service guide](./run-as-a-service#agent-clis-resolve-on-the-daemons-path)
+for how to fix that on each platform. On Linux, use the
+`systemd --user` unit instead; the same guide covers it.
 
 ## From source
 

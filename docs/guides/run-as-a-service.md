@@ -92,6 +92,31 @@ The same reasoning applies to your own habits:
 
 ## macOS: a LaunchAgent
 
+If you installed Harness with Homebrew, you do not need to write a plist at all.
+The formula ships a service definition, and `brew services start harness` is the
+supported way to run the daemon:
+
+```sh
+brew services start harness     # start, and start again at login
+brew services stop harness      # stop
+brew services info harness      # status
+```
+
+It runs the same command as the plist below (`harness daemon start`, in the
+foreground, relaunching on a crash but not after a clean stop) and gives the
+service a minimal PATH. Because `brew services` runs inside your GUI login
+session, agents it launches inherit your login Keychain, so a `claude-code`
+harness needs no `env_file`.
+
+One thing to know before you reach for it: an agent CLI installed outside
+Homebrew is **not** on that PATH, and the daemon looks the executable up on its
+own PATH when a harness spawns. See
+[agent CLIs resolve on the daemon's PATH](#agent-clis-resolve-on-the-daemons-path).
+
+The rest of this section is the hand-written plist, for a Linux-style manual
+install, a pinned binary outside Homebrew, or when you want to control the
+plist yourself.
+
 Create `~/Library/LaunchAgents/dev.harness.daemon.plist`. launchd does not
 expand `~` or `$HOME`, so replace `/Users/you` with your real home directory
 throughout:
@@ -173,6 +198,29 @@ There are two places to put environment, and they have different reach:
 |-------|---------|------------|
 | The unit's `Environment=` / `EnvironmentFile=`, or the plist's `EnvironmentVariables` | the daemon **and every harness** it starts | `PATH`, locale, anything genuinely shared |
 | A harness's `env_file` in `harness.toml` | **that harness only** | API keys, tokens, per-agent settings |
+
+### Agent CLIs resolve on the daemon's PATH
+
+The executable a harness runs is looked up **once, on the daemon's `PATH`**, and
+a harness's `env_file` cannot change that: it is applied after the lookup, so a
+`PATH` line in it is ignored for this purpose.
+
+That matters for every managed service, because a service does not read your
+shell profile:
+
+- **Linux (`systemd --user`):** put `Environment=PATH=…` in the unit, listing
+  every directory your agent CLIs and their runtimes live in. The
+  [unit above](#linux-a-systemd-user-unit) does this.
+- **macOS (LaunchAgent):** put `PATH` in the plist's `EnvironmentVariables`.
+  The [plist above](#macos-a-launchagent) does this.
+- **macOS (`brew services`):** the formula's `PATH` is Homebrew plus the system
+  directories. An agent installed under `~/.local/bin`, an npm or bun global
+  prefix, or a mise/asdf shim directory will not be found. Install the agent
+  through Homebrew, or use a LaunchAgent instead.
+
+The symptom is a harness that fails **at spawn**, not at `brew services start`
+or `systemctl --user start` — which is why this is worth reading before the
+first scheduled run rather than after it.
 
 Prefer the per-harness `env_file` for secrets. It keeps a token scoped to the one
 agent that needs it, and out of `harness.toml`, which you may want to keep in
