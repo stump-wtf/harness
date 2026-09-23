@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -187,13 +188,45 @@ func buildEnv(h core.Harness, run RunEnv) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	env := os.Environ()
+	// The daemon's own environment is never a source of run context: a
+	// daemon started from inside a run (an agent that restarted it, say)
+	// inherits that run's HARNESS_EVENT_FILE, and passing it on would hand
+	// every later child another run's attacker-supplied event file.
+	env := withoutRunVars(os.Environ())
 	env = ensureTermEnv(env)
+	if run.recorded() {
+		// A recorded run's context is the daemon's to state, including
+		// which of it is UNSET. Appending alone cannot unset anything, so
+		// an env_file HARNESS_EVENT_FILE would otherwise reach a scheduled
+		// run that has no event (REQ "Event Delivery To The Run").
+		extra = withoutRunVars(extra)
+	}
 	env = append(env, extra...)
 	// Last, so exec.Cmd.Env's later-wins rule makes these authoritative over
 	// both the daemon's environment and env_file.
 	env = append(env, run.vars()...)
 	return env, nil
+}
+
+// runVarNames are the reserved run-context variables RunEnv renders.
+var runVarNames = []string{"HARNESS_RUN_ID", "HARNESS_RUN_TRIGGER", "HARNESS_RUN_SOURCE", "HARNESS_EVENT_FILE"}
+
+// recorded reports whether r describes a run with a record, i.e. whether the
+// daemon has an authoritative value for every reserved name.
+func (r RunEnv) recorded() bool { return r.RunID > 0 || r.Trigger != "" }
+
+// withoutRunVars returns env minus every entry for a reserved run-context
+// name.
+func withoutRunVars(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if slices.Contains(runVarNames, k) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // ensureTermEnv returns env with a color-capable TERM and COLORTERM=truecolor
