@@ -15,6 +15,7 @@ package channel
 // @joestump 09/23/2026 - Introduced with the SPEC-0014 channel listener (#471).
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -104,8 +105,8 @@ func parseChannelNotification(params json.RawMessage) (string, map[string]string
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", nil, fmt.Errorf("params are not an object: %w", err)
 	}
-	var content string
-	if err := json.Unmarshal(p.Content, &content); err != nil {
+	content, ok := jsonString(p.Content)
+	if !ok {
 		return "", nil, fmt.Errorf("content must be a string")
 	}
 	if len(p.Meta) == 0 {
@@ -113,11 +114,26 @@ func parseChannelNotification(params json.RawMessage) (string, map[string]string
 	}
 	meta := make(map[string]string, len(p.Meta))
 	for k, raw := range p.Meta {
-		var v string
-		if err := json.Unmarshal(raw, &v); err != nil {
+		v, ok := jsonString(raw)
+		if !ok {
 			return "", nil, fmt.Errorf("meta.%s must be a string", k)
 		}
 		meta[k] = v
 	}
 	return content, meta, nil
+}
+
+// jsonString decodes raw as a JSON string. A JSON null is NOT a string:
+// encoding/json unmarshals null into a string as a silent no-op, which would
+// let `content: null` through as "" and fire.
+func jsonString(raw json.RawMessage) (string, bool) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || raw[0] != '"' {
+		return "", false
+	}
+	var v string
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", false
+	}
+	return v, true
 }

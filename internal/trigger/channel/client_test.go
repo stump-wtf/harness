@@ -642,3 +642,27 @@ func TestAStalledReplyDoesNotStopTheStream(t *testing.T) {
 		t.Errorf("content = %v", content)
 	}
 }
+
+// TestNullIsNotAString: encoding/json unmarshals a JSON null into a string as
+// a silent no-op, so without an explicit check `content: null` and a null meta
+// value would pass as "" and fire. REQ "Channel Notification Handling" says
+// they MUST be strings.
+func TestNullIsNotAString(t *testing.T) {
+	for _, tc := range []struct{ params, want string }{
+		{`{"content":null}`, "content"},
+		{`{"content":"ok","meta":{"todo_id":null}}`, "meta.todo_id"},
+	} {
+		_, _, err := parseChannelNotification([]byte(tc.params))
+		if err == nil {
+			t.Errorf("%s was accepted", tc.params)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: reason %q does not name %q", tc.params, err, tc.want)
+		}
+	}
+	// Control: the same shapes with strings are fine.
+	if _, _, err := parseChannelNotification([]byte(`{"content":"","meta":{"todo_id":""}}`)); err != nil {
+		t.Errorf("empty strings were rejected: %v", err)
+	}
+}
