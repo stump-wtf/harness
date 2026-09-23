@@ -1047,3 +1047,53 @@ func TestAutostartSkipsScheduledHarnessWithStalePersistedIntent(t *testing.T) {
 		t.Error("stale enabled=true survived Restore — it will autostart on the next boot")
 	}
 }
+
+// TestAutostartSkipsTriggeredHarnessWithStalePersistedIntent is the #159
+// residual for a harness with `triggers` and no `schedule`. `harness start
+// <name>` persists enabled=true through Start exactly as it does for a sweep;
+// if Restore and Autostart only clamp `schedule`, every daemon boot fires the
+// webhook one-shot with no event and re-persists the intent (reproduced end
+// to end against #585's head before this guard).
+func TestAutostartSkipsTriggeredHarnessWithStalePersistedIntent(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.json")
+
+	cfg := managerCfg(shHarness("pr-review", "while true; do sleep 0.02; done", 0))
+	h := cfg.Harnesses["pr-review"]
+	h.Enabled = false // the triggers/enabled exclusion forbids true in config
+	h.Triggers = []string{"webhook.gitea-pr"}
+	cfg.Harnesses["pr-review"] = h
+	cfg.Profiles["default"] = core.Profile{Name: "default", Harnesses: []string{}, Autostart: false}
+
+	data, err := json.Marshal(persistedState{
+		Version:       stateSchemaVersion,
+		ActiveProfile: "default",
+		Harnesses:     map[string]persistedHarness{"pr-review": {Enabled: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(cfg, ManagerOptions{Policy: fastPolicy(), StatePath: statePath, LogDir: filepath.Join(dir, "logs")})
+	t.Cleanup(m.Close)
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	m.Autostart()
+	time.Sleep(200 * time.Millisecond)
+
+	if snap, _ := m.Snapshot("pr-review"); snap.State == core.StateRunning || snap.State == core.StateStarting {
+		t.Fatalf("triggered harness autostarted from stale persisted intent (state = %s)", snap.State)
+	}
+	m.Save()
+	ps, err := loadState(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ps.Harnesses["pr-review"].Enabled {
+		t.Error("stale enabled=true survived Restore for a triggered harness")
+	}
+}

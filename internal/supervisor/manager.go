@@ -367,7 +367,10 @@ func (m *Manager) Restore() error {
 		// intent never heals and every daemon restart fires the run again.
 		// Clamp it here: for a scheduled harness the schedule IS the intent.
 		// Residual of issue #159.
-		scheduled := s.Snapshot().Scheduled
+		// Triggered, not Scheduled: a webhook-only harness is the same
+		// one-shot, and a stale enabled=true would fire it on every boot
+		// with no event (SPEC-0014).
+		scheduled := s.Snapshot().Triggered
 		var started time.Time
 		if inState && pr.LastStarted != nil {
 			started = *pr.LastStarted
@@ -432,7 +435,8 @@ func preserveMalformedState(path string) (string, error) {
 // to shut it a second later. Governing: SPEC-0012 REQ "Gate Enforcement".
 //
 // Scheduled harnesses are skipped unconditionally: a cron one-shot is started
-// by the scheduler and by nothing else (ADR-0013). Restore already clamps
+// by the scheduler and by nothing else (ADR-0013). The same holds for any
+// triggered harness (SPEC-0014): its firing source is its only starter. Restore already clamps
 // their persisted intent, so this is defense in depth — but it is the check
 // that actually holds the invariant, because Start re-persists enabled=true
 // and would make any leak permanent (issue #159).
@@ -440,7 +444,7 @@ func (m *Manager) Autostart() {
 	now := time.Now()
 	for _, s := range m.snapshotSupervisors() {
 		snap := s.Snapshot()
-		if snap.Scheduled {
+		if snap.Triggered {
 			continue
 		}
 		if !snap.Enabled {
