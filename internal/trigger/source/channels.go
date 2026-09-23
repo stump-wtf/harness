@@ -102,17 +102,31 @@ func (m *Manager) startSessionLocked(ctx context.Context, ref string, src core.C
 		cancel: cancel,
 		done:   done,
 	}
-	if m.onState != nil {
-		status := m.sources[ref].status
-		notify := m.onState
-		go notify(status)
-	}
 	m.sessions.Add(1)
 	go func() {
 		defer m.sessions.Done()
 		defer close(done)
+		// `connecting` is reported from the session goroutine, before it
+		// can report anything else, so a handler sees this source's changes
+		// in the order they happened. A `go notify` from here would race the
+		// session's own synchronous reports and could land after them.
+		m.notifyStatus(ref)
 		m.runSession(sctx, ref, src)
 	}()
+}
+
+// notifyStatus reports a source's current status to OnState, off the lock.
+func (m *Manager) notifyStatus(ref string) {
+	m.mu.Lock()
+	st, notify := m.sources[ref], m.onState
+	var status Status
+	if st != nil {
+		status = st.status
+	}
+	m.mu.Unlock()
+	if st != nil && notify != nil {
+		notify(status)
+	}
 }
 
 // runSession initializes, listens, and records what happened.

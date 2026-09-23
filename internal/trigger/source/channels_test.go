@@ -405,16 +405,69 @@ func TestNeverReportsConnectedWithoutAStream(t *testing.T) {
 	t.Cleanup(m.Close)
 	waitState(t, m, "channel.sb", trigger.StateConnected)
 
-	mu.Lock()
-	seen := append([]trigger.SourceState(nil), states...)
-	mu.Unlock()
+	// OnState runs after the state is recorded, off the lock, so StatusOf can
+	// show `connected` a moment before the hook has seen it. Wait for the
+	// hook rather than reading it once.
+	var seen []trigger.SourceState
+	deadline := time.Now().Add(5 * time.Second)
 	found := false
-	for _, s := range seen {
-		if s == trigger.StateConnected {
-			found = true
+	for !found && time.Now().Before(deadline) {
+		mu.Lock()
+		seen = append([]trigger.SourceState(nil), states...)
+		mu.Unlock()
+		for _, s := range seen {
+			if s == trigger.StateConnected {
+				found = true
+			}
+		}
+		if !found {
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 	if !found {
 		t.Errorf("a healthy source never reported connected: %v", seen)
+	}
+}
+
+// TestStateChangesArriveInOrder: OnState is the seam #476's
+// trigger_source_changed hangs off, so a consumer takes the LAST change it
+// saw as the current state. A slow handler for the first change must not let
+// a later one overtake it.
+func TestStateChangesArriveInOrder(t *testing.T) {
+	srv := testserver.New(testserver.Options{})
+	t.Cleanup(srv.Close)
+
+	var (
+		mu     sync.Mutex
+		states []trigger.SourceState
+	)
+	cfg := channelCfg(srv.URL, true, "sweep")
+	m := New(Options{
+		Runner: &fakeRunner{},
+		Config: func() *core.Config { return cfg },
+		Log:    log.New(discard{}),
+		OnState: func(s Status) {
+			if s.State == trigger.StateConnecting {
+				// A handler that takes a while, as one that writes to a
+				// socket may.
+				time.Sleep(200 * time.Millisecond)
+			}
+			mu.Lock()
+			states = append(states, s.State)
+			mu.Unlock()
+		},
+	})
+	m.Start(context.Background())
+	t.Cleanup(m.Close)
+
+	var seen []trigger.SourceState
+	waitFor(t, 5*time.Second, "two state changes observed", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append([]trigger.SourceState(nil), states...)
+		return len(seen) >= 2
+	})
+	if seen[0] != trigger.StateConnecting || seen[1] != trigger.StateConnected {
+		t.Errorf("state changes arrived as %v, want [connecting connected]", seen)
 	}
 }
