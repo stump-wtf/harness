@@ -295,3 +295,46 @@ func TestSnapshotReportsConsecutiveFailures(t *testing.T) {
 		t.Errorf("ConsecutiveFailures stayed %d after a deliberate start", s.Snapshot().ConsecutiveFailures)
 	}
 }
+
+// A harness that failed and then came up and stayed up has, by the
+// supervisor's own definition, come up successfully once its run passes
+// HealthyRun — the next exit would clear the count. The snapshot must say
+// so while the run is still going, not only when it ends: otherwise a
+// harness that recovered reports its old failures for as long as it keeps
+// running, and harness_consecutive_failures >= N (SPEC-0013 REQ-2) fires
+// for a week on a healthy harness.
+//
+// @joestump-agent 09/23/2026 - Added in review (harness#589).
+func TestSnapshotClearsConsecutiveFailuresOnceTheRunIsHealthy(t *testing.T) {
+	p := Policy{
+		CrashWindow:    time.Millisecond,
+		CrashThreshold: 1000,
+		BackoffBase:    time.Millisecond,
+		BackoffCap:     2 * time.Millisecond,
+		HealthyRun:     300 * time.Millisecond,
+		MaxRestarts:    10,
+		StopGrace:      80 * time.Millisecond,
+	}
+	count := filepath.Join(t.TempDir(), "runs")
+	// Fail twice, then stay up.
+	script := `n=$(cat ` + count + ` 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `; [ $n -le 2 ] && exit 1; exec sleep 30`
+	s := newTestSupervisor(t, shHarnessWithRestart("recovers", script, time.Millisecond, core.RestartOnFailure), p)
+	s.Start()
+
+	// The third run is up, carrying the two failures before it.
+	if !waitUntil(3*time.Second, func() bool {
+		snap := s.Snapshot()
+		return snap.State == core.StateRunning && snap.PID != 0 && snap.ConsecutiveFailures == 2
+	}) {
+		t.Fatalf("never reached a live run after two failures: %+v", s.Snapshot())
+	}
+	// Once that run has lasted HealthyRun it has come up successfully.
+	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().ConsecutiveFailures == 0 }) {
+		snap := s.Snapshot()
+		t.Fatalf("ConsecutiveFailures = %d after the run outlived HealthyRun (state %s, up %s); want 0",
+			snap.ConsecutiveFailures, snap.State, time.Since(snap.LastStarted))
+	}
+	if st := s.Snapshot().State; st != core.StateRunning {
+		t.Fatalf("state = %s, want running (the reset must come from a healthy run, not an exit)", st)
+	}
+}
