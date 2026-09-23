@@ -76,7 +76,7 @@ const (
 	// answers not_scheduled for a harness whose only firing source is an
 	// event, and ignores Event, so `trigger --event` against one silently
 	// starts a run with no event; the client refuses the flag rather than
-	// letting that happen (see cmdTrigger).
+	// letting that happen (see client.TriggerWithEvent).
 	ProtoMinor = 11
 )
 
