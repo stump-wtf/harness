@@ -9,10 +9,12 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -111,6 +113,11 @@ type rawServer struct {
 	AuthorizedKeysFile string            `toml:"authorized_keys_file"`
 	HostKeyPath        string            `toml:"host_key"`
 	Keys               []rawAuthzKeyTOML `toml:"key"`
+	// MetricsListen / MetricsTokenFile configure the Prometheus listener
+	// (ADR-0020, SPEC-0013 REQ-1). The token is read from the file at daemon
+	// start; harness.toml only ever holds its path (ADR-0008).
+	MetricsListen    string `toml:"metrics_listen"`
+	MetricsTokenFile string `toml:"metrics_token_file"`
 	// HarnessD is an optional directory whose *.toml files are loaded as
 	// additional harness definitions after the main config. Each file may
 	// contain [harness.*] tables only (no [server], [profile.*], or [daemon]).
@@ -1011,6 +1018,11 @@ func buildServer(filename string, line int, rs rawServer) (core.ServerConfig, er
 		Listen:             strings.TrimSpace(rs.Listen),
 		AuthorizedKeysFile: expandHome(strings.TrimSpace(rs.AuthorizedKeysFile)),
 		HostKeyPath:        expandHome(strings.TrimSpace(rs.HostKeyPath)),
+		MetricsListen:      strings.TrimSpace(rs.MetricsListen),
+		MetricsTokenFile:   expandHome(strings.TrimSpace(rs.MetricsTokenFile)),
+	}
+	if err := checkMetricsListen(sc.MetricsListen); err != nil {
+		return core.ServerConfig{}, newError(filename, line, "[server]: metrics_listen: %v", err)
 	}
 	for _, k := range rs.AuthorizedKeys {
 		if strings.TrimSpace(k) == "" {
@@ -1039,6 +1051,25 @@ func buildServer(filename string, line int, rs rawServer) (core.ServerConfig, er
 		return core.ServerConfig{}, err
 	}
 	return sc, nil
+}
+
+// checkMetricsListen rejects a metrics_listen that could never bind: it must
+// be empty (the loopback default), "off", or host:port with a numeric port.
+// Whether a non-loopback address has its token is the daemon's startup check,
+// not the parser's — the token lives in a file this loader never reads.
+// Governing: SPEC-0013 REQ-1.
+func checkMetricsListen(addr string) error {
+	if addr == "" || addr == "off" {
+		return nil
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("%q is not host:port or \"off\": %w", addr, err)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
+		return fmt.Errorf("%q has no valid port", addr)
+	}
+	return nil
 }
 
 // checkPromptFile validates a resolved prompt_file path at load time by doing

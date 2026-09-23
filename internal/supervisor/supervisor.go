@@ -148,6 +148,16 @@ type Snapshot struct {
 	// REQ "Graceful Shutdown"); CloseAt is zero unless Closing.
 	Closing bool
 	CloseAt time.Time
+	// ConsecutiveFailures is the loop's give-up accounting (consecFailures):
+	// failed exits since the last run that came up successfully. Give-up
+	// parks the harness in `failed` once it exceeds Policy.MaxRestarts, so a
+	// climbing value is the warning before that terminal state. It is not
+	// persisted — a daemon restart begins every harness at zero, exactly as
+	// the loop itself does.
+	//
+	// Governing: SPEC-0013 REQ-2 (harness_consecutive_failures mirrors the
+	// daemon's own give-up accounting); SPEC-0003 REQ "Backoff Give-Up".
+	ConsecutiveFailures int
 }
 
 // Supervisor owns the lifecycle of exactly one harness. It runs a single actor
@@ -282,10 +292,27 @@ func New(h core.Harness, opts Options) *Supervisor {
 func (s *Supervisor) Name() string { return s.harness.Name }
 
 // Snapshot returns a race-free copy of the current observable state.
+//
+// ConsecutiveFailures is the one field that depends on the clock as well as
+// the loop. The loop clears consecFailures only when a run exits, having
+// lasted HealthyRun; a run that is still up past HealthyRun has already come
+// up successfully by that same definition, and its exit — clean or not — can
+// no longer extend the old streak. The snapshot reports that now rather than
+// at the exit, so a harness that recovered does not advertise its old
+// failures for as long as it keeps running (SPEC-0013 REQ-2). LastStarted is
+// the live run's start whenever PID is set: spawn stamps both together.
+//
+// @joestump-agent 09/23/2026 - Clear a recovered run's ConsecutiveFailures
+// (review, harness#589).
 func (s *Supervisor) Snapshot() Snapshot {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.snap
+	snap := s.snap
+	s.mu.Unlock()
+	if snap.ConsecutiveFailures > 0 && snap.PID != 0 && !snap.LastStarted.IsZero() &&
+		time.Since(snap.LastStarted) > s.policy.HealthyRun {
+		snap.ConsecutiveFailures = 0
+	}
+	return snap
 }
 
 // Start marks the harness enabled and brings it up (SPEC-0003 REQ "Autostart"
@@ -1219,6 +1246,8 @@ func (s *Supervisor) publishSnapshot() {
 		Held:          s.held,
 		Closing:       s.closing,
 		CloseAt:       s.closeAt,
+
+		ConsecutiveFailures: s.consecFailures,
 	}
 	s.mu.Unlock()
 	if s.onChange != nil && !s.suppressPersist {

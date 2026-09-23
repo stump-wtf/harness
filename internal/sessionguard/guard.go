@@ -103,8 +103,15 @@ func Stalled(dbPath string, lookback time.Duration, now time.Time) (GuardStatus,
 
 // isContextError reports whether a message's parts blob carries a
 // context-limit failure.
-func isContextError(parts string) bool {
-	lower := strings.ToLower(parts)
+func isContextError(parts string) bool { return IsContextError(parts) }
+
+// IsContextError reports whether text — a parts blob, or an agent error
+// mark's note — carries a provider context-window rejection. It is exported
+// so the metrics classifier (SPEC-0013 REQ-3) recognises exactly the errors
+// this guard acts on: one list, so a context error the guard rotates on can
+// never be one the classifier calls unrecognised.
+func IsContextError(text string) bool {
+	lower := strings.ToLower(text)
 	for _, p := range patterns {
 		if strings.Contains(lower, p) {
 			return true

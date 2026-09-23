@@ -245,3 +245,96 @@ func TestStoppingRunningScheduledHarnessLandsInStopped(t *testing.T) {
 			"an operator's stop is not a failure", s.Snapshot().State)
 	}
 }
+
+// The snapshot must carry the loop's give-up accounting, so a harness walking
+// its budget toward `failed` is visible before it arrives (SPEC-0013 REQ-2,
+// harness_consecutive_failures). The value at give-up is the one the loop
+// compared against MaxRestarts; a snapshot that forgot to copy the field
+// reads 0 here and fails.
+//
+// @joestump-agent 09/21/2026 - Added with Snapshot.ConsecutiveFailures.
+func TestSnapshotReportsConsecutiveFailures(t *testing.T) {
+	p := Policy{
+		CrashWindow:    time.Millisecond,
+		CrashThreshold: 1000,
+		BackoffBase:    time.Millisecond,
+		BackoffCap:     2 * time.Millisecond,
+		MaxRestarts:    4,
+		StopGrace:      80 * time.Millisecond,
+	}
+	s := newTestSupervisor(t, shHarnessWithRestart("walker", "exit 1", time.Millisecond, core.RestartOnFailure), p)
+	s.Start()
+
+	seen := map[int]bool{}
+	if !waitUntil(3*time.Second, func() bool {
+		snap := s.Snapshot()
+		seen[snap.ConsecutiveFailures] = true
+		return snap.State == core.StateFailed
+	}) {
+		t.Fatalf("never gave up: %+v", s.Snapshot())
+	}
+	if got, want := s.Snapshot().ConsecutiveFailures, p.MaxRestarts+1; got != want {
+		t.Errorf("ConsecutiveFailures at give-up = %d, want %d (the count that exceeded MaxRestarts)", got, want)
+	}
+	// It climbed rather than jumping: at least one intermediate value was
+	// visible on the way, which is the whole point of exposing it.
+	intermediate := false
+	for n := 1; n <= p.MaxRestarts; n++ {
+		if seen[n] {
+			intermediate = true
+		}
+	}
+	if !intermediate {
+		t.Errorf("no intermediate ConsecutiveFailures value observed on the way to give-up: %v", seen)
+	}
+
+	// A deliberate start resets the budget (clearFailLatch), and the snapshot
+	// must say so.
+	s.Start()
+	if !waitUntil(time.Second, func() bool { return s.Snapshot().ConsecutiveFailures < p.MaxRestarts+1 }) {
+		t.Errorf("ConsecutiveFailures stayed %d after a deliberate start", s.Snapshot().ConsecutiveFailures)
+	}
+}
+
+// A harness that failed and then came up and stayed up has, by the
+// supervisor's own definition, come up successfully once its run passes
+// HealthyRun — the next exit would clear the count. The snapshot must say
+// so while the run is still going, not only when it ends: otherwise a
+// harness that recovered reports its old failures for as long as it keeps
+// running, and harness_consecutive_failures >= N (SPEC-0013 REQ-2) fires
+// for a week on a healthy harness.
+//
+// @joestump-agent 09/23/2026 - Added in review (harness#589).
+func TestSnapshotClearsConsecutiveFailuresOnceTheRunIsHealthy(t *testing.T) {
+	p := Policy{
+		CrashWindow:    time.Millisecond,
+		CrashThreshold: 1000,
+		BackoffBase:    time.Millisecond,
+		BackoffCap:     2 * time.Millisecond,
+		HealthyRun:     300 * time.Millisecond,
+		MaxRestarts:    10,
+		StopGrace:      80 * time.Millisecond,
+	}
+	count := filepath.Join(t.TempDir(), "runs")
+	// Fail twice, then stay up.
+	script := `n=$(cat ` + count + ` 2>/dev/null || echo 0); n=$((n+1)); echo $n > ` + count + `; [ $n -le 2 ] && exit 1; exec sleep 30`
+	s := newTestSupervisor(t, shHarnessWithRestart("recovers", script, time.Millisecond, core.RestartOnFailure), p)
+	s.Start()
+
+	// The third run is up, carrying the two failures before it.
+	if !waitUntil(3*time.Second, func() bool {
+		snap := s.Snapshot()
+		return snap.State == core.StateRunning && snap.PID != 0 && snap.ConsecutiveFailures == 2
+	}) {
+		t.Fatalf("never reached a live run after two failures: %+v", s.Snapshot())
+	}
+	// Once that run has lasted HealthyRun it has come up successfully.
+	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().ConsecutiveFailures == 0 }) {
+		snap := s.Snapshot()
+		t.Fatalf("ConsecutiveFailures = %d after the run outlived HealthyRun (state %s, up %s); want 0",
+			snap.ConsecutiveFailures, snap.State, time.Since(snap.LastStarted))
+	}
+	if st := s.Snapshot().State; st != core.StateRunning {
+		t.Fatalf("state = %s, want running (the reset must come from a healthy run, not an exit)", st)
+	}
+}

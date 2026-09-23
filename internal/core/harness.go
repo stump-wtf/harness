@@ -506,6 +506,16 @@ type ServerConfig struct {
 	WebhookTLSCertFile string
 	// WebhookTLSKeyFile is the key half of the pair above.
 	WebhookTLSKeyFile string
+
+	// MetricsListen is the Prometheus /metrics bind address, host:port.
+	// Empty means the loopback default; "off" disables the listener. It is
+	// independent of Enabled, which governs only the SSH front door.
+	// Governing: ADR-0020, SPEC-0013 REQ-1.
+	MetricsListen string
+	// MetricsTokenFile names a file holding the bearer token /metrics
+	// requires. A path, never the token itself (ADR-0008). Required when
+	// MetricsListen is not loopback; the daemon refuses to start otherwise.
+	MetricsTokenFile string
 }
 
 // Config is a fully parsed, validated harness.toml: the harness registry and

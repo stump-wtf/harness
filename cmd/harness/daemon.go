@@ -235,6 +235,15 @@ func runDaemon(o daemonOpts) {
 		os.Exit(cliui.Fatal(err))
 	}
 
+	// SPEC-0013 REQ-1: a metrics listener off loopback without a bearer
+	// token is refused here, before any harness is started.
+	metricsListener, err := daemonMetricsListener(cfg.Server)
+	if err != nil {
+		log.Error("refusing to start", "err", err)
+		signalDetached('e')
+		os.Exit(1)
+	}
+
 	// The attach data plane: one Mux (x/vt emulator + scrollback ring) per
 	// harness, lazily created. The Manager tees each harness's raw PTY output
 	// into its Mux via the ExtraOut hook, alongside the durable log (ADR-0003/
@@ -265,6 +274,10 @@ func runDaemon(o daemonOpts) {
 			"hint", "run `harness start <name>` to re-enable (it persists across restarts)",
 		)
 	}
+	// Issue #356: the metrics collector subscribes to lifecycle events before
+	// Autostart, so the transitions boot causes are counted (SPEC-0013 REQ-2).
+	// Its observer, schedule and listener arrive below.
+	daemonMet := beginDaemonMetrics(mgr, metricsListener)
 	mgr.Autostart()
 
 	// Scheduled harnesses and the operating-hours gate share one wall-clock
@@ -345,6 +358,9 @@ func runDaemon(o daemonOpts) {
 	// Issue #391: export that stream, only when [telemetry] names a
 	// destination and only for opted-in harnesses (SPEC-0015 REQ-1).
 	telemetryPipeline := startDaemonTelemetry(telemetryRes, observer, mgr, telemetry.Options{})
+	// Issue #356: GET /metrics (SPEC-0013), fed by the observer and the
+	// Manager, on its own listener.
+	daemonMet.serve(observer, sched.NextFire)
 
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
 	// tear down connections, stop harnesses, flush state. SIGHUP triggers a
@@ -384,6 +400,8 @@ func runDaemon(o daemonOpts) {
 	// of shutdown rather than ahead of it, so it never delays the harnesses'
 	// own stop; the daemon waits for it only at the very end.
 	telemetryDone := shutdownDaemonTelemetry(telemetryPipeline, telemetryRes)
+	// Before the observer and the Manager: metrics reads both.
+	daemonMet.Stop()
 	// Before the Manager closes: the observer reads its snapshots.
 	observer.Stop()
 	sessionGuard.Close()

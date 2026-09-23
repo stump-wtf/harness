@@ -11,6 +11,7 @@ package supervisor
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
@@ -95,15 +96,32 @@ const subBuffer = 128
 // Bus is a fan-out publisher of lifecycle Events. It is safe for concurrent
 // use: supervisors publish from their own goroutines while the daemon (and
 // tests) subscribe from theirs.
+//
+// Publish never blocks, so a subscriber that falls behind loses events. Each
+// subscriber's losses are counted, and SubscribeCounted hands the count back
+// to a subscriber that must not undercount silently — the metrics collector,
+// whose state-transition counters would otherwise read low with nothing to
+// say so (SPEC-0013 REQ-6). Plain Subscribe keeps its old shape; the count is
+// kept for it too and simply never read.
+//
+// @joestump-agent 09/21/2026 - Added per-subscriber drop counts for
+// harness#356.
 type Bus struct {
 	mu     sync.Mutex
 	nextID int
-	subs   map[int]chan Event
+	subs   map[int]*busSub
+}
+
+// busSub is one subscriber: its queue, and the events it has lost because
+// that queue was full.
+type busSub struct {
+	ch      chan Event
+	dropped atomic.Uint64
 }
 
 // NewBus returns an empty event bus.
 func NewBus() *Bus {
-	return &Bus{subs: make(map[int]chan Event)}
+	return &Bus{subs: make(map[int]*busSub)}
 }
 
 // Subscribe registers a new subscriber, returning its receive channel and a
@@ -111,12 +129,20 @@ func NewBus() *Bus {
 // buffered (subBuffer); events that arrive while it is full are dropped for
 // that subscriber only.
 func (b *Bus) Subscribe() (<-chan Event, func()) {
+	ch, cancel, _ := b.SubscribeCounted()
+	return ch, cancel
+}
+
+// SubscribeCounted is Subscribe plus a func reporting how many events this
+// subscriber has lost to a full buffer so far. The count is monotonic and
+// stays readable after cancel.
+func (b *Bus) SubscribeCounted() (<-chan Event, func(), func() uint64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	id := b.nextID
 	b.nextID++
-	ch := make(chan Event, subBuffer)
-	b.subs[id] = ch
+	sub := &busSub{ch: make(chan Event, subBuffer)}
+	b.subs[id] = sub
 	var once sync.Once
 	cancel := func() {
 		once.Do(func() {
@@ -124,24 +150,25 @@ func (b *Bus) Subscribe() (<-chan Event, func()) {
 			defer b.mu.Unlock()
 			if c, ok := b.subs[id]; ok {
 				delete(b.subs, id)
-				close(c)
+				close(c.ch)
 			}
 		})
 	}
-	return ch, cancel
+	return sub.ch, cancel, sub.dropped.Load
 }
 
 // Publish delivers ev to every current subscriber without blocking. A
 // subscriber whose buffer is full misses this event (bounded, lossy fan-out by
-// design — see subBuffer).
+// design — see subBuffer), and the miss is counted against it.
 func (b *Bus) Publish(ev Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for _, ch := range b.subs {
+	for _, sub := range b.subs {
 		select {
-		case ch <- ev:
+		case sub.ch <- ev:
 		default:
 			// Subscriber is not keeping up; drop for it only.
+			sub.dropped.Add(1)
 		}
 	}
 }
