@@ -30,3 +30,8 @@ func (m *Manager) ReloadFromFile(path string) error {
 // it once during daemon boot, before any reload source is live; it is not
 // synchronized for later replacement.
 func (m *Manager) SetReloadHook(fn func()) { m.reloadHook = fn }
+
+// ReloadHook returns the registered reload callback, or nil. It exists so a
+// second boot-time consumer can compose onto the first instead of re-typing
+// it; same boot-only, unsynchronized contract as SetReloadHook.
+func (m *Manager) ReloadHook() func() { return m.reloadHook }

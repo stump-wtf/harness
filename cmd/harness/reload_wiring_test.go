@@ -87,11 +87,13 @@ func TestDaemonWiringReloadHoldsAndRotatesAChannelSession(t *testing.T) {
 	sources := startDaemonSources(mgr)
 	t.Cleanup(sources.Close)
 
-	// A stand-in for the scheduler's hook, so the test also proves
-	// wireSourceReload COMPOSES rather than replaces. Without this the
-	// daemon's schedules would silently stop being re-applied on reload.
+	// A hook registered the way startDaemonScheduler registers its own, so
+	// the test also proves wireSourceReload COMPOSES onto whatever is
+	// already there rather than replacing it. Without this the daemon's
+	// schedules would silently stop being re-applied on reload.
 	schedulerRan := 0
-	wireSourceReload(mgr, sources, func() { schedulerRan++ })
+	mgr.SetReloadHook(func() { schedulerRan++ })
+	wireSourceReload(mgr, sources)
 
 	waitConnected := func(what string) {
 		t.Helper()
