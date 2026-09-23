@@ -55,6 +55,13 @@ type rawHarness struct {
 	// [telemetry] export_all (SPEC-0015 REQ-1).
 	ExportTelemetry *bool `toml:"export_telemetry"`
 
+	// Triggers binds the harness to [channel.*]/[webhook.*] sources
+	// (SPEC-0014 REQ "Triggers Key"). A plain slice, unlike the pointer
+	// fields above: nil and [] both mean "no event sources", and there is no
+	// exclusion that fires on presence rather than content — an empty list
+	// binds nothing and so excludes nothing.
+	Triggers []string `toml:"triggers"`
+
 	// OperatingHours gates a resident harness to weekly windows (ADR-0019).
 	// Plain string like Schedule: blank-vs-absent is checked the same way
 	// (rh.OperatingHours != "" && trimmed == "" is the blank-value error).
@@ -113,6 +120,12 @@ type rawServer struct {
 	// A leading ~ expands to the home directory and a relative path resolves
 	// against the config file's own directory (see resolveConfigPath).
 	HarnessD string `toml:"harness_d"`
+
+	// The opt-in webhook listener SPEC-0014 adds. Absent means no HTTP port
+	// is opened at all, however many [webhook.*] tables are declared.
+	WebhookListen      string `toml:"webhook_listen"`
+	WebhookTLSCertFile string `toml:"webhook_tls_cert_file"`
+	WebhookTLSKeyFile  string `toml:"webhook_tls_key_file"`
 }
 
 // rawAuthzKeyTOML is a [[server.key]] sub-table: an SSH public-key line with an
@@ -187,8 +200,9 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 		return nil, err
 	}
 
-	// Decode the [harness.*] and [profile.*] namespaces lazily.
-	var harnessNS, profileNS map[string]toml.Primitive
+	// Decode the [harness.*], [profile.*] and trigger-source namespaces
+	// lazily.
+	var harnessNS, profileNS, channelNS, webhookNS map[string]toml.Primitive
 	if p, ok := top["harness"]; ok {
 		if err := md.PrimitiveDecode(p, &harnessNS); err != nil {
 			return nil, newError(filename, lineOf(headers, "harness"), "[harness]: %v", err)
@@ -197,6 +211,16 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 	if p, ok := top["profile"]; ok {
 		if err := md.PrimitiveDecode(p, &profileNS); err != nil {
 			return nil, newError(filename, lineOf(headers, "profile"), "[profile]: %v", err)
+		}
+	}
+	if p, ok := top["channel"]; ok {
+		if err := md.PrimitiveDecode(p, &channelNS); err != nil {
+			return nil, newError(filename, lineOf(headers, "channel"), "[channel]: %v", err)
+		}
+	}
+	if p, ok := top["webhook"]; ok {
+		if err := md.PrimitiveDecode(p, &webhookNS); err != nil {
+			return nil, newError(filename, lineOf(headers, "webhook"), "[webhook]: %v", err)
 		}
 	}
 
@@ -215,12 +239,47 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 	var serverSeen, daemonSeen, telemetrySeen bool
 	var harnessDPath string
 
+	// Sources and the harnesses that bind them form one config view across
+	// the main file and every drop-in, so references between them are
+	// resolved after the last file rather than as each table is read.
+	// Governing: SPEC-0014 REQ "Triggers Key".
+	st := newLoadState()
+
 	for _, h := range headers {
 		switch {
 		case len(h.parts) == 1 && h.parts[0] == "harness":
 			continue // the namespace parent header itself
 		case len(h.parts) == 1 && h.parts[0] == "profile":
 			continue
+		// The trigger-source namespace parents. These cases sit BEFORE the
+		// bare-[name] fallback below, or a lone `[channel]` header would be
+		// registered as a backward-compatible harness named "channel".
+		// Governing: SPEC-0014 REQ "Channel Source Table", REQ "Webhook
+		// Source Table".
+		case len(h.parts) == 1 && (h.parts[0] == core.SourceKindChannel || h.parts[0] == core.SourceKindWebhook):
+			if err := checkSourceNamespaceParent(md, filename, h.line, h.parts[0]); err != nil {
+				return nil, err
+			}
+
+		case len(h.parts) == 2 && h.parts[0] == core.SourceKindChannel:
+			name := h.parts[1]
+			var rc rawChannel
+			if err := md.PrimitiveDecode(channelNS[name], &rc); err != nil {
+				return nil, newError(filename, h.line, "[channel.%s]: %v", name, err)
+			}
+			if err := addChannel(cfg, st, filename, name, h.line, rc); err != nil {
+				return nil, err
+			}
+
+		case len(h.parts) == 2 && h.parts[0] == core.SourceKindWebhook:
+			name := h.parts[1]
+			var rw rawWebhook
+			if err := md.PrimitiveDecode(webhookNS[name], &rw); err != nil {
+				return nil, newError(filename, h.line, "[webhook.%s]: %v", name, err)
+			}
+			if err := addWebhook(cfg, st, filename, name, h.line, rw); err != nil {
+				return nil, err
+			}
 
 		case len(h.parts) == 1 && h.parts[0] == "daemon":
 			// The optional daemon-level config (issue #98: watch_config).
@@ -280,7 +339,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 			if err := md.PrimitiveDecode(top[name], &rh); err != nil {
 				return nil, newError(filename, h.line, "[%s]: %v", name, err)
 			}
-			if err := addHarness(cfg, filename, name, h.line, rh); err != nil {
+			if err := addHarness(cfg, st, filename, name, h.line, rh); err != nil {
 				return nil, err
 			}
 
@@ -290,7 +349,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 			if err := md.PrimitiveDecode(harnessNS[name], &rh); err != nil {
 				return nil, newError(filename, h.line, "[harness.%s]: %v", name, err)
 			}
-			if err := addHarness(cfg, filename, name, h.line, rh); err != nil {
+			if err := addHarness(cfg, st, filename, name, h.line, rh); err != nil {
 				return nil, err
 			}
 
@@ -335,10 +394,19 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 	// config naming a drop-in harness is the whole point of the directory, and
 	// validating membership first rejected it as an unknown harness.
 	if harnessDPath != "" {
-		if err := loadHarnessD(cfg, resolveConfigPath(harnessDPath, filename)); err != nil {
+		if err := loadHarnessD(cfg, st, resolveConfigPath(harnessDPath, filename)); err != nil {
 			return nil, err
 		}
 	}
+
+	// Every file has been read, so `triggers` references can finally be
+	// resolved against the whole view: a drop-in harness may bind a source
+	// from the main file, and vice versa.
+	// Governing: SPEC-0014 REQ "Triggers Key".
+	if err := resolveTriggers(cfg, st); err != nil {
+		return nil, err
+	}
+	warnNonLoopbackWebhook(cfg)
 
 	// Validate profile membership now that all harnesses are registered.
 	for _, pp := range pending {
@@ -356,14 +424,24 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 				return nil, newError(filename, pp.line,
 					"profile %q includes scheduled harness %q (\"schedule\" and profile membership are mutually exclusive)", pp.profile.Name, member)
 			}
+			// The same coupling, for the same reason: profile autostart (and
+			// `use-profile`) would start a triggered one-shot with no event,
+			// so its run would have no event file and nothing to act on.
+			// Governing: SPEC-0014 REQ "Triggered Harness Exclusions".
+			if len(h.Triggers) > 0 {
+				return nil, newError(filename, pp.line,
+					"profile %q includes triggered harness %q (\"triggers\" and profile membership are mutually exclusive: autostart would fire the one-shot with no event)", pp.profile.Name, member)
+			}
 		}
 	}
 
 	return cfg, nil
 }
 
-// addHarness validates a raw harness table and registers it on cfg.
-func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness) error {
+// addHarness validates a raw harness table and registers it on cfg, recording
+// where it was declared so a `triggers` reference resolved after the last file
+// can still report the right line.
+func addHarness(cfg *core.Config, st *loadState, filename, name string, line int, rh rawHarness) error {
 	// "/" is reserved for the `<project>/<harness>` namespace: a (TOML-quoted)
 	// global name containing it could shadow or clobber a registered project
 	// harness. Governing: ADR-0009, SPEC-0004 REQ "Project Naming And
@@ -374,7 +452,11 @@ func addHarness(cfg *core.Config, filename, name string, line int, rh rawHarness
 	}
 	// Global semantics: `enabled` defaults to false (autostart is opt-in) and
 	// workdir/env_file are stored verbatim.
-	return registerHarness(cfg, filename, name, line, rh, false, nil)
+	if err := registerHarness(cfg, filename, name, line, rh, false, nil); err != nil {
+		return err
+	}
+	st.harnessAt[name] = declSite{file: filename, line: line}
+	return nil
 }
 
 // registerHarness is the shared validate/normalize/register body behind the
@@ -632,29 +714,88 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 				"harness %q: invalid \"schedule\" %q: %v", name, schedule, err)
 		}
 	}
-	// catch_up is the schedule's missed-window policy and means nothing
-	// without one. Rejected on presence, not only when true, for the same
-	// reason as every exclusion above: a key that silently does nothing is a
-	// mistake the operator should hear about at load, not discover at 03:00.
-	// Governing: SPEC-0008 REQ "Missed Window Handling"; issue #117.
-	if rh.CatchUp != nil && schedule == "" {
+	// `triggers` binds the harness to event sources. It combines with
+	// `schedule` — a harness may fire on a clock and on an event — and
+	// carries the same exclusions for the same reasons: a triggered harness
+	// is a one-shot agent run, so autostart intent, profile membership and a
+	// respawning restart policy would each fire it with no event to act on.
+	//
+	// Only the SHAPE of each reference is checked here. Whether the named
+	// source exists is answered once every file in the view has been read
+	// (resolveTriggers), because a drop-in harness may bind a main-file
+	// source and vice versa.
+	// Governing: ADR-0021; SPEC-0014 REQ "Triggers Key", REQ "Triggered
+	// Harness Exclusions".
+	triggers, err := parseTriggers(filename, name, line, rh.Triggers)
+	if err != nil {
+		return err
+	}
+	switch {
+	case len(triggers) > 0 && !isAgent:
 		return newError(filename, line,
-			"harness %q: \"catch_up\" requires \"schedule\" (it decides what happens to missed schedule windows)", name)
+			"harness %q: \"triggers\" requires \"prompt\" or \"prompt_file\" (a triggered harness is a one-shot agent run)", name)
+	case len(triggers) > 0 && enabled:
+		return newError(filename, line,
+			"harness %q: \"triggers\" and \"enabled = true\" are mutually exclusive (autostart intent and on-demand firing are distinct)", name)
+	case len(triggers) > 0 && (restartPolicy == core.RestartAlways || restartPolicy == core.RestartUnlessStopped):
+		return newError(filename, line,
+			"harness %q: \"triggers\" requires restart policy \"no\" or \"on-failure\" (a triggered run must be allowed to finish; %q would respawn the one-shot with no event)", name, restartPolicy)
+	}
+	// Triggered is the predicate SPEC-0014 extends SPEC-0008's run machinery
+	// to: a webhook-only harness gets run records, logs, timeout, on_overlap
+	// and keep_runs exactly as a cron one-shot does.
+	triggered := schedule != "" || len(triggers) > 0
+
+	// catch_up decides what happens to firings that elapsed while nobody was
+	// evaluating them. Three things can miss one: a cron `schedule`, a
+	// channel source (whose stream can be down across a laptop's night), and
+	// `operating_hours` (whose window can open while the daemon is stopped).
+	// A webhook source cannot: a delivery that arrived with nothing listening
+	// was refused at the socket, and Harness is a trigger, not a queue.
+	//
+	// Rejected on presence, not only when true, for the same reason as every
+	// exclusion above: a key that silently does nothing is a mistake the
+	// operator should hear about at load, not discover at 03:00.
+	// Governing: SPEC-0008 REQ "Missed Window Handling"; SPEC-0014 REQ
+	// "Triggered Harness Exclusions", REQ "Channel Catch-Up"; issue #117.
+	hasChannelTrigger := false
+	for _, t := range triggers {
+		if strings.HasPrefix(t, core.SourceKindChannel+".") {
+			hasChannelTrigger = true
+			break
+		}
+	}
+	// operating_hours counts only on a harness with `triggers`: REQ
+	// "Operating Hours On Triggered Harnesses" is what gives catch_up a
+	// meaning there (one run at the first in-hours evaluation after an
+	// out-of-hours skip). A RESIDENT hours-gated harness has no firings to
+	// miss, and nothing in the runtime reads CatchUp for one, so accepting
+	// the key there would bring back the silent no-op this check exists
+	// to refuse.
+	hoursGatedFirings := strings.TrimSpace(rh.OperatingHours) != "" && len(triggers) > 0
+	if rh.CatchUp != nil && schedule == "" && !hasChannelTrigger && !hoursGatedFirings {
+		return newError(filename, line,
+			"harness %q: \"catch_up\" requires \"schedule\", a channel trigger, or \"operating_hours\" on a harness with \"triggers\" (nothing else can miss a firing: a webhook delivery with nobody listening was refused at the socket, and a resident harness has no firings)", name)
 	}
 	catchUp := rh.CatchUp != nil && *rh.CatchUp
 
-	// timeout, on_overlap and keep_runs shape a schedule's runs, so like
-	// catch_up they are rejected on presence without one. With a schedule each
-	// gets its documented default, so every scheduled harness has a bounded run
-	// and a bounded history whether or not the operator thought to ask.
+	// timeout, on_overlap and keep_runs shape the runs a firing produces, so
+	// like catch_up they are rejected on presence when nothing fires this
+	// harness. SPEC-0014 widens the predicate from "has a schedule" to
+	// "is triggered": an event source produces runs the same way a clock
+	// does. With either, each key gets its documented default, so every
+	// triggered harness has a bounded run and a bounded history whether or
+	// not the operator thought to ask.
 	// Governing: ADR-0013; SPEC-0008 REQ "Run Timeout", REQ "Overlap Policy",
-	// REQ "Run History"; issue #119.
+	// REQ "Run History"; ADR-0021; SPEC-0014 REQ "Triggered Harness
+	// Exclusions", REQ "Overlap Default For Triggered Harnesses"; issue #119.
 	for _, k := range []struct {
 		key string
 		set bool
 	}{{"timeout", rh.Timeout != nil}, {"on_overlap", rh.OnOverlap != nil}, {"keep_runs", rh.KeepRuns != nil}} {
-		if k.set && schedule == "" {
-			return newError(filename, line, "harness %q: %q requires \"schedule\" (it applies to scheduled runs)", name, k.key)
+		if k.set && !triggered {
+			return newError(filename, line,
+				"harness %q: %q requires \"schedule\" or \"triggers\" (it applies to the runs a firing produces, and nothing fires this harness)", name, k.key)
 		}
 	}
 	var (
@@ -662,7 +803,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		overlap  core.OverlapPolicy
 		keepRuns int
 	)
-	if schedule != "" {
+	if triggered {
 		timeout = core.DefaultRunTimeout
 		if rh.Timeout != nil {
 			d, err := time.ParseDuration(strings.TrimSpace(*rh.Timeout))
@@ -672,7 +813,19 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 			}
 			timeout = d
 		}
+		// The default differs by what fires the harness, and the asymmetry
+		// is deliberate. A cron firing that arrives during a run is the SAME
+		// work coming round again, so skipping it loses nothing. An event
+		// firing is a DIFFERENT event — a second pull request, a second
+		// doorbell — and dropping it loses work nothing will re-deliver,
+		// because Harness is a trigger and not a queue. So a schedule skips
+		// and a trigger queues. An explicit value always wins.
+		// Governing: SPEC-0014 REQ "Overlap Default For Triggered
+		// Harnesses".
 		overlap = core.OverlapSkip
+		if len(triggers) > 0 {
+			overlap = core.OverlapQueue
+		}
 		if rh.OnOverlap != nil {
 			overlap = core.OverlapPolicy(strings.TrimSpace(*rh.OnOverlap))
 			if overlap == "" || !overlap.Valid() {
@@ -744,6 +897,22 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		return newError(filename, line,
 			"harness %q: \"hours_shutdown_timeout\" requires \"operating_hours\" (a shutdown mode with no hours to close does nothing)", name)
 	}
+	// Both close a RESIDENT session at the end of its window. A triggered
+	// run has no resident session to close: it is bounded by `timeout` and
+	// ends on its own, so a close mode would have nothing to act on. The
+	// schedule half of this is already covered, because operating_hours and
+	// schedule are mutually exclusive above; `triggers` is the case
+	// SPEC-0014 adds.
+	// Governing: SPEC-0014 REQ "Triggered Harness Exclusions".
+	for _, k := range []struct {
+		key string
+		set bool
+	}{{"hours_shutdown", rh.HoursShutdown != nil}, {"hours_shutdown_timeout", rh.HoursShutdownTimeout != nil}} {
+		if k.set && len(triggers) > 0 {
+			return newError(filename, line,
+				"harness %q: %q is not accepted on a triggered harness (it closes a resident session; a triggered run is bounded by \"timeout\")", name, k.key)
+		}
+	}
 	if operatingHours != "" {
 		shutdownMode = core.HoursShutdownGraceful
 		if rh.HoursShutdown != nil {
@@ -796,6 +965,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		HoursExpr:            hoursExpr,
 		HoursShutdown:        shutdownMode,
 		HoursShutdownTimeout: shutdownTimeout,
+		Triggers:             triggers,
 	}
 	if isAgent {
 		// Args stay EMPTY for a prompt harness (spawn-time synthesis,
@@ -861,6 +1031,13 @@ func buildServer(filename string, line int, rs rawServer) (core.ServerConfig, er
 		return core.ServerConfig{}, newError(filename, line,
 			"[server]: enabled = true requires authorized_keys or authorized_keys_file (ADR-0008: no unauthenticated remote access)")
 	}
+	// The webhook listener is a separate server from the SSH front door
+	// above, with its own bind address and its own TLS pair (SPEC-0014 REQ
+	// "Webhook Listener"). `enabled` does not gate it: naming an address is
+	// the opt-in.
+	if err := buildWebhookServer(&sc, filename, line, rs); err != nil {
+		return core.ServerConfig{}, err
+	}
 	return sc, nil
 }
 
@@ -907,7 +1084,7 @@ func expandHome(p string) string {
 // definitions into cfg. Files are sorted lexicographically for deterministic
 // ordering. Each file may only contain [harness.*] tables — [server],
 // [profile.*], and [daemon] are rejected with a source-located error.
-func loadHarnessD(cfg *core.Config, dir string) error {
+func loadHarnessD(cfg *core.Config, st *loadState, dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("[server] harness_d %q: %w", dir, err)
@@ -928,7 +1105,7 @@ func loadHarnessD(cfg *core.Config, dir string) error {
 		if err != nil {
 			return fmt.Errorf("harness_d %s: %w", path, err)
 		}
-		if err := parseHarnessDFile(cfg, data, path); err != nil {
+		if err := parseHarnessDFile(cfg, st, data, path); err != nil {
 			return err
 		}
 	}
@@ -936,19 +1113,39 @@ func loadHarnessD(cfg *core.Config, dir string) error {
 }
 
 // parseHarnessDFile parses a single harness.d TOML file and registers its
-// [harness.*] definitions on cfg. Only [harness.*] tables are permitted.
-func parseHarnessDFile(cfg *core.Config, data []byte, filename string) error {
+// [harness.*] definitions on cfg. Only [harness.*] tables and the trigger
+// source tables [channel.*]/[webhook.*] are permitted — no [server],
+// [profile.*] or [daemon].
+//
+// Sources are admitted here for the same reason harnesses are: a drop-in is
+// how an operator adds or removes one unit at a time, and a unit that fires on
+// a webhook is not a unit until its source travels with it. SPEC-0014 says so
+// explicitly ("the global harness.toml and in harness_d drop-in files"), and
+// the uniqueness and reference rules span the whole view, which is why the
+// shared loadState is threaded in rather than re-created per file.
+// Governing: SPEC-0014 REQ "Channel Source Table", REQ "Webhook Source Table".
+func parseHarnessDFile(cfg *core.Config, st *loadState, data []byte, filename string) error {
 	var top map[string]toml.Primitive
 	md, err := toml.Decode(string(data), &top)
 	if err != nil {
 		return syntaxError(filename, err)
 	}
 
-	// Decode the [harness] namespace to access individual members.
-	var harnessNS map[string]toml.Primitive
+	// Decode the namespaces a drop-in may carry, to access individual members.
+	var harnessNS, channelNS, webhookNS map[string]toml.Primitive
 	if p, ok := top["harness"]; ok {
 		if err := md.PrimitiveDecode(p, &harnessNS); err != nil {
 			return newError(filename, lineOf(scanTables(data), "harness"), "[harness]: %v", err)
+		}
+	}
+	if p, ok := top[core.SourceKindChannel]; ok {
+		if err := md.PrimitiveDecode(p, &channelNS); err != nil {
+			return newError(filename, lineOf(scanTables(data), "channel"), "[channel]: %v", err)
+		}
+	}
+	if p, ok := top[core.SourceKindWebhook]; ok {
+		if err := md.PrimitiveDecode(p, &webhookNS); err != nil {
+			return newError(filename, lineOf(scanTables(data), "webhook"), "[webhook]: %v", err)
 		}
 	}
 
@@ -963,6 +1160,10 @@ func parseHarnessDFile(cfg *core.Config, data []byte, filename string) error {
 		switch {
 		case len(h.parts) == 1 && h.parts[0] == "harness":
 			continue // namespace parent
+		case len(h.parts) == 1 && (h.parts[0] == core.SourceKindChannel || h.parts[0] == core.SourceKindWebhook):
+			if err := checkSourceNamespaceParent(md, filename, h.line, h.parts[0]); err != nil {
+				return err
+			}
 
 		case len(h.parts) == 2 && h.parts[0] == "harness":
 			name := h.parts[1]
@@ -974,13 +1175,41 @@ func parseHarnessDFile(cfg *core.Config, data []byte, filename string) error {
 			if err := md.PrimitiveDecode(p, &rh); err != nil {
 				return newError(filename, h.line, "[harness.%s]: %v", name, err)
 			}
-			if err := addHarness(cfg, filename, name, h.line, rh); err != nil {
+			if err := addHarness(cfg, st, filename, name, h.line, rh); err != nil {
+				return err
+			}
+
+		case len(h.parts) == 2 && h.parts[0] == core.SourceKindChannel:
+			name := h.parts[1]
+			p, ok := channelNS[name]
+			if !ok {
+				continue
+			}
+			var rc rawChannel
+			if err := md.PrimitiveDecode(p, &rc); err != nil {
+				return newError(filename, h.line, "[channel.%s]: %v", name, err)
+			}
+			if err := addChannel(cfg, st, filename, name, h.line, rc); err != nil {
+				return err
+			}
+
+		case len(h.parts) == 2 && h.parts[0] == core.SourceKindWebhook:
+			name := h.parts[1]
+			p, ok := webhookNS[name]
+			if !ok {
+				continue
+			}
+			var rw rawWebhook
+			if err := md.PrimitiveDecode(p, &rw); err != nil {
+				return newError(filename, h.line, "[webhook.%s]: %v", name, err)
+			}
+			if err := addWebhook(cfg, st, filename, name, h.line, rw); err != nil {
 				return err
 			}
 
 		default:
 			return newError(filename, h.line,
-				"harness.d file must not contain [%s] (only [harness.*] allowed)", key)
+				"harness.d file must not contain [%s] (only [harness.*], [channel.*] and [webhook.*] allowed)", key)
 		}
 	}
 	if err := checkArrayTables(data, filename, false); err != nil {

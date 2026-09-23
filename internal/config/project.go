@@ -188,6 +188,16 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 		if len(h.parts) >= 1 && h.parts[0] == "telemetry" {
 			return nil, forbiddenTableErr(filename, full, h.line)
 		}
+		// Trigger sources are daemon-owned: the daemon holds a channel
+		// session and serves a webhook route from the config of record, and
+		// a project harness never enters that view. A project source would
+		// therefore be declared, accepted, and never connected or served.
+		// Governing: SPEC-0014 REQ "Channel Source Table", REQ "Webhook
+		// Source Table".
+		if len(h.parts) >= 1 && (h.parts[0] == core.SourceKindChannel || h.parts[0] == core.SourceKindWebhook) {
+			return nil, newError(filename, h.line,
+				"project file must not contain [%s] (trigger sources are daemon-owned; declare them in the daemon's harness.toml)", full)
+		}
 	}
 
 	// Reuse the harness-namespace decode for [harness.*] and bare [name] tables.
@@ -226,7 +236,8 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 			// Bare [name] — backward-compatible harness (ADR-0006).
 			name := h.parts[0]
 			// Skip namespace parents and rejected tables (already validated above).
-			if name == "server" || name == "profile" || name == "project" {
+			if name == "server" || name == "profile" || name == "project" ||
+				name == core.SourceKindChannel || name == core.SourceKindWebhook {
 				continue
 			}
 			var rh rawHarness
@@ -307,6 +318,15 @@ func addProjectHarness(cfg *core.Config, filename, name string, line int, rh raw
 			return newError(filename, line,
 				"harness %q: %q is not supported in project files (operating hours are daemon-owned; define them in the daemon's harness.toml)", name, k.key)
 		}
+	}
+	// `triggers` is daemon-owned for the same reason `schedule` is, and more
+	// sharply: the sources it names are declared in the global config, which
+	// a project file cannot see at all, so every reference would be
+	// unresolvable even before the firing question arose.
+	// Governing: SPEC-0014 REQ "Triggered Harness Exclusions".
+	if rh.Triggers != nil {
+		return newError(filename, line,
+			"harness %q: \"triggers\" is not supported in project files (trigger sources are daemon-owned; define triggered harnesses in the daemon's harness.toml)", name)
 	}
 	// mcp_allow is a global-only concern (SPEC-0005 REQ "Capability Scoping"):
 	// a cloned repository granting its own harnesses write authority over the

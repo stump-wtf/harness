@@ -351,7 +351,35 @@ type Harness struct {
 	// reload applies without a restart; it never affects the spawn. Governing:
 	// ADR-0022; SPEC-0015 REQ-1, REQ-2.
 	ExportTelemetry *bool
+	// Triggers binds this harness to trigger sources: a list of
+	// `channel.<name>` / `webhook.<name>` references, each naming a table
+	// declared in the same config view. Every event from a bound source is a
+	// firing, entering the same run machinery a schedule firing does. Like
+	// Schedule it requires a prompt source, and it is global-config only —
+	// a project harness never enters the daemon's config view, so a project
+	// `triggers` could never fire.
+	//
+	// Nil and empty mean the same thing here (not triggered by a source), so
+	// unlike CatchUp or OnOverlap there is no presence-versus-value
+	// distinction to preserve: the exclusions this key carries are checked
+	// against a non-empty list.
+	// Governing: ADR-0021; SPEC-0014 REQ "Triggers Key", REQ "Triggered
+	// Harness Exclusions".
+	Triggers []string
 }
+
+// Triggered reports whether h has any firing source at all — a clock, an
+// event source, or both. It is the predicate the run machinery keys off
+// (SPEC-0014 extends SPEC-0008's "scheduled harness" to cover event sources),
+// so a webhook-only harness gets run records, per-run logs, `timeout`,
+// `on_overlap` and `keep_runs` exactly as a cron one-shot does.
+//
+// Use Schedule directly only where the CLOCK is what is being asked about —
+// the next window, a countdown, catch-up of a missed cron window. Everywhere
+// else a bare `Schedule != ""` check is the bug SPEC-0014 introduces: it reads
+// a triggered harness as an ordinary resident one.
+// Governing: ADR-0021; SPEC-0014 REQ "Triggers Key".
+func (h Harness) Triggered() bool { return h.Schedule != "" || len(h.Triggers) > 0 }
 
 // ReadPromptFile reads the instruction text a PromptFile names. It is the one
 // place that decides what makes a prompt file usable, so the config parser's
@@ -463,6 +491,21 @@ type ServerConfig struct {
 	// HostKeyPath overrides the persisted host-key location; empty uses the
 	// default under $XDG_STATE_HOME/harness (ADR-0008).
 	HostKeyPath string
+	// WebhookListen is the bind address (host:port) for the webhook
+	// listener SPEC-0014 adds. Empty means no listener exists at all — the
+	// daemon opens no HTTP port, and declaring a `[webhook.*]` table does
+	// not change that. It is a server of its own, separate from the SSH
+	// front door above and from the metrics listener.
+	// Governing: ADR-0021; SPEC-0014 REQ "Webhook Listener".
+	WebhookListen string
+	// WebhookTLSCertFile and WebhookTLSKeyFile turn the webhook listener into
+	// HTTPS. Both or neither: setting exactly one is a parse error, because a
+	// half-configured pair is overwhelmingly an operator who believes the
+	// listener is encrypted when it is not.
+	// Governing: ADR-0021; SPEC-0014 REQ "Webhook Listener".
+	WebhookTLSCertFile string
+	// WebhookTLSKeyFile is the key half of the pair above.
+	WebhookTLSKeyFile string
 }
 
 // Config is a fully parsed, validated harness.toml: the harness registry and
@@ -482,6 +525,64 @@ type Config struct {
 	Daemon DaemonConfig
 	// Telemetry is the optional global [telemetry] table (SPEC-0015 REQ-2).
 	Telemetry TelemetryConfig
+	// Channels is every [channel.*] trigger source keyed by name, nil when
+	// none are declared. Governing: ADR-0021; SPEC-0014 REQ "Channel Source
+	// Table".
+	Channels map[string]ChannelSource
+	// ChannelOrder is channel source names in the order they appear, main
+	// file first and then each drop-in in lexicographic file order — the
+	// same rule HarnessOrder follows, so fan-out is deterministic.
+	ChannelOrder []string
+	// Webhooks is every [webhook.*] trigger source keyed by name, nil when
+	// none are declared. Governing: ADR-0021; SPEC-0014 REQ "Webhook Source
+	// Table".
+	Webhooks map[string]WebhookSource
+	// WebhookOrder is webhook source names in declaration order, as
+	// ChannelOrder is for channels.
+	WebhookOrder []string
+	// Warnings are non-fatal findings from the load: conditions the operator
+	// should know about that do not justify refusing the config. `harness
+	// doctor` surfaces them. A warning never carries a credential — only a
+	// path, a name, or a reason.
+	// Governing: SPEC-0014 REQ "Credential Resolution", REQ "Webhook
+	// Listener".
+	Warnings []string
+}
+
+// OrderedChannels returns the channel sources in declaration order.
+func (c *Config) OrderedChannels() []ChannelSource {
+	out := make([]ChannelSource, 0, len(c.ChannelOrder))
+	for _, name := range c.ChannelOrder {
+		out = append(out, c.Channels[name])
+	}
+	return out
+}
+
+// OrderedWebhooks returns the webhook sources in declaration order.
+func (c *Config) OrderedWebhooks() []WebhookSource {
+	out := make([]WebhookSource, 0, len(c.WebhookOrder))
+	for _, name := range c.WebhookOrder {
+		out = append(out, c.Webhooks[name])
+	}
+	return out
+}
+
+// BoundHarnesses returns the names of every harness whose `triggers` lists
+// ref, in config order. It is the fan-out set REQ "Firing" walks, and it lives
+// here because the answer is a property of the parsed config rather than of
+// whatever component happens to be asking.
+// Governing: ADR-0021; SPEC-0014 REQ "Firing".
+func (c *Config) BoundHarnesses(ref string) []string {
+	var out []string
+	for _, name := range c.HarnessOrder {
+		for _, t := range c.Harnesses[name].Triggers {
+			if t == ref {
+				out = append(out, name)
+				break
+			}
+		}
+	}
+	return out
 }
 
 // DaemonConfig carries optional daemon-level settings ([daemon] table).
