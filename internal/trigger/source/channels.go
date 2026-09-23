@@ -24,6 +24,7 @@ package source
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -338,9 +339,14 @@ func (m *Manager) attempt(
 // Reusing LateGrace rather than picking a threshold here is deliberate. A
 // doorbell lost to a brief blip is re-rung by the server within minutes, so
 // only a long gap or a restart can outlast the re-rings; and "late" then means
-// one thing across the daemon rather than two numbers that drift. A flapping
-// link cannot produce a run per flap either, because the backoff stretches the
-// very outages this measures.
+// one thing across the daemon rather than two numbers that drift.
+//
+// A flapping link is NOT immune. The backoff resets only after a stream has
+// stayed open 5 minutes, so on a link that drops sooner every time the ladder
+// climbs past LateGrace within a few flaps, and from then on each reconnect
+// follows an outage longer than LateGrace and catches up — about once per
+// ceiling interval. REQ "Channel Catch-Up" asks for exactly that, read
+// literally; it is bounded by the ceiling and by on_overlap, not prevented.
 // Governing: SPEC-0014 REQ "Channel Catch-Up"; SPEC-0008 REQ "Missed Window
 // Handling".
 func (m *Manager) onConnected(ref string, src core.ChannelSource, firstDone *bool, downSince time.Time) {
@@ -368,22 +374,44 @@ func (m *Manager) onConnected(ref string, src core.ChannelSource, firstDone *boo
 // goes through on_overlap like any other firing, so a catch-up that lands on a
 // run already in flight is held or skipped rather than stacking.
 // Governing: SPEC-0014 REQ "Channel Catch-Up".
+//
+// It holds to the rules Fire does. A closed manager starts nothing, and a
+// panic starting one harness costs that harness's catch-up only: this runs on
+// the session goroutine, inside Listen's onOpen, where an unrecovered panic
+// would take the whole daemon down.
 func (m *Manager) catchUp(ref string) {
+	m.mu.Lock()
+	closed := m.closed
+	m.mu.Unlock()
+	if closed {
+		return
+	}
 	cfg := m.config()
 	for _, name := range cfg.BoundHarnesses(ref) {
 		h, ok := cfg.Harnesses[name]
 		if !ok || !h.CatchUp {
 			continue
 		}
-		if _, ok := m.runner.StartRun(name, supervisor.RunRequest{
-			Trigger: supervisor.TriggerCatchUp,
-			Source:  ref,
-		}); !ok {
-			m.log.Warn("catch-up fired for a harness the daemon does not know", "harness", name, "source", ref)
-			continue
-		}
-		m.log.Info("catch-up run started", "harness", name, "source", ref)
+		m.catchUpOne(name, ref)
 	}
+}
+
+// catchUpOne starts one harness's catch-up run, recovering a panic for the
+// reason fireOne does.
+func (m *Manager) catchUpOne(name, ref string) {
+	defer func() {
+		if r := recover(); r != nil {
+			m.log.Error("catch-up firing panicked", "harness", name, "source", ref, "panic", fmt.Sprint(r))
+		}
+	}()
+	if _, ok := m.runner.StartRun(name, supervisor.RunRequest{
+		Trigger: supervisor.TriggerCatchUp,
+		Source:  ref,
+	}); !ok {
+		m.log.Warn("catch-up fired for a harness the daemon does not know", "harness", name, "source", ref)
+		return
+	}
+	m.log.Info("catch-up run started", "harness", name, "source", ref)
 }
 
 // terminalState maps a session failure to the state it should report.
