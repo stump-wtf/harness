@@ -78,6 +78,21 @@ const ClientName = "harness"
 // advertise, and which this client offers as a marker.
 const channelCapability = "claude/channel"
 
+// handshakeTimeout bounds initialize plus notifications/initialized. The
+// transport's ResponseHeaderTimeout covers only the response head; a server
+// that sends the head and then stalls would otherwise park the source in
+// `connecting` for as long as the daemon runs.
+const handshakeTimeout = 30 * time.Second
+
+// replyTimeout bounds one reply to a server request. Replies are POSTed from
+// the goroutine that reads doorbells, so an unbounded one would stop the
+// stream being read.
+const replyTimeout = 10 * time.Second
+
+// maxDrain is the most of a response body this client reads only to discard
+// it, so a keep-alive connection can be reused.
+const maxDrain = 4096
+
 // Options configure a Client.
 type Options struct {
 	// Source is the [channel.*] table this session serves.
@@ -192,6 +207,9 @@ type initializeResult struct {
 // sit in `connected` forever and never fire — which looks healthier than being
 // broken, and is worse.
 func (c *Client) Initialize(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
+
 	body, err := json.Marshal(message{
 		JSONRPC: jsonrpcVersion,
 		ID:      json.RawMessage(`1`),
@@ -215,10 +233,10 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("channel %s: initialize: %w", c.src.Name, err)
 	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-	}()
+	// Closed, not drained: a server may answer on a stream and then hold it
+	// open (the transport says it SHOULD close it, not MUST), and waiting for
+	// its end would wait for as long as the server likes.
+	defer discardBody(resp)
 
 	// The session id arrives on the initialize response and rides every later
 	// request.
@@ -260,8 +278,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("channel %s: notifications/initialized: %w", c.src.Name, err)
 	}
-	_, _ = io.Copy(io.Discard, iresp.Body)
-	_ = iresp.Body.Close()
+	discardBody(iresp)
 
 	c.log.Info("channel session initialized",
 		"source", c.src.Name, "server", res.ServerInfo.Name, "protocol", negotiated)
@@ -299,10 +316,7 @@ func (c *Client) Listen(ctx context.Context, h Handler, onOpen func()) error {
 	if err != nil {
 		return fmt.Errorf("channel %s: open stream: %w", c.src.Name, err)
 	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		_ = resp.Body.Close()
-	}()
+	defer discardBody(resp)
 
 	if resp.StatusCode == http.StatusMethodNotAllowed {
 		return fmt.Errorf("channel %s: %w (405 on the standalone GET)", c.src.Name, ErrStreamRefused)
@@ -386,9 +400,10 @@ func (c *Client) dispatch(ctx context.Context, ev Event, h Handler) {
 // answer replies to a server request. `ping` gets an empty result; everything
 // else gets -32601, because this client serves nothing.
 //
-// The reply is POSTed and its body discarded: a server that answers a reply
-// with a stream has misunderstood, and reading it would block the one
-// goroutine that is meant to be reading doorbells.
+// The reply is POSTed and its body discarded unread when it is a stream or of
+// unknown length: a server that answers a reply with a stream has
+// misunderstood, and reading it would block the one goroutine that is meant
+// to be reading doorbells. replyTimeout bounds the rest.
 func (c *Client) answer(ctx context.Context, req message) {
 	var reply message
 	if req.Method == "ping" {
@@ -401,13 +416,14 @@ func (c *Client) answer(ctx context.Context, req message) {
 	if err != nil {
 		return
 	}
-	resp, err := c.post(ctx, body, true)
+	rctx, cancel := context.WithTimeout(ctx, replyTimeout)
+	defer cancel()
+	resp, err := c.post(rctx, body, true)
 	if err != nil {
 		c.log.Debug("channel reply failed", "source", c.src.Name, "method", req.Method, "err", err.Error())
 		return
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	_ = resp.Body.Close()
+	discardBody(resp)
 }
 
 // Close ends the session with DELETE. It is best-effort: the session is over
@@ -424,8 +440,7 @@ func (c *Client) Close(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("channel %s: delete session: %w", c.src.Name, err)
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	_ = resp.Body.Close()
+	discardBody(resp)
 	return nil
 }
 
@@ -449,8 +464,7 @@ func (c *Client) post(ctx context.Context, body []byte, accepted bool) (*http.Re
 		return resp, nil
 	}
 	if err := c.statusError(resp, "request"); err != nil {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		_ = resp.Body.Close()
+		discardBody(resp)
 		return nil, err
 	}
 	return resp, nil
@@ -531,6 +545,19 @@ func (c *Client) readOneMessage(resp *http.Response) (message, error) {
 		return message{}, fmt.Errorf("%w: response is not JSON-RPC: %v", ErrProtocol, err)
 	}
 	return msg, nil
+}
+
+// discardBody closes a response this client has finished with. It drains the
+// body first only when that is known to be short — a declared length within
+// maxDrain, and not a stream — so the connection can be reused. Anything else
+// is closed unread: draining a stream means waiting for the server to end it,
+// and a server is free not to.
+func discardBody(resp *http.Response) {
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if resp.ContentLength >= 0 && resp.ContentLength <= maxDrain && !strings.HasPrefix(ct, "text/event-stream") {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxDrain))
+	}
+	_ = resp.Body.Close()
 }
 
 // experimentalKeys renders the capability keys a server DID offer, so the
