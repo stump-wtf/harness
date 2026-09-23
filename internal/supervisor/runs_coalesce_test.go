@@ -14,6 +14,7 @@ package supervisor
 // @joestump 09/22/2026 - Introduced with SPEC-0014 firing fan-out (#457).
 
 import (
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -280,5 +281,47 @@ func TestConcurrentFiringsStartOneProcessAndHoldOne(t *testing.T) {
 		t.Errorf("the history holds %d skipped records, want exactly 1", len(skips))
 	case skips[0].Coalesced != 48:
 		t.Errorf("coalesced = %d, want 48", skips[0].Coalesced)
+	}
+}
+
+// TestCoalescingSurvivesAStateSaveFailure: a skip whose increment landed but
+// whose state.json write failed must stay coalesced. CoalesceRun used to
+// answer a failed Save with the same error it gives for a record that no
+// longer exists, and recordSkip reads that as "the record went away" — so it
+// opened a NEW record for a firing the old one had already counted. On a
+// state dir that stays unwritable, every other firing did it again: the
+// burst came back as one record per two firings, each double-counting one.
+func TestCoalescingSurvivesAStateSaveFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions, so the save cannot be made to fail")
+	}
+	e := newRunsEnv(t)
+	h := coalesceSweep("busy")
+	h.OnOverlap = core.OverlapSkip
+	m, _ := e.manager(t, sweepCfg(h), fastPolicy())
+
+	req := RunRequest{Trigger: TriggerWebhook, Source: "webhook.gh"}
+	m.StartRun("busy", req)
+	waitRuns(t, m, "busy", "the run is in flight", outcomesAre(OutcomeRunning))
+
+	// state.json lives directly in e.dir; the run's own log is already open
+	// under e.logs, so only Save is affected.
+	if err := os.Chmod(e.dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(e.dir, 0o700) })
+	if err := m.Save(); err == nil {
+		t.Fatal("Save succeeded on a read-only state dir, so this test proves nothing")
+	}
+
+	for i := 0; i < 10; i++ {
+		m.StartRun("busy", req)
+	}
+	skips := skippedRecords(m.Runs("busy"))
+	switch {
+	case len(skips) != 1:
+		t.Errorf("the history holds %d skipped records after a failed save, want exactly 1", len(skips))
+	case skips[0].Coalesced != 10:
+		t.Errorf("coalesced = %d, want 10", skips[0].Coalesced)
 	}
 }
