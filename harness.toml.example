@@ -134,7 +134,13 @@ enabled = false
 # appended after it) and the CLI-specific argv synthesized for a prompt
 # one-shot. REQUIRED -- there is no default. "generic" runs sh, so its args
 # are sh's args -- write args = ["-c", "<command line>"] to run an arbitrary
-# command (no projection, scrollback-only trajectory).
+# command (no projection, scrollback-only trajectory). "generic" takes NO
+# prompt: it has no prompt synthesis, so prompt or prompt_file on it is a
+# config error (it used to run crush). Until the "command" kind and the
+# pi/omp adapters ship (ADR-0023, issue #500), the only way to run Pi, OMP or
+# another unlisted agent CLI is harness = "generic" with
+# args = ["-c", "omp ..."], and only as a long-running harness: it cannot be
+# scheduled or triggered, because schedule and triggers need a prompt.
 # Valid values: "crush", "claude-code", "codex", "generic".
 #
 # harness = "claude-code"   # required on every [harness.*] table
