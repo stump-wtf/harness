@@ -31,6 +31,7 @@ import (
 	"github.com/stump-wtf/harness/internal/config"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/daemon"
+	"github.com/stump-wtf/harness/internal/loopguard"
 	"github.com/stump-wtf/harness/internal/observe"
 	"github.com/stump-wtf/harness/internal/remote"
 	"github.com/stump-wtf/harness/internal/scheduler"
@@ -88,16 +89,14 @@ func startDaemonObserver(mgr *supervisor.Manager, opts observe.Options) *observe
 	return obs
 }
 
-// startDaemonLoopGuard subscribes the runaway tool-loop guard to the daemon's
-// observer, killing a run through the daemon's own Manager when one of its
-// sessions repeats one identical tool call past the threshold. It is a
-// function, like startDaemonObserver, so the wiring test drives the guard the
-// daemon builds.
+// startDaemonLoopGuard subscribes the runaway tool-loop guard to the
+// observer, stopping harnesses through the daemon's own Manager. The daemon
+// closes it on shutdown, before the observer stops and the Manager closes.
 //
 // Governing: stumpcloud/stumpcloud#469.
-func startDaemonLoopGuard(obs *observe.Observer, mgr *supervisor.Manager) *observe.LoopGuard {
-	g := observe.StartLoopGuard(obs, mgr, 0, nil)
-	log.Info("runaway loop guard active", "threshold", observe.DefaultLoopThreshold)
+func startDaemonLoopGuard(mgr *supervisor.Manager, obs loopguard.Subscriber, opts loopguard.Options) *loopguard.Guard {
+	g := loopguard.New(mgr, opts)
+	g.Start(obs)
 	return g
 }
 
@@ -385,11 +384,11 @@ func runDaemon(o daemonOpts) {
 	observer := startDaemonObserver(mgr, daemonObserverOptions())
 	log.Info("agent event observer active", "interval", observe.DefaultPollInterval)
 
-	// stumpcloud/stumpcloud#469: kill a run whose session repeats one
-	// identical tool call past the threshold — the shape behind the 608
-	// "." comments on harness#383/#384. The daemon keeps supervising; only
-	// the runaway run dies.
-	loopGuard := startDaemonLoopGuard(observer, mgr)
+	// stumpcloud/stumpcloud#469: stop a harness whose agent repeats one tool
+	// call with identical arguments, back to back — a loop no process exit
+	// ever reports.
+	loopGuard := startDaemonLoopGuard(mgr, observer, loopguard.Options{})
+	log.Info("runaway tool-loop guard active", "threshold", loopguard.DefaultThreshold)
 
 	// Issue #391: export that stream, only when [telemetry] names a
 	// destination and only for opted-in harnesses (SPEC-0015 REQ-1).
@@ -447,10 +446,9 @@ func runDaemon(o daemonOpts) {
 	mergeTrain.Stop()
 	// Before the observer and the Manager: metrics reads both.
 	daemonMet.Stop()
-	// Before the observer stops: the guard consumes from it, and its Stop
-	// unregisters the subscription so observer.Stop never closes a channel
-	// the guard is still reading.
-	loopGuard.Stop()
+	// Before the observer and the Manager: the guard reads one and stops
+	// harnesses through the other.
+	loopGuard.Close()
 	// Before the Manager closes: the observer reads its snapshots.
 	observer.Stop()
 	sessionGuard.Close()
