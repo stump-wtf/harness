@@ -361,9 +361,33 @@ func (c *Client) Listen(ctx context.Context, h Handler, onOpen func()) error {
 }
 
 // dispatch decodes one SSE event and acts on it.
+//
+// An event may carry a JSON-RPC batch: protocol 2025-03-26, the version this
+// client offers, obliges an implementation to accept them. Each message in a
+// batch is dispatched on its own, so a batch of two doorbells is two firings.
 func (c *Client) dispatch(ctx context.Context, ev Event, h Handler) {
+	data := bytes.TrimSpace([]byte(ev.Data))
+	if len(data) > 0 && data[0] == '[' {
+		var batch []json.RawMessage
+		if err := json.Unmarshal(data, &batch); err != nil || len(batch) == 0 {
+			c.log.Warn("channel message dropped: not a valid JSON-RPC batch", "source", c.src.Name)
+			if h != nil {
+				h.Invalid("not a valid JSON-RPC batch")
+			}
+			return
+		}
+		for _, raw := range batch {
+			c.dispatchMessage(ctx, raw, h)
+		}
+		return
+	}
+	c.dispatchMessage(ctx, data, h)
+}
+
+// dispatchMessage decodes one JSON-RPC message and acts on it.
+func (c *Client) dispatchMessage(ctx context.Context, data []byte, h Handler) {
 	var msg message
-	if err := json.Unmarshal([]byte(ev.Data), &msg); err != nil {
+	if err := json.Unmarshal(data, &msg); err != nil {
 		// Not JSON-RPC at all. Logged and dropped: the payload is never
 		// echoed, because a stream is as untrusted as any other input.
 		c.log.Warn("channel message dropped: not valid JSON-RPC", "source", c.src.Name, "err", err.Error())

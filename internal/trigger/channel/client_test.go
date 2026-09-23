@@ -666,3 +666,32 @@ func TestNullIsNotAString(t *testing.T) {
 		t.Errorf("empty strings were rejected: %v", err)
 	}
 }
+
+// TestBatchedMessagesAreEachDispatched: the protocol version this client
+// offers (2025-03-26) obliges it to accept JSON-RPC batches. A batch of two
+// doorbells is two firings, not one `invalid`.
+func TestBatchedMessagesAreEachDispatched(t *testing.T) {
+	srv := testserver.New(testserver.Options{})
+	defer srv.Close()
+
+	c := New(Options{Source: source(srv.URL, nil), Log: quietLog()})
+	if err := c.Initialize(context.Background()); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	rec := newRecorder()
+	opened, stop := listen(t, c, rec)
+	<-opened
+	defer stop()
+
+	srv.Push(`[{"jsonrpc":"2.0","method":"notifications/claude/channel","params":{"content":"one"}},` +
+		`{"jsonrpc":"2.0","method":"notifications/claude/channel","params":{"content":"two"}}]`)
+	rec.await(t, 2)
+
+	content, _, invalid := rec.snapshot()
+	if len(invalid) != 0 {
+		t.Errorf("a batch was counted invalid: %v", invalid)
+	}
+	if len(content) != 2 || content[0] != "one" || content[1] != "two" {
+		t.Errorf("content = %v, want [one two]", content)
+	}
+}
