@@ -95,6 +95,8 @@ func (m *Manager) Reconcile(cfg *core.Config) {
 	if cfg == nil {
 		return
 	}
+	m.reconcileMu.Lock()
+	defer m.reconcileMu.Unlock()
 	m.mu.Lock()
 	if m.closed || m.ctx == nil {
 		m.mu.Unlock()
@@ -122,11 +124,23 @@ func (m *Manager) Reconcile(cfg *core.Config) {
 		src, still := want[ref]
 		bound := len(cfg.BoundHarnesses(ref)) > 0
 		switch {
-		case !still, !src.Enabled, !bound:
-			// Removed, disabled, or nothing binds it any more.
+		case !still:
+			// Removed from the config.
 			if st.cancel != nil {
 				toEnd = append(toEnd, st)
 			}
+			delete(m.sources, ref)
+		case !src.Enabled, !bound:
+			// Disabled, or nothing binds it any more. A live session ends;
+			// a record that never had one stays, so the pass below reports
+			// a change only if the state really changed.
+			if st.cancel != nil {
+				toEnd = append(toEnd, st)
+				delete(m.sources, ref)
+			}
+		case st.cancel == nil:
+			// Was disabled or unbound, and now is neither: start it below
+			// as a fresh source.
 			delete(m.sources, ref)
 		case st.identity != identityOf(src):
 			// The endpoint or the credential changed: this is a different
@@ -149,8 +163,13 @@ func (m *Manager) Reconcile(cfg *core.Config) {
 	}
 	m.mu.Unlock()
 
+	// Cancel every session first, then wait: each one's DELETE can take a
+	// few seconds against a slow server, and waiting on them one at a time
+	// would hold the reload for the sum rather than the longest.
 	for _, st := range toEnd {
 		st.cancel()
+	}
+	for _, st := range toEnd {
 		if st.done != nil {
 			<-st.done
 		}
@@ -165,14 +184,19 @@ func (m *Manager) Reconcile(cfg *core.Config) {
 	}
 	for _, src := range cfg.OrderedChannels() {
 		ref := core.SourceKindChannel + "." + src.Name
-		if _, live := m.sources[ref]; live {
-			continue
+		existing := m.sources[ref]
+		if existing != nil && existing.cancel != nil {
+			continue // live and unchanged
 		}
 		switch {
 		case !src.Enabled:
-			m.setStatusLocked(ref, core.SourceKindChannel, trigger.StateDisabled, "")
+			if existing == nil || existing.status.State != trigger.StateDisabled {
+				m.setStatusLocked(ref, core.SourceKindChannel, trigger.StateDisabled, "")
+			}
 		case len(cfg.BoundHarnesses(ref)) == 0:
-			m.setStatusLocked(ref, core.SourceKindChannel, trigger.StateUnbound, "")
+			if existing == nil || existing.status.State != trigger.StateUnbound {
+				m.setStatusLocked(ref, core.SourceKindChannel, trigger.StateUnbound, "")
+			}
 		default:
 			// A replacement inherits the replaced session's own history,
 			// read after it ended: whether it ever connected, and when it
