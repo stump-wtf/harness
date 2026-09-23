@@ -121,6 +121,12 @@ type Snapshot struct {
 	// actor goroutine — Manager.Restore, Manager.Autostart — can ask without
 	// racing applyConfig, which reassigns s.harness (ADR-0013).
 	Scheduled bool
+	// Triggered marks any one-shot: a `schedule`, `triggers`, or both
+	// (core.Harness.Triggered). Restore and Autostart key the #159 clamp off
+	// this rather than Scheduled, because a webhook-only harness is just as
+	// much a one-shot that nothing but its firing source may start.
+	// Governing: SPEC-0014 REQ "Triggered Harness Exclusions"; ADR-0013.
+	Triggered bool
 	// SessionStalled reports the session guard's finding: every recent
 	// assistant turn failed with a context-limit error, so the harness is
 	// accepting events and answering none of them no matter what State says
@@ -260,7 +266,7 @@ func New(h core.Harness, opts Options) *Supervisor {
 		created:      now,
 		lastExitCode: 0,
 	}
-	s.snap = Snapshot{Name: h.Name, State: core.StateStopped, Created: now, Scheduled: h.Schedule != "", Gated: h.OperatingHours != ""}
+	s.snap = Snapshot{Name: h.Name, State: core.StateStopped, Created: now, Scheduled: h.Schedule != "", Triggered: h.Triggered(), Gated: h.OperatingHours != ""}
 	go s.loop()
 	return s
 }
@@ -1200,6 +1206,7 @@ func (s *Supervisor) publishSnapshot() {
 		Created:       s.created,
 		LastStarted:   s.lastStarted,
 		Scheduled:     s.harness.Schedule != "",
+		Triggered:     s.harness.Triggered(),
 		PID:           pid,
 		Gated:         s.gated(),
 		Held:          s.held,
