@@ -90,6 +90,78 @@ func TestMakeRenderable(t *testing.T) {
 	}
 }
 
+// Credential-shaped fixtures, assembled at run time from split literals so no
+// high-entropy token exists as a contiguous string in this source — the repo's
+// secret scan reads the file, not the expression. Assertions must reference
+// these rather than restate the value, or the literal reappears and the scan
+// flags it. (It did: gitleaks caught exactly that here.)
+var (
+	pwSecret     = "0123456789" + "abcdef0123"
+	bearerSecret = "sk-" + "abcdefghijklmnopqrstuvwxyz"
+	ghSecret     = "ghp_" + "0123456789abcdefghijklmnopqrstuvwxyz"
+)
+
+var credFixtures = strings.NewReplacer(
+	"<PW_REMOTE>", "https://joestump-agent:"+pwSecret+"@gitea.stump.rocks/a/b.git",
+	"<BEARER>", "Authorization: Bearer "+bearerSecret,
+	"<GHTOK>", ghSecret,
+)
+
+// TestMakeRenderableRedactsCredentials: the chatroom reads events straight
+// from the watcher, so every free-text field it renders is verbatim transcript
+// content. Each of the four render sites is checked, because they do not share
+// one source — the error line re-reads Classified.Summary off the raw event
+// rather than the truncated copy, so masking only what MakeRenderable stores
+// leaves that one exposed (ADR-0008; issue #312).
+func TestMakeRenderableRedactsCredentials(t *testing.T) {
+	remote := credFixtures.Replace("<PW_REMOTE>")
+	bearer := credFixtures.Replace("<BEARER>")
+	ghtok := credFixtures.Replace("<GHTOK>")
+
+	ev := tail.Event{
+		Session: tail.SessionMeta{Harness: tail.HarnessCrush, ID: "s1"},
+		Classified: classify.Event{
+			Seq:       1,
+			Timestamp: "2026-09-12T14:00:00Z",
+			Tool:      "bash",
+			Action:    classify.ActionExec,
+			IsError:   true,
+			Summary:   "git remote set-url origin " + remote,
+			Targets:   []classify.Target{{Path: "/tmp/" + ghtok + "/notes.md", Touch: "read"}},
+		},
+		Marks:      []classify.Mark{{Seq: 1, Timestamp: "2026-09-12T14:00:01Z", Type: "error", Note: "request failed, sent " + bearer}},
+		ReceivedAt: time.Now(),
+	}
+
+	re := MakeRenderable(ev)
+	rendered := strings.Join(re.RenderLines(testStyles()), "\n")
+
+	for _, secret := range []struct{ name, value string }{
+		{"remote password", pwSecret},
+		{"bearer token", bearerSecret},
+		{"github token", ghSecret},
+	} {
+		if strings.Contains(rendered, secret.value) {
+			t.Errorf("rendered chatroom lines leak the %s:\n%s", secret.name, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "[REDACTED]") {
+		t.Errorf("nothing was masked at all:\n%s", rendered)
+	}
+
+	// The caller's event must be untouched: Marks and Targets are slices, and
+	// masking them in place would reach into the watcher's own copy.
+	if !strings.Contains(ev.Classified.Summary, pwSecret) {
+		t.Error("redactEvent mutated the caller's Summary")
+	}
+	if !strings.Contains(ev.Marks[0].Note, bearerSecret) {
+		t.Error("redactEvent mutated the caller's Marks through the shared backing array")
+	}
+	if !strings.Contains(ev.Classified.Targets[0].Path, ghSecret) {
+		t.Error("redactEvent mutated the caller's Targets through the shared backing array")
+	}
+}
+
 // testStyles is the Styles every buffer test inserts with. Insert renders an
 // event's lines as it files it, so it needs a palette.
 func testStyles() *Styles { return NewStyles(theme.Default()) }

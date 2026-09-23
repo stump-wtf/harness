@@ -106,6 +106,75 @@ func TestPtyHistoryFlushLandsFinalScreen(t *testing.T) {
 	}
 }
 
+// Credential-shaped fixtures, assembled at run time from split literals so no
+// high-entropy token exists as a contiguous string in this source. Assertions
+// reference these rather than restating the value — restating it puts the
+// literal back and the secret scan flags it.
+var (
+	pwSecret     = "0123456789" + "abcdef0123"
+	bearerSecret = "sk-" + "abcdefghijklmnopqrstuvwxyz"
+)
+
+var credFixtures = strings.NewReplacer(
+	"<PW_REMOTE>", "https://joestump-agent:"+pwSecret+"@gitea.stump.rocks/a/b.git",
+	"<BEARER>", "Authorization: Bearer "+bearerSecret,
+)
+
+// TestPtyHistoryMasksCredentialsBeforeDisk: the durable log records what the
+// program printed, so an agent running `git remote set-url` with a token in
+// the URL puts it in the file verbatim. Masking at write time is what keeps
+// the secret out of the artifact — the log is readable directly under
+// $XDG_STATE_HOME regardless of what the protocol serves (ADR-0008 as
+// amended; issue #312).
+func TestPtyHistoryMasksCredentialsBeforeDisk(t *testing.T) {
+	remote := credFixtures.Replace("<PW_REMOTE>")
+	bearer := credFixtures.Replace("<BEARER>")
+
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 200, 24)
+	_, _ = h.Write([]byte("git remote set-url origin " + remote + "\r\n"))
+	_, _ = h.Write([]byte("curl -H '" + bearer + "' https://example.com\r\n"))
+	h.Flush()
+	got := out.String()
+
+	for _, secret := range []string{pwSecret, bearerSecret} {
+		if strings.Contains(got, secret) {
+			t.Errorf("durable log kept a credential (%q):\n%s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Errorf("nothing was masked at all:\n%s", got)
+	}
+	// The surrounding command must survive: --raw still shows the shape of
+	// what ran, only not the secret inside it.
+	if !strings.Contains(got, "git remote set-url origin") {
+		t.Errorf("masking ate the command text:\n%s", got)
+	}
+}
+
+// TestPtyHistoryMasksKeyBodyBeforeDisk: the log is written a row at a time,
+// and a PEM private key spans many rows. Masking each row on its own masks the
+// BEGIN line and writes the body — the key itself — to disk verbatim. Fixture
+// assembled from split literals so the secret scan has no block to match.
+func TestPtyHistoryMasksKeyBodyBeforeDisk(t *testing.T) {
+	body := strings.Repeat("QUJD", 16)
+	key := "-----BEGIN " + "OPENSSH PRIVATE KEY-----\r\n" + body + "\r\n" + body +
+		"\r\n-----END " + "OPENSSH PRIVATE KEY-----\r\n"
+
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 80, 24)
+	_, _ = h.Write([]byte("$ cat ~/.ssh/id_ed25519\r\n" + key + "$ ls\r\n"))
+	h.Flush()
+	got := out.String()
+
+	if strings.Contains(got, body) {
+		t.Errorf("durable log kept private key material:\n%s", got)
+	}
+	if !strings.Contains(got, "$ cat ~/.ssh/id_ed25519") || !strings.Contains(got, "$ ls") {
+		t.Errorf("masking ate the lines around the key:\n%s", got)
+	}
+}
+
 // TestPtyHistoryFlushIsOnce verifies a second Flush (closeLog runs
 // defensively after the reader EOF flush) cannot duplicate the screen.
 func TestPtyHistoryFlushIsOnce(t *testing.T) {

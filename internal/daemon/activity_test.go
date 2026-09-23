@@ -285,9 +285,12 @@ func TestLogsEventsGenericFallsBackToText(t *testing.T) {
 	}
 }
 
-// TestLogsRawIsUnchanged: without Events the op is byte-for-byte what it was,
-// which is what the peek pane and --raw depend on.
-func TestLogsRawIsUnchanged(t *testing.T) {
+// TestLogsRawKeepsStructure: the raw op still answers with the file's own
+// lines, in order, with no Source or Entries — what the peek pane and
+// `harness logs --raw` depend on. Credential-free content is byte-exact;
+// credential masking is pinned separately below, because the spec now
+// promises structure rather than byte-for-byte identity (issue #312).
+func TestLogsRawKeepsStructure(t *testing.T) {
 	td, _ := sweepsDaemon(t)
 	body := lifecycleLine(local(7, 40, 0), "state changed from=stopped to=starting") + "\x1b[2Jrepaint\n"
 	writeLog(t, td, "sweep-pdx", body)
@@ -297,6 +300,92 @@ func TestLogsRawIsUnchanged(t *testing.T) {
 	}
 	if ld.Text != body || ld.Source != "" || ld.Entries != nil {
 		t.Errorf("raw reply = %+v, want exactly the file", ld)
+	}
+}
+
+// Credential-shaped fixtures, assembled at run time from split literals so no
+// high-entropy token exists as a contiguous string in this source. Assertions
+// reference these rather than restating the value — restating it puts the
+// literal back and the secret scan flags it.
+var (
+	logPwSecret     = "0123456789" + "abcdef0123"
+	logBearerSecret = "sk-" + "abcdefghijklmnopqrstuvwxyz"
+)
+
+var logCredFixtures = strings.NewReplacer(
+	"<PW_REMOTE>", "https://joestump-agent:"+logPwSecret+"@gitea.stump.rocks/a/b.git",
+	"<BEARER>", "Authorization: Bearer "+logBearerSecret,
+)
+
+// TestLogsRawMasksCredentials covers the logs already on disk — the reason
+// read-time masking exists alongside write-time masking. It also proves the
+// masking is served by the DAEMON, so `--json` and any other client get it
+// too, rather than it being a rendering choice one client makes (issue #312).
+func TestLogsRawMasksCredentials(t *testing.T) {
+	td, _ := sweepsDaemon(t)
+	remote := logCredFixtures.Replace("<PW_REMOTE>")
+	bearer := logCredFixtures.Replace("<BEARER>")
+	body := "git remote set-url origin " + remote + "\n" +
+		"curl -H '" + bearer + "' https://example.com\n"
+	writeLog(t, td, "sweep-pdx", body)
+
+	ld, err := td.dial(t, nil).Logs("sweep-pdx", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{logPwSecret, logBearerSecret} {
+		if strings.Contains(ld.Text, secret) {
+			t.Errorf("raw logs reply leaked a credential (%q):\n%s", secret, ld.Text)
+		}
+	}
+	if !strings.Contains(ld.Text, "[REDACTED]") {
+		t.Errorf("nothing was masked at all:\n%s", ld.Text)
+	}
+	if !strings.Contains(ld.Text, "git remote set-url origin") {
+		t.Errorf("masking ate the command text:\n%s", ld.Text)
+	}
+}
+
+// TestLogsRawMasksKeyBody: a log written before write-time masking existed
+// can hold a PEM private key, one row per line. The tail is masked line by
+// line, so without carrying state across lines the body — the key — is served.
+func TestLogsRawMasksKeyBody(t *testing.T) {
+	td, _ := sweepsDaemon(t)
+	keyBody := strings.Repeat("QUJD", 16)
+	body := "-----BEGIN " + "OPENSSH PRIVATE KEY-----\n" + keyBody + "\n" +
+		"-----END " + "OPENSSH PRIVATE KEY-----\nafter\n"
+	writeLog(t, td, "sweep-pdx", body)
+
+	ld, err := td.dial(t, nil).Logs("sweep-pdx", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ld.Text, keyBody) {
+		t.Errorf("raw logs reply served private key material:\n%s", ld.Text)
+	}
+	if !strings.Contains(ld.Text, "after") {
+		t.Errorf("masking ran past the end of the key:\n%s", ld.Text)
+	}
+}
+
+// TestRunLogTailMasksCredentials: a run log is served by opLogsRun on the
+// events path as well as for --raw, so it needs the same read-time masking as
+// the harness-wide log — and it is a separate reader, so it needs its own test.
+func TestRunLogTailMasksCredentials(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "1.log")
+	remote := logCredFixtures.Replace("<PW_REMOTE>")
+	if err := os.WriteFile(path, []byte("git remote set-url origin "+remote+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	text, ok := readRunLogTail(path, 10)
+	if !ok {
+		t.Fatal("readRunLogTail reported no log")
+	}
+	if strings.Contains(text, logPwSecret) {
+		t.Errorf("run log tail leaked a credential:\n%s", text)
+	}
+	if !strings.Contains(text, "git remote set-url origin") {
+		t.Errorf("masking ate the command text:\n%s", text)
 	}
 }
 

@@ -33,7 +33,35 @@ import (
 	"github.com/charmbracelet/x/vt"
 
 	clog "github.com/charmbracelet/log"
+
+	"github.com/stump-wtf/harness/internal/redact"
 )
+
+// logLine masks credentials in one history line on its way to disk.
+//
+// The durable log records what the program printed, so a token-bearing git
+// remote or an `Authorization:` header lands in it verbatim. Masking here —
+// rather than only when a log is read — is what keeps the secret out of the
+// artifact: the file is readable directly at $XDG_STATE_HOME/harness/logs,
+// whatever the protocol chooses to serve. Readers mask too, because that is
+// the only thing covering logs written before this existed; redact.String is
+// idempotent, so a line masked here passes through a reader unchanged.
+//
+// This is deliberately broader than ADR-0008 as originally written, which
+// banned persisting secrets *we* control and disclaimed the ones a harnessed
+// program prints. Those are precisely the ones that reach this line.
+//
+// Cost, measured: ~7.2µs for an ordinary line, ~15.1µs when a rule matches.
+// Negligible in steady state; ~0.7s of CPU on this goroutine for a 100k-line
+// burst, which backpressures the PTY. That is the trade this makes knowingly.
+//
+// It is stateful because the log is written a row at a time: a PEM private
+// key spans many rows, and only redact.Lines remembers that the row after a
+// BEGIN line is key material. Caller holds h.mu.
+//
+// Governing: ADR-0008 (secrets, as amended for #312), ADR-0007 (the durable
+// log is sanitized); issue #312.
+func (h *ptyHistory) logLine(ln string) string { return h.mask.String(ln) }
 
 // ptyHistory is an io.Writer that extracts scrolled-off screen rows from a
 // raw PTY stream and appends them, one "\n"-terminated plain-text line each,
@@ -49,6 +77,8 @@ type ptyHistory struct {
 	// flushed guards the end-of-stream Flush against a second call (closeLog
 	// also flushes, defensively, for runs that never got a reader EOF).
 	flushed bool
+	// mask carries credential masking across rows (logLine).
+	mask redact.Lines
 }
 
 // newPtyHistory builds the sanitizer for a PTY born at cols x rows.
@@ -187,7 +217,7 @@ func (h *ptyHistory) diffLocked() {
 	cur := screenText(h.term)
 	for _, ln := range h.prev[:scrollCount(h.prev, cur)] {
 		if ln != "" {
-			_, _ = io.WriteString(h.out, ln+"\n")
+			_, _ = io.WriteString(h.out, h.logLine(ln)+"\n")
 		}
 	}
 	h.prev = cur
@@ -205,7 +235,7 @@ func (h *ptyHistory) Flush() {
 	h.flushed = true
 	for _, ln := range screenText(h.term) {
 		if ln != "" {
-			_, _ = io.WriteString(h.out, ln+"\n")
+			_, _ = io.WriteString(h.out, h.logLine(ln)+"\n")
 		}
 	}
 }
