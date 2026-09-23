@@ -8,6 +8,9 @@
 //
 // @joestump-agent 09/21/2026 - AppendCrushMessages and RewriteLastCrushMessage,
 // so a test can grow a live session between observer ticks (harness#390).
+//
+// @joestump-agent 09/23/2026 - ToolCall writes the step's finish part, the
+// shape real crush writes and agent-trace v0.4.0 waits for.
 package runtracetest
 
 import (
@@ -154,8 +157,27 @@ func writerDSN(path string) string {
 	return "file:" + path + "?_pragma=busy_timeout(5000)"
 }
 
-// ToolCall is an assistant message's tool_call part.
+// ToolCall is an assistant message's parts for one tool call: the tool_call
+// part and the finish part crush writes into the row when the model's step
+// ends, before the tool runs. A call orphaned by a kill mid-call has both;
+// what it lacks is the tool message holding its result. agent-trace from
+// v0.4.0 holds its read cursor below an assistant row with no finish, so a
+// fixture without one never delivers.
 func ToolCall(id, name string, input map[string]any) string {
+	in, _ := json.Marshal(input)
+	return mustParts(
+		map[string]any{"type": "tool_call", "data": map[string]any{
+			"id": id, "name": name, "input": string(in), "finished": true,
+		}},
+		map[string]any{"type": "finish", "data": map[string]any{"reason": "tool_use"}},
+	)
+}
+
+// UnfinishedToolCall is ToolCall without the finish part: the row a crush
+// killed while the model was still streaming its step leaves behind. From
+// agent-trace v0.4.0 it is the orphan shape that holds ParseSince's cursor;
+// a finished call with no result is released once the session writes past it.
+func UnfinishedToolCall(id, name string, input map[string]any) string {
 	in, _ := json.Marshal(input)
 	return mustParts(map[string]any{"type": "tool_call", "data": map[string]any{
 		"id": id, "name": name, "input": string(in), "finished": true,
@@ -177,8 +199,8 @@ func FinishError(message, details string) string {
 	}})
 }
 
-func mustParts(part map[string]any) string {
-	b, err := json.Marshal([]any{part})
+func mustParts(parts ...map[string]any) string {
+	b, err := json.Marshal(parts)
 	if err != nil {
 		panic(err)
 	}

@@ -29,10 +29,16 @@ import (
 	rt "github.com/stump-wtf/harness/internal/runtrace/runtracetest"
 )
 
-// crushCall is an assistant row issuing one tool call, and nothing else: the
-// row a crush killed mid-call leaves behind.
+// crushCall is an assistant row issuing one tool call, its step finished.
 func crushCall(id, name string, input map[string]any, at time.Time) rt.CrushMessage {
 	return rt.CrushMessage{Role: "assistant", At: at, Parts: rt.ToolCall(id, name, input)}
+}
+
+// crushOrphan is the row a crush killed mid-step leaves behind: a tool call
+// and no finish. It is the shape that pins ParseSince; a finished call with no
+// result, agent-trace releases on its own (TestFinishedOrphanIsReleasedUpstream).
+func crushOrphan(id, name string, input map[string]any, at time.Time) rt.CrushMessage {
+	return rt.CrushMessage{Role: "assistant", At: at, Parts: rt.UnfinishedToolCall(id, name, input)}
 }
 
 // crushResult is the tool row answering id.
@@ -80,7 +86,7 @@ func orphanedSession(t *testing.T, f *fixture) {
 	t.Helper()
 	msgs := []rt.CrushMessage{userSays("go", start.Add(time.Second))}
 	msgs = append(msgs, crushRead("c1", start.Add(2*time.Second))...)
-	msgs = append(msgs, crushCall("orphan", "grep", map[string]any{"pattern": "never answered"}, start.Add(3*time.Second)))
+	msgs = append(msgs, crushOrphan("orphan", "grep", map[string]any{"pattern": "never answered"}, start.Add(3*time.Second)))
 	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{ID: "s", Created: start, Updated: start.Add(3 * time.Second), Messages: msgs})
 }
 
@@ -170,6 +176,39 @@ func TestOrphanedToolCallDoesNotStallSession(t *testing.T) {
 	}
 }
 
+// TestFinishedOrphanIsReleasedUpstream: a crush killed while a tool ran —
+// after the model's step finished, before the result was written — leaves a
+// finished call with no result. From agent-trace v0.4.0 ParseSince releases
+// that call itself once the session writes past it, so the observer delivers
+// it (with an empty result) and everything after it, exactly once, and the
+// fallback never runs. Only the unfinished-row shape (crushOrphan) still
+// needs stall.go.
+func TestFinishedOrphanIsReleasedUpstream(t *testing.T) {
+	f := newFixture(t, nil)
+	f.src.add(core.Harness{Name: "worker", Adapter: "crush", Workdir: f.work}, running(start.Add(-time.Hour)))
+	msgs := []rt.CrushMessage{userSays("go", start.Add(time.Second))}
+	msgs = append(msgs, crushRead("c1", start.Add(2*time.Second))...)
+	msgs = append(msgs, crushCall("orphan", "grep", map[string]any{"pattern": "never answered"}, start.Add(3*time.Second)))
+	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{ID: "s", Created: start, Updated: start.Add(3 * time.Second), Messages: msgs})
+	ch, cancel := f.obs.Subscribe("test", 64)
+	defer cancel()
+
+	f.tick(start.Add(5 * time.Second))
+	if got, want := describe(drain(ch)), []string{"worker:mark:user-message@0", "worker:tool:view@0"}; !equal(got, want) {
+		t.Fatalf("before the kill delivered %v, want %v (an open call must still be held)", got, want)
+	}
+	resume(t, f)
+	f.tick(start.Add(25 * time.Second))
+	f.tick(start.Add(30 * time.Second))
+	want := []string{"worker:tool:grep@1", "worker:mark:user-message@2", "worker:mark:error@2", "worker:tool:grep@2"}
+	if got := describe(drain(ch)); !equal(got, want) {
+		t.Fatalf("after resuming delivered %v, want %v (stats %+v)", got, want, f.obs.Stats())
+	}
+	if s := f.obs.Stats(); s.StallChecks != 0 || s.Stalls != 0 || s.OrphansSkipped != 0 {
+		t.Errorf("stats = %+v; agent-trace released the call, so the fallback must not have run", s)
+	}
+}
+
 // TestHealthyPathNeverFullParses: sessions that never orphan a call — idle
 // ticks, a row crush is still streaming into, a tool call open across many
 // ticks, discovery itself — cost no full Parse. The last step orphans a call
@@ -212,7 +251,7 @@ func TestHealthyPathNeverFullParses(t *testing.T) {
 	}
 
 	// Now orphan a call and resume past it: the seam must see a parse.
-	rt.AppendCrushMessages(t, f.crushDB(), "s", crushCall("orphan", "grep", map[string]any{"pattern": "x"}, at))
+	rt.AppendCrushMessages(t, f.crushDB(), "s", crushOrphan("orphan", "grep", map[string]any{"pattern": "x"}, at))
 	step(5 * time.Second)
 	rt.AppendCrushMessages(t, f.crushDB(), "s", userSays("resume", at.Add(10*time.Second)), providerError("503", at.Add(11*time.Second)))
 	step(15 * time.Second)
@@ -237,7 +276,7 @@ func TestStallCheckIsRateLimited(t *testing.T) {
 	at := start.Add(5 * time.Second)
 	for i := 0; i < 12; i++ {
 		at = at.Add(5 * time.Second)
-		rt.AppendCrushMessages(t, f.crushDB(), "s", crushCall("x"+string(rune('a'+i)), "view", map[string]any{"file_path": "a"}, at))
+		rt.AppendCrushMessages(t, f.crushDB(), "s", crushOrphan("x"+string(rune('a'+i)), "view", map[string]any{"file_path": "a"}, at))
 		f.tick(at)
 	}
 	// Writes every 5s from +10s to +65s at a 30s interval: checks at +10s
@@ -392,7 +431,7 @@ func TestOrphanAndResumeInsideOnePoll(t *testing.T) {
 		t.Fatalf("first scan delivered %v, want %v", got, want)
 	}
 	msgs := crushRead("c1", start.Add(6*time.Second))
-	msgs = append(msgs, crushCall("orphan", "grep", map[string]any{"pattern": "x"}, start.Add(7*time.Second)))
+	msgs = append(msgs, crushOrphan("orphan", "grep", map[string]any{"pattern": "x"}, start.Add(7*time.Second)))
 	msgs = append(msgs, userSays("resume", start.Add(8*time.Second)), providerError("429", start.Add(9*time.Second)))
 	rt.AppendCrushMessages(t, f.crushDB(), "s", msgs...)
 	f.tick(start.Add(10 * time.Second))
@@ -419,7 +458,7 @@ func TestManyOrphansRecoverAcrossChecks(t *testing.T) {
 	var msgs []rt.CrushMessage
 	for i := 0; i < n; i++ {
 		at := start.Add(time.Duration(10+2*i) * time.Second)
-		msgs = append(msgs, userSays("resume", at), crushCall("o"+string(rune('a'+i)), "grep", map[string]any{"pattern": "x"}, at.Add(time.Second)))
+		msgs = append(msgs, userSays("resume", at), crushOrphan("o"+string(rune('a'+i)), "grep", map[string]any{"pattern": "x"}, at.Add(time.Second)))
 	}
 	msgs = append(msgs, providerError("still failing", start.Add(time.Duration(10+2*n)*time.Second)))
 	rt.AppendCrushMessages(t, f.crushDB(), "s", msgs...)

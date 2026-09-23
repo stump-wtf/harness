@@ -18,6 +18,9 @@ package telemetry
 //
 // @joestump-agent 09/21/2026 - review: added so the pipeline's wire format is
 // checked against the mapping, not against substrings.
+//
+// @joestump-agent 09/23/2026 - Span events, which agent-trace v0.4.0 emits
+// for an error mark inside a turn.
 
 import (
 	"bytes"
@@ -68,10 +71,19 @@ type strictSpan struct {
 	StartTimeUnixNano json.RawMessage `json:"startTimeUnixNano"`
 	EndTimeUnixNano   json.RawMessage `json:"endTimeUnixNano"`
 	Attributes        []strictKV      `json:"attributes"`
+	Events            []strictEvent   `json:"events"`
 	Status            struct {
 		Code    json.RawMessage `json:"code"`
 		Message string          `json:"message"`
 	} `json:"status"`
+}
+
+// strictEvent is a Span.Event. agent-trace v0.4.0 records an error mark
+// inside a turn as an "exception" event on the turn's span.
+type strictEvent struct {
+	TimeUnixNano json.RawMessage `json:"timeUnixNano"`
+	Name         string          `json:"name"`
+	Attributes   []strictKV      `json:"attributes"`
 }
 
 type strictBody struct {
@@ -208,6 +220,17 @@ func strictSpanRecord(sp strictSpan) error {
 	if _, err := strictEnum(sp.Status.Code, 0, 2); err != nil {
 		return fmt.Errorf("status.code: %w", err)
 	}
+	for i, ev := range sp.Events {
+		if _, err := strictUint64(ev.TimeUnixNano); err != nil {
+			return fmt.Errorf("events[%d].timeUnixNano: %w", i, err)
+		}
+		if ev.Name == "" {
+			return fmt.Errorf("events[%d] has no name", i)
+		}
+		if err := strictAttrs(fmt.Sprintf("events[%d].attributes", i), ev.Attributes); err != nil {
+			return err
+		}
+	}
 	return strictAttrs("attributes", sp.Attributes)
 }
 
@@ -326,6 +349,11 @@ func TestStrictOTLPRejectsWhatACollectorWould(t *testing.T) {
 	if err := strictOTLP("/v1/traces", []byte(span(goodSpan))); err != nil {
 		t.Fatalf("a valid span request was rejected: %v", err)
 	}
+	goodEvent := `"events":[{"timeUnixNano":"2","name":"exception","attributes":[{"key":"exception.message","value":{"stringValue":"m"}}]}],`
+	withEvent := strings.Replace(goodSpan, `"status"`, goodEvent+`"status"`, 1)
+	if err := strictOTLP("/v1/traces", []byte(span(withEvent))); err != nil {
+		t.Fatalf("a valid span event was rejected: %v", err)
+	}
 	for name, body := range map[string]struct{ path, raw string }{
 		"numeric timestamp":  {"/v1/logs", log(strings.Replace(goodLog, `"timeUnixNano":"1"`, `"timeUnixNano":1`, 1))},
 		"severity as name":   {"/v1/logs", log(strings.Replace(goodLog, `"severityNumber":9`, `"severityNumber":"SEVERITY_NUMBER_INFO"`, 1))},
@@ -340,6 +368,10 @@ func TestStrictOTLPRejectsWhatACollectorWould(t *testing.T) {
 		"short spanId":       {"/v1/traces", span(strings.Replace(goodSpan, sid, `"0123"`, 1))},
 		"ends before start":  {"/v1/traces", span(strings.Replace(goodSpan, `"endTimeUnixNano":"2"`, `"endTimeUnixNano":"0"`, 1))},
 		"logs to traces":     {"/v1/traces", log(goodLog)},
+		"numeric event time": {"/v1/traces", span(strings.Replace(withEvent, `"timeUnixNano":"2"`, `"timeUnixNano":2`, 1))},
+		"unnamed event":      {"/v1/traces", span(strings.Replace(withEvent, `"name":"exception"`, `"name":""`, 1))},
+		"event bad AnyValue": {"/v1/traces", span(strings.Replace(withEvent, `{"stringValue":"m"}`, `{}`, 1))},
+		"event unknown key":  {"/v1/traces", span(strings.Replace(withEvent, `"name":"exception"`, `"name":"exception","nme":"x"`, 1))},
 	} {
 		if err := strictOTLP(body.path, []byte(body.raw)); err == nil {
 			t.Errorf("%s: accepted", name)

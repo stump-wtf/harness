@@ -12,6 +12,15 @@ package observe
 // superseded) belongs upstream in agent-trace; this is the observer-side
 // fallback that keeps harness correct until then.
 //
+// Upstream has half of it. From agent-trace v0.4.0 a crush call whose step
+// finished — crush killed while the tool ran — is released once the session
+// writes past it, and delivered with an empty result; the fallback never sees
+// it (TestFinishedOrphanIsReleasedUpstream). A row with no finish part — crush
+// killed while the model was still streaming the step — still holds the cursor
+// below it, and agent-trace bounds that only in tail.Watcher, which the
+// observer does not use. That shape, and the JSONL adapters, are what this
+// fallback still covers.
+//
 // Detection is layered so the healthy path pays nothing:
 //
 //  1. A read is "held" when ParseSince returns the watermark it was given and
@@ -69,6 +78,9 @@ package observe
 // @joestump-agent 09/21/2026 - review: a read that returns items, and a
 // recovery that stops short, no longer record EndedAt as "seen while held";
 // either hid a pending stall until the session wrote again.
+//
+// @joestump-agent 09/23/2026 - agent-trace v0.4.0 releases finished crush
+// orphans itself; the fallback now covers unfinished rows and JSONL.
 
 import (
 	"bufio"
