@@ -1,6 +1,6 @@
 package client
 
-// @joestump-agent 09/23/2026 - Added in review of #585: ProtoMinor 11's note
+// @joestump 09/23/2026 - Added in review of #585: ProtoMinor 11's note
 // said the client refuses --event against an older daemon, and nothing did.
 
 import (
