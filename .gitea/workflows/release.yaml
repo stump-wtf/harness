@@ -10,17 +10,25 @@
 #       https://gitea.stump.rocks/api/packages/stump.wtf/generic/harness/<version>/<file>
 #     which is what an install script or an Ansible get_url wants to point at.
 #
-# AUTH: the release step uses the automatic per-run `gitea.token`, which can
-# create a release. The registry upload CANNOT: this instance's package
-# registry rejects the per-run token with 401 (v0.4.0's run died there, and the
-# generic registry has no 0.4.0), the same way its container registry does
-# (see stump.wtf/ci's go-service.yaml). So the upload uses the stump.wtf org
-# secret REGISTRY_TOKEN, the purpose-scoped write:package PAT the shared CI
-# already pushes images with. The `permissions:` block still grants the
-# per-run token `contents: write` for the release itself.
+# AUTH: GoReleaser uses the automatic per-run `gitea.token`, which is fine —
+# it writes to THIS repo. The registry upload does not: `/api/packages/stump.wtf/`
+# is owner scoped, and the per-run token is minted for whoever TRIGGERED the run,
+# so its package scope follows the person who pushed the tag rather than the
+# repo. v0.4.0 is the proof. Identical file, same Gitea 1.27.0, and yet:
 #
-# @joestump 09/23/2026 - Moved the registry upload to REGISTRY_TOKEN after
-# v0.4.0's upload failed 401 on the per-run token.
+#   v0.3.0  tag pushed by joestump         → uploaded, package creator joestump
+#   v0.4.0  tag pushed by joestump-agent   → HTTP 401 on the first file
+#
+# Nothing had changed but the actor. So the upload prefers an explicit
+# REGISTRY_TOKEN repo secret — a stump.wtf org owner's PAT with write:package,
+# the same credential stump.wtf/switchboard's build.yaml uses — and only falls
+# back to the per-run token, which keeps a joestump-cut release working until
+# that secret exists. The `permissions:` block still grants `contents: write`
+# (create the release) and `packages: write`.
+#
+# @joestump-agent 09/23/2026 - Replaced the claim that gitea.token is enough on
+# 1.26+ with what v0.4.0 actually did, and made the upload prefer an explicit
+# credential over an actor-bound one.
 name: release
 
 on:
@@ -72,25 +80,56 @@ jobs:
       # so re-running this workflow for an already-published tag fails loudly
       # instead of silently diverging from what is published. Delete the package
       # version in the UI first if a genuine re-cut is needed.
+      #
+      # Every failure here is named. The old version passed `curl -sSf` and let
+      # exit 22 speak for itself, which is how a 401 caused by WHO PUSHED THE TAG
+      # read as an unexplained CI failure.
       - name: Publish to the generic package registry
         env:
-          TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          RUN_TOKEN: ${{ gitea.token }}
           REF_NAME: ${{ gitea.ref_name }}
+          ACTOR: ${{ gitea.actor }}
         run: |
           set -euo pipefail
-          if [ -z "${TOKEN}" ]; then
-            echo "::error::REGISTRY_TOKEN is not set — the per-run token is rejected by the package registry" >&2
-            exit 1
+
+          # Prefer the explicit credential; the per-run token is the fallback
+          # and carries the actor caveat in its own name, so the error below
+          # can say which one was used without ever printing either.
+          if [ -n "${REGISTRY_TOKEN:-}" ]; then
+            token="${REGISTRY_TOKEN}"
+            source="the REGISTRY_TOKEN secret"
+          else
+            token="${RUN_TOKEN}"
+            source="the per-run gitea.token, minted for ${ACTOR}"
+            echo "::warning::no REGISTRY_TOKEN secret — falling back to the per-run token, whose package scope follows ${ACTOR}"
           fi
+
           version="${REF_NAME#v}"   # v0.1.0 → 0.1.0
           base="https://gitea.stump.rocks/api/packages/stump.wtf/generic/harness/${version}"
           for f in dist/*.tar.gz dist/checksums.txt; do
             [ -e "$f" ] || continue
             name=$(basename "$f")
             echo "→ ${base}/${name}"
-            curl -sSf \
-              -H "Authorization: token ${TOKEN}" \
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Authorization: token ${token}" \
               --upload-file "$f" \
-              "${base}/${name}"
+              "${base}/${name}")
+            case "$code" in
+              20*)
+                ;;
+              401 | 403)
+                echo "::error::${code} publishing ${name} with ${source}. The per-run token is scoped to the actor who pushed the tag, not to the repo, so a release cut by someone without write:package on the stump.wtf org fails exactly here. Set a REGISTRY_TOKEN repo secret (a stump.wtf org owner PAT, write:package) and the upload stops depending on who cut the release."
+                exit 1
+                ;;
+              409)
+                echo "::error::409 — ${name} is already published for ${version}. Delete that package version before re-cutting the tag."
+                exit 1
+                ;;
+              *)
+                echo "::error::HTTP ${code} publishing ${name} with ${source}."
+                exit 1
+                ;;
+            esac
           done
-          echo "published harness ${version} to the generic registry"
+          echo "published harness ${version} to the generic registry with ${source}"
