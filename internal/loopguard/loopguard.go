@@ -34,7 +34,11 @@
 //
 // Governing: stumpcloud/stumpcloud#469; issue #390 (the observer); ADR-0007.
 //
-// @joestump-agent 09/23/2026 - Added for stumpcloud/stumpcloud#469.
+// @joestump-agent 09/23/2026 - Added for stumpcloud/stumpcloud#469. Replaces
+// observe.LoopGuard (#621), which keyed on the classified call (tool, action,
+// summary, targets) — for an MCP tool that is the tool name alone, whatever
+// the arguments — and counted over the session's whole life, so a worker's
+// eighth call to any one MCP tool in a session stopped it.
 package loopguard
 
 import (
