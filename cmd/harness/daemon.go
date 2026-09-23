@@ -167,7 +167,7 @@ func runDaemon(o daemonOpts) {
 	sources := startDaemonSources(mgr)
 	// After startDaemonScheduler, which registered its own hook: this
 	// composes onto it rather than replacing it (see wireSourceReload).
-	wireSourceReload(mgr, sources, func() { sched.Apply(mgr.Config()) })
+	wireSourceReload(mgr, sources)
 
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
@@ -312,7 +312,8 @@ func startDaemonSources(mgr *supervisor.Manager) *source.Manager {
 // less thing to wonder about when reading a log.
 //
 // Governing: ADR-0021; SPEC-0014 REQ "Source Reconciliation On Reload".
-func wireSourceReload(mgr *supervisor.Manager, sources *source.Manager, prev func()) {
+func wireSourceReload(mgr *supervisor.Manager, sources *source.Manager) {
+	prev := mgr.ReloadHook()
 	mgr.SetReloadHook(func() {
 		if prev != nil {
 			prev()
