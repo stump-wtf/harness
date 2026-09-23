@@ -25,6 +25,7 @@ package channel
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"strings"
 )
@@ -70,6 +71,12 @@ type Decoder struct {
 // count — rather than as a silent read error here.
 const maxLine = 1 << 20
 
+// ErrEventTooLarge ends a stream whose event's data outgrew maxLine. maxLine
+// bounds one line, but `data` accumulates across lines until the blank line
+// that dispatches, so without this a server could grow the buffer without
+// limit simply by never sending that blank line.
+var ErrEventTooLarge = errors.New("server-sent event exceeds the size limit")
+
 // NewDecoder reads events from r.
 func NewDecoder(r io.Reader) *Decoder {
 	sc := bufio.NewScanner(r)
@@ -93,14 +100,17 @@ func (d *Decoder) Next() (Event, bool) {
 	for d.sc.Scan() {
 		line := strings.TrimSuffix(d.sc.Text(), "\r")
 		if line == "" {
+			// The grammar moves the last event ID at dispatch whether or not
+			// the event carries data, so an `id:`-only event still moves the
+			// resume point.
+			if hasID {
+				d.lastID = id
+			}
 			if data.Len() == 0 {
 				// A dispatch with no data fires nothing (a keep-alive, or a
 				// stray blank line). Reset and keep reading.
 				name, id, hasID, any = "", "", false, false
 				continue
-			}
-			if hasID {
-				d.lastID = id
 			}
 			return Event{ID: d.lastID, Name: name, Data: data.String()}, true
 		}
@@ -118,6 +128,10 @@ func (d *Decoder) Next() (Event, bool) {
 		value = strings.TrimPrefix(value, " ")
 		switch field {
 		case "data":
+			if data.Len()+len(value)+1 > maxLine {
+				d.err = ErrEventTooLarge
+				return Event{}, false
+			}
 			if any {
 				data.WriteByte('\n')
 			}

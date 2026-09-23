@@ -176,3 +176,35 @@ func FuzzDecoder(f *testing.F) {
 		_ = d.Err()
 	})
 }
+
+// TestDecoderBoundsAnEventAcrossLines: maxLine bounds ONE line, but `data`
+// accumulates across lines, so without a bound on the event a server could
+// grow the buffer without limit by never sending the blank line that
+// dispatches. The stream must end with an error instead.
+func TestDecoderBoundsAnEventAcrossLines(t *testing.T) {
+	line := "data: " + strings.Repeat("x", 1023) + "\n"
+	input := strings.Repeat(line, (maxLine/len(line))+16)
+	dec := NewDecoder(strings.NewReader(input))
+	if ev, ok := dec.Next(); ok {
+		t.Fatalf("an event of %d bytes was returned", len(ev.Data))
+	}
+	if dec.Err() == nil {
+		t.Fatal("an event over the limit ended the stream as a clean EOF; it must be an error")
+	}
+}
+
+// TestDecoderIDOnlyEventUpdatesLastID: the SSE grammar sets the last event
+// ID when an event dispatches even if it carried no data, so an `id:`-only
+// event moves the resume point.
+func TestDecoderIDOnlyEventUpdatesLastID(t *testing.T) {
+	dec := NewDecoder(strings.NewReader("id: 1\ndata: a\n\nid: 2\n\n"))
+	if _, ok := dec.Next(); !ok {
+		t.Fatal("no first event")
+	}
+	if _, ok := dec.Next(); ok {
+		t.Fatal("an id-only event was returned as an event")
+	}
+	if got := dec.LastID(); got != "2" {
+		t.Errorf("LastID = %q, want 2", got)
+	}
+}

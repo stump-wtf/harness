@@ -347,6 +347,10 @@ func (c *Client) Listen(ctx context.Context, h Handler, onOpen func()) error {
 		c.mu.Unlock()
 		c.dispatch(ctx, ev, h)
 	}
+	// An `id:`-only event moves the resume point without producing an event.
+	c.mu.Lock()
+	c.lastID = dec.LastID()
+	c.mu.Unlock()
 	if err := dec.Err(); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
