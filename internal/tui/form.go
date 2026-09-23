@@ -176,6 +176,11 @@ func (f HarnessForm) Validate() error {
 	default:
 		return fmt.Errorf("harness must be one of: crush, claude-code, codex, generic")
 	}
+	// Mirror the parser's refusal: saving this would leave harness.toml
+	// unparseable. Governing: SPEC-0017 REQ "Generic Kind Rejects Prompts".
+	if f.Harness == "generic" && promptSet {
+		return fmt.Errorf("generic runs sh and has no prompt synthesis; use harness crush, claude-code or codex for a prompt one-shot")
+	}
 	if promptSet && len(f.Args) > 0 {
 		return fmt.Errorf("prompt and args are mutually exclusive")
 	}

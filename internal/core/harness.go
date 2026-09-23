@@ -285,14 +285,15 @@ type Harness struct {
 	// History"; issue #119.
 	KeepRuns int
 	// Adapter is the harness kind — the config `harness` key, an enum:
-	// "crush" (the default when omitted), "claude-code", "codex",
+	// "crush", "claude-code", "codex",
 	// "generic". It selects the adapter, which supplies BOTH the
 	// tool-specific behaviour (trajectory discovery, prompt flag mapping)
 	// and the executable a long-running (non-prompt) harness runs; `args`
 	// are appended after it. Naming an unknown value is a
-	// config-validation error. "generic" has no executable of its own, so
-	// it is only valid for a prompt harness. Governing: ADR-0011, SPEC-0006
-	// REQ "Adapter Selection".
+	// config-validation error. "generic" runs sh and has no prompt
+	// synthesis, so it is only valid for a long-running harness: a prompt
+	// on it is a config-validation error. Governing: ADR-0011, SPEC-0006
+	// REQ "Adapter Selection", SPEC-0017 REQ "Generic Kind Rejects Prompts".
 	Adapter string
 	// HarvestTrajectory controls whether the harness's trajectory is exposed
 	// read-only through the facade (list_trajectories / get_trajectory).

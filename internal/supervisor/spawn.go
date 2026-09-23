@@ -8,6 +8,7 @@ package supervisor
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -341,26 +342,40 @@ func resolvePrompt(h core.Harness) (core.Harness, error) {
 	return h, nil
 }
 
+// ErrGenericPrompt is returned when a harness reaches spawn carrying a prompt
+// its adapter cannot synthesize an argv for — in practice `generic` (or an
+// empty/unknown kind, which Resolve maps to Generic). Config validation and
+// the wire reject the combination first; this is the backstop for any path
+// that bypassed them, and it fails the start rather than running some agent
+// in the operator's place.
+// Governing: ADR-0023, SPEC-0017 REQ "Generic Kind Rejects Prompts".
+var ErrGenericPrompt = errors.New(`"generic" runs sh and has no prompt synthesis`)
+
 // execArgv resolves the executable and argv spawn runs: the configured cmd
 // with {workdir}-expanded args, or — for a prompt harness (empty Cmd, ADR-0011
 // spawn-time synthesis) — the argv the adapter registry resolves from the
-// harness's agent key (or crush by default). Prompt and options are passed
+// harness's `harness` kind. Prompt and options are passed
 // verbatim: only configured args go through expandArgs's {workdir}
 // substitution, never those — a prompt legitimately containing "{workdir}" is
 // instruction text, not a placeholder. The cmd path ignores Model, AutoAccept,
 // and MaxTurns entirely (config validation forbids the combinations; a wire
 // def carrying them spawns on its configured argv alone).
-func execArgv(h core.Harness, workdir string) (string, []string) {
+func execArgv(h core.Harness, workdir string) (string, []string, error) {
 	return execArgvWithRegistry(h, workdir, adapter.NewRegistryWithDefaults())
 }
 
 // execArgvWithRegistry is the adapter-aware version of execArgv. For a prompt
 // harness it resolves the adapter via the registry and delegates to its
 // PromptCommand, so each agent CLI gets its own flags instead of everything
-// being hardcoded to crush. For a cmd harness it bypasses the registry
-// entirely and returns the configured cmd/args with {workdir} expansion.
-// Governing: issue #74 (adapter-aware prompt synthesis).
-func execArgvWithRegistry(h core.Harness, workdir string, reg *adapter.Registry) (string, []string) {
+// being hardcoded to crush. An adapter with no prompt mode answers with an
+// empty executable, and that is an error here, never a fallback: the check
+// keys on what PromptCommand returned rather than on the adapter's name, so a
+// Generic that went back to borrowing another agent's argv would fail the
+// spawn tests instead of passing them. For a long-running harness it returns
+// the adapter's executable with the configured args, {workdir}-expanded.
+// Governing: issue #74 (adapter-aware prompt synthesis), SPEC-0017 REQ
+// "Generic Kind Rejects Prompts".
+func execArgvWithRegistry(h core.Harness, workdir string, reg *adapter.Registry) (string, []string, error) {
 	if h.Prompt != "" {
 		opts := core.AgentOpts{
 			Model:      h.Model,
@@ -368,11 +383,15 @@ func execArgvWithRegistry(h core.Harness, workdir string, reg *adapter.Registry)
 			MaxTurns:   h.MaxTurns,
 			Quiet:      h.Quiet,
 		}
-		return reg.Resolve(h).PromptCommand(h.Prompt, opts)
+		cmd, args := reg.Resolve(h).PromptCommand(h.Prompt, opts)
+		if cmd == "" {
+			return "", nil, fmt.Errorf("supervisor: harness %q: %w", h.Name, ErrGenericPrompt)
+		}
+		return cmd, args, nil
 	}
 	// Long-running harness: the adapter owns the executable (the `harness`
 	// enum key); configured args are appended after it.
-	return reg.Resolve(h).Executable(), expandArgs(h.Args, workdir)
+	return reg.Resolve(h).Executable(), expandArgs(h.Args, workdir), nil
 }
 
 // process is a live spawned harness: its PTY, the command handle (for signals
@@ -412,6 +431,14 @@ func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
 		return nil, err
 	}
 	workdir := Workdir(h)
+	// Resolve the argv before the environment and the PTY, for the same
+	// reason: a harness spawn refuses (a `generic` carrying a prompt, SPEC-0017
+	// REQ "Generic Kind Rejects Prompts") fails here, having allocated and
+	// exec'd nothing.
+	name, args, err := execArgv(h, workdir)
+	if err != nil {
+		return nil, err
+	}
 	env, err := buildEnv(h, run)
 	if err != nil {
 		return nil, err
@@ -428,7 +455,6 @@ func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
 		return nil, fmt.Errorf("supervisor: allocate pty: %w", err)
 	}
 
-	name, args := execArgv(h, workdir)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = workdir
 	cmd.Env = env

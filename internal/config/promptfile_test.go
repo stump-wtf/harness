@@ -147,7 +147,7 @@ func TestParsePromptFileErrors(t *testing.T) {
 		},
 		{
 			name:     "prompt_file and args are mutually exclusive",
-			toml:     "[harness.bad]\nharness = \"generic\"\nargs = [\"-c\", \"sleep 1\"]\nprompt_file = \"" + good + "\"\n",
+			toml:     "[harness.bad]\nharness = \"crush\"\nargs = [\"-c\", \"sleep 1\"]\nprompt_file = \"" + good + "\"\n",
 			wantLine: 1,
 			wantSub:  `"prompt_file" and "args" are mutually exclusive`,
 		},

@@ -4,6 +4,7 @@ package supervisor
 // loaded, {workdir} arg expansion); ADR-0008 (env_file is where secrets stay).
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -84,8 +85,8 @@ func TestExpandArgsWorkdir(t *testing.T) {
 // multi-word prompt as ONE argv element, and the prompt text is exempt from
 // the {workdir} placeholder expansion configured args go through.
 func TestExecArgvPromptSynthesis(t *testing.T) {
-	h := core.Harness{Name: "agent", Prompt: "check the deployments in {workdir} please", Quiet: true}
-	name, args := execArgv(h, "/home/x")
+	h := core.Harness{Name: "agent", Adapter: "crush", Prompt: "check the deployments in {workdir} please", Quiet: true}
+	name, args := mustExecArgv(t, h, "/home/x")
 	if name != "crush" {
 		t.Errorf("cmd = %q, want crush", name)
 	}
@@ -101,8 +102,8 @@ func TestExecArgvPromptSynthesis(t *testing.T) {
 // prompt, is exempt from the {workdir} placeholder expansion configured args
 // go through.
 func TestExecArgvPromptModelSynthesis(t *testing.T) {
-	h := core.Harness{Name: "agent", Prompt: "check {workdir} please", Model: "claude-{workdir}", Quiet: true}
-	name, args := execArgv(h, "/home/x")
+	h := core.Harness{Name: "agent", Adapter: "crush", Prompt: "check {workdir} please", Model: "claude-{workdir}", Quiet: true}
+	name, args := mustExecArgv(t, h, "/home/x")
 	if name != "crush" {
 		t.Errorf("cmd = %q, want crush", name)
 	}
@@ -118,7 +119,7 @@ func TestExecArgvPromptModelSynthesis(t *testing.T) {
 // configured argv alone.
 func TestExecArgvCmdIgnoresModel(t *testing.T) {
 	h := core.Harness{Name: "svc", Adapter: "generic", Args: []string{"--dir", "{workdir}"}, Model: "claude-opus-5"}
-	name, args := execArgv(h, "/home/x")
+	name, args := mustExecArgv(t, h, "/home/x")
 	if name != "sh" {
 		t.Errorf("cmd = %q, want sh (generic)", name)
 	}
@@ -133,8 +134,8 @@ func TestExecArgvCmdIgnoresModel(t *testing.T) {
 // with "unknown flag" and the harness crash-loops to degraded. The prompt
 // stays the final argv element and never passes through {workdir} expansion.
 func TestExecArgvPromptAutoAcceptSynthesis(t *testing.T) {
-	h := core.Harness{Name: "agent", Prompt: "check deployments", Model: "claude-opus-5", AutoAccept: true, Quiet: true}
-	name, args := execArgv(h, "/home/x")
+	h := core.Harness{Name: "agent", Adapter: "crush", Prompt: "check deployments", Model: "claude-opus-5", AutoAccept: true, Quiet: true}
+	name, args := mustExecArgv(t, h, "/home/x")
 	if name != "crush" {
 		t.Errorf("cmd = %q, want crush", name)
 	}
@@ -144,8 +145,8 @@ func TestExecArgvPromptAutoAcceptSynthesis(t *testing.T) {
 	}
 
 	// Without a model the flag still precedes the subcommand.
-	h = core.Harness{Name: "agent", Prompt: "check deployments", AutoAccept: true, Quiet: true}
-	_, args = execArgv(h, "/home/x")
+	h = core.Harness{Name: "agent", Adapter: "crush", Prompt: "check deployments", AutoAccept: true, Quiet: true}
+	_, args = mustExecArgv(t, h, "/home/x")
 	want = []string{"--yolo", "run", "--quiet", "check deployments"}
 	if !slices.Equal(args, want) {
 		t.Errorf("args = %q, want %q", args, want)
@@ -157,8 +158,8 @@ func TestExecArgvPromptAutoAcceptSynthesis(t *testing.T) {
 // emits NO flag — emitting one would kill the spawn — and a 0/unset budget is
 // equally silent. The knob stays on the wire for when crush grows the flag.
 func TestExecArgvPromptMaxTurnsSynthesis(t *testing.T) {
-	h := core.Harness{Name: "agent", Prompt: "check deployments", MaxTurns: 8, Quiet: true}
-	name, args := execArgv(h, "/home/x")
+	h := core.Harness{Name: "agent", Adapter: "crush", Prompt: "check deployments", MaxTurns: 8, Quiet: true}
+	name, args := mustExecArgv(t, h, "/home/x")
 	if name != "crush" {
 		t.Errorf("cmd = %q, want crush", name)
 	}
@@ -167,15 +168,15 @@ func TestExecArgvPromptMaxTurnsSynthesis(t *testing.T) {
 	}
 
 	// Budget 0 (unset/unlimited) is equally silent.
-	h = core.Harness{Name: "agent", Prompt: "check deployments", MaxTurns: 0, Quiet: true}
-	_, args = execArgv(h, "/home/x")
+	h = core.Harness{Name: "agent", Adapter: "crush", Prompt: "check deployments", MaxTurns: 0, Quiet: true}
+	_, args = mustExecArgv(t, h, "/home/x")
 	if want := []string{"run", "--quiet", "check deployments"}; !slices.Equal(args, want) {
 		t.Errorf("args = %q, want %q (no --max-turns when budget is 0)", args, want)
 	}
 
 	// It stacks with the other options in a stable flag order.
-	h = core.Harness{Name: "agent", Prompt: "check", Model: "claude-opus-5", AutoAccept: true, MaxTurns: 3, Quiet: true}
-	_, args = execArgv(h, "/home/x")
+	h = core.Harness{Name: "agent", Adapter: "crush", Prompt: "check", Model: "claude-opus-5", AutoAccept: true, MaxTurns: 3, Quiet: true}
+	_, args = mustExecArgv(t, h, "/home/x")
 	if want := []string{"--yolo", "run", "--quiet", "--model", "claude-opus-5", "check"}; !slices.Equal(args, want) {
 		t.Errorf("args = %q, want %q (yolo before run, model after, prompt last)", args, want)
 	}
@@ -187,7 +188,7 @@ func TestExecArgvPromptMaxTurnsSynthesis(t *testing.T) {
 // on its configured argv alone.
 func TestExecArgvCmdIgnoresMaxTurns(t *testing.T) {
 	h := core.Harness{Name: "svc", Adapter: "generic", Args: []string{"--dir", "{workdir}"}, MaxTurns: 5}
-	name, args := execArgv(h, "/home/x")
+	name, args := mustExecArgv(t, h, "/home/x")
 	if name != "sh" {
 		t.Errorf("cmd = %q, want sh (generic)", name)
 	}
@@ -201,8 +202,8 @@ func TestExecArgvCmdIgnoresMaxTurns(t *testing.T) {
 // `quiet = false` drops it so the agent streams output to whoever attaches.
 func TestExecArgvPromptQuietToggle(t *testing.T) {
 	// Default quiet: the --quiet flag is emitted.
-	h := core.Harness{Name: "agent", Prompt: "check deployments", Quiet: true}
-	name, args := execArgv(h, "/home/x")
+	h := core.Harness{Name: "agent", Adapter: "crush", Prompt: "check deployments", Quiet: true}
+	name, args := mustExecArgv(t, h, "/home/x")
 	if name != "crush" {
 		t.Errorf("cmd = %q, want crush", name)
 	}
@@ -211,8 +212,8 @@ func TestExecArgvPromptQuietToggle(t *testing.T) {
 	}
 
 	// quiet=false: no --quiet, so the agent streams output.
-	h = core.Harness{Name: "agent", Prompt: "check deployments", Quiet: false}
-	_, args = execArgv(h, "/home/x")
+	h = core.Harness{Name: "agent", Adapter: "crush", Prompt: "check deployments", Quiet: false}
+	_, args = mustExecArgv(t, h, "/home/x")
 	if want := []string{"run", "check deployments"}; !slices.Equal(args, want) {
 		t.Errorf("args = %q, want %q (quiet=false drops --quiet)", args, want)
 	}
@@ -224,7 +225,7 @@ func TestExecArgvPromptQuietToggle(t *testing.T) {
 // its configured argv alone.
 func TestExecArgvCmdIgnoresAutoAccept(t *testing.T) {
 	h := core.Harness{Name: "svc", Adapter: "generic", Args: []string{"--dir", "{workdir}"}, AutoAccept: true}
-	name, args := execArgv(h, "/home/x")
+	name, args := mustExecArgv(t, h, "/home/x")
 	if name != "sh" {
 		t.Errorf("cmd = %q, want sh (generic)", name)
 	}
@@ -237,7 +238,7 @@ func TestExecArgvCmdIgnoresAutoAccept(t *testing.T) {
 // {workdir} expansion — synthesis only engages when Cmd is empty.
 func TestExecArgvCmdUnchanged(t *testing.T) {
 	h := core.Harness{Name: "svc", Adapter: "generic", Args: []string{"--dir", "{workdir}"}}
-	name, args := execArgv(h, "/home/x")
+	name, args := mustExecArgv(t, h, "/home/x")
 	if name != "sh" {
 		t.Errorf("cmd = %q, want sh (generic runs through sh)", name)
 	}
@@ -319,7 +320,7 @@ func TestExecArgvWithRegistryClaudeCode(t *testing.T) {
 		Adapter: "claude-code",
 		Quiet:   true,
 	}
-	cmd, args := execArgvWithRegistry(h, "/home/x", reg)
+	cmd, args := mustExecArgvReg(t, h, "/home/x", reg)
 	if cmd != "claude" {
 		t.Fatalf("cmd = %q, want claude (from claude-code adapter)", cmd)
 	}
@@ -328,20 +329,19 @@ func TestExecArgvWithRegistryClaudeCode(t *testing.T) {
 	}
 }
 
-func TestExecArgvWithRegistryDefaultCrush(t *testing.T) {
+// A prompt harness with no kind is not defaulted to an agent any more: Resolve
+// maps it to Generic, which has no prompt synthesis, so the argv is refused
+// rather than guessed as crush. SPEC-0017 REQ "Generic Kind Rejects Prompts".
+func TestExecArgvWithRegistryNoKindIsRefused(t *testing.T) {
 	reg := adapter.NewRegistryWithDefaults()
 	h := core.Harness{
 		Name:   "test-default",
 		Prompt: "check deployments",
 		Quiet:  true,
 	}
-	cmd, args := execArgvWithRegistry(h, "/home/x", reg)
-	if cmd != "crush" {
-		t.Fatalf("cmd = %q, want crush (default for prompt harness without agent)", cmd)
-	}
-	want := []string{"run", "--quiet", "check deployments"}
-	if !slices.Equal(args, want) {
-		t.Fatalf("args = %q, want %q", args, want)
+	cmd, args, err := execArgvWithRegistry(h, "/home/x", reg)
+	if !errors.Is(err, ErrGenericPrompt) {
+		t.Fatalf("execArgv = %q %q, %v; want ErrGenericPrompt (no default agent)", cmd, args, err)
 	}
 }
 
@@ -352,7 +352,7 @@ func TestExecArgvWithRegistryLongRunningUsesAdapterExecutable(t *testing.T) {
 		Adapter: "claude-code",
 		Args:    []string{"server.js"},
 	}
-	cmd, args := execArgvWithRegistry(h, "/home/x", reg)
+	cmd, args := mustExecArgvReg(t, h, "/home/x", reg)
 	if cmd != "claude" {
 		t.Fatalf("cmd = %q, want claude (adapter owns the executable)", cmd)
 	}
@@ -368,7 +368,7 @@ func TestExecArgvWithRegistryCodex(t *testing.T) {
 		Adapter: "codex",
 		Quiet:   true,
 	}
-	cmd, args := execArgvWithRegistry(h, "/home/x", reg)
+	cmd, args := mustExecArgvReg(t, h, "/home/x", reg)
 	if cmd != "codex" {
 		t.Fatalf("cmd = %q, want codex", cmd)
 	}
@@ -390,7 +390,7 @@ func TestExecArgvWithRegistryExplicitOverridesInference(t *testing.T) {
 		Adapter: "crush",
 		Quiet:   true,
 	}
-	cmd, args := execArgvWithRegistry(h, "/home/x", reg)
+	cmd, args := mustExecArgvReg(t, h, "/home/x", reg)
 	if cmd != "crush" {
 		t.Fatalf("cmd = %q, want crush", cmd)
 	}
