@@ -90,7 +90,7 @@ reference and every verb are in the docs above.
 
 ## Status
 
-**Alpha — and self-hosting.** `v0.3.0` is the latest tag, and Harness supervises
+**Alpha — and self-hosting.** `v0.4.0` is the latest tag, and Harness supervises
 real work daily. Everything in the docs is implemented and exercised on `main`,
 but the TOML schema and daemon protocol can still change before v1.
 
