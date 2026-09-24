@@ -357,7 +357,7 @@ resident harness or for a zero exit.
 
 #### Scenario: A Claude Code usage limit on a one-shot
 
-- **GIVEN** agent-trace does not surface claude-code API errors (stump.wtf/agent-trace#104 open)
+- **GIVEN** agent-trace does not surface claude-code API errors (the pinned version predates those marks)
 - **WHEN** a claude-code `-p` run exits 1 and its run log ends with "Claude AI usage limit reached|1790000000"
 - **THEN** the fallback classifies it `quota` with a reset time of 1790000000
 

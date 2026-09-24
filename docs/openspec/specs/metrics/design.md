@@ -92,7 +92,7 @@ crush records provider errors in its transcript, so only crush harnesses get
 the error side (the `error` outcome, the classes and the unclassified
 control); the others omit it rather than report a zero no error could move
 (`ErrorsObservable`, pinned to the parser by a test that fails when the
-agent-trace bump carrying stump.wtf/agent-trace#104 lands).
+agent-trace bump carrying claude-code API error marks lands).
 
 Classification is by per-adapter tables, then shared provider shapes.
 Overload (`529`, `503`) is `transport`, not `quota`: it is the provider's

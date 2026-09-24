@@ -220,7 +220,7 @@ counter reads them**.
 
 The observer stays what it is: the stream of agent activity. The ledger does not
 copy it. Instead a **usage accumulator** subscribes to the observer and folds
-what it delivers (usage items from stump.wtf/agent-trace#105, error marks, tool
+what it delivers (agent-trace's per-message usage items, error marks, tool
 calls, session ids) into the harness's open run: tokens, cost, served models,
 calls and errors by class. It checkpoints them into the ledger as `updated`
 lines, and writes a final total at `closed`. So SPEC-0013's model-reachability
@@ -306,7 +306,7 @@ harness runs [NAME...] [--harness NAME]... [--since DUR|TIME] [--until TIME]
   host-side record of each attempt, and the two join on `todo_id`. Harness still
   never calls Switchboard on its own initiative (ADR-0021).
 * **Cairn.** A run's `trace_url` points at wherever its trace went. That will be
-  Cairn once Cairn can receive OTLP traces (Cairn ADR-0015, cairn#138), and
+  Cairn once Cairn can receive OTLP traces (Cairn ADR-0015), and
   Harness's telemetry export sends them. A receipt (Cairn ADR-0027) can
   cite a run's ledger fields, and a daily sweep can publish
   `harness runs --json --since 24h` as a Cairn artifact. Harness does not push
@@ -332,7 +332,7 @@ harness runs [NAME...] [--harness NAME]... [--since DUR|TIME] [--until TIME]
   a daemon downgraded past this ADR starts with none. That is the pre-1.0
   trade: one history, no projection to keep in step, and an upgrade note
   rather than a rollback path.
-* Bad, because usage fields depend on agent-trace#105; until it lands, records
+* Bad, because usage fields depend on agent-trace's usage items; until they land, records
   carry outcomes, times, codes, sessions and error counts, but no tokens, cost
   or served model.
 * Neutral, because resident records are short and numerous in a crash loop. The
@@ -486,5 +486,6 @@ flowchart LR
   `main` yet, so it stays cited by number. The SPEC-0013 implementation,
   whose `harness_scheduled_runs_total` this re-sources, is also still
   open.
-* **Depends on** stump.wtf/agent-trace#105 for tokens, cost and served model.
+* **Depends on** agent-trace's per-message usage items for tokens, cost and
+  served model.
 * **SPEC-0022** (`run-ledger`) holds the requirements.

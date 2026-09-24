@@ -74,7 +74,7 @@ self-test read-back.
 
 **Rationale**: a Homebrew user has `harness` and nothing else. Requiring the
 `switchboard` binary (which ships inside the server image) or the `cairn` CLI
-(not yet publicly installable; its formula is homebrew-tap#20) would make the
+(not yet publicly installable; a Homebrew tap formula is planned) would make the
 installer depend on
 installs it is supposed to perform.
 
@@ -217,7 +217,7 @@ takes an endpoint, bucket and key file instead.
 maintained, runs single-node cleanly, is what StumpCloud already operates, and
 is unmodified as a separate service. MinIO's community images are no longer a
 dependable pin. If Cairn gains a filesystem store (a natural outcome of the
-single-binary work, cairn#246), the bundled store becomes optional.
+single-binary work), the bundled store becomes optional.
 
 **Alternatives considered**:
 - SeaweedFS: capable, but a larger surface for one bucket.
@@ -597,5 +597,5 @@ left open.
   `SWITCHBOARD_ENROLLMENT_MODE` and `CAIRN_ENROLLMENT_MODE` (`allowlist`,
   `invite` or `open`), defaulting to `invite` (REQ-18). Open sign-up is opt-in.
 - **The `cairn` CLI formula.** Resolved (design review 2026-09-22): it ships
-  through the Homebrew tap (homebrew-tap#20); the `harness` formula still gains
+  through the Homebrew tap; the `harness` formula still gains
   no dependency.

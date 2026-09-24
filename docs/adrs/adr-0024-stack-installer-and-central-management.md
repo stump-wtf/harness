@@ -678,9 +678,10 @@ sequenceDiagram
 * **Cairn:** agent personal access tokens owned by a human; teams and per-owner
   webhooks in ADR-0029; actionable validation errors in ADR-0025, which `init`
   surfaces verbatim. A consented CLI mint for agent tokens would remove the
-  paste step. Cairn's single-binary work (cairn#246) would shrink the bundle.
+  paste step. Cairn's single-binary work would shrink the bundle.
 * **Homebrew:** the `harness` formula gains no dependency. A `cairn` CLI
-  formula (homebrew-tap#20, for cairn#183) is recommended alongside it, and an
+  formula in the Homebrew tap, giving the CLI its first public install path,
+  is recommended alongside it, and an
   optional `switchboard` operator CLI formula later.
 
 ## More Information
