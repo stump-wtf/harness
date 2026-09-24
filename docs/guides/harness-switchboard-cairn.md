@@ -6,6 +6,18 @@ sidebar_position: 7
 
 # The stack: Harness, Switchboard and Cairn
 
+:::tip Paste this to your agent
+
+```text
+Read https://stump-wtf.github.io/harness/llms.txt and
+https://stump-wtf.github.io/harness/guides/harness-switchboard-cairn. Tell me
+what Switchboard, Harness and Cairn each do and do not do in my setup, then
+walk me through https://stump-wtf.github.io/harness/guides/onboarding one step
+at a time, stopping at each gate until it passes.
+```
+
+:::
+
 Harness, [Switchboard](https://switchboard.stump.wtf/docs/) and
 [Cairn](https://cairn.stump.wtf/docs/) are three small tools. Each does one job,
 and together they close a loop around your agents. This is the canonical page for

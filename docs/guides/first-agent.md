@@ -5,6 +5,19 @@ sidebar_position: 3
 
 # Your first supervised agent
 
+:::tip Paste this to your agent
+
+```text
+Read https://stump-wtf.github.io/harness/llms.txt and
+https://stump-wtf.github.io/harness/guides/first-agent. Put my agent CLI under
+Harness supervision as that page describes, using the Claude Code
+authentication mode that fits this machine. Then prove it: `harness list`
+shows it running, and `harness attach NAME --ro` shows the agent itself, not a
+login or trust prompt.
+```
+
+:::
+
 A **harness** is one supervised process. The daemon starts it in its own
 pseudo-terminal, keeps its scrollback, restarts it according to a policy you
 choose, and lets any client attach to it as if you had launched it in that
