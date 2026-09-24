@@ -63,30 +63,80 @@ ignored.
 Run each agent once by hand, in the same `workdir` and as the same user, and
 get it fully logged in:
 
-- **Claude Code:** `claude` opens a login flow and a "trust this folder"
-  prompt. Harness can't click through either for you.
-
-  **On macOS you are then done — no `env_file`, no API key.** Claude Code
-  keeps the session it just created in your login Keychain (as the
-  generic-password item `Claude Code-credentials`), not in a file, and a
-  harness inherits it because the daemon spawns the agent as the same user.
-  Copying `ANTHROPIC_API_KEY` into an `env_file` here would move a credential
-  *out* of the Keychain and onto disk in plaintext, which is strictly worse.
-
-  The one condition is that the daemon runs in your GUI login session. The
-  LaunchAgent in [Run the daemon as a service](/guides/run-as-a-service) does
-  (`launchctl bootstrap gui/$(id -u)`), so the normal setup is fine. A
-  *system* LaunchDaemon, a different user, or an SSH session with no login
-  keychain unlocked cannot reach it — use `ANTHROPIC_API_KEY` in the
-  `env_file` there.
-
-  On Linux and on headless boxes there is no Keychain: log in interactively,
-  or put `ANTHROPIC_API_KEY` in the harness's `env_file`.
+- **Claude Code:** `claude` opens a "trust this folder" prompt, and a login
+  flow unless it already has a credential. Harness can't click through either
+  for you. Which credential a supervised Claude Code should use depends on
+  where the daemon runs; see
+  [Claude Code authentication](#claude-code-authentication) below.
 - **Crush:** configure a provider in `crush.json` or its environment, and put
   the API key in the `env_file`.
 
 If you skip this, the harness starts green and sits at a login prompt nobody
 sees. You can always `harness attach` and finish the prompt there.
+
+### Claude Code authentication
+
+Claude Code can authenticate a supervised session three ways. Pick by where the
+daemon runs:
+
+| Mode | Use it when | What goes in the `env_file` | Bills |
+|------|-------------|-----------------------------|-------|
+| **Keychain** | macOS, with the daemon in your GUI login session | nothing | your Claude subscription |
+| **Subscription token** | Linux, headless boxes, containers, SSH-only hosts, a system LaunchDaemon | `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` | your Claude subscription |
+| **API key** | you have only a Claude Console key, or want per-token API billing | `ANTHROPIC_API_KEY` | **the API**, not your subscription |
+
+**Keychain (the macOS default).** Log in once with `claude`, as the same user
+the daemon runs as, and you are done: no `env_file`, no key. Claude Code keeps
+the login in your login Keychain (the generic-password item
+`Claude Code-credentials`), not in a file, and a harness inherits it because the
+daemon spawns the agent as the same user. Copying a key into an `env_file` here
+would move a credential *out* of the Keychain and onto disk, which is strictly
+worse.
+
+The one condition is that the daemon runs in your GUI login session. The
+LaunchAgent in [Run the daemon as a service](/guides/run-as-a-service) does
+(`launchctl bootstrap gui/$(id -u)`), so the normal setup is fine. A *system*
+LaunchDaemon, a different user, or an SSH session with no unlocked login
+keychain cannot reach it: use a subscription token there.
+
+**Subscription token (the headless and Linux default).** On any machine with a
+browser, run once:
+
+```sh
+claude setup-token
+```
+
+It opens the same browser sign-in as `/login` and prints a one-year OAuth token.
+It needs a Pro, Max, Team or Enterprise plan, and it saves the token nowhere, so
+copy it straight into the harness's `env_file` and lock the file down:
+
+```sh
+# ~/.config/harness/env/claude-main.env   (chmod 600)
+CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+```
+
+```sh
+chmod 600 ~/.config/harness/env/claude-main.env
+harness restart claude-main      # env files are read at start
+```
+
+The token can only make model requests, so a session using it cannot open
+Claude Code's Remote Control or fetch claude.ai connectors; MCP servers you
+configure locally still work. Renew it before the year is out.
+
+**API key.** `ANTHROPIC_API_KEY=sk-ant-api...` in the `env_file` works anywhere,
+but it **bills your API account per token, not your subscription**. Claude Code
+ranks it *above* `CLAUDE_CODE_OAUTH_TOKEN` and your login, and a one-shot
+(`claude -p`) uses it without asking whenever it is set. So an
+`ANTHROPIC_API_KEY` left in the daemon's environment moves every scheduled run
+onto API billing. See
+[the harness bills my API account](./troubleshooting#the-harness-bills-my-api-account-or-starts-at-a-login-prompt).
+
+Never put any of these in `harness.toml`, which you may keep in version control:
+credentials belong in the `env_file`, mode `0600`
+([ADR-0008](/decisions/adr-0008-security-and-secrets)). Check which credential a
+session is using with `claude auth status`, run as the daemon's user, or
+`/status` inside an attached session.
 
 ## The verbs
 

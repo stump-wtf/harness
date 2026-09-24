@@ -46,9 +46,12 @@ every config key, every flag.
 - **At least one agent CLI**, installed and logged in as the same user that will
   run Harness: [Claude Code](https://claude.com/claude-code),
   [Crush](https://github.com/charmbracelet/crush), or Codex.
-- **Credentials for that agent**, such as `$ANTHROPIC_API_KEY` or a prior
-  interactive login. Harness never asks for them. It just starts the CLI with
-  the environment you give it.
+- **Credentials for that agent.** Harness never asks for them; it starts the
+  CLI with the environment you give it. For Claude Code that is your Keychain
+  login on macOS, or a `claude setup-token` subscription token
+  (`CLAUDE_CODE_OAUTH_TOKEN`) on Linux and headless boxes.
+  `ANTHROPIC_API_KEY` works too, but bills the API rather than your
+  subscription. See [Claude Code authentication](./first-agent#claude-code-authentication).
 
 :::note Version
 
