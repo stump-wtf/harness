@@ -130,7 +130,9 @@ func (m *Manager) appendNew(name string, typ ledger.Type, rec RunRecord) (RunRec
 // swallowing it would lose the skip entirely. Any other error is a failed
 // append: the increment HAS been queued, and the returned record carries it.
 func (m *Manager) CoalesceRun(name string, id int) (RunRecord, error) {
-	f, ok, err := m.ledger.Get(name, id)
+	// Pending, not Get: the previous increment may still be queued, and
+	// counting from the committed value would drop it.
+	f, ok, err := m.ledger.Pending(name, id)
 	if err != nil || !ok {
 		return RunRecord{}, fmt.Errorf("%w: run %d of %q", errors.Join(errNoRunToCoalesce, err), id, name)
 	}

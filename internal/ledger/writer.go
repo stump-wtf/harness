@@ -340,11 +340,6 @@ func (l *Ledger) Enqueue(ln Line, sync bool) (uint64, func() error, error) {
 		p.res = make(chan error, 1)
 	}
 	l.queue = append(l.queue, p)
-	l.idx.apply(ln)
-	if day := startOfDay(l.opts.Now()); !day.Equal(l.idx.trimmedDay) {
-		l.idx.trimmedDay = day
-		l.idx.trim(l.opts.Now(), l.opts.Window, l.opts.Tail)
-	}
 	degraded := l.stats.Degraded
 	l.mu.Unlock()
 	l.poke()
@@ -369,6 +364,23 @@ func (l *Ledger) Enqueue(ln Line, sync bool) (uint64, func() error, error) {
 		}
 	}
 	return ln.Seq, wait, nil
+}
+
+// commitLocked moves the first n queued lines, which the writer has written
+// (and synced, where they asked to be), out of the queue and into the index.
+// Only here: a reader sees a line once it is on disk and not before, so the
+// runs op, jobs and every other reader never report an outcome the ledger
+// could still lose (SPEC-0022 REQ-6; "committed before counted"). Caller holds
+// mu.
+func (l *Ledger) commitLocked(n int) {
+	for _, p := range l.queue[:n] {
+		l.idx.apply(p.line)
+	}
+	l.queue = l.queue[n:]
+	if day := startOfDay(l.opts.Now()); !day.Equal(l.idx.trimmedDay) {
+		l.idx.trimmedDay = day
+		l.idx.trim(l.opts.Now(), l.opts.Window, l.opts.Tail)
+	}
 }
 
 func (l *Ledger) poke() {
@@ -425,7 +437,7 @@ func (l *Ledger) run() {
 		if len(batch) > 0 {
 			n, err := l.writeBatch(batch)
 			l.mu.Lock()
-			l.queue = l.queue[n:]
+			l.commitLocked(n)
 			if err != nil {
 				l.stats.AppendErrors++
 				l.stats.LastError = err.Error()
@@ -460,7 +472,7 @@ func (l *Ledger) run() {
 					l.mu.Unlock()
 					if m, err := l.writeBatch(rest); err == nil || m > 0 {
 						l.mu.Lock()
-						l.queue = l.queue[m:]
+						l.commitLocked(m)
 						l.mu.Unlock()
 					}
 					return
