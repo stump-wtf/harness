@@ -257,6 +257,17 @@ func runDaemon(o daemonOpts) {
 		os.Exit(1)
 	}
 
+	// ADR-0032: the merge train, only when [mergetrain] enabled = true. Its
+	// preconditions (the token variable) are checked here, before any harness
+	// starts, so a train that cannot run refuses the start instead of
+	// half-running (SPEC-0025 REQ-1).
+	mergeTrain, err := daemon.StartMergeTrain(context.Background(), daemonMergeTrainOptions(cfg.MergeTrain))
+	if err != nil {
+		log.Error("refusing to start", "err", err)
+		signalDetached('e')
+		os.Exit(1)
+	}
+
 	// The attach data plane: one Mux (x/vt emulator + scrollback ring) per
 	// harness, lazily created. The Manager tees each harness's raw PTY output
 	// into its Mux via the ExtraOut hook, alongside the durable log (ADR-0003/
@@ -419,6 +430,9 @@ func runDaemon(o daemonOpts) {
 	// of shutdown rather than ahead of it, so it never delays the harnesses'
 	// own stop; the daemon waits for it only at the very end.
 	telemetryDone := shutdownDaemonTelemetry(telemetryPipeline, telemetryRes)
+	// The merge train next: an attempt in flight deletes its train branch
+	// and each driver releases its repo lock (SPEC-0025 REQ-15).
+	mergeTrain.Stop()
 	// Before the observer and the Manager: metrics reads both.
 	daemonMet.Stop()
 	// Before the observer stops: the guard consumes from it, and its Stop
@@ -444,6 +458,22 @@ func runDaemon(o daemonOpts) {
 	srv.Close()
 	mgr.Close()
 	<-telemetryDone
+}
+
+// daemonMergeTrainOptions is the merge train configuration the daemon runs
+// with: the [mergetrain] table, the process environment for the token
+// variable, the daemon's state directory, and its logger. A function, like
+// daemonManagerOptions, so the wiring test checks what the daemon builds
+// rather than a copy of it (#315).
+//
+// Governing: ADR-0032; SPEC-0025 REQ-1, REQ-12.
+func daemonMergeTrainOptions(mc core.MergeTrainConfig) daemon.MergeTrainOptions {
+	return daemon.MergeTrainOptions{
+		Config:   mc,
+		Getenv:   os.Getenv,
+		StateDir: supervisor.StateHome(),
+		Log:      log.Default(),
+	}
 }
 
 // startDaemonSources builds and starts the trigger source manager the daemon

@@ -188,6 +188,11 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 		if len(h.parts) >= 1 && h.parts[0] == "telemetry" {
 			return nil, forbiddenTableErr(filename, full, h.line)
 		}
+		// The merge train merges code; a cloned repository does not get to
+		// turn it on (SPEC-0025 REQ-1).
+		if len(h.parts) >= 1 && h.parts[0] == "mergetrain" {
+			return nil, forbiddenTableErr(filename, full, h.line)
+		}
 		// Trigger sources are daemon-owned: the daemon holds a channel
 		// session and serves a webhook route from the config of record, and
 		// a project harness never enters that view. A project source would

@@ -535,6 +535,8 @@ type Config struct {
 	Daemon DaemonConfig
 	// Telemetry is the optional global [telemetry] table (SPEC-0015 REQ-2).
 	Telemetry TelemetryConfig
+	// MergeTrain is the optional global [mergetrain] table (SPEC-0025 REQ-1).
+	MergeTrain MergeTrainConfig
 	// Channels is every [channel.*] trigger source keyed by name, nil when
 	// none are declared. Governing: ADR-0021; SPEC-0014 REQ "Channel Source
 	// Table".
