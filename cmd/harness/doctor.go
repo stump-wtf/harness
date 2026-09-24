@@ -59,6 +59,9 @@ type doctorResult struct {
 	// TelemetryCheck is the warning row for a [telemetry] config that does
 	// not resolve (the daemon would refuse to start).
 	TelemetryCheck *checkResult `json:"telemetry_check,omitempty"`
+	// Ledger is the run ledger section (SPEC-0022 REQ-18): its summary row,
+	// then each warning that fired.
+	Ledger []checkResult `json:"ledger,omitempty"`
 	// Settings reports every process setting with the source that supplied it,
 	// so "which one won — my flag, HARNESS_*, the file, or the default?" is
 	// answerable without reading code. It is not a health check and does not
@@ -169,6 +172,9 @@ func runDoctor(o verbOpts) int {
 		// "Operating Hours Visibility") — no point skipping them just because
 		// the daemon is down.
 		rows = appendOperatingHoursCheck(rows, cfg)
+		// The ledger's files are readable with the daemon down (SPEC-0022
+		// REQ-18); its live counters are not.
+		rows = appendLedgerChecks(rows, nil, cfg)
 		// No point continuing further: every later check needs the daemon.
 		// Resolved process settings and where each came from. A resolve failure
 		// is non-fatal but reported — see resolvedSettings.
@@ -235,6 +241,14 @@ func runDoctor(o verbOpts) int {
 	// --- Check: operating hours misconfiguration ---------------------------
 	// Governing: ADR-0019, SPEC-0012 REQ "Operating Hours Visibility".
 	rows = appendOperatingHoursCheck(rows, cfg)
+
+	// --- Check: the run ledger ----------------------------------------------
+	// Governing: SPEC-0022 REQ-18.
+	var li *protocol.LedgerInfo
+	if diOK {
+		li = di.Ledger
+	}
+	rows = appendLedgerChecks(rows, li, cfg)
 
 	// --- Check 5: harnesses in healthy state -------------------------------
 	// Governing: SPEC-0003 (the state model and its healthy/degraded/failed
@@ -494,6 +508,10 @@ func emitDoctorJSON(w io.Writer, rows []check, resolved []settings.Resolved, tel
 		case "telemetry":
 			c := cr
 			res.TelemetryCheck = &c
+		default:
+			if strings.HasPrefix(r.name, "ledger") {
+				res.Ledger = append(res.Ledger, cr)
+			}
 		}
 	}
 	if len(resolved) > 0 {

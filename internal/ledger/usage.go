@@ -173,7 +173,22 @@ func NewAccumulator(l *Ledger, opts AccumulatorOptions) *Accumulator {
 	}
 	a := &Accumulator{l: l, opts: opts, runs: map[key]*usage{}, lastTotals: map[string]UsageReport{}}
 	l.SetCloseHook(a.final)
+	l.hookMu.Lock()
+	l.usageStats = a.Stats
+	l.hookMu.Unlock()
 	return a
+}
+
+// UsageStats returns the usage accumulator's counters, when one is attached
+// (doctor, REQ-18).
+func (l *Ledger) UsageStats() (AccumulatorStats, bool) {
+	l.hookMu.Lock()
+	fn := l.usageStats
+	l.hookMu.Unlock()
+	if fn == nil {
+		return AccumulatorStats{}, false
+	}
+	return fn(), true
 }
 
 // SetTraceURL sets the trace_url template (REQ-9). A reload applies it to

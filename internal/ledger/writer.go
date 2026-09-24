@@ -71,6 +71,10 @@ type Options struct {
 	Tail   int
 	// Logger receives append failures (default log.Default()).
 	Logger *log.Logger
+	// Retention and MaxBytes bound the day files (defaults 90 days and
+	// 256 MiB); the prune applies them once EnablePrune is called.
+	Retention time.Duration
+	MaxBytes  int64
 }
 
 func (o Options) normalize() Options {
@@ -98,6 +102,12 @@ func (o Options) normalize() Options {
 	if o.Logger == nil {
 		o.Logger = log.Default()
 	}
+	if o.Retention <= 0 {
+		o.Retention = DefaultRetention
+	}
+	if o.MaxBytes <= 0 {
+		o.MaxBytes = DefaultMaxBytes
+	}
 	return o
 }
 
@@ -123,6 +133,10 @@ type Stats struct {
 	Truncated uint64
 	// Imported reports that the first-boot import has run (REQ-13).
 	Imported bool
+	// Pruned counts day files retention or the size cap deleted, and
+	// CarriedForward the open runs re-opened in today's file first (REQ-12).
+	Pruned         uint64
+	CarriedForward uint64
 }
 
 // Ledger is the run ledger: the single writer, and the in-memory index of what
@@ -150,15 +164,20 @@ type Ledger struct {
 	done chan struct{}
 
 	// closeHook supplies fields for every closed line (usage.go).
-	hookMu    sync.Mutex
-	closeHook func(harness string, id int) Record
+	hookMu     sync.Mutex
+	closeHook  func(harness string, id int) Record
+	usageStats func() AccumulatorStats
+
+	// pruneOn is set by EnablePrune; the writer prunes only after it.
+	pruneOn bool
 
 	// Owned by the writer goroutine.
-	f       *os.File
-	fday    string
-	needNL  bool
-	dirty   bool
-	dirtyAt time.Time
+	prunedDay time.Time
+	f         *os.File
+	fday      string
+	needNL    bool
+	dirty     bool
+	dirtyAt   time.Time
 }
 
 // dayFile is one day file and the seq of its first line.
@@ -237,6 +256,17 @@ func OpenReader(dir string) (*Ledger, error) {
 		return nil, err
 	}
 	return l, nil
+}
+
+// EnablePrune turns retention on (REQ-12): the writer prunes at once, then at
+// each UTC rollover. The Manager calls it after boot has backfilled and
+// reconciled, so no open run the index has not yet seen can lose the file that
+// opened it.
+func (l *Ledger) EnablePrune() {
+	l.mu.Lock()
+	l.pruneOn = true
+	l.mu.Unlock()
+	l.poke()
 }
 
 // Dir is the ledger directory.
@@ -476,10 +506,16 @@ func (l *Ledger) run() {
 	defer l.closeFile()
 	backoff := time.Duration(0)
 	var flush *time.Timer
+	midnight := time.NewTimer(untilMidnight(l.opts.Now()))
+	defer midnight.Stop()
 	for {
 		l.mu.Lock()
 		batch := slices.Clone(l.queue)
+		prune := l.pruneOn
 		l.mu.Unlock()
+		if prune {
+			l.pruneIfDue()
+		}
 
 		if len(batch) > 0 {
 			n, err := l.writeBatch(batch)
@@ -544,6 +580,9 @@ func (l *Ledger) run() {
 		}
 		select {
 		case <-l.wake:
+		case <-midnight.C:
+			// The rollover: the loop's next pass prunes.
+			midnight.Reset(untilMidnight(l.opts.Now()))
 		case <-flushC:
 			if err := l.syncFile(); err != nil {
 				l.log.Error("ledger sync failed", "err", err)
@@ -768,6 +807,11 @@ func listDays(dir string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// untilMidnight is how long until the next UTC day starts.
+func untilMidnight(now time.Time) time.Duration {
+	return max(startOfDay(now).Add(24*time.Hour).Sub(now), time.Second)
 }
 
 func startOfDay(t time.Time) time.Time {

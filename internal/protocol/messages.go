@@ -741,6 +741,32 @@ type DaemonInfo struct {
 	// allowlist, ADR-0008).
 	SshAddr string `json:"ssh_addr,omitempty"`
 	SshKeys int    `json:"ssh_keys,omitempty"`
+	// Ledger is the run ledger's health, for doctor (SPEC-0022 REQ-18).
+	// Additive: an older daemon omits it, and doctor reads what it can from
+	// the files.
+	Ledger *LedgerInfo `json:"ledger,omitempty"`
+}
+
+// LedgerInfo is the run ledger's health (SPEC-0022 REQ-18).
+type LedgerInfo struct {
+	Dir          string `json:"dir"`
+	Bytes        int64  `json:"bytes"`
+	MaxMB        int    `json:"max_mb"`
+	RetentionSec int64  `json:"retention_sec"`
+	// OldestDay is the oldest day file kept (YYYY-MM-DD), empty for none.
+	OldestDay    string `json:"oldest_day,omitempty"`
+	AppendErrors uint64 `json:"append_errors"`
+	Queued       int    `json:"queued"`
+	LastError    string `json:"last_error,omitempty"`
+	Skipped      int    `json:"skipped"`
+	Truncated    uint64 `json:"truncated"`
+	Imported     bool   `json:"imported"`
+	// FeedDropped is each run feed subscriber's miss count.
+	FeedDropped map[string]uint64 `json:"feed_dropped,omitempty"`
+	// UsageDropped and UsageIncomplete are the usage accumulator's observer
+	// drops and the runs they left usage_complete: false.
+	UsageDropped    uint64 `json:"usage_dropped"`
+	UsageIncomplete uint64 `json:"usage_incomplete"`
 }
 
 // ---- Structured errors (SPEC-0002 REQ "Control Operations") --------------

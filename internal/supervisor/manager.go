@@ -196,7 +196,7 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 	}
 	// Open does not fail: a ledger it cannot write yet queues and retries
 	// (SPEC-0022 REQ-6). What it could not read at boot is logged here.
-	lg, err := ledger.Open(ledgerDir, ledger.Options{})
+	lg, err := ledger.Open(ledgerDir, ledgerOptions(cfg))
 	if err != nil {
 		log.Error("run ledger boot incomplete", "dir", ledgerDir, "err", err)
 	}
@@ -442,7 +442,19 @@ func (m *Manager) Restore() error {
 	// Before Autostart admits anything: import, backfill and reconcile the
 	// run ledger (SPEC-0022 REQ-7, REQ-13).
 	m.bootLedger()
+	// Retention only now: boot has backfilled every harness's open runs, so
+	// the prune can carry each forward before deleting its file (REQ-12).
+	m.ledger.EnablePrune()
 	return nil
+}
+
+// ledgerOptions is the run ledger's configuration from [ledger] (SPEC-0022
+// REQ-12, REQ-19).
+func ledgerOptions(cfg *core.Config) ledger.Options {
+	return ledger.Options{
+		Retention: cfg.Ledger.RetentionOrDefault(),
+		MaxBytes:  int64(cfg.Ledger.MaxMBOrDefault()) << 20,
+	}
 }
 
 // preserveMalformedState copies an unparseable state file aside and returns the
@@ -948,6 +960,10 @@ func (m *Manager) Snapshots() []Snapshot {
 // config is not their definition source, so a global reload never removes or
 // re-defines them (ADR-0009; SPEC-0004 REQ "Project Naming And Namespacing").
 func (m *Manager) Reload(newCfg *core.Config) {
+	// [ledger] retention and max_mb apply at the next prune, without
+	// reopening the ledger (SPEC-0022 REQ-19).
+	lo := ledgerOptions(newCfg)
+	m.ledger.SetRetention(lo.Retention, lo.MaxBytes)
 	m.mu.Lock()
 	old := m.supervisors
 	m.cfg = newCfg

@@ -25,6 +25,8 @@ package ledger
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -234,4 +236,21 @@ func dayOf(name string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return t, true
+}
+
+// ParseDuration is time.ParseDuration plus a whole-day suffix ("7d", "90d"),
+// the unit ledger retention and `harness runs --since` are written in.
+func ParseDuration(s string) (time.Duration, error) {
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		var n int
+		if _, err := fmt.Sscanf(days, "%d", &n); err == nil && fmt.Sprint(n) == days && n >= 0 {
+			return time.Duration(n) * 24 * time.Hour, nil
+		}
+		return 0, fmt.Errorf("bad day count %q", s)
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("bad duration %q", s)
+	}
+	return d, nil
 }
