@@ -111,8 +111,6 @@ func run(verb string, o verbOpts) error {
 		return withClient(o, nil, cmdJobs)
 	case "trigger":
 		return withClient(o, nil, cmdTrigger)
-	case "runs":
-		return withClient(o, nil, cmdRuns)
 	case "profiles":
 		return withClient(o, nil, cmdProfiles)
 	case "use-profile":

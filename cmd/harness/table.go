@@ -202,6 +202,15 @@ func defaultColumnWidths(headers []string, budget, nameWidth int) (widths []int,
 		"CHECK":     12,
 		"STATUS":    10,
 		"AUTOSTART": 10,
+		// The runs table (SPEC-0022 REQ-14): sized for their longest
+		// values ("model_unattested" is 16, "Sep 24 15:04" 12, "autostart"
+		// 9), so HARNESS keeps the rest of an 80-column terminal.
+		"RUN":     5,
+		"STARTED": 12,
+		"TOOK":    7,
+		"TRIGGER": 9,
+		"OUTCOME": 16,
+		"EXIT":    4,
 	}
 	widths = make([]int, n)
 	truncate = make([]bool, n)

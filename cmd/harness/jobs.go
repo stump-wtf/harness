@@ -23,20 +23,28 @@ package main
 // @joestump-agent 09/11/2026 - Added for issue #120.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/stump-wtf/harness/internal/buildinfo"
 	"github.com/stump-wtf/harness/internal/client"
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/ledger"
 	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/runquery"
 	"github.com/stump-wtf/harness/internal/schedfmt"
+	"github.com/stump-wtf/harness/internal/supervisor"
 	"github.com/stump-wtf/harness/internal/trigger"
 )
 
@@ -97,30 +105,187 @@ func newTriggerCmd(g *globalOpts) *cobra.Command {
 	return cmd
 }
 
-// newRunsCmd builds `harness runs NAME [--limit N]`.
+// newRunsCmd builds `harness runs [NAME...]` (SPEC-0022 REQ-14): SPEC-0008's
+// one-harness history when given a single NAME and no other filter, and a
+// query across the run ledger otherwise.
 func newRunsCmd(g *globalOpts) *cobra.Command {
-	var limit int
+	var (
+		limit    int
+		harness  []string
+		since    string
+		until    string
+		outcomes []string
+		triggers []string
+		wide     bool
+	)
 	cmd := &cobra.Command{
-		Use:           "runs",
-		Short:         "show a scheduled harness's run history",
-		Args:          cobra.MaximumNArgs(1),
+		Use:           "runs [NAME...]",
+		Short:         "show run history from the run ledger",
+		Args:          cobra.ArbitraryArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, err := bindName("runs", nameRequired, args)
-			if err != nil {
+			rq := runsRequest{names: append(slices.Clone(args), harness...), wide: wide, now: time.Now()}
+			rq.legacy = len(args) == 1 && len(harness) == 0 && since == "" && until == "" &&
+				len(outcomes) == 0 && len(triggers) == 0
+			rq.limit = limit
+			if !cmd.Flags().Changed("limit") {
+				rq.limit = 50
+				if rq.legacy {
+					rq.limit = 20
+				}
+			}
+			if rq.limit < 1 || rq.limit > runquery.MaxLimit {
+				return fmt.Errorf("--limit must be between 1 and %d", runquery.MaxLimit)
+			}
+			if err := runquery.CheckValues("outcome", outcomes, runquery.Outcomes); err != nil {
 				return err
 			}
-			if limit < 1 {
-				return fmt.Errorf("--limit must be at least 1")
+			if err := runquery.CheckValues("trigger", triggers, runquery.Triggers); err != nil {
+				return err
 			}
-			o := g.opts()
-			o.name, o.limit = name, limit
-			return run("runs", o)
+			rq.outcomes, rq.triggers = outcomes, triggers
+			if !rq.legacy {
+				// A query with no --since reads the last day (REQ-14).
+				if since == "" {
+					since = "24h"
+				}
+				t, err := runquery.ParseSince(since, rq.now)
+				if err != nil {
+					return err
+				}
+				rq.since = t
+			}
+			if until != "" {
+				t, err := time.Parse(time.RFC3339Nano, until)
+				if err != nil {
+					return fmt.Errorf("--until %q: want an RFC 3339 instant", until)
+				}
+				rq.until = t
+			}
+			return cmdRunsQuery(g.opts(), rq, os.Stdout, os.Stderr)
 		},
 	}
-	cmd.Flags().IntVar(&limit, "limit", 20, "number of runs to show, newest first")
+	cmd.Flags().IntVar(&limit, "limit", 20, "number of runs to show, newest first (default 20 for one NAME, else 50)")
+	cmd.Flags().StringArrayVar(&harness, "harness", nil, "a harness to include (repeatable)")
+	cmd.Flags().StringVar(&since, "since", "", "runs started since a duration ago (7d, 36h) or an RFC 3339 instant (default 24h across harnesses)")
+	cmd.Flags().StringVar(&until, "until", "", "runs started before an RFC 3339 instant")
+	cmd.Flags().StringSliceVar(&outcomes, "outcome", nil, "only these outcomes, comma-separated (e.g. failed,timed_out)")
+	cmd.Flags().StringSliceVar(&triggers, "trigger", nil, "only these triggers, comma-separated (e.g. webhook,channel)")
+	cmd.Flags().BoolVar(&wide, "wide", false, "add MODEL, TOKENS, COST and TODO columns")
 	return cmd
+}
+
+// runsRequest is a parsed `harness runs` invocation.
+type runsRequest struct {
+	names              []string
+	legacy             bool // a single NAME and no other filter: SPEC-0008's view
+	since, until       time.Time
+	outcomes, triggers []string
+	limit              int
+	wide               bool
+	now                time.Time
+}
+
+// cmdRunsQuery asks the daemon, and, when there is no daemon to ask, reads the
+// ledger's day files itself (SPEC-0022 REQ-16). It exits 0 whenever the query
+// ran, records or none, and fails only when neither could be read (REQ-14).
+func cmdRunsQuery(o verbOpts, rq runsRequest, stdout, stderr io.Writer) error {
+	rd, err := daemonRuns(o, rq)
+	if err != nil {
+		why, offline := unreachable(err)
+		if !offline {
+			return err
+		}
+		rd, err = offlineRuns(o, rq)
+		if err != nil {
+			return fmt.Errorf("daemon %s, and the run ledger could not be read: %w", why, err)
+		}
+		fmt.Fprintf(stderr, "harness: daemon %s; read the ledger from disk\n", why)
+	}
+	return printRuns(stdout, rd, rq, o.json)
+}
+
+// daemonRuns asks the daemon.
+func daemonRuns(o verbOpts, rq runsRequest) (protocol.RunsData, error) {
+	c, err := client.Dial(o.socket, buildinfo.Version, nil)
+	if err != nil {
+		return protocol.RunsData{}, err
+	}
+	defer c.Close()
+	if rq.legacy {
+		// SPEC-0008's request, exactly: an older daemon answers it too.
+		return c.Runs(rq.names[0], rq.limit)
+	}
+	q := client.RunsQuery{Names: rq.names, Outcomes: rq.outcomes, Triggers: rq.triggers, Limit: rq.limit}
+	if !rq.since.IsZero() {
+		q.Since = rq.since.UTC().Format(time.RFC3339Nano)
+	}
+	if !rq.until.IsZero() {
+		q.Until = rq.until.UTC().Format(time.RFC3339Nano)
+	}
+	return c.QueryRuns(q)
+}
+
+// unreachable reports a dial that found no daemon to answer: nothing bound to
+// the socket, or something bound that never said hello.
+func unreachable(err error) (why string, ok bool) {
+	var silent *client.NoHandshakeError
+	switch {
+	case errors.As(err, &silent):
+		return "not responding", true
+	case errors.Is(err, syscall.ECONNREFUSED), errors.Is(err, os.ErrNotExist):
+		return "not running", true
+	}
+	return "", false
+}
+
+// offlineRuns reads the ledger read-only. It reconciles, prunes and writes
+// nothing, so a run a crashed daemon left open is shown as `running?`: the
+// CLI cannot tell a live run from one nobody will ever close (REQ-16).
+func offlineRuns(o verbOpts, rq runsRequest) (protocol.RunsData, error) {
+	l, err := ledger.OpenReader(offlineLedgerDir(o))
+	if err != nil {
+		return protocol.RunsData{}, err
+	}
+	q := ledger.Query{Names: rq.names, Since: rq.since, Until: rq.until, Outcomes: rq.outcomes, Triggers: rq.triggers, Limit: rq.limit}
+	recs, oldest, err := l.Query(q)
+	if err != nil {
+		return protocol.RunsData{}, err
+	}
+	rd := protocol.RunsData{Runs: runquery.Infos(recs), OldestSeq: oldest}
+	if rq.legacy {
+		rd.Name = rq.names[0]
+	}
+	for i := range rd.Runs {
+		if rd.Runs[i].Outcome == string(supervisor.OutcomeRunning) {
+			rd.Runs[i].Outcome = "running?"
+		}
+	}
+	return rd, nil
+}
+
+// offlineLedgerDir is the ledger a default daemon writes: beside its
+// state.json (SPEC-0022 REQ-1). A variable so a test can point it at a temp
+// directory.
+var offlineLedgerDir = func(verbOpts) string {
+	return filepath.Join(filepath.Dir(supervisor.DefaultStatePath()), "ledger")
+}
+
+// printRuns renders runs. --json is SPEC-0008's {name, runs} object for the
+// one-harness view, so a script written against it keeps working with only
+// new fields added, and the REQ-4 record list, newest first, for a query
+// (REQ-14).
+func printRuns(w io.Writer, rd protocol.RunsData, rq runsRequest, asJSON bool) error {
+	if asJSON {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		if rq.legacy {
+			return enc.Encode(rd)
+		}
+		return enc.Encode(rd.Runs)
+	}
+	return printRunsTable(w, rd, rq.wide)
 }
 
 // cmdJobs prints every scheduled harness.
@@ -190,36 +355,86 @@ func runAgo(r protocol.RunInfo, now time.Time) string {
 	return schedfmt.ShortDuration(max(now.Sub(t), 0)) + " ago"
 }
 
-// cmdRuns prints a harness's run history.
-func cmdRuns(c *client.Client, o verbOpts) error {
-	rd, err := c.Runs(o.name, o.limit)
-	if err != nil {
-		return err
-	}
-	if o.json {
-		return printJSON(rd)
-	}
-	return printRunsTable(os.Stdout, rd)
-}
-
-// printRunsTable renders a run history, newest first.
-func printRunsTable(w io.Writer, rd protocol.RunsData) error {
+// printRunsTable renders a run history, newest first, in 80 columns:
+// HARNESS, RUN, STARTED, TOOK, TRIGGER, OUTCOME and EXIT; wide adds MODEL,
+// TOKENS, COST and TODO (SPEC-0022 REQ-14).
+func printRunsTable(w io.Writer, rd protocol.RunsData, wide bool) error {
 	if len(rd.Runs) == 0 {
-		_, err := fmt.Fprintf(w, "%s has no runs yet\n", rd.Name)
+		msg := "no runs match"
+		if rd.Name != "" {
+			msg = rd.Name + " has no runs yet"
+		}
+		_, err := fmt.Fprintln(w, msg)
 		return err
 	}
-	t := NewTable(w, "RUN", "TRIGGER", "OUTCOME", "STARTED", "DURATION", "EXIT")
+	t := NewTable(w, runsHeaders(wide)...)
+	if wide {
+		t.width = max(t.width, wideRunsWidth)
+	}
 	for _, r := range rd.Runs {
-		t.Row(strconv.Itoa(r.RunID), r.Trigger, runOutcomeCell(r), runStartedCell(r), runDurationCell(r), runExitCell(r))
+		h := r.Harness
+		if h == "" {
+			h = rd.Name
+		}
+		cells := []string{h, strconv.Itoa(r.RunID), runStartedCell(r), runDurationCell(r), r.Trigger, runOutcomeCell(r), runExitCell(r)}
+		if wide {
+			cells = append(cells, dashIfEmpty(r.Model), runTokensCell(r), runCostCell(r), dashIfEmpty(r.TodoID))
+		}
+		t.Row(cells...)
 	}
 	return t.Flush()
+}
+
+// runsHeaders is the runs table's columns.
+func runsHeaders(wide bool) []string {
+	h := []string{"HARNESS", "RUN", "STARTED", "TOOK", "TRIGGER", "OUTCOME", "EXIT"}
+	if wide {
+		h = append(h, "MODEL", "TOKENS", "COST", "TODO")
+	}
+	return h
+}
+
+// wideRunsWidth is the least budget --wide lays out in: it is for a wide
+// terminal or a pipe, and eleven columns in 64 cells would help no one.
+const wideRunsWidth = 140
+
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
+func runTokensCell(r protocol.RunInfo) string {
+	if r.Tokens == nil {
+		return "—"
+	}
+	return strconv.FormatInt(r.Tokens.Input+r.Tokens.Output, 10)
+}
+
+// runCostCell is the cost with its source; an unknown cost is "?", never a
+// zero it is not.
+func runCostCell(r protocol.RunInfo) string {
+	switch {
+	case r.CostUSD != nil && r.CostSource == "recorded":
+		return fmt.Sprintf("$%.2f", *r.CostUSD)
+	case r.CostUSD != nil:
+		return fmt.Sprintf("$%.2f %s", *r.CostUSD, r.CostSource)
+	case r.CostSource != "":
+		return "?"
+	}
+	return "—"
 }
 
 // runOutcomeCell is the outcome, with the window count a missed record covers
 // ("missed ×4") — kept short so it fits one table column.
 func runOutcomeCell(r protocol.RunInfo) string {
-	if r.Outcome == "missed" && r.Windows > 1 {
+	switch {
+	case r.Outcome == "missed" && r.Windows > 1:
 		return fmt.Sprintf("missed ×%d", r.Windows)
+	case r.LogPruned:
+		// REQ-12: the record outlived its log; `logs --run` says so too.
+		return r.Outcome + " (log pruned)"
 	}
 	return r.Outcome
 }
@@ -234,8 +449,8 @@ func runStartedCell(r protocol.RunInfo) string {
 
 func runDurationCell(r protocol.RunInfo) string {
 	switch {
-	case r.Outcome == "running":
-		return "running"
+	case r.Outcome == "running" || r.Outcome == "running?":
+		return r.Outcome
 	case r.EndedAt == "":
 		return "unknown"
 	case r.DurationMs > 0:
