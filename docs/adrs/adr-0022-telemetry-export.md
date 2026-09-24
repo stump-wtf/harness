@@ -1,9 +1,9 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-21
-decision-makers: Joe Stump
-extends: [adr-0008, adr-0011]
-related: [adr-0007, adr-0020]
+decision-makers: [joestump]
+extends: [ADR-0008, ADR-0011]
+related: [ADR-0007, ADR-0020]
 ---
 
 # ADR-0022: Harness Exports Agent Telemetry as OTLP Logs, OTLP Traces and a Local JSONL Stream
@@ -23,7 +23,8 @@ The pieces for export exist and are wired to nothing:
 * `internal/otlpexport` converts an agent-trace `otel.Trace` into OTLP/HTTP JSON
   and POSTs it. It has tests and no callers.
 * `[daemon] otel_endpoint` is parsed into `core.DaemonConfig.OTelEndpoint` and
-  read by nothing. `docs/usage/configuration.md` says so in as many words.
+  read by nothing. The [configuration reference](../usage/configuration.md)
+  says so in as many words.
 * agent-trace's `otel.BuildTrace` produces a span tree per session, with trace
   and span IDs derived deterministically from the session.
 
@@ -63,32 +64,32 @@ Harness turns that stream into telemetry an operator can ship.
 
 ## Considered Options
 
-### Where the data comes from
+### Decision 1 — Where the data comes from
 
-* **Post-hoc harvest when a run finishes** (the `cairnexport` shape). Rejected: a
+* **Option 1 — Post-hoc harvest when a run finishes** (the `cairnexport` shape). Rejected: a
   resident harness never finishes, so a production worker would export nothing
   until it was restarted, and nothing at all while it was failing.
-* **agent-trace's `tail.Watcher` directly.** Rejected: it parks marks until a
+* **Option 2 — agent-trace's `tail.Watcher` directly.** Rejected: it parks marks until a
   tool event arrives, so a provider outage — error marks, no tool calls — is
   invisible. That is the failure this work most needs to show.
-* **Each agent CLI's native telemetry** (Claude Code, for one, can emit its own
+* **Option 3 — Each agent CLI's native telemetry** (Claude Code, for one, can emit its own
   OTel). Rejected as the mechanism: per-agent, inconsistent across adapters,
   absent for most of them, and not attributed to a *harness*. Operators who want
   it can still configure it per harness in `env_file`; it is complementary.
-* **The daemon-side observer (`internal/observe`).** Chosen. One continuous,
+* **Option 4 — The daemon-side observer (`internal/observe`).** Chosen. One continuous,
   harness-attributed stream of tool events *and* marks, shared with the metrics
   work (ADR-0020) so both read the same facts.
 
-### Transport
+### Decision 2 — Transport
 
-* **The OpenTelemetry Go SDK (`go.opentelemetry.io/otel` + OTLP exporters).**
+* **Option 1 — The OpenTelemetry Go SDK (`go.opentelemetry.io/otel` + OTLP exporters).**
   Correct by construction, but a large dependency tree (gRPC, protobuf, the SDK's
   own batching and resource detection) for a daemon that already has its own
   span model from agent-trace and would use a fraction of the SDK. The logs SDK
   has also been the least stable part of the Go project. Rejected.
-* **OTLP/gRPC.** Adds the gRPC stack for no capability OTLP/HTTP lacks; every
+* **Option 2 — OTLP/gRPC.** Adds the gRPC stack for no capability OTLP/HTTP lacks; every
   collector serves both. Rejected; out of scope.
-* **Hand-rolled OTLP/HTTP JSON, extending `internal/otlpexport`.** Chosen. The
+* **Option 3 — Hand-rolled OTLP/HTTP JSON, extending `internal/otlpexport`.** Chosen. The
   OTLP JSON encoding is a stable part of the specification (a direct protobuf
   mapping with fixed field names), `otlpexport` already implements the trace
   half with tests, and the logs half is the same envelope with `resourceLogs` in
@@ -96,56 +97,64 @@ Harness turns that stream into telemetry an operator can ship.
   to write and test — which we would have had to configure and test anyway to
   meet the never-block driver.
 
-### How an operator "slurps" the stream
+### Decision 3 — How an operator "slurps" the stream
 
-* **OTLP only.** Excludes the file-tailing operators.
-* **A local file only.** Excludes operators with a collector, and gives up trace
+* **Option 1 — OTLP only.** Excludes the file-tailing operators.
+* **Option 2 — A local file only.** Excludes operators with a collector, and gives up trace
   structure.
-* **OTLP logs + OTLP traces + an optional local JSONL file.** Chosen. Logs carry
+* **Option 3 — OTLP logs + OTLP traces + an optional local JSONL file.** Chosen. Logs carry
   every item as a searchable record; traces carry the session's shape; the JSONL
   file is the zero-network path and carries exactly the log attributes, so a file
   shipper and a collector see the same fields.
 
-### Where configuration and credentials live
+### Decision 4 — Where configuration and credentials live
 
-* **Environment variables only.** Standard, but an inherited
+* **Option 1 — Environment variables only.** Standard, but an inherited
   `OTEL_EXPORTER_OTLP_ENDPOINT` — set in a login shell for some other tool —
   would silently start publishing transcripts. Consent cannot be implicit.
-* **`harness.toml` only.** Puts the collector credential in the config file,
+* **Option 2 — `harness.toml` only.** Puts the collector credential in the config file,
   against ADR-0008.
-* **A `[telemetry]` table that grants consent and sets policy; the standard OTel
+* **Option 3 — A `[telemetry]` table that grants consent and sets policy; the standard OTel
   variables supply endpoints and headers.** Chosen. Signals are enabled only in
   `harness.toml`; endpoints may come from either place, env winning; headers come
   only from the environment or a `[telemetry] env_file`. `harness.toml` rejects a
   `headers` key outright rather than trying to tell a tenant ID from a token.
 
-### Which harnesses contribute
+### Decision 5 — Which harnesses contribute
 
-* **Reuse `harvest_trajectory`.** Rejected: that key consents to the local MCP
+* **Option 1 — Reuse `harvest_trajectory`.** Rejected: that key consents to the local MCP
   facade reading a transcript — another agent on the same machine. Publication
   to an external collector is a different audience, and #94 is precisely the
   rule that one does not imply the other.
-* **Fleet-wide only.** Cannot exclude the one harness that handles something
+* **Option 2 — Fleet-wide only.** Cannot exclude the one harness that handles something
   sensitive.
-* **Per-harness only.** Tedious for a forty-harness production box.
-* **Per-harness `export_telemetry`, plus a fleet-wide `[telemetry] export_all`.**
+* **Option 3 — Per-harness only.** Tedious for a forty-harness production box.
+* **Option 4 — Per-harness `export_telemetry`, plus a fleet-wide `[telemetry] export_all`.**
   Chosen. Both are explicit. An explicit per-harness `false` beats `export_all`,
   so an operator can export everything but one harness. A project file may opt
   its harnesses *out* but not *in*: a cloned repository does not get to decide
   that its transcripts are published to the operator's collector.
 
-### The dead `[daemon] otel_endpoint`
+### Decision 6 — The dead `[daemon] otel_endpoint`
 
-* **Alias it to the traces endpoint, with a deprecation warning.** Rejected. The
+* **Option 1 — Alias it to the traces endpoint, with a deprecation warning.** Rejected. The
   key never did anything and the docs said so; configs carry it (the test
   fixtures point it at a public Cairn host). Aliasing would turn an inert,
   documented-as-inert line into live publication of agent transcripts on
   upgrade — the one outcome the consent driver forbids.
-* **Reject it with a migration error.** Chosen, per the delete-not-deprecate
+* **Option 2 — Reject it with a migration error.** Chosen, per the delete-not-deprecate
   convention in `internal/config/config.go` ("Removed keys"). The error names
   `[telemetry]` and the env variables, so the fix is one edit.
 
 ## Decision Outcome
+
+Chosen options: **Decision 1, Option 4** (the daemon-side observer),
+**Decision 2, Option 3** (hand-rolled OTLP/HTTP JSON), **Decision 3, Option 3**
+(OTLP logs, OTLP traces and an optional JSONL file), **Decision 4, Option 3**
+(a `[telemetry]` table for consent and policy, OTel variables for endpoints and
+headers), **Decision 5, Option 4** (per-harness `export_telemetry` plus
+`export_all`) and **Decision 6, Option 2** (reject `otel_endpoint` with a
+migration error).
 
 Harness exports the observer's stream as three independent, opt-in signals:
 
@@ -193,29 +202,29 @@ queueing and retry behaviour, and the self-telemetry contract.
 
 ### Consequences
 
-* Good: an operator's existing log and trace stack sees every harness's agent
+* Good, because an operator's existing log and trace stack sees every harness's agent
   activity, attributed to the harness, with no Harness-specific tooling.
-* Good: a provider outage is a burst of `ERROR` records per affected harness in
+* Good, because a provider outage is a burst of `ERROR` records per affected harness in
   the log backend — the shape ADR-0020 makes alertable as a metric, now also
   searchable with the provider's own message. This holds for adapters that
   surface API errors as marks: Crush does; Claude Code does not at the pinned
   agent-trace version, where the outage shows instead as its records stopping.
-* Good: consent stays explicit at both levels, and the zero-config case — a
+* Good, because consent stays explicit at both levels, and the zero-config case — a
   laptop — is unchanged: no sockets, no files.
-* Good: `internal/otlpexport` and the observer each gain a real caller; the dead
+* Good, because `internal/otlpexport` and the observer each gain a real caller; the dead
   config key stops misleading people.
-* Bad: batching, retry, backoff and partial-success handling are ours to own
+* Bad, because batching, retry, backoff and partial-success handling are ours to own
   and test, where an SDK would have supplied them.
-* Bad: span IDs deliberately diverge from agent-trace's counter-derived IDs
+* Bad, because span IDs deliberately diverge from agent-trace's counter-derived IDs
   until agent-trace keys them by item itself. A second system correlating by
   agent-trace's own IDs (a Cairn trace of the same session) joins on trace ID,
   not span ID.
-* Bad: removing `otel_endpoint` fails daemon startup for anyone who set it. The
+* Bad, because removing `otel_endpoint` fails daemon startup for anyone who set it. The
   error says exactly what to do, and the alternative was worse.
-* Neutral: a span's end time is frozen when it is first exported; a turn that
+* Neutral, because a span's end time is frozen when it is first exported; a turn that
   resumes after an idle export keeps its first-export end time. The idle gap is
   real, and a zero-length final span is more honest than one stretched across it.
-* Neutral: supervisor lifecycle events (state changes, restarts, give-up) are not
+* Neutral, because supervisor lifecycle events (state changes, restarts, give-up) are not
   in this stream; the daemon's own log already carries them to journald or
   `HARNESS_LOG_FILE`, which shippers already collect.
 

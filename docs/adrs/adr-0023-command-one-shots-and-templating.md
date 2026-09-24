@@ -50,9 +50,9 @@ The customer evidence points the same way. A self-hosting customer running Pi-
 and OMP-based coding agents (OMP is a Pi fork) found no adapter for either. They
 wrote and now maintain a wrapper executable that `generic` launches as a
 resident process. Their rollout plan names "a generic or custom OMP adapter" as
-a hard requirement, and they cannot schedule or trigger it. Joe's direction for
-this feature (F-H1 in the Operation Stumply roadmap) is that it is templating
-plus a command kind: arbitrary prompts, templating in argv and in the prompt,
+a hard requirement, and they cannot schedule or trigger it. The direction for
+this feature (F-H1 in the Operation Stumply roadmap) is templating plus a
+command kind: arbitrary prompts, templating in argv and in the prompt,
 used to enrich inbound events. It is not an agent-trace feature.
 
 How does Harness run any CLI as a scheduled or event-fired one-shot, and put run
@@ -88,40 +88,40 @@ reopening the prompt-injection boundary ADR-0021 drew?
 
 ## Considered Options
 
-**Axis 1: how an arbitrary CLI becomes a one-shot.**
+### Decision 1 — How an arbitrary CLI becomes a one-shot
 
-* **1A. Let `generic` take a prompt** and substitute it into `sh -c` args.
-* **1B. A new `command` kind** whose `argv` array is exec'd directly, and which
+* **Option 1 — Let `generic` take a prompt** and substitute it into `sh -c` args.
+* **Option 2 — A new `command` kind** whose `argv` array is exec'd directly, and which
   may carry `schedule`, `triggers` and a prompt.
-* **1C. Adapters only.** Every CLI worth running gets a built-in adapter, and
+* **Option 3 — Adapters only.** Every CLI worth running gets a built-in adapter, and
   there is no escape hatch.
 
-**Axis 2: the templating mechanism.**
+### Decision 2 — The templating mechanism
 
-* **2A. Go `text/template`** over a context struct.
-* **2B. A closed placeholder grammar** (`{{path}}`, `{{path?}}`) over a
+* **Option 1 — Go `text/template`** over a context struct.
+* **Option 2 — A closed placeholder grammar** (`{{path}}`, `{{path?}}`) over a
   documented, typed context, with no functions and no control flow.
-* **2C. No templating.** Export `HARNESS_*` variables and let a wrapper script
+* **Option 3 — No templating.** Export `HARNESS_*` variables and let a wrapper script
   build its own argv.
 
-**Axis 3: what event data may appear inline.**
+### Decision 3 — What event data may appear inline
 
-* **3A. Nothing** (ADR-0021 as written). The file is the only channel.
-* **3B. Trust tiers.** Operator- and daemon-authored values and typed event
+* **Option 1 — Nothing** (ADR-0021 as written). The file is the only channel.
+* **Option 2 — Trust tiers.** Operator- and daemon-authored values and typed event
   metadata inline; the actor only after a trust check; free text only by file
   path or through an opt-in untrusted fence.
-* **3C. The whole payload** (`{{ .body.pull_request.title }}`).
+* **Option 3 — The whole payload** (`{{ .body.pull_request.title }}`).
 
-**Axis 4: first-class Pi and OMP.**
+### Decision 4 — First-class Pi and OMP
 
-* **4A. Built-in `pi` and `omp` adapters.**
-* **4B. `command` presets**: a named argv template plus a transcript binding,
+* **Option 1 — Built-in `pi` and `omp` adapters.**
+* **Option 2 — `command` presets**: a named argv template plus a transcript binding,
   expanded from `preset = "omp"`.
 
 ## Decision Outcome
 
-Chosen options: **1B** (a `command` kind), **2B** (a closed placeholder
-grammar), **3B** (trust tiers), and **4A** (built-in `pi` and `omp` adapters).
+Chosen options: **Decision 1, Option 2** (a `command` kind), **Decision 2, Option 2** (a closed placeholder
+grammar), **Decision 3, Option 2** (trust tiers), and **Decision 4, Option 1** (built-in `pi` and `omp` adapters).
 Before any of it, the immediate slice: **`harness = "generic"` with `prompt` or
 `prompt_file` becomes a config validation error** at every front door, and
 `Generic.PromptCommand` stops delegating to Crush.
@@ -274,8 +274,8 @@ with their byte counts, never the content, and increments a counter, and
 `harness doctor` keeps a warn row while it is set. The configuration reference
 and the templates page carry a danger callout for it. The recommended form is
 still `{{event.file}}` plus an instruction to read it as data. This is the
-shape Joe approved on 2026-09-22: a risky capability is fine when it is
-configurable, off by default, and loud.
+project's rule for risky capabilities: fine when configurable, off by default,
+and loud.
 
 ### Prompt delivery
 
@@ -310,7 +310,7 @@ observes them as it observes Crush, Claude Code and Codex. Pi runs tools
 without asking, so `auto_accept` is accepted as a no-op and documented as such.
 Neither CLI has a turn cap, so `max_turns` is inert, as it is for Crush.
 
-Presets (4B) were rejected for two reasons:
+Presets (Decision 4, Option 2) were rejected for two reasons:
 
 1. **Everything that makes an agent first-class hangs off the adapter
    interface**: trajectory discovery, observer attribution, model flag mapping,
@@ -469,7 +469,9 @@ Acceptance includes:
 
 ## Pros and Cons of the Options
 
-### 1A. Let `generic` take a prompt
+### Decision 1 — How an arbitrary CLI becomes a one-shot
+
+#### Option 1 — Let `generic` take a prompt
 
 * Good, because it needs no new kind: `args = ["-c", "omp -p \"$0\""]`.
 * Bad, because the prompt goes through `sh`, where quoting a multi-line prompt
@@ -478,7 +480,7 @@ Acceptance includes:
 * Bad, because it keeps `generic` meaning two things (a shell, and "any
   agent"), and that ambiguity is what produced the silent-Crush bug.
 
-### 1B. A `command` kind (chosen)
+#### Option 2 — A `command` kind (chosen)
 
 * Good, because exec'ing an argv removes the whole shell attack surface.
 * Good, because one kind covers resident processes, scheduled scripts,
@@ -486,7 +488,7 @@ Acceptance includes:
 * Bad, because it is a fifth kind with its own validation table, and `generic`
   now overlaps it for resident use.
 
-### 1C. Adapters only
+#### Option 3 — Adapters only
 
 * Good, because every supported CLI is fully first-class.
 * Bad, because there is no answer for the CLI we have not written an adapter
@@ -495,7 +497,9 @@ Acceptance includes:
 * Bad, because flag drift in any supported CLI blocks its users until a Harness
   release.
 
-### 2A. Go `text/template`
+### Decision 2 — The templating mechanism
+
+#### Option 1 — Go `text/template`
 
 * Good, because it is standard, well known and expressive.
 * Bad, because the expressiveness is the problem. Functions, method calls,
@@ -504,7 +508,7 @@ Acceptance includes:
 * Bad, because a missing key renders `<no value>` by default. That is the silent
   failure this ADR exists to remove.
 
-### 2B. A closed placeholder grammar (chosen)
+#### Option 2 — A closed placeholder grammar (chosen)
 
 * Good, because the set of reachable values is the documented context table,
   and the config loader can check every reference.
@@ -513,7 +517,7 @@ Acceptance includes:
 * Bad, because there are no conditionals. A prompt that needs them uses two
   harnesses, or reads the event file.
 
-### 2C. No templating, environment only
+#### Option 3 — No templating, environment only
 
 * Good, because the daemon adds nothing but variables.
 * Bad, because every user writes the same wrapper script, which is where the
@@ -521,14 +525,16 @@ Acceptance includes:
 * Bad, because it does nothing for built-in adapters, whose argv the operator
   does not control.
 
-### 3A. Nothing inline
+### Decision 3 — What event data may appear inline
+
+#### Option 1 — Nothing inline
 
 * Good, because it is the simplest boundary to explain.
 * Bad, because it forbids values that cannot carry an instruction (a number, a
   SHA) and forces every run to parse JSON just to learn which pull request it is
   about.
 
-### 3B. Trust tiers (chosen)
+#### Option 2 — Trust tiers (chosen)
 
 * Good, because the line falls where the risk is: attacker-expressive text
   versus shape-constrained identifiers.
@@ -537,20 +543,22 @@ Acceptance includes:
 * Bad, because the tiers must be learned, and the typed table must be
   maintained per payload scheme.
 
-### 3C. The whole payload
+#### Option 3 — The whole payload
 
 * Good, because it is maximally flexible.
-* Bad, because it is ADR-0021's rejected option 4A: prompt injection by
+* Bad, because it is ADR-0021's rejected Decision 4, Option 1: prompt injection by
   construction, and argv-visible payloads.
 
-### 4A. Built-in `pi` and `omp` adapters (chosen)
+### Decision 4 — First-class Pi and OMP
+
+#### Option 1 — Built-in `pi` and `omp` adapters (chosen)
 
 * Good, because the adapter interface is where trajectory, observation, model
   mapping and (with ADR-0026) pin rendering already live.
 * Good, because the customer's case works with two lines of config.
 * Bad, because each CLI's flags are ours to track.
 
-### 4B. `command` presets
+#### Option 2 — `command` presets
 
 * Good, because a preset is data, and a user can override it.
 * Bad, because a preset needs a transcript binding, a model mapping and pin
@@ -593,35 +601,35 @@ flowchart TD
 
 ## More Information
 
-* **Extends [ADR-0011](adr-0011-agent-adapters.md).** Adds the `command`,
+* **Extends ADR-0011.** Adds the `command`,
   `pi` and `omp` kinds, the `transcripts` binding, and templated prompt keys
   beside the verbatim ones.
-* **Extends [ADR-0013](adr-0013-scheduled-one-shot-jobs.md).** A `command`
+* **Extends ADR-0013.** A `command`
   harness may be scheduled without a prompt.
-* **Extends [ADR-0018](adr-0018-external-prompt-source.md).**
+* **Extends ADR-0018.**
   `prompt_template_file` follows `prompt_file`'s path resolution, load check and
   per-spawn read.
-* **Extends [ADR-0021](adr-0021-on-demand-one-shots.md).** Narrows its "never
+* **Extends ADR-0021.** Narrows its "never
   interpolated" rule to free text, adds `typed` to the envelope, and lifts its
   deferral of `cmd` one-shots on triggers.
-* **Related [ADR-0006](adr-0006-configuration-and-profiles.md)** (the new
-  keys), **[ADR-0008](adr-0008-security-and-secrets.md)** (nothing rendered is
-  persisted), **[ADR-0010](adr-0010-local-mcp-surface.md)** (the facade's
+* **Related ADR-0006** (the new
+  keys), **ADR-0008** (nothing rendered is
+  persisted), **ADR-0010** (the facade's
   prompt side-loading is a different, agent-driven channel), and
-  **[ADR-0020](adr-0020-prometheus-metrics-endpoint.md)** (render counters).
+  **ADR-0020** (render counters).
 * **Related records accepted with this one (2026-09-22).** The `related` edges
   sit in the newer record's front matter.
-  [ADR-0026](adr-0026-fail-closed-model-pinning.md), fail-closed model
+  ADR-0026, fail-closed model
   pinning, which renders pins through these adapters and attests through
   `transcripts`.
-  [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md),
+  ADR-0025,
   supervisor-held leases and relay attempts, whose one-shots are typically
   `command` or templated harnesses.
-  [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md), budgets, which
+  ADR-0027, budgets, which
   cannot cap tokens on a `command` harness without `transcripts`.
-  [ADR-0028](adr-0028-run-history-ledger.md), the run ledger, which records
+  ADR-0028, the run ledger, which records
   the `template_unresolved` skip.
-  [ADR-0024](adr-0024-stack-installer-and-central-management.md), the stack
+  ADR-0024, the stack
   installer, whose persona templates may use `prompt_template`.
 * **Upstream:** first-class Pi and OMP depend on agent-trace's Pi reader
   handling OMP's session layout. The adapter story checks this with a fixture.

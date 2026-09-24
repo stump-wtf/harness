@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-22
 decision-makers: [joestump]
 extends: [ADR-0024, ADR-0005]
@@ -14,11 +14,11 @@ related: [ADR-0006, ADR-0008, ADR-0011, ADR-0016, ADR-0021, ADR-0026]
 
 ## Context and Problem Statement
 
-[ADR-0024](adr-0024-stack-installer-and-central-management.md) decided that
+ADR-0024 decided that
 `harness stack` writes, starts, checks and upgrades a pinned **Docker Compose**
-bundle, and rejected the native alternative on its Axis 2:
+bundle, and rejected the native alternative as its Decision 2, Option 2:
 
-> **2B — Native binaries under Harness**
+> **Option 2 — Native binaries under Harness**
 >
 > * Good, because Harness is a supervisor, and it would need no Docker.
 > * Bad, because a native Postgres and object store is a per-platform install
@@ -27,7 +27,7 @@ bundle, and rejected the native alternative on its Axis 2:
 
 Both objections are correct and both still hold. Neither is an objection to
 running **Switchboard and Cairn** natively. They are objections to *Harness
-installing a database* and to *Harness supervising one*. Option 2B bundled
+installing a database* and to *Harness supervising one*. That option bundled
 three things together — native service binaries, a Harness-installed Postgres,
 and supervision as resident harnesses — and rejecting the bundle rejected the
 one part that was never the problem.
@@ -61,12 +61,12 @@ Four facts on `origin/main` decide how expensive this actually is.
   and cannot be a signature, and a decision that assumes otherwise would be
   unimplementable on the day it landed.
 * **Harness already writes service units — for itself.**
-  [ADR-0005](adr-0005-supervision-and-lifecycle.md) put the daemon's own boot
+  ADR-0005 put the daemon's own boot
   integration in `systemd --user` on Linux and a launchd LaunchAgent on macOS,
-  and `docs/guides/run-as-a-service.md` ships both shapes. Generating a unit is
+  and the [run-as-a-service guide](../guides/run-as-a-service.md) ships both shapes. Generating a unit is
   an idiom this project already owns, tests and documents.
 
-One fact cuts the other way, and is the reason this is not simply "2A with
+One fact cuts the other way, and is the reason this is not simply "ADR-0024's Decision 2, Option 1 with
 binaries": SPEC-0018 REQ-15 requires Postgres to hold **one database and one
 role per service**, each role owning only its own database. On a Compose bundle
 Harness creates that cluster and can guarantee it. On the operator's Postgres,
@@ -99,56 +99,57 @@ to supervise?**
 
 ## Considered Options
 
-The decision has four parts. Axis A and Axis B together are exactly the split
-inside ADR-0024's option 2B.
+The decision has four parts. Decisions 1 and 2 together are exactly the split
+inside ADR-0024's Decision 2, Option 2.
 
-**Axis A: whether a native path exists at all.**
+### Decision 1 — Whether a native path exists at all
 
-* **A1. A hybrid native runtime.** Harness installs pinned Switchboard and Cairn
+* **Option 1 — A hybrid native runtime.** Harness installs pinned Switchboard and Cairn
   binaries and writes service units for them; Postgres and the object store are
   the operator's, required as inputs and verified, never installed.
-* **A2. Compose only.** ADR-0024 unchanged. An operator without Docker installs
+* **Option 2 — Compose only.** ADR-0024 unchanged. An operator without Docker installs
   by hand and gets none of the installer.
-* **A3. Full native, including datastores.** Harness installs and manages
-  Postgres and an object store per platform. This is the half of 2B that
-  ADR-0024's first objection rejects.
+* **Option 3 — Full native, including datastores.** Harness installs and manages
+  Postgres and an object store per platform. This is the half of ADR-0024's
+  Decision 2, Option 2 that its first objection rejects.
 
-**Axis B: how the native processes are supervised.**
+### Decision 2 — How the native processes are supervised
 
-* **B1. Generated service units that the OS supervises** — a launchd
+* **Option 1 — Generated service units that the OS supervises** — a launchd
   LaunchAgent on macOS, a `systemd --user` unit on Linux — written by
   `harness stack`, owned by the operator's login session.
-* **B2. Resident harnesses under the Harness daemon.** This is the half of 2B
-  that ADR-0024's second objection rejects.
-* **B3. Nothing.** Harness writes a bundle and prints the commands; the operator
+* **Option 2 — Resident harnesses under the Harness daemon.** This is the half of ADR-0024's
+  Decision 2, Option 2 that its second objection rejects.
+* **Option 3 — Nothing.** Harness writes a bundle and prints the commands; the operator
   starts the processes.
 
-**Axis C: where binaries come from and how they are verified.**
+### Decision 3 — Where binaries come from and how they are verified
 
-* **C1. Pinned release artifacts named by the embedded manifest, verified
+* **Option 1 — Pinned release artifacts named by the embedded manifest, verified
   against a SHA-256 recorded *in the manifest*,** with signature verification
   enabled per component the moment a product publishes signatures.
-* **C2. The release's own `checksums.txt`.** Fetch the artifact and its checksum
+* **Option 2 — The release's own `checksums.txt`.** Fetch the artifact and its checksum
   file from the same release.
-* **C3. `go install` at a pinned version.**
-* **C4. Build from a pinned source tag on the operator's host.**
+* **Option 3 — `go install` at a pinned version.**
+* **Option 4 — Build from a pinned source tag on the operator's host.**
 
-**Axis D: the datastores.**
+### Decision 4 — The datastores
 
-* **D1. External and required.** Connection details are mandatory inputs;
+* **Option 1 — External and required.** Connection details are mandatory inputs;
   Harness verifies reachability, version, privileges and isolation, and refuses
   to install or start either one.
-* **D2. Harness installs them** per platform (Homebrew, apt, a downloaded
+* **Option 2 — Harness installs them** per platform (Homebrew, apt, a downloaded
   Postgres).
-* **D3. Embedded substitutes** — SQLite and a filesystem blob store — for the
+* **Option 3 — Embedded substitutes** — SQLite and a filesystem blob store — for the
   native path only.
 
 ## Decision Outcome
 
-Chosen options: **A1** (a hybrid native runtime), **B1** (generated service
-units the OS supervises), **C1** (manifest-pinned artifacts verified by a digest
-recorded in the manifest, signatures when they exist), and **D1** (the
-datastores are external, required and verified).
+Chosen options: **Decision 1, Option 1** (a hybrid native runtime),
+**Decision 2, Option 1** (generated service units the OS supervises),
+**Decision 3, Option 1** (manifest-pinned artifacts verified by a digest
+recorded in the manifest, signatures when they exist), and
+**Decision 4, Option 1** (the datastores are external, required and verified).
 
 In one sentence: `harness stack` gains a `runtime` of `docker` or `native`;
 under `native` it downloads the manifest's pinned Switchboard and Cairn server
@@ -159,9 +160,9 @@ correctly separated before writing anything — and then runs the **same**
 version verification, the same end-to-end self-test, and the same upgrade and
 rollback flow as the Compose path.
 
-### Exactly what this adopts from 2B, and what it still rejects
+### Exactly what this adopts from ADR-0024's Decision 2, Option 2, and what it still rejects
 
-| ADR-0024 option 2B, taken apart | Verdict here | Why |
+| ADR-0024 Decision 2, Option 2, taken apart | Verdict here | Why |
 |---|---|---|
 | Switchboard and Cairn run as **native binaries**, no Docker | **Adopted** | Switchboard already ships a server binary; Cairn needs one published. Neither objection in ADR-0024 was about this. |
 | Harness installs a **native Postgres** | **Still rejected**, unchanged | "A native Postgres and object store is a per-platform install problem." It still is. The operator brings one. |
@@ -177,14 +178,15 @@ native` refuses rather than helpfully installing one.
 
 ### What changes in ADR-0024
 
-ADR-0024's Axis 2 decision becomes: **2A for the Docker runtime, and a
-constrained 2B — its binaries and none of its datastore or supervision
+ADR-0024's Decision 2 becomes: **Option 1 for the Docker runtime, and a
+constrained Option 2 — its binaries and none of its datastore or supervision
 claims — for the native runtime.** Nothing else in ADR-0024 changes: the
-installer still lives in Harness (1A), still pins from a tested embedded
-manifest (3A), still provisions as the signed-in user with no bootstrap
-credential (4A), still writes per-persona client files with secrets by
-reference (5A), and still proves the install with an end-to-end self-test
-compared by content (6A). `harness init` is untouched — it connects a client to
+installer still lives in Harness (Decision 1, Option 1), still pins from a
+tested embedded manifest (Decision 3, Option 1), still provisions as the
+signed-in user with no bootstrap credential (Decision 4, Option 1), still
+writes per-persona client files with secrets by reference (Decision 5,
+Option 1), and still proves the install with an end-to-end self-test compared
+by content (Decision 6, Option 1). `harness init` is untouched — it connects a client to
 an instance and does not care how that instance's processes were started.
 
 ### Runtime selection
@@ -198,13 +200,23 @@ whichever set was running before unmanaged and still holding the port.
 
 ### Supervision, and where the line sits
 
-```
-launchd / systemd --user  ──supervises──▶  switchboard serve
-                          ──supervises──▶  cairnd
-                          ──supervises──▶  harness daemon  ──supervises──▶  agents
+```mermaid
+flowchart LR
+    init["launchd / systemd --user"]:::external
+    sb["switchboard serve"]:::external
+    cairnd["cairnd"]:::external
+    daemon["harness daemon"]:::daemon
+    agents["agents"]:::agent
+    stack["harness stack"]:::client
+    files["binaries + units"]:::store
+    data["Postgres, object store"]:::store
 
-harness stack             ──writes, verifies, upgrades──▶  binaries + units
-                          ──connects to, verifies, never manages──▶  Postgres, object store
+    init -->|supervises| sb
+    init -->|supervises| cairnd
+    init -->|supervises| daemon
+    daemon -->|supervises| agents
+    stack -->|writes, verifies, upgrades| files
+    stack -.->|connects to, verifies, never manages| data
 ```
 
 This is ADR-0005's diagram with two more units in it. The Harness daemon's job
@@ -215,7 +227,7 @@ Units are **user-scoped**: `gui/<uid>` on macOS, `systemd --user` on Linux. No
 subcommand writes to `/Library/LaunchDaemons`, `/etc/systemd/system`, or
 anything else needing `sudo`. A server that must survive logout is a
 `loginctl enable-linger` instruction in the docs, the same answer
-`run-as-a-service.md` already gives for the daemon — not a privilege Harness
+the run-as-a-service guide already gives for the daemon — not a privilege Harness
 acquires.
 
 ### Verification, honestly scoped
@@ -251,32 +263,32 @@ for it would be used.
 
 ### Consequences
 
-* **Good:** an operator with no Docker gets the whole installer — the pinned
+* Good, because an operator with no Docker gets the whole installer — the pinned
   manifest, the reported versions, the upgrade plan with a pre-upgrade dump and
   a rollback, `doctor`, and the self-test that proves an agent claimed a real
   todo and wrote a real artifact.
-* **Good:** ADR-0024's objections are preserved as written rather than
-  re-litigated, and the record says which half of 2B it takes.
-* **Good:** it reuses what exists — ADR-0005's unit idiom, SPEC-0018's manifest,
+* Good, because ADR-0024's objections are preserved as written rather than
+  re-litigated, and the record says which half of ADR-0024's Decision 2, Option 2 it takes.
+* Good, because it reuses what exists — ADR-0005's unit idiom, SPEC-0018's manifest,
   lock, self-test, upgrade and doctor. The second runtime is a fetch-and-unit
   layer under an unchanged command surface, not a second installer.
-* **Good:** it forces a packaging fix worth having on its own: Cairn publishes
+* Good, because it forces a packaging fix worth having on its own: Cairn publishes
   a server artifact, distinctly from its CLI, instead of the server being
   reachable only as a container image.
-* **Bad:** two runtimes is two upgrade paths, two doctor check sets, and two CI
+* Bad, because two runtimes is two upgrade paths, two doctor check sets, and two CI
   matrices. CI must exercise the native path on macOS and Linux, or "native is
   first-class" is a claim rather than a property.
-* **Bad:** the installer acquires platform-specific code — `launchctl bootstrap`
+* Bad, because the installer acquires platform-specific code — `launchctl bootstrap`
   versus `systemctl --user`, plist versus unit file, and their differing
   restart, environment and logging semantics.
-* **Bad:** Harness can verify the operator's Postgres but cannot keep it
+* Bad, because Harness can verify the operator's Postgres but cannot keep it
   correct. An operator who later grants Cairn's role access to Switchboard's
   database will pass `stack init` and fail `stack doctor`, which is the right
   place for it to surface and is still later than a bundle Harness built.
-* **Bad:** Windows is out. Neither `launchd` nor `systemd --user` exists there,
+* Bad, because Windows is out. Neither `launchd` nor `systemd --user` exists there,
   and a Windows service installer is not in scope. `--runtime native` refuses on
   Windows with a named error rather than degrading.
-* **Neutral:** the native path has no digest to compare a running container
+* Neutral, because the native path has no digest to compare a running container
   against, so `stack status` compares the installed binary's SHA-256 and the
   service's reported version against the lock. That is the same property REQ-20
   asserts, measured differently.
@@ -310,7 +322,9 @@ testable requirements. Acceptance tests include:
 
 ## Pros and Cons of the Options
 
-### A1 — A hybrid native runtime (chosen)
+### Decision 1 — Whether a native path exists at all
+
+#### Option 1 — A hybrid native runtime (chosen)
 
 * Good, because it serves an operator with no Docker without Harness acquiring
   a datastore to install or supervise.
@@ -320,20 +334,22 @@ testable requirements. Acceptance tests include:
 * Bad, because it depends on Cairn publishing a server artifact it does not
   publish today.
 
-### A2 — Compose only
+#### Option 2 — Compose only
 
 * Good, because it is one path, one CI matrix, one upgrade story.
 * Bad, because it excludes an operator whose objection to Docker is not
   ignorance of it, and hands them a hand-assembled stack — which is the failure
   ADR-0024 was written to end.
 
-### A3 — Full native, including datastores
+#### Option 3 — Full native, including datastores
 
-* Bad, for the reason ADR-0024 gave: a native Postgres and object store is a
+* Bad, because, as ADR-0024 found, a native Postgres and object store is a
   per-platform install problem, and it makes Harness responsible for the
   durability of data it has no story for backing up.
 
-### B1 — Generated service units (chosen)
+### Decision 2 — How the native processes are supervised
+
+#### Option 1 — Generated service units (chosen)
 
 * Good, because the OS's service manager already does restart, boot start and
   log routing, and ADR-0005 already chose it for the daemon.
@@ -342,22 +358,24 @@ testable requirements. Acceptance tests include:
 * Bad, because plist and `.service` semantics differ enough that the
   generator needs real per-platform tests, not one template with substitutions.
 
-### B2 — Resident harnesses under the daemon
+#### Option 2 — Resident harnesses under the daemon
 
 * Good, because it would need no platform-specific code.
-* Bad, for the reason ADR-0024 gave: the daemon's restart policies are built for
+* Bad, because, as ADR-0024 found, the daemon's restart policies are built for
   agent runs, which are expected to exit. A server that exits is an incident,
   and conflating the two makes both worse.
 * Bad, because the daemon would then have to be running for the stack to be
   running, so `harness daemon stop` would take down Switchboard and Cairn.
 
-### B3 — Print the commands
+#### Option 3 — Print the commands
 
 * Bad, because "the installer that does not install" reproduces the week of
   hand-assembly this whole capability exists to remove, and leaves nothing for
   `upgrade`, `status` or `doctor` to act on.
 
-### C1 — Manifest-pinned artifacts, digest in the manifest (chosen)
+### Decision 3 — Where binaries come from and how they are verified
+
+#### Option 1 — Manifest-pinned artifacts, digest in the manifest (chosen)
 
 * Good, because the digest comes from the artifact Harness's own release tested,
   not from a file served by whoever served the binary.
@@ -367,24 +385,26 @@ testable requirements. Acceptance tests include:
 * Bad, because every component version bump is a manifest change with a digest,
   which is Renovate's job and a CI gate rather than a human's.
 
-### C2 — The release's `checksums.txt`
+#### Option 2 — The release's `checksums.txt`
 
 * Good, because it needs no manifest field.
 * Bad, because an attacker who can serve the artifact can serve the checksum
   file, so it verifies transport and nothing else.
 
-### C3 — `go install` at a pinned version
+#### Option 3 — `go install` at a pinned version
 
 * Bad, because it requires a Go toolchain on the operator's host, builds
   something the project never tested, and — as the module path of a mirrored
   repository already demonstrates elsewhere in this fleet — resolves against
   whatever the proxy holds rather than the release.
 
-### C4 — Build from source
+#### Option 4 — Build from source
 
-* Bad, for the same reasons plus a compiler, a clone and minutes per install.
+* Bad, because of the same reasons plus a compiler, a clone and minutes per install.
 
-### D1 — External, required, verified (chosen)
+### Decision 4 — The datastores
+
+#### Option 1 — External, required, verified (chosen)
 
 * Good, because it is ADR-0024's first objection honoured rather than
   worked around, and because the operator's Postgres is usually the one thing
@@ -392,11 +412,11 @@ testable requirements. Acceptance tests include:
 * Bad, because isolation becomes a check that can pass at install and rot
   afterwards.
 
-### D2 — Harness installs Postgres
+#### Option 2 — Harness installs Postgres
 
-* Bad: rejected by ADR-0024 and not revisited here.
+* Bad, because ADR-0024 rejected it and this record does not revisit it.
 
-### D3 — Embedded SQLite and a filesystem store
+#### Option 3 — Embedded SQLite and a filesystem store
 
 * Bad, because it makes the native path a different product with different
   durability, different concurrency and a migration nobody wants, which is the
@@ -510,16 +530,16 @@ who owns what they hold.
 
 ## More Information
 
-* [ADR-0024: Stack installer and centralized stack management](adr-0024-stack-installer-and-central-management.md)
-  — the record this extends, and the source of options 2A and 2B.
-* [ADR-0005: Supervision and lifecycle](adr-0005-supervision-and-lifecycle.md)
+* ADR-0024 (Stack installer and centralized stack management)
+  — the record this extends, and the source of its Decision 2, Options 1 and 2.
+* ADR-0005 (Supervision and lifecycle)
   — the existing decision that the OS supervises the Harness daemon through
   `systemd --user` or a LaunchAgent.
-* [SPEC-0018: Stack installer and centralized stack management](../openspec/specs/stack-installer/spec.md)
+* SPEC-0018 (Stack installer and centralized stack management)
   — the requirements the native runtime extends; REQ-15, REQ-16, REQ-17, REQ-20
   through REQ-25 and REQ-27 are the ones it restates for a second runtime.
 * SPEC-0024 — the companion spec for this ADR. It is a separate record because
   the pull request accepting the Stumply design set is still open against
   SPEC-0018; folding it in is tracked as a follow-up story on the stack
   installer epic.
-* `docs/guides/run-as-a-service.md` — the unit shapes the generator follows.
+* The [run-as-a-service guide](../guides/run-as-a-service.md) — the unit shapes the generator follows.

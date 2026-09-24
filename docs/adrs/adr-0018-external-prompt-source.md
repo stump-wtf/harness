@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-28
 decision-makers: [joestump]
 extends: [ADR-0006, ADR-0011]
@@ -197,7 +197,7 @@ absence is easy to reverse later.
   already recognize.
 * Good, because it is explicit — unlike sniffing, the intent is written down.
 * Bad, because it needs a permanent escape rule (`@@`) for a prompt that
-  legitimately begins with `@`, which is not exotic: `@joestump-agent`,
+  legitimately begins with `@`, which is not exotic: `@review-bot`,
   `@claude`, and any prompt opening with a mention hit it.
 * Bad, because it overloads one field with two types, so the TUI dashboard,
   `harness list`, the wire, and `persisted.json` must each learn the convention
@@ -252,21 +252,21 @@ flowchart TD
 
 ## More Information
 
-* **Extends [ADR-0006](adr-0006-configuration-and-profiles.md)** — adds
+* **Extends ADR-0006** — adds
   `prompt_file` to the harness schema; the file remains hand-authored and the
   source of truth, and the new key holds a path so it stays one.
-* **Extends [ADR-0011](adr-0011-agent-adapters.md)** — `prompt_file` is an
+* **Extends ADR-0011** — `prompt_file` is an
   alternate source for the prompt ADR-0011 synthesizes into the agent argv;
   `PromptCommand` and the adapter interface are unchanged.
-* **Related [ADR-0008](adr-0008-security-and-secrets.md)** — `prompt_file`
+* **Related ADR-0008** — `prompt_file`
   follows `env_file` in keeping content out of the config, though a prompt is
   not a secret and the file is read into argv, which is world-visible in a
   process listing. Secrets still belong in `env_file`.
-* **Related [ADR-0009](adr-0009-project-scoped-config-and-compose-commands.md)** —
+* **Related ADR-0009** —
   a relative `prompt_file` in a project `harness.toml` resolves against the
   project root, matching `workdir` and `env_file`.
-* **Related [ADR-0013](adr-0013-scheduled-one-shot-jobs.md)** — scheduled
+* **Related ADR-0013** — scheduled
   one-shots are the motivating case, and the eager-validation rule follows the
   cron expression's precedent.
-* **Governs [SPEC-0006](../openspec/specs/agent-adapters/spec.md)** REQ
+* **Governs SPEC-0006** REQ
   "Prompt Source".

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-19
 decision-makers: [joestump]
 extends: [ADR-0006]
@@ -62,15 +62,16 @@ adopting Cobra + Viper to get it cost more than it returns?**
 
 ## Considered Options
 
-* **Option 1: Cobra for commands + Viper for process settings, BurntSushi
+* **Option 1 — Cobra for commands + Viper for process settings, BurntSushi
   retained for the domain tables (chosen)**
-* **Option 2: Viper for everything, including `[harness.*]` and `[profile.*]`**
-* **Option 3: Hand-rolled `os.Getenv` layer, keep stdlib `flag`**
-* **Option 4: Cobra only — subcommands, but no environment layer**
+* **Option 2 — Viper for everything, including `[harness.*]` and `[profile.*]`**
+* **Option 3 — Hand-rolled `os.Getenv` layer, keep stdlib `flag`**
+* **Option 4 — Cobra only: subcommands, but no environment layer**
 
 ## Decision Outcome
 
-Chosen option: **Option 1**. Cobra owns the command tree, Viper owns the
+Chosen option: **Option 1 — Cobra for commands + Viper for process settings**,
+because the two libraries do different jobs. Cobra owns the command tree, Viper owns the
 precedence ladder for *process settings only*, and `BurntSushi/toml` keeps
 parsing the domain tables that carry line numbers.
 
@@ -160,7 +161,7 @@ harness without one.**
 
 ## Pros and Cons of the Options
 
-### Option 1: Cobra + Viper for process settings, BurntSushi for domain tables
+### Option 1 — Cobra + Viper for process settings, BurntSushi for domain tables
 
 * Good, because each library does the job it is actually good at
 * Good, because the environment layer is ~20 lines of `BindPFlag` rather than a
@@ -171,7 +172,7 @@ harness without one.**
   +14 modules, including a second TOML parser and a YAML parser that are dead
   weight here
 
-### Option 2: Viper for everything
+### Option 2 — Viper for everything
 
 * Good, because there is exactly one config reader
 * Good, because full twelve-factor purity — no file needed for anything
@@ -183,7 +184,7 @@ harness without one.**
 * Bad, because it requires a name-mangling scheme for harness names that cannot
   be reliably inverted
 
-### Option 3: Hand-rolled `os.Getenv` layer, keep stdlib `flag`
+### Option 3 — Hand-rolled `os.Getenv` layer, keep stdlib `flag`
 
 * Good, because zero new dependencies
 * Good, because it could ship in an afternoon
@@ -193,7 +194,7 @@ harness without one.**
 * Bad, because every new setting means remembering to add a fourth branch by
   hand, which is precisely the kind of thing that silently rots
 
-### Option 4: Cobra only, no environment layer
+### Option 4 — Cobra only, no environment layer
 
 * Good, because it fixes the flag parsing without a config rewrite
 * Bad, because it does not solve the stated problem at all — the twelve-factor
@@ -254,8 +255,7 @@ graph TD
     (config)"* reaches the same two conclusions independently: precedence
     `defaults < file < env < flags`, and **`pflag.Changed`-aware binding** as the
     mechanism, for the same reason given above ("a flag only wins when typed").
-    It also carries a 2026-07 amendment softening its secrets rule for a desktop
-    UI — a useful precedent if Harness ever grows a settings surface, though
+    It also softens its secrets rule for a desktop UI — a useful precedent if Harness ever grows a settings surface, though
     ADR-0008 keeps credentials out of `HARNESS_*` here.
   * `joe-links` ADR-0004 *"CLI Framework — Cobra + Viper with JOE_ Environment
     Variable Prefix"* takes the lighter path: `SetEnvPrefix` + `AutomaticEnv`

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-07-27
 decision-makers: [joestump]
 extends: [ADR-0006]
@@ -98,8 +98,11 @@ skill_paths = ["~/work/team-skills"]
 
 ### Ordered precedence, not a flat union
 
-```
-adapter defaults → global skill_paths → project skill_paths → project-local dirs
+```mermaid
+flowchart LR
+    a["adapter defaults"]:::store --> g["global skill_paths"]:::store
+    g --> p["project skill_paths"]:::store
+    p --> l["project-local dirs"]:::store
 ```
 
 Nearest wins on a name collision. Shadowed copies remain listable so the winner
@@ -258,19 +261,19 @@ ADR-0002 agnosticism.
 
 ## More Information
 
-* **Extends [ADR-0006](adr-0006-configuration-and-profiles.md)** — adds
+* **Extends ADR-0006** — adds
   `skill_paths`, `use_default_skill_paths`, and `agent` to the harness schema;
   the file remains hand-authored and the source of truth.
-* **Related [ADR-0003](adr-0003-terminal-multiplexing.md)** — `agent` follows the
+* **Related ADR-0003** — `agent` follows the
   `backend` precedent: a registry key the daemon dispatches on without
   understanding.
-* **Related [ADR-0007](adr-0007-state-persistence-scrollback.md)** — the
+* **Related ADR-0007** — the
   scrollback ring is the trajectory fallback when an adapter reports no native
   transcript.
-* **Related [ADR-0009](adr-0009-project-scoped-config-and-compose-commands.md)** —
+* **Related ADR-0009** —
   reuses the project-root up-walk and per-harness provenance; `skill_paths` is
   deliberately excluded from the global-only table list.
-* **Governs [SPEC-0006](../openspec/specs/agent-adapters/spec.md)**.
-* Consumed by [ADR-0010](adr-0010-local-mcp-surface.md) (trajectory read tools)
-  and [ADR-0012](adr-0012-cross-harness-distillation.md) (trajectories in,
+* **Governs SPEC-0006**.
+* Consumed by ADR-0010 (trajectory read tools)
+  and ADR-0012 (trajectories in,
   learned skills out).

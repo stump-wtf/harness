@@ -53,8 +53,8 @@ Under Harness, every start is often unattended:
 The evidence comes from customers. In the Discord thread behind Operation
 Stumply, self-hosting customers running Claude Code (most use a Claude Max
 subscription) hit the per-start confirmation as the first obstacle to an
-unattended worker. The proposal lists it as F-H8, and Joe approved automatic
-confirmation on two conditions: it logs a warning every time it fires, and the
+unattended worker. The proposal lists it as F-H8, and automatic
+confirmation is accepted on two conditions: it logs a warning every time it fires, and the
 docs call it out loudly.
 
 How does Harness let an operator run a resident Claude Code session with a
@@ -88,23 +88,23 @@ other than the operator?
 
 ## Considered Options
 
-* **1. Status quo.** Document `harness attach` and confirm by hand after every
+* **Option 1 — Status quo.** Document `harness attach` and confirm by hand after every
   start.
-* **2. Harness auto-confirms over the PTY**, per configured entry, against a
+* **Option 2 — Harness auto-confirms over the PTY**, per configured entry, against a
   table of known dialog signatures.
-* **3. An `expect`-style wrapper**, run as a `generic` or `command` harness
+* **Option 3 — An `expect`-style wrapper**, run as a `generic` or `command` harness
   that answers the dialog itself.
-* **4. Require the Team/Enterprise path**: the channel as a plugin, the admin's
+* **Option 4 — Require the Team/Enterprise path**: the channel as a plugin, the admin's
   `allowedChannelPlugins`, and `--channels plugin:…`.
-* **5. Use ADR-0021 instead**: daemon-held channels and one-shots, no resident
+* **Option 5 — Use ADR-0021 instead**: daemon-held channels and one-shots, no resident
   Claude Code worker.
-* **6. Suppress the dialog inside Claude Code** with a setting or environment
+* **Option 6 — Suppress the dialog inside Claude Code** with a setting or environment
   variable.
 
 ## Decision Outcome
 
-Chosen option: **2**, auto-confirmation over the PTY, opt-in per entry, with
-options 4 and 5 documented as the preferred paths where they apply. Option 6
+Chosen option: **Option 2 — Harness auto-confirms over the PTY**, opt-in per
+entry, with Options 4 and 5 documented as the preferred paths where they apply. Option 6
 has no documented mechanism, and relying on undocumented internals would be
 worse than the dialog.
 
@@ -302,13 +302,13 @@ attention state, logging, doctor and metrics. Acceptance includes:
 
 ## Pros and Cons of the Options
 
-### 1. Status quo: attach and confirm
+### Option 1 — Status quo: attach and confirm
 
 * Good, because a human reads the dialog every time, exactly as designed.
 * Bad, because every unattended restart parks the worker while it looks healthy,
   so resident Claude Code channel workers are impractical under supervision.
 
-### 2. Auto-confirm over the PTY (chosen)
+### Option 2 — Auto-confirm over the PTY (chosen)
 
 * Good, because consent is explicit, exact and logged, and unknown text fails
   safe.
@@ -318,7 +318,7 @@ attention state, logging, doctor and metrics. Acceptance includes:
   notice.
 * Bad, because it bypasses a confirmation Anthropic chose to show every time.
 
-### 3. An `expect`-style wrapper
+### Option 3 — An `expect`-style wrapper
 
 * Good, because Harness itself stays out of it.
 * Bad, because every operator writes their own, usually matching looser text and
@@ -327,7 +327,7 @@ attention state, logging, doctor and metrics. Acceptance includes:
 * Bad, because the wrapper hides Claude Code from the adapter, which costs
   trajectory, observation and model reachability.
 
-### 4. Require the Team/Enterprise plugin path
+### Option 4 — Require the Team/Enterprise plugin path
 
 * Good, because no confirmation is bypassed at all. The organization's admin
   made the decision.
@@ -335,7 +335,7 @@ attention state, logging, doctor and metrics. Acceptance includes:
   that is the customer case.
 * Kept as the documented first choice where available.
 
-### 5. ADR-0021 one-shots instead
+### Option 5 — ADR-0021 one-shots instead
 
 * Good, because no development flag is involved at all. The daemon holds the
   channel and the agent is plain `claude -p`.
@@ -344,7 +344,7 @@ attention state, logging, doctor and metrics. Acceptance includes:
   so).
 * Kept as the documented first choice for event-driven work.
 
-### 6. Suppress the dialog in Claude Code
+### Option 6 — Suppress the dialog in Claude Code
 
 * Good, because it would be clean, if it existed.
 * Bad, because no documented setting or variable does it. Relying on an
@@ -375,20 +375,20 @@ stateDiagram-v2
 
 ## More Information
 
-* **Extends [ADR-0005](adr-0005-supervision-and-lifecycle.md).** A supervised
+* **Extends ADR-0005.** A supervised
   restart of a Claude Code channel worker completes without a human, and a
   harness can carry an attention flag beside its lifecycle state.
-* **Extends [ADR-0011](adr-0011-agent-adapters.md).** A Claude Code adapter
+* **Extends ADR-0011.** A Claude Code adapter
   detector, adapter-scoped, as the session guard is Crush-scoped.
-* **Related [ADR-0003](adr-0003-terminal-multiplexing.md)** (the daemon-owned
-  emulator it reads), **[ADR-0008](adr-0008-security-and-secrets.md)**,
-  **[ADR-0019](adr-0019-operating-hours.md)** (hours releases are unattended
-  starts), and **[ADR-0021](adr-0021-on-demand-one-shots.md)** (the no-flag
+* **Related ADR-0003** (the daemon-owned
+  emulator it reads), **ADR-0008**,
+  **ADR-0019** (hours releases are unattended
+  starts), and **ADR-0021** (the no-flag
   path for one-shots).
 * **Related records accepted with this one (2026-09-22):**
-  [ADR-0023](adr-0023-command-one-shots-and-templating.md) (a `command`
+  ADR-0023 (a `command`
   harness cannot use this key) and
-  [ADR-0024](adr-0024-stack-installer-and-central-management.md) (`harness
+  ADR-0024 (`harness
   init` writes the key only for a persona whose user opted in), both linked in
   the front matter. Switchboard ADR-0030 (doorbell acknowledgement and doctor,
   the delivery proof this feature lacks) is cross-repo and stays cited by

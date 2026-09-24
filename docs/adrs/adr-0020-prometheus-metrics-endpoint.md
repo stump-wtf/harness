@@ -1,9 +1,9 @@
 ---
 status: accepted
 date: 2026-09-15
-decision-makers: Joe Stump
-extends: [adr-0003, adr-0005]
-related: [adr-0013]
+decision-makers: [joestump]
+extends: [ADR-0003, ADR-0005]
+related: [ADR-0013]
 ---
 
 # ADR-0020: Harness Exposes Prometheus Metrics, Led by Model Reachability
@@ -48,16 +48,16 @@ on "is it running" reports green through this entire class of outage.
 
 ## Considered Options
 
-* **Status quo: `harness list` plus reading logs.** Rejected — that is the
-  configuration that produced the blind spot.
-* **Make `harness list` show a degraded state, and nothing else.** Useful, and
-  tracked separately, but it is a human-facing surface. It cannot alert and it
-  has no history, so it answers "is it broken now" and never "when did it start".
-* **Log-derived metrics.** Rejected: it infers a state machine from error text,
-  which is fragile precisely where provider error strings vary.
-* **`GET /metrics` in Prometheus text format.** Chosen.
+* Option 1 — Status quo: `harness list` plus reading logs
+* Option 2 — Make `harness list` show a degraded state, and nothing else
+* Option 3 — Log-derived metrics
+* Option 4 — `GET /metrics` in Prometheus text format
 
 ## Decision Outcome
+
+Chosen option: **Option 4 — `GET /metrics` in Prometheus text format**, because
+it is the only option that makes "running but unable to work" alertable and
+gives it history.
 
 The Harness daemon exposes **`GET /metrics`** in Prometheus text format via
 `prometheus/client_golang`'s `promhttp`, on its own listener bound by default to
@@ -66,7 +66,7 @@ loopback, with the bind address configurable in `harness.toml`.
 The metric set is led by **model reachability**, and the distinction the
 2026-09-14 outage needed is mandatory:
 
-```
+```text
 harness_harness_state{harness,state}              gauge   running|failed|stopped|flapping
 harness_model_calls_total{harness,outcome}        counter success|error
 harness_model_call_errors_total{harness,class}    counter quota|auth|timeout|transport|other
@@ -98,18 +98,55 @@ SPEC-0013 defines names, labels and types.
 
 ### Consequences
 
-* Good: "running but unable to work" becomes alertable, and the entry into
+* Good, because "running but unable to work" becomes alertable, and the entry into
   terminal `failed` becomes a graph with a timestamp rather than a discovery.
-* Good: a fleet-wide provider outage is visible as a simultaneous edge across
+* Good, because a fleet-wide provider outage is visible as a simultaneous edge across
   every harness, which distinguishes it from one bad agent.
-* Good: restart churn gets history, so a harness quietly consuming a metered
+* Good, because restart churn gets history, so a harness quietly consuming a metered
   budget on failing launches is visible before the budget is gone.
-* Bad: a new dependency and a listener that did not previously exist.
-* Bad: harness names are operator-chosen labels. They are bounded in practice
+* Bad, because it adds a new dependency and a listener that did not previously exist.
+* Bad, because harness names are operator-chosen labels. They are bounded in practice
   (single digits per host) but the cap in SPEC-0013 exists because "in practice"
   is not a guarantee.
-* Neutral: loopback-by-default means remote scraping requires a deliberate
+* Neutral, because loopback-by-default means remote scraping requires a deliberate
   config change per host, which is the intent.
+
+### Confirmation
+
+* `GET /metrics` on the configured `[server] metrics_listen` address (loopback
+  by default) returns Prometheus text carrying the families SPEC-0013 names,
+  including `harness_last_successful_call_timestamp`.
+* A harness whose model calls fail with HTTP 429 while its process stays up
+  shows `harness_harness_state{state="running"} == 1` and a growing
+  `time() - harness_last_successful_call_timestamp`.
+
+## Pros and Cons of the Options
+
+### Option 1 — Status quo: `harness list` plus reading logs
+
+* Good, because it needs no new code or listener.
+* Bad, because that is the configuration that produced the blind spot.
+
+### Option 2 — A degraded state in `harness list`, and nothing else
+
+* Good, because it gives a human the answer at a glance, and it is tracked
+  separately as a complement.
+* Bad, because it is a human-facing surface: it cannot alert and it has no
+  history, so it answers "is it broken now" and never "when did it start".
+
+### Option 3 — Log-derived metrics
+
+* Good, because the daemon would need no new listener.
+* Bad, because it infers a state machine from error text, which is fragile
+  precisely where provider error strings vary.
+
+### Option 4 — `GET /metrics` in Prometheus text format
+
+* Good, because the operator's existing Prometheus-compatible stack can scrape,
+  graph and alert on it.
+* Good, because the daemon classifies errors at the point of failure, so alerts
+  need no regexes over error text.
+* Bad, because it adds a dependency and a listener.
 
 ## More Information
 

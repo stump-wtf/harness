@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-09-22
 decision-makers: [joestump]
 extends: [ADR-0012]
@@ -82,50 +82,51 @@ sees it, and how does it reach that human?**
 
 Five questions.
 
-**1. What a skill's content is grounded in**
+### Decision 1 — What a skill's content is grounded in
 
-* 1A — Trajectories alone (ADR-0012).
-* 1B — Source code, mined across whole repositories (Code2Skill).
-* 1C — Trajectories find the candidates; the merged pull request that ended the
+* Option 1 — Trajectories alone (ADR-0012).
+* Option 2 — Source code, mined across whole repositories (Code2Skill).
+* Option 3 — Trajectories find the candidates; the merged pull request that ended the
   struggle grounds them.
 
-**2. How a candidate is checked before review**
+### Decision 2 — How a candidate is checked before review
 
-* 2A — Human review only (ADR-0012).
-* 2B — A model grades the skill text.
-* 2C — Source-blind reconstruction with a separate judge and adjudicator (the
+* Option 1 — Human review only (ADR-0012).
+* Option 2 — A model grades the skill text.
+* Option 3 — Source-blind reconstruction with a separate judge and adjudicator (the
   paper's gate), plus the repository's own tests, and a run without the skill
   when the change is small enough to replay.
 
-**3. How a skill reaches review**
+### Decision 3 — How a skill reaches review
 
-* 3A — A `status: proposed` file in the local store, flipped by hand
+* Option 1 — A `status: proposed` file in the local store, flipped by hand
   (ADR-0012).
-* 3B — A Cairn artifact or Switchboard todo for the operator.
-* 3C — A pull request for every change to any skill surface. Merging is
+* Option 2 — A Cairn artifact or Switchboard todo for the operator.
+* Option 3 — A pull request for every change to any skill surface. Merging is
   promotion.
 
-**4. What runs the pipeline**
+### Decision 4 — What runs the pipeline
 
-* 4A — A daemon subsystem.
-* 4B — A distiller agent following a prompt, doing forge work with `gh` and
+* Option 1 — A daemon subsystem.
+* Option 2 — A distiller agent following a prompt, doing forge work with `gh` and
   `tea`.
-* 4C — Deterministic `harness distill` commands. Each model call is a separate
+* Option 3 — Deterministic `harness distill` commands. Each model call is a separate
   child process whose inputs, environment and tools are fixed by code.
 
-**5. Where skills live, and who decides what gets distilled**
+### Decision 5 — Where skills live, and who decides what gets distilled
 
-* 5A — One learned store and one global `[distill]` table with a fixed
+* Option 1 — One learned store and one global `[distill]` table with a fixed
   cross-project threshold. Single-repository findings go into each repository's
   native skill or context files.
-* 5B — Any number of declared **skill repos**, each served by search to the
+* Option 2 — Any number of declared **skill repos**, each served by search to the
   harnesses it names. Distillation is configured on ordinary harnesses (the
   **distillers**), and each distiller names the harnesses it learns from, the
   skill repo it proposes to, and its own threshold.
 
 ## Decision Outcome
 
-Chosen: **1C, 2C, 3C, 4C, 5B.**
+Chosen options: **Decision 1, Option 3**, **Decision 2, Option 3**,
+**Decision 3, Option 3**, **Decision 4, Option 3** and **Decision 5, Option 2**.
 
 In one sentence: sessions show *where* agents struggled; the merged, green,
 unreverted pull request that ended the struggle shows *what the fix was*; a
@@ -207,7 +208,7 @@ reviewers = ["your-reviewer"]
 * **A distiller is a `command` one-shot** (ADR-0023) whose argv runs
   `harness distill run <name>`. Until that kind lands, there is no supported
   distiller. A prompt harness would put the forge token and the webhook payload
-  inside an agent, which is option 4B. `to` names one skill repo, and
+  inside an agent, which is Decision 4, Option 2. `to` names one skill repo, and
   `min_repos` (default 1) replaces ADR-0012's fixed threshold. A project-level
   tier and a stack-level tier are simply two distillers with different `from`,
   `to` and `min_repos`.
@@ -632,7 +633,7 @@ path into the real home directory is caught by the audit, not prevented.
   two of them full agent sessions. `max_candidates`, `max_reverify` and
   `replay_max_lines` bound the cost.
 * Bad, because there is no supported distiller until ADR-0023's `command` kind
-  lands. A prompt-harness stopgap would reintroduce option 4B.
+  lands. A prompt-harness stopgap would reintroduce Decision 4, Option 2.
 * Bad, because Harness cannot enforce who merges. The skill repo's branch
   protection must, and an operator who leaves it open lets an agent promote its
   own skills.
@@ -666,7 +667,7 @@ path into the real home directory is caught by the audit, not prevented.
 
 ### Confirmation
 
-SPEC-0007, as revised, turns this into requirements. The acceptance tests that
+SPEC-0007 turns this into requirements. The acceptance tests that
 matter:
 
 * A candidate whose only evidence is a closed or reverted pull request produces
@@ -704,7 +705,9 @@ matter:
 
 ## Pros and Cons of the Options
 
-### 1A — Trajectories alone
+### Decision 1 — What a skill's content is grounded in
+
+#### Option 1 — Trajectories alone
 
 * Good, because it needs no forge access and sees work that never became a pull
   request.
@@ -715,7 +718,7 @@ matter:
 * Bad, because the literal error text it relies on is not in agent-trace's
   output.
 
-### 1B — Source code, mined across whole repositories
+#### Option 2 — Source code, mined across whole repositories
 
 * Good, because it is the paper's measured winner, needs no agent history, and
   grounds every claim in a span.
@@ -728,7 +731,7 @@ matter:
   model-written records, derived from other people's code, into agent context.
   That is a supply chain of untrusted instructions.
 
-### 1C — Trajectories find the candidates, merged pull requests ground them
+#### Option 3 — Trajectories find the candidates, merged pull requests ground them
 
 * Good, because the demand comes from where agents actually struggled, and the
   content from the reviewed, tested fix.
@@ -736,20 +739,22 @@ matter:
 * Neutral, because it needs forge reads and a ledger.
 * Bad, because it sees only what reached a merge.
 
-### 2A — Human review only
+### Decision 2 — How a candidate is checked before review
+
+#### Option 1 — Human review only
 
 * Good, because it is simple, and the human stays the final gate either way.
 * Bad, because the paper's audit judged about one accepted record in five not
   worth keeping even after verification. Without verification, the reviewer
   filters all of that alone.
 
-### 2B — A model grades the skill
+#### Option 2 — A model grades the skill
 
 * Good, because it is one cheap call.
 * Bad, because a grader that reads the skill and the evidence together can only
   judge whether the skill sounds plausible, and plausibility is what fails.
 
-### 2C — Blind reconstruction, tests and a control
+#### Option 3 — Blind reconstruction, tests and a control
 
 * Good, because the round trip catches omissions and invented constraints, the
   tests add the execution the paper lacked, and the control catches skills that
@@ -757,19 +762,21 @@ matter:
 * Bad, because it is the most expensive option, and its boundary rests on a
   filesystem convention plus an audit.
 
-### 3A — A local status field
+### Decision 3 — How a skill reaches review
+
+#### Option 1 — A local status field
 
 * Good, because it needs no forge.
 * Bad, because it has no reviewer, no notification, no record of rejections and
   no rate limit, and an unreviewed proposal is one hand edit away from promotion.
 
-### 3B — A Cairn artifact or Switchboard todo
+#### Option 2 — A Cairn artifact or Switchboard todo
 
 * Good, because it reaches the operator where they already work.
 * Bad, because approval would still need a second mechanism to change the store,
   and neither keeps the history of a change next to its content.
 
-### 3C — Pull requests everywhere
+#### Option 3 — Pull requests everywhere
 
 * Good, because review, diffs, history, rejection and CI come from existing
   machinery, and ADR-0012 already had to send project-scoped findings as pull
@@ -777,12 +784,14 @@ matter:
 * Bad, because every skill repo then requires a forge remote. There is no
   local-only mode.
 
-### 4A — A daemon subsystem
+### Decision 4 — What runs the pipeline
+
+#### Option 1 — A daemon subsystem
 
 * Bad, because it breaks the ADR-0012 and ADR-0008 fences for a batch job that
   gains nothing from living in the supervisor.
 
-### 4B — A distiller agent with `gh` and `tea`
+#### Option 2 — A distiller agent with `gh` and `tea`
 
 * Good, because it means the least code.
 * Bad, because prompts reliably get the most important invariants wrong: one
@@ -791,7 +800,7 @@ matter:
 * Bad, because the agent reading review comments would also hold the forge
   token.
 
-### 4C — Deterministic commands, isolated model runs
+#### Option 3 — Deterministic commands, isolated model runs
 
 * Good, because the invariants are code with tests, and credentials are split
   according to what each process reads.
@@ -799,7 +808,9 @@ matter:
   GitHub, a ledger, the clean-room builder and the audit. It also waits on
   ADR-0023's `command` kind before a distiller can run at all.
 
-### 5A — One learned store, a global table, a fixed threshold
+### Decision 5 — Where skills live, and who decides what gets distilled
+
+#### Option 1 — One learned store, a global table, a fixed threshold
 
 * Good, because there is one place to look and one set of knobs.
 * Bad, because one threshold is wrong for either a small fleet or a large one.
@@ -810,7 +821,7 @@ matter:
 * Bad, because every harness sees every skill, including skills for stacks it
   never touches.
 
-### 5B — Skill repos and distillers
+#### Option 2 — Skill repos and distillers
 
 * Good, because scope, thresholds, targets and audience are the operator's
   choices, stated where the rest of the fleet is configured.
@@ -873,25 +884,25 @@ flowchart TD
   typed records with explicit anti-goals, deterministic purpose keys, summary
   rendering, and placement at review time. The control run is how we will find
   out whether they pay.
-* **Extends [ADR-0012](adr-0012-cross-harness-distillation.md)**. It replaces
+* **Extends ADR-0012**. It replaces
   ADR-0012's signal, verification and proposal sections, its fixed scope gate,
   and its `AGENTS.md` output. It keeps the search-only delivery tier, the index,
   and the lifecycle rules.
-* **Related [ADR-0008](adr-0008-security-and-secrets.md)**: credentials are
+* **Related ADR-0008**: credentials are
   split by process, and only the processes without forge credentials read
   attacker-reachable text.
-* **Related [ADR-0010](adr-0010-local-mcp-surface.md)**: `search_skills` and
+* **Related ADR-0010**: `search_skills` and
   `get_skill` gain a default summary render, a small k, and `paths`. Serving is
   blocked on the SPEC-0005 facade, and `serve_to` depends on that spec's caller
   identity and endpoint wiring requirements.
-* **Related [ADR-0011](adr-0011-agent-adapters.md)**: adapters locate
+* **Related ADR-0011**: adapters locate
   transcripts. Skill repos are served by search and are never projected, so no
   adapter's native skill path is involved. This does not contradict ADR-0010,
   ADR-0011 or SPEC-0006's non-goal of serving skills over MCP. Those concern the
   native skill primitive, which MCP lacks. Here a skill is ordinary text returned
   by a search tool.
 * **Mechanisms from other designs.**
-  [ADR-0021](adr-0021-on-demand-one-shots.md) webhook triggers can wake a pass.
+  ADR-0021 webhook triggers can wake a pass.
   Three designs still in review are involved. ADR-0023's `command` kind is a
   **prerequisite**: it is what a distiller runs as. ADR-0027 (run budgets)
   applies to the distiller's run. ADR-0028's run ledger can absorb the git

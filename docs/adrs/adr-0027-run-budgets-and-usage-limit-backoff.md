@@ -51,7 +51,7 @@ SPEC-0013 already classifies these errors (`quota`, `auth`, `timeout`,
 `transport`, `other`) where they are observed, for metrics (#407). Nothing acts
 on the class.
 
-ADR-0019 considered a token or cost budget (its option 1D) and **deferred** it,
+ADR-0019 considered a token or cost budget (its Decision 1, Option 4) and **deferred** it,
 because "the daemon cannot see tokens without trusting adapter-parsed
 trajectories as a billing meter". Two things have changed since:
 
@@ -95,38 +95,40 @@ what a provider is?
 
 ## Considered Options
 
-**Axis 1 — where budgets are enforced:**
+### Decision 1 — Where budgets are enforced
 
-* **1A. In the daemon: admission before every spawn, and a stop during a run.**
-* **1B. In the agent CLI**: `max_turns` and whatever budget flags each agent has.
-* **1C. In a model gateway** (LiteLLM budgets, virtual keys, OpenRouter limits).
-* **1D. In Switchboard**: per-queue admission (Switchboard ADR-0035 /
+* **Option 1 — In the daemon: admission before every spawn, and a stop during a run.**
+* **Option 2 — In the agent CLI**: `max_turns` and whatever budget flags each agent has.
+* **Option 3 — In a model gateway** (LiteLLM budgets, virtual keys, OpenRouter limits).
+* **Option 4 — In Switchboard**: per-queue admission (Switchboard ADR-0035 /
   SPEC-0030, Operation Stumply F-S5).
 
-**Axis 2 — where the usage meter comes from:**
+### Decision 2 — Where the usage meter comes from
 
-* **2A. agent-trace, through the daemon's observer**, with prices supplied by
+* **Option 1 — agent-trace, through the daemon's observer**, with prices supplied by
   the operator where the agent records none.
-* **2B. Scrape Claude Code's `stream-json` result line** off the run's PTY.
-* **2C. Ask the provider** (usage and billing APIs).
+* **Option 2 — Scrape Claude Code's `stream-json` result line** off the run's PTY.
+* **Option 3 — Ask the provider** (usage and billing APIs).
 
-**Axis 3 — what an exhausted quota does:**
+### Decision 3 — What an exhausted quota does
 
-* **3A. Park the harness until the reset time**, or a backoff when none is
+* **Option 1 — Park the harness until the reset time**, or a backoff when none is
   given.
-* **3B. Treat it as a crash** (status quo): backoff, then `failed`.
-* **3C. Keep running** and let the agent retry.
+* **Option 2 — Treat it as a crash** (status quo): backoff, then `failed`.
+* **Option 3 — Keep running** and let the agent retry.
 
-**Axis 4 — the scope of a park:**
+### Decision 4 — The scope of a park
 
-* **4A. Per harness.**
-* **4B. Per account**, via an optional `quota_group` shared by harnesses on one
+* **Option 1 — Per harness.**
+* **Option 2 — Per account**, via an optional `quota_group` shared by harnesses on one
   allowance.
 
 ## Decision Outcome
 
-Chosen: **1A + 2A + 3A**, with **4A by default and 4B one key away**. 1B and 1C
-stay useful complements, and 1D is Switchboard's half of the same problem.
+Chosen options: **Decision 1, Option 1**, **Decision 2, Option 1** and
+**Decision 3, Option 1**, with **Decision 4, Option 1** by default and
+**Decision 4, Option 2** one key away. Decision 1, Options 2 and 3 stay useful
+complements, and Decision 1, Option 4 is Switchboard's half of the same problem.
 
 In one sentence: every start passes one **admission** check that consults
 operating hours, quota parks, daily caps, run counts and concurrency in that
@@ -397,7 +399,7 @@ merged, and story #488 folds the amendment into SPEC-0012 when it ships.
   config edit is the operator's.
 * **No secrets anywhere new** (ADR-0008). A park stores the class, the matched
   rule's name and the reset time, never the error text. Prices and caps are not
-  secrets. The daemon never holds a provider credential to query usage (2C
+  secrets. The daemon never holds a provider credential to query usage (Decision 2, Option 3
   rejected).
 
 ### How it composes with Switchboard and Cairn
@@ -440,7 +442,7 @@ merged, and story #488 folds the amendment into SPEC-0012 when it ships.
   ADR-0020 rejected for metrics. It is scoped to one adapter's non-zero exits,
   clamped, and retires with agent-trace#104.
 * Bad, because a budget spent by 09:30 holds the agent for the rest of the day,
-  ADR-0019's objection to 1D. It is the point of a daily cap. `--over-budget`
+  ADR-0019's objection to Decision 1, Option 4. It is the point of a daily cap. `--over-budget`
   is the escape hatch, and hours plus budgets together are the intended use.
 * Neutral, because admission gains four checks on a path that runs a handful of
   times a minute at most.
@@ -479,20 +481,22 @@ fake clock and the real supervisor path:
 
 ## Pros and Cons of the Options
 
-### 1A — Daemon admission plus in-run stop (chosen)
+### Decision 1 — Where budgets are enforced
+
+#### Option 1 — Daemon admission plus in-run stop (chosen)
 
 * Good, because the daemon is the one component that sees every spawn, every
   exit and (through the observer) every model call on the host.
 * Good, because admission before a spawn is free and exact.
 * Bad, because in-run caps depend on a meter the daemon does not own.
 
-### 1B — The agent CLI's own limits
+#### Option 2 — The agent CLI's own limits
 
 * Good, because the agent knows its own turns and tokens exactly.
 * Bad, because only Claude Code has `--max-turns`, and no agent Harness supports
   offers a cost or daily cap. Kept as a complement: `max_turns` still applies.
 
-### 1C — A gateway budget
+#### Option 3 — A gateway budget
 
 * Good, because a LiteLLM budget or an OpenRouter key limit is exact and shared
   across hosts.
@@ -503,14 +507,16 @@ fake clock and the real supervisor path:
   With parking, a gateway budget becomes a clean park (litellm's
   `BudgetExceededError` is already classified `quota`). Recommended alongside.
 
-### 1D — Switchboard admission
+#### Option 4 — Switchboard admission
 
 * Good, because it counts claims across every worker on a queue.
 * Bad, because it cannot see cron firings, webhooks from other senders, or
   resident agents, and it cannot stop a run. It is the complement, not the
   substitute.
 
-### 2A — agent-trace through the observer, prices from the operator (chosen)
+### Decision 2 — Where the usage meter comes from
+
+#### Option 1 — agent-trace through the observer, prices from the operator (chosen)
 
 * Good, because it is one source for every agent the observer reads, and the
   same stream that feeds SPEC-0013 and telemetry export.
@@ -518,44 +524,48 @@ fake clock and the real supervisor path:
 * Bad, because it needs agent-trace#105, and priced cost is only as current as
   the operator's table.
 
-### 2B — Scrape Claude Code's `stream-json` result
+#### Option 2 — Scrape Claude Code's `stream-json` result
 
 * Good, because it has `total_cost_usd` today, with no upstream change.
 * Bad, because it covers one adapter's `-p` runs only, reports cost only at the
   end (too late for a cap), and parses a JSON stream through a PTY and the
   sanitizer.
 
-### 2C — Ask the provider
+#### Option 3 — Ask the provider
 
 * Good, because the provider's number is the real one.
 * Bad, because it needs a provider credential in the daemon and one integration
   per provider, and it breaks ADR-0021's "the daemon stays agnostic".
 
-### 3A — Park until the reset (chosen)
+### Decision 3 — What an exhausted quota does
+
+#### Option 1 — Park until the reset (chosen)
 
 * Good, because it matches what a quota is: a timed refusal.
 * Good, because it releases by itself and never needs a human.
 * Bad, because it needs a detector with thresholds, and a reset-time parser for
   wording that varies by provider and version.
 
-### 3B — Treat it as a crash (status quo)
+#### Option 2 — Treat it as a crash (status quo)
 
 * Bad, because it produced the 2026-09-19 outage: restarts spent, `failed`
   latched, and nothing restarted the fleet when the quota came back.
 
-### 3C — Keep running
+#### Option 3 — Keep running
 
 * Bad, because a resident keeps failing silently (the 2026-09-14 shape), and
   every one-shot firing spends a Switchboard attempt.
 
-### 4A — Per-harness parks (default)
+### Decision 4 — The scope of a park
+
+#### Option 1 — Per-harness parks (default)
 
 * Good, because it needs no configuration and each harness learns from its own
   errors.
 * Bad, because N harnesses on one account each spend a failing run to learn the
   same thing.
 
-### 4B — Account groups (opt-in)
+#### Option 2 — Account groups (opt-in)
 
 * Good, because one refusal parks everyone on the allowance.
 * Bad, because the operator has to name the grouping. The daemon cannot infer
@@ -598,30 +608,30 @@ flowchart TD
 
 ## More Information
 
-* **Extends [ADR-0019](adr-0019-operating-hours.md)**: `held` becomes a set of
+* **Extends ADR-0019**: `held` becomes a set of
   reasons, the gate tick evaluates park expiry and the budget day, and the
   after-hours lease becomes the over-budget override for residents. It decides
-  ADR-0019's deferred option 1D.
-* **Extends [ADR-0013](adr-0013-scheduled-one-shot-jobs.md)**: admission sits
+  ADR-0019's deferred Decision 1, Option 4.
+* **Extends ADR-0013**: admission sits
   in front of every firing, and a run gains a budget stop beside its timeout.
-* **Extends [ADR-0005](adr-0005-supervision-and-lifecycle.md)**: a quota exit is
+* **Extends ADR-0005**: a quota exit is
   a third kind of down, neither a crash nor an operator stop, and the restart
   policy consults the detector before counting it.
-* **Related [ADR-0020](adr-0020-prometheus-metrics-endpoint.md)**: the error
+* **Related ADR-0020**: the error
   classes it defines drive parking, and SPEC-0013 gains budget and park series.
-* **Related [ADR-0021](adr-0021-on-demand-one-shots.md)**: skip reasons
+* **Related ADR-0021**: skip reasons
   `quota_parked`, `budget` and `concurrency` join SPEC-0014's `overlap`,
   `stopping` and `outside_hours`.
 * **Related, accepted with this ADR (2026-09-22)**:
-  [ADR-0023](adr-0023-command-one-shots-and-templating.md) (command kind,
+  ADR-0023 (command kind,
   whose `transcripts` key decides whether a cap is measurable),
-  [ADR-0024](adr-0024-stack-installer-and-central-management.md) (the
+  ADR-0024 (the
   installer's templates set `max_runs_per_day`),
-  [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md)
+  ADR-0025
   (supervisor-held leases) and
-  [ADR-0026](adr-0026-fail-closed-model-pinning.md) (model pinning, the other
+  ADR-0026 (model pinning, the other
   consumer of the served-model data), linked in this ADR's front matter;
-  [ADR-0028](adr-0028-run-history-ledger.md) (run history ledger, the
+  ADR-0028 (run history ledger, the
   counters' store and the usage accumulator), which carries the edge to this
   ADR. ADR-0022 (telemetry export, #408) is not on `main` yet, so it stays
   cited by number.

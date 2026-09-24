@@ -31,7 +31,7 @@ has costs that a one-shot does not:
   confirmation on every start. A supervised restart waits at that prompt until
   someone attaches.
 * **A stopped agent never hears the knock.** ADR-0019 rejected "start on demand"
-  (option 1E) for exactly this reason: doorbells go to the agent, not to Harness.
+  (its Decision 1, Option 5) for exactly this reason: doorbells go to the agent, not to Harness.
 * **"Delivered" proves nothing.** Claude Code keeps the notification stream open
   whether or not it loaded the server as a channel, so a delivered doorbell does
   not show that anything heard it.
@@ -78,57 +78,47 @@ queue, and without learning what an agent is?
 
 The decision has four parts.
 
-**Axis 1: who holds the channel connection.**
+### Decision 1 — Who holds the channel connection
 
-* **1A. The agent holds it.** This is the status quo (a resident channel worker).
+* **Option 1 — The agent holds it.** This is the status quo (a resident channel worker).
   Build nothing.
-* **1B. The daemon holds it.** The daemon is a listen-only MCP client, and each
+* **Option 2 — The daemon holds it.** The daemon is a listen-only MCP client, and each
   notification fires the prompt harnesses bound to it.
-* **1C. A bridge harness holds it.** A small resident process holds the channel
+* **Option 3 — A bridge harness holds it.** A small resident process holds the channel
   and calls `harness trigger` over the socket. The daemon only relaxes
   `trigger`'s schedule requirement.
 
-**Axis 2: how a webhook reaches the daemon.**
+### Decision 2 — How a webhook reaches the daemon
 
-* **2A. A daemon-owned HTTP listener** with one authenticated route per
+* **Option 1 — A daemon-owned HTTP listener** with one authenticated route per
   `[webhook.*]` table.
-* **2B. No listener.** An external receiver (a reverse proxy script, adnanh/webhook,
+* **Option 2 — No listener.** An external receiver (a reverse proxy script, adnanh/webhook,
   Switchboard) calls `harness trigger` over SSH or the socket.
-* **2C. SSH exec.** The Wish server accepts `ssh host trigger <name>` from an
+* **Option 3 — SSH exec.** The Wish server accepts `ssh host trigger <name>` from an
   authorized key.
-* **2D. Share SPEC-0013's metrics listener.**
+* **Option 4 — Share SPEC-0013's metrics listener.**
 
-**Axis 3: how triggers are expressed in config.**
+### Decision 3 — How triggers are expressed in config
 
-* **3A. Source tables plus a key on the harness.** `[channel.*]` and
+* **Option 1 — Source tables plus a key on the harness.** `[channel.*]` and
   `[webhook.*]` declare sources, and a `triggers` list on `[harness.*]` binds
   them.
-* **3B. Inline keys on the harness** (`channel_url`, `webhook_secret`, …).
-* **3C. Source tables that name their harnesses** (`fires = ["pr-review"]`).
+* **Option 2 — Inline keys on the harness** (`channel_url`, `webhook_secret`, …).
+* **Option 3 — Source tables that name their harnesses** (`fires = ["pr-review"]`).
 
-**Axis 4: how the event reaches the run.**
+### Decision 4 — How the event reaches the run
 
-* **4A. Template the payload into the prompt** (`{{ .body }}`).
-* **4B. A private per-run event file plus environment variables.** The prompt is
+* **Option 1 — Template the payload into the prompt** (`{{ .body }}`).
+* **Option 2 — A private per-run event file plus environment variables.** The prompt is
   unchanged.
-* **4C. Pass nothing.** The event is only a doorbell, and the agent re-derives
+* **Option 3 — Pass nothing.** The event is only a doorbell, and the agent re-derives
   its work.
 
 ## Decision Outcome
 
-Chosen options: **1B** (the daemon holds the channel), **2A** (a daemon-owned
-webhook listener), **3A** (source tables and a `triggers` key), and **4B** (the
+Chosen options: **Decision 1, Option 2** (the daemon holds the channel), **Decision 2, Option 1** (a daemon-owned
+webhook listener), **Decision 3, Option 1** (source tables and a `triggers` key), and **Decision 4, Option 2** (the
 event as a file, never as prompt text).
-
-> **Amendment (2026-09-22).** The deferral of timestamped signature schemes is
-> lifted for **Standard Webhooks only**: `verify = "standard-webhooks"` joins
-> the table below. Switchboard ADR-0029 (accepted 2026-09-21) signs its
-> per-endpoint notify hooks with Standard Webhooks (`webhook-id`,
-> `webhook-timestamp`, and `webhook-signature: v1,…` over `id.timestamp.body`).
-> Those hooks exist to wake a consumer that has no live session, which is what a
-> triggered harness is. Without the scheme, Harness could not verify them at
-> all. Stripe and Slack stay deferred. SPEC-0014 REQ "Standard Webhooks
-> Verification" specifies the scheme.
 
 In one sentence: a **triggered harness** is an ADR-0011 prompt harness carrying
 `schedule`, `triggers`, or both. Each event from a bound source enters the same
@@ -311,7 +301,15 @@ there is no unauthenticated option:
 | `github` | `X-Hub-Signature-256: sha256=…`; event `X-GitHub-Event`; delivery `X-GitHub-Delivery` |
 | `gitea` | `X-Gitea-Signature`; event `X-Gitea-Event`; delivery `X-Gitea-Delivery` |
 | `gitlab` | `X-Gitlab-Token` equality; event `X-Gitlab-Event` |
-| `standard-webhooks` | `webhook-signature: v1,…` over `id.timestamp.body` with a 5-minute timestamp tolerance; delivery `webhook-id`; event is the body's `type` (added by the amendment above) |
+| `standard-webhooks` | `webhook-signature: v1,…` over `id.timestamp.body` with a 5-minute timestamp tolerance; delivery `webhook-id`; event is the body's `type` |
+
+Standard Webhooks is the one timestamped signature scheme supported. Switchboard
+ADR-0029 signs its per-endpoint notify hooks with it (`webhook-id`,
+`webhook-timestamp`, and `webhook-signature: v1,…` over `id.timestamp.body`).
+Those hooks exist to wake a consumer that has no live session, which is what a
+triggered harness is; without the scheme, Harness could not verify them at all.
+Other timestamped schemes (Stripe, Slack) are deferred. SPEC-0014 REQ "Standard
+Webhooks Verification" specifies the scheme.
 
 `secret` must be a `${NAME}` reference, resolved from the table's own `env_file`
 when the config loads. A literal secret is a config error. Resolving from a file
@@ -384,9 +382,9 @@ payload as bytes it files for someone else. This is the scheduler's position
 exactly: cron is a protocol too, and speaking it did not make the daemon an
 expert in sweeps.
 
-ADR-0019 rejected option 1E ("start on demand") because "the daemon [must]
+ADR-0019 rejected its Decision 1, Option 5 ("start on demand") because "the daemon [must]
 receive the demand" and doorbells went to the agent. For one-shots, this ADR
-supplies that missing piece. It does not reopen 1E for resident harnesses.
+supplies that missing piece. It does not reopen that option for resident harnesses.
 
 ### Security
 
@@ -509,11 +507,13 @@ Acceptance tests include:
   survives a restart. ADR-0025 (accepted 2026-09-22) delivers result callbacks
   for leased harnesses only.
 * **An SSH exec trigger** (`ssh host trigger <name>` with a per-key scope). It is
-  cheap to add later; see option 2C.
+  cheap to add later; see Decision 2, Option 3.
 
 ## Pros and Cons of the Options
 
-### 1A — The agent holds the channel (status quo)
+### Decision 1 — Who holds the channel connection
+
+#### Option 1 — The agent holds the channel (status quo)
 
 * Good, because it exists, works, and needs no daemon code.
 * Good, because a warm session answers a doorbell in one turn, with no cold
@@ -524,7 +524,7 @@ Acceptance tests include:
   confirmation), and ADR-0019's hours cannot start it on demand.
 * Bad, because "delivered" and "heard" are indistinguishable from outside.
 
-### 1B — The daemon holds the channel (chosen)
+#### Option 2 — The daemon holds the channel (chosen)
 
 * Good, because the event enters ADR-0013's run machinery unchanged.
 * Good, because one listener per endpoint makes "exactly one consumer" a
@@ -535,7 +535,7 @@ Acceptance tests include:
   another protocol.
 * Bad, because every event pays a cold start.
 
-### 1C — A bridge harness holds the channel
+#### Option 3 — A bridge harness holds the channel
 
 A resident `cmd` harness (for example, a 200-line Go program) listens and runs
 `harness trigger <name>` on each doorbell.
@@ -552,7 +552,9 @@ A resident `cmd` harness (for example, a 200-line Go program) listens and runs
 * Bad, because it is one more thing to install, version and configure on every
   host, and the config is split across two files for one feature.
 
-### 2A — A daemon-owned webhook listener (chosen)
+### Decision 2 — How a webhook reaches the daemon
+
+#### Option 1 — A daemon-owned webhook listener (chosen)
 
 * Good, because machines get the same front-door model humans got from SSH:
   opt-in, bound narrowly, and credential-authenticated.
@@ -563,7 +565,7 @@ A resident `cmd` harness (for example, a 200-line Go program) listens and runs
 * Bad, because TLS is either ours to serve or a reverse proxy the operator must
   run.
 
-### 2B — No listener; an external receiver calls `trigger`
+#### Option 2 — No listener; an external receiver calls `trigger`
 
 * Good, because Harness writes no HTTP code at all.
 * Bad, because every server deployment needs a second program that verifies
@@ -572,7 +574,7 @@ A resident `cmd` harness (for example, a 200-line Go program) listens and runs
 * Bad, because the event payload has no path into the run unless `trigger`
   grows one anyway.
 
-### 2C — SSH exec (`ssh host trigger <name>`)
+#### Option 3 — SSH exec (`ssh host trigger <name>`)
 
 * Good, because it reuses Wish, key auth, and the existing per-key scoping, with
   no new listener.
@@ -581,14 +583,16 @@ A resident `cmd` harness (for example, a 200-line Go program) listens and runs
   HMAC. None of them speak SSH, so this does not answer the question that was
   asked. It is deferred as a complement, not rejected.
 
-### 2D — Share the metrics listener
+#### Option 4 — Share the metrics listener
 
 * Good, because one port and one TLS configuration serve both.
 * Bad, because the exposures are opposite. Metrics should stay on loopback for
   a scraper; webhooks are often published to the internet through a proxy.
   Sharing forces one bind decision onto two surfaces that want different ones.
 
-### 3A — Source tables plus `triggers` on the harness (chosen)
+### Decision 3 — How triggers are expressed in config
+
+#### Option 1 — Source tables plus `triggers` on the harness (chosen)
 
 * Good, because a source is a resource with its own state, credentials and
   lifecycle (a connection, a route), and a table is where such things live.
@@ -597,23 +601,25 @@ A resident `cmd` harness (for example, a 200-line Go program) listens and runs
   "one consumer per endpoint" check has a single place to run.
 * Good, because the harness remains the complete answer to "what fires me?" It
   keeps ADR-0013's property that `schedule` sits on the harness, which is the
-  reason 2C (`[schedule.*]`) lost.
+  reason ADR-0013's Decision 2, Option 3 (`[schedule.*]`) lost.
 * Bad, because understanding one webhook harness means reading two tables.
 
-### 3B — Inline keys on the harness
+#### Option 2 — Inline keys on the harness
 
 * Good, because everything is in one table.
 * Bad, because two harnesses on one endpoint would open two connections: the
   two-consumer failure, built into the schema.
 * Bad, because credentials and transport settings multiply across harness tables.
 
-### 3C — Sources that name their harnesses
+#### Option 3 — Sources that name their harnesses
 
 * Good, because a source reads as a routing table.
 * Bad, because the harness no longer says what fires it, and ADR-0013 rejected
   exactly this inversion for schedules.
 
-### 4A — Template the payload into the prompt
+### Decision 4 — How the event reaches the run
+
+#### Option 1 — Template the payload into the prompt
 
 * Good, because the agent needs no file access, and it is the most direct
   option.
@@ -623,16 +629,16 @@ A resident `cmd` harness (for example, a 200-line Go program) listens and runs
   limits make large bodies fail in ways specific to each platform.
 * Bad, because ADR-0011 fixed the prompt as verbatim and never expanded.
 
-### 4B — A per-run event file plus environment (chosen)
+#### Option 2 — A per-run event file plus environment (chosen)
 
 * Good, because data and instructions travel separately.
 * Good, because the file is private (`0600`), bounded, and pruned with the run.
-* Good, because it is a superset of 4C: a prompt that ignores the file gets
-  4C exactly.
+* Good, because it is a superset of Decision 4, Option 3: a prompt that ignores the file gets
+  Decision 4, Option 3 exactly.
 * Bad, because the prompt must tell the agent that the file exists. Nothing
   injects that hint automatically.
 
-### 4C — Pass nothing
+#### Option 3 — Pass nothing
 
 * Good, because it matches Switchboard's model: the doorbell is only a hint.
 * Bad, because a webhook without a durable store behind it carries its only
@@ -697,36 +703,36 @@ sequenceDiagram
 
 ## More Information
 
-* **Extends [ADR-0013](adr-0013-scheduled-one-shot-jobs.md).** It widens the
+* **Extends ADR-0013.** It widens the
   run machinery's gate from "scheduled" to "triggered", adds the `channel` and
   `webhook` trigger values, generalizes `catch_up` to "may have missed a
   firing", and coalesces overlap skips. ADR-0013's exclusions, clock, and
   reconciliation rules are otherwise unchanged.
-* **Extends [ADR-0004](adr-0004-transport-and-remote-access.md).** It adds a
+* **Extends ADR-0004.** It adds a
   second, opt-in network front door for machines beside Wish SSH for humans. The
   exposure and authentication posture are the same, and it uses a separate
   listener.
-* **Extends [ADR-0008](adr-0008-security-and-secrets.md).** Source credentials
+* **Extends ADR-0008.** Source credentials
   follow `env_file`: referenced from config, never persisted, logged or sent.
   Webhook routes are always authenticated.
-* **Extends [ADR-0006](adr-0006-configuration-and-profiles.md).** It adds the
+* **Extends ADR-0006.** It adds the
   `[channel.*]` and `[webhook.*]` tables, `triggers` on `[harness.*]`, and
   `webhook_listen` and its TLS keys on `[server]`. Drop-in files may carry
   source tables beside the harness that uses them.
-* **Related [ADR-0010](adr-0010-local-mcp-surface.md).** That ADR's broker
+* **Related ADR-0010.** That ADR's broker
   would make the daemon an MCP *server*, and this ADR makes it a narrow MCP
   *client*. Stdio channel sources wait for the broker's supervision of stdio
   servers.
-* **Related [ADR-0011](adr-0011-agent-adapters.md)** and
-  **[ADR-0018](adr-0018-external-prompt-source.md).** The prompt source and the
+* **Related ADR-0011** and
+  **ADR-0018.** The prompt source and the
   argv synthesis are unchanged. The event never joins them.
-* **Related [ADR-0019](adr-0019-operating-hours.md).** Hours may gate an
+* **Related ADR-0019.** Hours may gate an
   event-triggered harness. This ADR supplies the "daemon receives the demand"
-  piece that option 1E lacked, for one-shots only.
-* **Related [ADR-0020](adr-0020-prometheus-metrics-endpoint.md).** It adds
+  piece that ADR-0019's Decision 1, Option 5 lacked, for one-shots only.
+* **Related ADR-0020.** It adds
   source health metrics, and it keeps its listener separate from the metrics
   listener.
-* **Governs [SPEC-0014](../openspec/specs/event-triggers/spec.md).**
+* **Governs SPEC-0014.**
 * The Channels contract is described in the
   [Claude Code Channels reference](https://code.claude.com/docs/en/channels-reference).
   The Switchboard side (doorbell `meta.todo_id`/`meta.queue`, lossy

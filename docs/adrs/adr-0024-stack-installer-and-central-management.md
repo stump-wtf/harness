@@ -30,15 +30,16 @@ costs real people real days:
   same customer wrote their own `harness-omp` wrapper because Harness had no
   way to run their client.
 * **They asked for a one-shot install.** "Make the brew formula depend on
-  Cairn and Switchboard." Joe's advice, "get the live loop working, then layer
-  Harness", is also right. The two are compatible only if installing is one
+  Cairn and Switchboard." The competing advice, "get the live loop working, then
+  layer Harness", is also right. The two are compatible only if installing is one
   step and *verifying* is layered.
 * **The Claude Code path has three sharp edges Harness owns:**
   * Headless Claude subscription auth is undocumented. `claude setup-token`
     mints a long-lived `CLAUDE_CODE_OAUTH_TOKEN`, and the repository contains
     zero references to either. The guides tell headless operators to put
-    `ANTHROPIC_API_KEY` in an `env_file` (`docs/guides/first-agent.md`,
-    `run-as-a-service.md`, `push-events.md`), which bills the API rather than
+    `ANTHROPIC_API_KEY` in an `env_file` (the [first agent](../guides/first-agent.md),
+    [run as a service](../guides/run-as-a-service.md) and
+    [push events](../guides/push-events.md) guides), which bills the API rather than
     the subscription. A customer found the right answer on their own.
   * A Claude Code one-shot cannot carry per-persona instructions, tools or MCP
     servers. `args` is rejected alongside `prompt` and `prompt_file`
@@ -56,8 +57,8 @@ costs real people real days:
 
 Two different people install things, and the design has to keep them apart.
 The **operator** deploys and runs a whole instance of Switchboard and Cairn
-(Joe on StumpCloud, or a customer on one host). A **user** logs in to an
-instance and uses it (Joe's brother, a friend, a teammate). Both Switchboard and
+(a maintainer on their own infrastructure, or a customer on one host). A **user** logs in to an
+instance and uses it (a family member, a friend, a teammate). Both Switchboard and
 Cairn treat multi-tenancy as a hard rule: every resource a user creates is owned
 by that user or by a team, never by the instance.
 
@@ -95,63 +96,63 @@ or creating anything global?
 
 The decision has six parts.
 
-**Axis 1: where the installer lives.**
+### Decision 1 — Where the installer lives
 
-* **1A. In Harness:** `harness init` (connect a client and personas to an
+* **Option 1 — In Harness:** `harness init` (connect a client and personas to an
   instance) and `harness stack` (operate an instance).
-* **1B. A new `stumpctl` binary** in its own repository.
-* **1C. Per product.** Switchboard and Cairn each ship an installer. Harness
+* **Option 2 — A new `stumpctl` binary** in its own repository.
+* **Option 3 — Per product.** Switchboard and Cairn each ship an installer. Harness
   only documents how to connect.
-* **1D. Homebrew dependencies.** `brew install harness` depends on `cairn` and
+* **Option 4 — Homebrew dependencies.** `brew install harness` depends on `cairn` and
   `switchboard` formulae that run the servers under `brew services`.
 
-**Axis 2: how the servers run.**
+### Decision 2 — How the servers run
 
-* **2A. A Docker Compose bundle** that Harness generates and drives.
-* **2B. Native binaries supervised by Harness** as ordinary resident harnesses,
+* **Option 1 — A Docker Compose bundle** that Harness generates and drives.
+* **Option 2 — Native binaries supervised by Harness** as ordinary resident harnesses,
   with a native Postgres.
-* **2C. Kubernetes manifests or a Helm chart.**
+* **Option 3 — Kubernetes manifests or a Helm chart.**
 
-**Axis 3: which versions it installs.**
+### Decision 3 — Which versions it installs
 
-* **3A. A tested manifest embedded in each Harness release,** pinning every
+* **Option 1 — A tested manifest embedded in each Harness release,** pinning every
   image by tag and digest, bumped by Renovate and gated by a compose smoke test.
-* **3B. Resolve the newest release** of each image at install time.
-* **3C. `:latest`.**
+* **Option 2 — Resolve the newest release** of each image at install time.
+* **Option 3 — `:latest`.**
 
-**Axis 4: how the installer gets credentials to provision with.**
+### Decision 4 — How the installer gets credentials to provision with
 
-* **4A. The operator is the first user.** `harness stack up` hands off to
+* **Option 1 — The operator is the first user.** `harness stack up` hands off to
   `harness init`, which authenticates as the signed-in human through each
   product's own OAuth and token flows, and creates only user-owned resources.
-* **4B. A stack-level bootstrap credential** (an admin token generated into the
+* **Option 2 — A stack-level bootstrap credential** (an admin token generated into the
   server environment) that can create resources for anyone.
-* **4C. Direct database writes** from the installer into Switchboard's and
+* **Option 3 — Direct database writes** from the installer into Switchboard's and
   Cairn's Postgres.
 
-**Axis 5: how clients are configured.**
+### Decision 5 — How clients are configured
 
-* **5A. Per-persona generated files** (an MCP JSON file, a `crush.json` in the
+* **Option 1 — Per-persona generated files** (an MCP JSON file, a `crush.json` in the
   persona workdir) whose credentials are `${VAR}` references resolved from the
   persona's `env_file`.
-* **5B. Edit the user's global client configuration** (`~/.claude.json`,
+* **Option 2 — Edit the user's global client configuration** (`~/.claude.json`,
   `~/.config/crush/crush.json`) with literal tokens.
-* **5C. Print instructions** and let the user paste.
+* **Option 3 — Print instructions** and let the user paste.
 
-**Axis 6: how the install is verified.**
+### Decision 6 — How the install is verified
 
-* **6A. An end-to-end self-test.** A nonce enters through a real webhook,
+* **Option 1 — An end-to-end self-test.** A nonce enters through a real webhook,
   becomes a todo, rings a doorbell, fires a one-shot that claims the todo and
   writes a Cairn artifact containing the nonce, and completes the todo with the
   artifact's handle. Harness reads both back and compares content.
-* **6B. Health checks** (`/healthz` on each service).
-* **6C. Trust the delivery log.**
+* **Option 2 — Health checks** (`/healthz` on each service).
+* **Option 3 — Trust the delivery log.**
 
 ## Decision Outcome
 
-Chosen options: **1A** (Harness), **2A** (a Compose bundle), **3A** (an
-embedded, tested manifest), **4A** (the operator is the first user), **5A**
-(per-persona files, secrets by reference), and **6A** (an end-to-end self-test
+Chosen options: **Decision 1, Option 1** (Harness), **Decision 2, Option 1** (a Compose bundle), **Decision 3, Option 1** (an
+embedded, tested manifest), **Decision 4, Option 1** (the operator is the first user), **Decision 5, Option 1**
+(per-persona files, secrets by reference), and **Decision 6, Option 1** (an end-to-end self-test
 proven by content).
 
 In one sentence: `harness init` is the **user's** command, a converge-style
@@ -209,7 +210,7 @@ It then converges. For each persona it:
    is revocable separately from the `switchboard` CLI's.
 2. Obtains a Cairn agent token owned by the user or team.
 3. Writes the persona's `env_file` (`0600`) with those credentials.
-4. Writes the client configuration for that persona (Axis 5A).
+4. Writes the client configuration for that persona (Decision 5, Option 1).
 5. Writes a `harness_d` drop-in (`<persona>.toml`) and the persona's prompt and
    system-prompt files.
 6. Installs the `claude-plugin-switchboard`, `claude-plugin-cairn` and
@@ -245,7 +246,7 @@ a risky capability: `auto_accept` (Claude Code's
 `--dangerously-skip-permissions`) and ADR-0029's `accept_dev_channels` are off
 unless the user opts in for that persona, by answer or flag, and `init` warns
 when they do. A one-shot persona gets `allowed_tools` instead. This follows
-Joe's 2026-09-22 rule for risky capabilities: configurable, and off by default.
+the project's rule for risky capabilities: configurable, and off by default.
 
 Templates render operator-authored files at `init` time. They never see an
 event payload, so ADR-0021's rule that events reach a run as data, never as
@@ -470,7 +471,9 @@ rules as testable requirements. Acceptance tests include:
 
 ## Pros and Cons of the Options
 
-### 1A — Harness (chosen; Joe's decision)
+### Decision 1 — Where the installer lives
+
+#### Option 1 — Harness (chosen)
 
 * Good, because Harness already owns the part that is hardest to get right:
   starting and supervising the agents the stack exists to serve.
@@ -479,26 +482,28 @@ rules as testable requirements. Acceptance tests include:
 * Bad, because it widens Harness's job from "supervise agents" to "install and
   operate their services".
 
-### 1B — A separate `stumpctl`
+#### Option 2 — A separate `stumpctl`
 
 * Good, because Harness stays narrow.
 * Bad, because it is a fourth binary, formula and release train, and it would
   still need Harness's config model to write personas.
 
-### 1C — Per-product installers
+#### Option 3 — Per-product installers
 
 * Good, because each product's own team knows its deployment best.
 * Bad, because the loop is the product the user wants, and nothing would wire
   the three together or prove the loop works.
 
-### 1D — Homebrew dependencies
+#### Option 4 — Homebrew dependencies
 
 * Good, because it is what a customer literally asked for.
 * Bad, because the servers are Docker services with a database and an object
   store. `brew services` for Postgres, Switchboard and Cairn on every laptop
   that only wants to run agents against a shared instance is the wrong weight.
 
-### 2A — A Compose bundle (chosen)
+### Decision 2 — How the servers run
+
+#### Option 1 — A Compose bundle (chosen)
 
 * Good, because both products already publish images and reference compose
   files, so the bundle composes what exists.
@@ -507,77 +512,85 @@ rules as testable requirements. Acceptance tests include:
 * Bad, because it requires Docker, and Compose version differences are a bug
   surface.
 
-### 2B — Native binaries under Harness
+#### Option 2 — Native binaries under Harness
 
 * Good, because Harness is a supervisor, and it would need no Docker.
 * Bad, because a native Postgres and object store is a per-platform install
   problem, and supervising a database is not what Harness's restart policies
   were built for.
 
-### 2C — Kubernetes
+#### Option 3 — Kubernetes
 
 * Bad, because the audience is one host, a laptop or a small server.
 
-### 3A — An embedded, tested manifest (chosen)
+### Decision 3 — Which versions it installs
+
+#### Option 1 — An embedded, tested manifest (chosen)
 
 * Good, because the installed set is exactly what CI ran.
 * Bad, because upgrades wait for a Harness release.
 
-### 3B — Newest release at install time
+#### Option 2 — Newest release at install time
 
 * Good, because fixes arrive without a Harness release.
 * Bad, because the installed set was never tested together, and two installs a
   day apart differ.
 
-### 3C — `:latest`
+#### Option 3 — `:latest`
 
 * Bad, because it is the cause of the week described above.
 
-### 4A — The operator is the first user (chosen)
+### Decision 4 — How the installer gets credentials to provision with
+
+#### Option 1 — The operator is the first user (chosen)
 
 * Good, because the installer never holds more power than a user.
 * Good, because the operator's path and a friend's path are the same code.
 * Bad, because it needs an identity provider before the first login, and a
   browser for the OAuth flows.
 
-### 4B — A bootstrap superuser credential
+#### Option 2 — A bootstrap superuser credential
 
 * Good, because it works headless with no browser.
 * Bad, because it is a credential that creates resources outside any user's
   ownership, which the tenancy rule forbids.
 
-### 4C — Direct database writes
+#### Option 3 — Direct database writes
 
 * Bad, because it bypasses each product's hashing, invariants, audit and
   tenancy checks, and couples Harness to their schemas.
 
-### 5A — Per-persona files, secrets by reference (chosen)
+### Decision 5 — How clients are configured
+
+#### Option 1 — Per-persona files, secrets by reference (chosen)
 
 * Good, because client configs carry no secrets and stay committable.
 * Good, because each persona sees only its own servers.
 * Bad, because it relies on each client's variable expansion, which Harness
   has to track.
 
-### 5B — Edit global client config with literal tokens
+#### Option 2 — Edit global client config with literal tokens
 
 * Bad, because it writes credentials into plaintext files that other tools
   read, and every persona sees every server.
 
-### 5C — Print instructions
+#### Option 3 — Print instructions
 
 * Bad, because it is the status quo.
 
-### 6A — End-to-end, proven by content (chosen)
+### Decision 6 — How the install is verified
+
+#### Option 1 — End-to-end, proven by content (chosen)
 
 * Good, because it cannot pass unless an agent claimed the todo and wrote the
   artifact.
 * Bad, because it spends one model run per self-test.
 
-### 6B — Health checks
+#### Option 2 — Health checks
 
 * Bad, because every service can be healthy while no agent hears anything.
 
-### 6C — The delivery log
+#### Option 3 — The delivery log
 
 * Bad, because "delivered" is logged whether or not anything heard it.
 
@@ -692,12 +705,12 @@ sequenceDiagram
   templates bind.
 * Harness records accepted with this one (2026-09-22), linked by `related`
   edges in the newer record's front matter:
-  [ADR-0023](adr-0023-command-one-shots-and-templating.md) (command kind),
-  [ADR-0026](adr-0026-fail-closed-model-pinning.md) (model pinning, which
+  ADR-0023 (command kind),
+  ADR-0026 (model pinning, which
   `init` will render once it lands),
-  [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets),
-  [ADR-0028](adr-0028-run-history-ledger.md) (run history), and
-  [ADR-0029](adr-0029-auto-confirm-dev-channels.md) (dev-channels
+  ADR-0027 (budgets),
+  ADR-0028 (run history), and
+  ADR-0029 (dev-channels
   auto-confirm, which `init` writes for a resident Claude Code persona only
   when the user opts in for that persona, with its warning). ADR-0022
   (telemetry export, #408) is not on `main` yet, so it stays cited by number.

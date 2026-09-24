@@ -84,31 +84,32 @@ loop wait on a database and without storing anything ADR-0008 forbids?
 
 ## Considered Options
 
-**Axis 1 — where records live:**
+### Decision 1 — Where records live
 
-* **1A. An append-only JSONL ledger**, one file per UTC day, under the state
+* **Option 1 — An append-only JSONL ledger**, one file per UTC day, under the state
   directory.
-* **1B. SQLite** (`modernc.org/sqlite` is already a dependency).
-* **1C. Grow `state.json`**: raise `keep_runs`, add resident records.
-* **1D. An external system as the record**: OTLP logs (#408) or Prometheus.
+* **Option 2 — SQLite** (`modernc.org/sqlite` is already a dependency).
+* **Option 3 — Grow `state.json`**: raise `keep_runs`, add resident records.
+* **Option 4 — An external system as the record**: OTLP logs (#408) or Prometheus.
 
-**Axis 2 — how consumers stay consistent:**
+### Decision 2 — How consumers stay consistent
 
-* **2A. Each consumer counts for itself** from the lifecycle bus (status quo).
-* **2B. Ledger first**: the ledger append *is* the event. Consumers read a
+* **Option 1 — Each consumer counts for itself** from the lifecycle bus (status quo).
+* **Option 2 — Ledger first**: the ledger append *is* the event. Consumers read a
   post-commit feed, and a consumer that must not miss a record replays the
   ledger by sequence number.
-* **2C. Metrics as the record**: derive history from Prometheus.
+* **Option 3 — Metrics as the record**: derive history from Prometheus.
 
-**Axis 3 — what a resident "run" is:**
+### Decision 3 — What a resident "run" is
 
-* **3A. A process lifetime**: spawn to exit.
-* **3B. An agent session** as agent-trace sees it.
-* **3C. Residents get no records.**
+* **Option 1 — A process lifetime**: spawn to exit.
+* **Option 2 — An agent session** as agent-trace sees it.
+* **Option 3 — Residents get no records.**
 
 ## Decision Outcome
 
-Chosen: **1A + 2B + 3A**.
+Chosen options: **Decision 1, Option 1**, **Decision 2, Option 2** and
+**Decision 3, Option 1**.
 
 In one sentence: the Manager's `RunJournal`, which already opens and closes a
 record at every way a one-shot run ends, becomes the single writer of an
@@ -166,7 +167,7 @@ one-shot does. `skipped` keeps SPEC-0014's reasons and gains ADR-0027's (`quota_
 
 ### The ledger on disk
 
-```
+```text
 $XDG_STATE_HOME/harness/ledger/         0700
   2026-09-21.jsonl                      0600, one JSON object per line
   2026-09-22.jsonl
@@ -239,7 +240,7 @@ list of short `failed` records with their exit codes, instead of log lines.
 Residents get no per-run log files; their record points at the durable log
 (ADR-0007), which already holds the output.
 
-Sessions (3B) are the wrong unit because they are not a supervisor fact: a
+Sessions (Decision 3, Option 2) are the wrong unit because they are not a supervisor fact: a
 resident crush resumes one session across many restarts (#347), so a session
 record would merge unrelated process lifetimes. Session ids are recorded *on*
 the run instead.
@@ -261,7 +262,7 @@ log, and `harness runs` says `log pruned`.
 
 ### `harness runs`
 
-```
+```text
 harness runs [NAME...] [--harness NAME]... [--since DUR|TIME] [--until TIME]
              [--outcome O[,O]] [--trigger T[,T]] [--limit N] [--wide] [--json]
 ```
@@ -311,7 +312,7 @@ harness runs [NAME...] [--harness NAME]... [--since DUR|TIME] [--until TIME]
   cite a run's ledger fields, and a daily sweep can publish
   `harness runs --json --since 24h` as a Cairn artifact. Harness does not push
   the ledger to Cairn.
-* **Prometheus.** This is the relation Joe named: run counts on `/metrics` and
+* **Prometheus.** This is the relation that matters most: run counts on `/metrics` and
   rows in `harness runs` come from the same committed records, so a Grafana
   panel and a CLI answer can never disagree about how many runs failed.
 
@@ -368,7 +369,9 @@ reconciliation, feed, retention and CLI as testable requirements. Acceptance:
 
 ## Pros and Cons of the Options
 
-### 1A — Append-only JSONL day files (chosen)
+### Decision 1 — Where records live
+
+#### Option 1 — Append-only JSONL day files (chosen)
 
 * Good, because an append is one write and one sync, retention is a file
   deletion, and a torn line is recoverable.
@@ -376,7 +379,7 @@ reconciliation, feed, retention and CLI as testable requirements. Acceptance:
 * Bad, because queries scan files. A day's file is small, and recent records
   are served from memory.
 
-### 1B — SQLite
+#### Option 2 — SQLite
 
 * Good, because indexed queries, transactions, and the driver is already a
   dependency.
@@ -384,46 +387,50 @@ reconciliation, feed, retention and CLI as testable requirements. Acceptance:
   path, a second on-disk format, and a WAL to reason about on crash.
 * Bad, because a corrupt database is a harder failure than a torn line.
 
-### 1C — Grow `state.json`
+#### Option 3 — Grow `state.json`
 
 * Good, because it needs no new file.
 * Bad, because `state.json` is rewritten whole on every save, so its size bounds
   how much history is affordable, and every resident exit would rewrite it.
 
-### 1D — An external system as the record
+#### Option 4 — An external system as the record
 
 * Good, because operators already run Loki, Tempo or VictoriaMetrics.
 * Bad, because telemetry export is optional and drops on a full queue by design
   (ADR-0022), and Prometheus keeps counts, not records. Neither can back
   budgets or `harness runs`.
 
-### 2A — Each consumer counts from the bus (status quo)
+### Decision 2 — How consumers stay consistent
+
+#### Option 1 — Each consumer counts from the bus (status quo)
 
 * Bad, because the bus drops for slow subscribers, so every consumer's count is
   "approximately right", and no two agree.
 
-### 2B — Ledger first, one feed, replay by sequence (chosen)
+#### Option 2 — Ledger first, one feed, replay by sequence (chosen)
 
 * Good, because every count is derived from a committed record.
 * Good, because a consumer that must not miss a record has a way not to.
 * Bad, because the journal becomes a hub that must never block the actor loop.
   Its appends are bounded and its feed is non-blocking.
 
-### 2C — Metrics as the record
+#### Option 3 — Metrics as the record
 
 * Bad, because Prometheus has no records to list, and a restart resets counters.
 
-### 3A — A process lifetime (chosen)
+### Decision 3 — What a resident "run" is
+
+#### Option 1 — A process lifetime (chosen)
 
 * Good, because it is exactly what the supervisor observes, and it makes a crash
   loop legible.
 
-### 3B — An agent session
+#### Option 2 — An agent session
 
 * Bad, because a resumed session spans unrelated process lifetimes (#347), and
   a harness without a trace reader has no sessions.
 
-### 3C — No resident records
+#### Option 3 — No resident records
 
 * Bad, because residents are where the 2026-09-14 and 2026-09-19 outages
   happened.
@@ -457,30 +464,30 @@ flowchart LR
 
 ## More Information
 
-* **Extends [ADR-0007](adr-0007-state-persistence-scrollback.md)**: a third
+* **Extends ADR-0007**: a third
   durable artifact beside `state.json` and the logs, with its own retention.
-* **Extends [ADR-0013](adr-0013-scheduled-one-shot-jobs.md)**: run records
+* **Extends ADR-0013**: run records
   outlive `keep_runs`, and cover residents.
-* **Extends [ADR-0020](adr-0020-prometheus-metrics-endpoint.md)**: run series
+* **Extends ADR-0020**: run series
   come from committed records, and `harness_scheduled_runs_total` moves off the
   lifecycle bus.
-* **Related [ADR-0021](adr-0021-on-demand-one-shots.md)**: `source`, `event_id`
+* **Related ADR-0021**: `source`, `event_id`
   and `todo_id` for event-fired runs.
-* **Related [ADR-0019](adr-0019-operating-hours.md)**: a resident closed for
+* **Related ADR-0019**: a resident closed for
   hours reads `cancelled` with reason `hours`; one started when hours open reads
   trigger `release`.
-* **Related [ADR-0002](adr-0002-daemon-client-architecture.md)**: the `runs` op
+* **Related ADR-0002**: the `runs` op
   gains a query, and NAME becomes optional.
 * **Related, accepted with this ADR (2026-09-22)**:
-  [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets, which
+  ADR-0027 (budgets, which
   read the ledger and set two outcomes),
-  [ADR-0026](adr-0026-fail-closed-model-pinning.md) (model pinning, which sets
+  ADR-0026 (model pinning, which sets
   `model_mismatch` and `model_unattested` and the skip reason `model_hold`),
-  [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md)
+  ADR-0025
   (supervisor-held leases, which supply `todo_id` and replay the ledger),
-  [ADR-0023](adr-0023-command-one-shots-and-templating.md) (the
+  ADR-0023 (the
   `template_unresolved` skip) and
-  [ADR-0024](adr-0024-stack-installer-and-central-management.md) (the
+  ADR-0024 (the
   installer's self-test asserts a run record).
 * **Related, not yet on `main`**: ADR-0022 (telemetry export, #408) is not on
   `main` yet, so it stays cited by number. The SPEC-0013 implementation
