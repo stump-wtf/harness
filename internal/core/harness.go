@@ -238,11 +238,13 @@ type Harness struct {
 	// miss. Requires Schedule. Governing: ADR-0013; SPEC-0008 REQ "Missed
 	// Window Handling"; issue #117.
 	CatchUp bool
-	// Timeout bounds one run of a scheduled harness: past it the run's process
-	// group gets SIGTERM, then SIGKILL after the stop grace, and the run is
-	// recorded timed_out. Zero means no limit. The parser fills in
-	// DefaultRunTimeout for a scheduled harness that omits it. Requires
-	// Schedule. Governing: ADR-0013; SPEC-0008 REQ "Run Timeout"; issue #119.
+	// Timeout bounds the process lifetime: past it the process group gets
+	// SIGTERM, then SIGKILL after the stop grace. For a scheduled harness the
+	// run is recorded timed_out and the parser fills in DefaultRunTimeout when
+	// it is omitted. For a persistent (non-scheduled) harness the process is
+	// killed and, subject to its restart policy, respawned so a wedged but
+	// alive worker cannot sit stuck forever; zero means no limit. Governing:
+	// ADR-0013; SPEC-0008 REQ "Run Timeout"; issue #119.
 	Timeout time.Duration
 	// OnOverlap is what a firing does while a run is still in flight. Requires
 	// Schedule; the parser fills in OverlapSkip. Governing: ADR-0013; SPEC-0008

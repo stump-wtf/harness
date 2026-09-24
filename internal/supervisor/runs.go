@@ -176,7 +176,7 @@ func decisionRecord(req RunRequest, outcome RunOutcome, now time.Time) RunRecord
 // scheduled, as a plain start otherwise. It returns the run's record as opened
 // (zero for an unscheduled harness).
 func (s *Supervisor) startProcess(req RunRequest) RunRecord {
-	if s.harness.Schedule != "" {
+	if s.harness.Schedule != "" || s.harness.Timeout > 0 {
 		return s.beginRun(req)
 	}
 	s.beginStart()
@@ -308,16 +308,26 @@ func (s *Supervisor) handleRunTimeout(gen uint64) {
 	if s.bus != nil {
 		s.bus.Publish(Event{Kind: EventExited, Name: s.harness.Name, Time: now, Code: s.lastExitCode})
 	}
-	s.resetCrashState()
-	if s.state == core.StateRunning {
-		s.transition(core.StateDegraded) // running→failed is not a legal edge
-	}
-	s.transition(core.StateFailed)
 	var exit *int
 	if ok {
 		exit = &code
 	}
 	s.finishRun(OutcomeTimedOut, exit)
+
+	if s.harness.Schedule == "" {
+		// A persistent worker: evaluate the restart exactly as a natural exit
+		// would, so restart=always brings a timed-out worker back up (and the
+		// timeout is re-armed on respawn). The timeout kill is not a clean
+		// exit, so it counts toward crash-loop give-up like any other crash.
+		s.evaluateRestart(code, false, now)
+		return
+	}
+	// A scheduled one-shot: land in failed; the schedule is its retry.
+	s.resetCrashState()
+	if s.state == core.StateRunning {
+		s.transition(core.StateDegraded) // running→failed is not a legal edge
+	}
+	s.transition(core.StateFailed)
 }
 
 // killProcess ends the live process group the way a graceful stop does —

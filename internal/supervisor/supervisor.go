@@ -660,6 +660,15 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		s.finishRun(outcome, exit)
 	}
 
+	s.evaluateRestart(code, spawnFailed, now)
+}
+
+// evaluateRestart decides whether a process that just died (or was killed)
+// should respawn, and arms the restart timer if so. It is the shared tail of a
+// natural exit (onProcessGone) and a timeout kill (handleRunTimeout): the same
+// restart policy, crash-loop accounting, backoff and give-up must apply whether
+// the worker fell over on its own or was killed for outliving its timeout.
+func (s *Supervisor) evaluateRestart(code int, spawnFailed bool, now time.Time) {
 	// Exit while disabled → stopped, no respawn (SPEC-0003 REQ "Restart On
 	// Exit" / "Intent vs. reality").
 	if !s.enabled {
@@ -771,12 +780,14 @@ func (s *Supervisor) handleRestartTimer() {
 	if s.state != core.StateRestarting && s.state != core.StateDegraded {
 		return
 	}
-	// degraded/restarting → (starting → running) via beginStart; degraded is
-	// routed degraded→restarting→starting per the SPEC-0003 transition table.
+	// degraded/restarting → (starting → running); degraded is routed
+	// degraded→restarting→starting per the SPEC-0003 transition table. Route
+	// through startProcess so a persistent worker with a timeout re-arms its
+	// timeout on every respawn, not just the first lifetime.
 	if s.state == core.StateDegraded {
 		s.transition(core.StateRestarting)
 	}
-	s.beginStart()
+	s.startProcess(RunRequest{Trigger: TriggerManual})
 }
 
 // handleSurvival resets crash-loop state once a run outlives the crash window.

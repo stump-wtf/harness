@@ -81,10 +81,10 @@ func TestRunKeysRejected(t *testing.T) {
 	}
 }
 
-// TestRunKeysRequireSchedule: each key is a mistake without a schedule.
+// TestRunKeysRequireSchedule: overlap and history are schedule-only; timeout is
+// accepted without a schedule (it bounds a persistent worker's lifetime too).
 func TestRunKeysRequireSchedule(t *testing.T) {
 	for key, line := range map[string]string{
-		"timeout":    `timeout = "1h"`,
 		"on_overlap": `on_overlap = "queue"`,
 		"keep_runs":  `keep_runs = 5`,
 	} {
@@ -93,6 +93,18 @@ func TestRunKeysRequireSchedule(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), `"`+key+`" requires "schedule"`) {
 			t.Errorf("%s without schedule: error = %v", key, err)
 		}
+	}
+}
+
+// TestTimeoutWithoutSchedule: a persistent harness may declare a timeout to
+// bound its process lifetime; the value parses and is carried through.
+func TestTimeoutWithoutSchedule(t *testing.T) {
+	cfg, err := Parse([]byte("[harness.agent]\nharness = \"crush\"\nprompt = \"once\"\ntimeout = \"90m\"\n"), "test.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := cfg.Harnesses["agent"]; h.Timeout != 90*time.Minute {
+		t.Errorf("timeout = %v, want 90m", h.Timeout)
 	}
 }
 

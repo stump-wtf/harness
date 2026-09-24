@@ -188,6 +188,44 @@ func TestRunTimeoutRecordsTimedOut(t *testing.T) {
 	}
 }
 
+// TestPersistentWorkerTimeoutRestarts: a persistent (non-scheduled) harness
+// with a timeout that never exits is killed once it outlives the ceiling and,
+// under restart = always, respawned — re-arming the timeout on each respawn —
+// so a wedged-but-alive worker cannot sit stuck forever.
+func TestPersistentWorkerTimeoutRestarts(t *testing.T) {
+	h := shHarnessWithRestart("wedge", "while true; do sleep 0.02; done", time.Millisecond, core.RestartAlways)
+	h.Timeout = 120 * time.Millisecond
+	cfg := managerCfg(h)
+	cfg.Profiles["default"] = core.Profile{Name: "default", Autostart: false}
+
+	m := newTestManager(t, cfg)
+	if err := m.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	if !m.Start("wedge") {
+		t.Fatal("Start(wedge) = false")
+	}
+
+	// Each lifetime outlives its timeout and is recorded timed_out; the second
+	// timeout proves the restart re-armed it rather than running unbounded.
+	waitRuns(t, m, "wedge", "respawn re-arms the timeout", func(rs []RunRecord) bool {
+		timed := 0
+		for _, r := range rs {
+			if r.Outcome == OutcomeTimedOut {
+				timed++
+			}
+		}
+		return timed >= 2
+	})
+	rs := m.Runs("wedge")
+	if rs[0].ExitCode == nil {
+		t.Error("timed-out run has no exit code")
+	}
+	if snap, _ := m.Snapshot("wedge"); snap.RestartCount < 1 {
+		t.Errorf("restart count = %d, want >= 1 after a timeout", snap.RestartCount)
+	}
+}
+
 // TestOverlapSkip: a firing while a run is in flight is recorded skipped and
 // starts nothing; the run in flight is untouched.
 func TestOverlapSkip(t *testing.T) {
