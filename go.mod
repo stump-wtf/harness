@@ -17,7 +17,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
-	github.com/stump-wtf/agent-trace v0.4.0
+	github.com/stump-wtf/agent-trace v0.4.1-0.20260923134138-9002ae0bc550
 	golang.org/x/crypto v0.57.0
 	golang.org/x/term v0.46.0
 )
