@@ -274,3 +274,22 @@ func TestConcurrentUse(t *testing.T) {
 		}
 	}
 }
+
+func TestCancelledContextFails(t *testing.T) {
+	f := New()
+	f.SetBranch(repo, "main", "base")
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := f.BranchHead(cctx, repo, "main"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("BranchHead on a cancelled context = %v, want context.Canceled", err)
+	}
+	if err := f.DeleteBranch(cctx, repo, "main"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("DeleteBranch on a cancelled context = %v", err)
+	}
+	if _, ok := f.Branches(repo)["main"]; !ok {
+		t.Fatal("a cancelled DeleteBranch still deleted")
+	}
+	if got := f.Methods(); len(got) != 2 {
+		t.Fatalf("cancelled calls not recorded: %v", got)
+	}
+}
