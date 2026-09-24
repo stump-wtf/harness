@@ -295,6 +295,7 @@ func (c *conn) runInfo(name string, r supervisor.RunRecord) protocol.RunInfo {
 	}
 	info.LogPruned = r.LogPruned
 	info.Reason = string(r.Reason)
+	info.TodoID = r.TodoID
 	return info
 }
 

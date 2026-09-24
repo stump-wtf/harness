@@ -188,6 +188,10 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 		if len(h.parts) >= 1 && h.parts[0] == "telemetry" {
 			return nil, forbiddenTableErr(filename, full, h.line)
 		}
+		// One run ledger per daemon (SPEC-0022 REQ-19).
+		if len(h.parts) >= 1 && h.parts[0] == "ledger" {
+			return nil, ledgerGlobalOnlyErr(filename, h.line)
+		}
 		// Trigger sources are daemon-owned: the daemon holds a channel
 		// session and serves a webhook route from the config of record, and
 		// a project harness never enters that view. A project source would
