@@ -54,7 +54,8 @@ enabled = false
 # An agent one-shot: give the harness a prompt instead of args and the
 # daemon synthesizes the agent invocation at spawn time from the harness's
 # adapter (claude-code: `claude -p … <prompt>`; crush: `crush run … <prompt>`;
-# codex: `codex exec … <prompt>`). `prompt` is mutually exclusive with
+# codex: `codex exec … <prompt>`; pi and omp: `pi --print … <prompt>`, `omp
+# --print … <prompt>`). `prompt` is mutually exclusive with
 # `args`. One-shots default to restart = "no" — a completed run must
 # not respawn; set restart explicitly to opt back into supervision.
 [harness.deploy-check]
@@ -63,14 +64,15 @@ prompt = "check the deployments and report anything unhealthy"
 model = "claude-opus-5"  # optional: which model the agent runs (requires prompt)
 # auto_accept runs the agent unattended (the adapter's own flag, synthesized at
 # spawn: --dangerously-skip-permissions for claude-code, --yolo for crush,
-# --full-auto for codex). WARNING: this bypasses ALL of the agent's permission
+# --full-auto for codex; nothing for pi and omp, which never prompt). WARNING:
+# this bypasses ALL of the agent's permission
 # prompts — only enable it for trusted, headless runs. Requires `prompt`; a
 # long-running harness passes its tool's own flag through `args` instead.
 auto_accept = true
 # max_turns caps how many iterations the agent may run before it stops — the
 # budget guard for unattended one-shots (requires `prompt`; a long-running harness
 # passes its tool's flag through `args`). 0 or omitted means unlimited. Only the
-# claude-code adapter has a turn-cap flag; crush and codex ignore this key.
+# claude-code adapter has a turn-cap flag; crush, codex, pi and omp ignore it.
 max_turns = 20
 # quiet runs the one-shot headless (suppresses agent output). It is the
 # default for a prompt harness, so set quiet = false to have the agent stream
@@ -146,8 +148,12 @@ enabled = false
 # the program's own flags in argv). For now a command harness is resident
 # only: prompt, prompt_file, schedule and triggers are refused, and argv may
 # not contain "{{" (templates are still to come, ADR-0023, issue #500). This is
-# also how Pi, OMP or another unlisted agent CLI runs today.
-# Valid values: "crush", "claude-code", "codex", "generic", "command".
+# how an agent CLI without an adapter runs; `transcripts = "claude-code"` (or
+# crush, codex, pi, omp) on a command harness observes its sessions as that
+# agent's. Pi and OMP have adapters of their own ("pi", "omp"); OMP's sessions
+# are not observed yet.
+# Valid values: "crush", "claude-code", "codex", "pi", "omp", "generic",
+# "command".
 #
 # harness = "claude-code"   # required on every [harness.*] table
 #
@@ -156,6 +162,12 @@ enabled = false
 # argv = ["/usr/local/bin/report", "--listen", ":8080", "--title", "Nightly report"]
 # workdir = "~/src/report"
 # enabled = true
+#
+# [harness.claude-by-hand]
+# harness = "command"
+# argv = ["claude", "--remote-control", "--continue"]
+# transcripts = "claude-code"
+# workdir = "~/src/app"
 
 # Trajectory harvesting (SPEC-0006 REQ "Harvest Opt-In"): the opt-in for
 # exposing this harness's session transcripts read-only through the MCP facade

@@ -150,14 +150,16 @@ harness apart from one an operator stopped.
 ### Where the model-call numbers come from
 
 The daemon reads the transcript each agent writes: Claude Code's JSONL, Crush's
-SQLite store, or Codex's session files. It counts a **tool call** as a
+SQLite store, Codex's session files, or Pi's session files. It counts a **tool call** as a
 successful model call, because the model answered with work. It counts an
 **error mark** as a failed one. A turn that ends in plain text with no tool
 call is not counted.
 
 Only a harness whose adapter writes a readable transcript (`claude-code`,
-`crush`, `codex`) **and** that has a `workdir` gets model-call series. A
-`generic` harness, or an agent harness with no workdir, has none. The daemon
+`crush`, `codex`, `pi`, or a `command` harness bound to one of those with
+`transcripts`) **and** that has a `workdir` gets model-call series. A `generic`
+harness, an unbound `command` harness, an `omp` harness (its sessions are not
+readable yet), or an agent harness with no workdir, has none. The daemon
 omits values it cannot compute rather than reporting a zero, which would look
 like a healthy, idle agent.
 
@@ -169,7 +171,7 @@ counted, but its provider errors do not appear yet.
 Until an adapter's errors do appear, its harnesses have no error-side series:
 `harness_model_calls_total{outcome="error"}`, `harness_model_call_errors_total`
 and `harness_model_call_errors_unclassified_total` are **absent** for `codex`
-harnesses today, not zero. A zero would say "no quota
+and `pi` harnesses today, not zero. A zero would say "no quota
 errors" through the very outage the quota alert exists to catch. For those
 harnesses, the staleness alert on `harness_last_successful_call_timestamp` is
 the one that fires.
