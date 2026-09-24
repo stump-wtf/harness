@@ -518,6 +518,14 @@ type ServerConfig struct {
 	MetricsTokenFile string
 }
 
+// LedgerConfig is the global [ledger] table (ADR-0028; SPEC-0022 REQ-19).
+type LedgerConfig struct {
+	// TraceURL is a link template for a run's trace: "{trace_id}" is
+	// replaced by the run's first session's trace id, and nothing else is
+	// substituted (REQ-9). Empty records no trace_url.
+	TraceURL string
+}
+
 // Config is a fully parsed, validated harness.toml: the harness registry and
 // the profiles, each preserving file order for stable rendering.
 type Config struct {
@@ -537,6 +545,8 @@ type Config struct {
 	Telemetry TelemetryConfig
 	// MergeTrain is the optional global [mergetrain] table (SPEC-0025 REQ-1).
 	MergeTrain MergeTrainConfig
+	// Ledger is the optional global [ledger] table (SPEC-0022 REQ-19).
+	Ledger LedgerConfig
 	// Channels is every [channel.*] trigger source keyed by name, nil when
 	// none are declared. Governing: ADR-0021; SPEC-0014 REQ "Channel Source
 	// Table".

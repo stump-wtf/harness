@@ -31,8 +31,10 @@ import (
 	"github.com/stump-wtf/harness/internal/config"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/daemon"
+	"github.com/stump-wtf/harness/internal/ledger"
 	"github.com/stump-wtf/harness/internal/observe"
 	"github.com/stump-wtf/harness/internal/remote"
+	"github.com/stump-wtf/harness/internal/runusage"
 	"github.com/stump-wtf/harness/internal/scheduler"
 	"github.com/stump-wtf/harness/internal/supervisor"
 	"github.com/stump-wtf/harness/internal/telemetry"
@@ -99,6 +101,26 @@ func startDaemonLoopGuard(obs *observe.Observer, mgr *supervisor.Manager) *obser
 	g := observe.StartLoopGuard(obs, mgr, 0, nil)
 	log.Info("runaway loop guard active", "threshold", observe.DefaultLoopThreshold)
 	return g
+}
+
+// startDaemonRunUsage builds the run ledger's usage accumulator over the
+// Manager's ledger, feeds it from the observer, and keeps its trace_url
+// template current across reloads (SPEC-0022 REQ-19: a reload applies it to
+// records closed after it). A function, like startDaemonLoopGuard, so the
+// wiring test drives the accumulator the daemon builds.
+//
+// Governing: SPEC-0022 REQ-8, REQ-9, REQ-19; harness#459.
+func startDaemonRunUsage(obs *observe.Observer, mgr *supervisor.Manager) *runusage.Feed {
+	acc := ledger.NewAccumulator(mgr.Ledger(), ledger.AccumulatorOptions{})
+	acc.SetTraceURL(mgr.Config().Ledger.TraceURL)
+	prev := mgr.ReloadHook()
+	mgr.SetReloadHook(func() {
+		if prev != nil {
+			prev()
+		}
+		acc.SetTraceURL(mgr.Config().Ledger.TraceURL)
+	})
+	return runusage.Start(obs, acc, runusage.Options{})
 }
 
 // resolveDaemonTelemetry resolves the [telemetry] table against the daemon's
@@ -391,6 +413,11 @@ func runDaemon(o daemonOpts) {
 	// the runaway run dies.
 	loopGuard := startDaemonLoopGuard(observer, mgr)
 
+	// harness#459: fold that activity into each harness's open run in the
+	// run ledger (SPEC-0022 REQ-8): model calls, error classes, sessions and
+	// their trace links.
+	runUsage := startDaemonRunUsage(observer, mgr)
+
 	// Issue #391: export that stream, only when [telemetry] names a
 	// destination and only for opted-in harnesses (SPEC-0015 REQ-1).
 	telemetryPipeline := startDaemonTelemetry(telemetryRes, observer, mgr, telemetry.Options{})
@@ -451,6 +478,9 @@ func runDaemon(o daemonOpts) {
 	// unregisters the subscription so observer.Stop never closes a channel
 	// the guard is still reading.
 	loopGuard.Stop()
+	// Likewise; the runs still open keep what it folded, and their closes,
+	// in mgr.Close below, carry it.
+	runUsage.Stop()
 	// Before the Manager closes: the observer reads its snapshots.
 	observer.Stop()
 	sessionGuard.Close()

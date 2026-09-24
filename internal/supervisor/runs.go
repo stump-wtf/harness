@@ -243,6 +243,13 @@ type RunRecord struct {
 	LogPruned bool   `json:"log_pruned,omitempty"`
 	// Kind is oneshot or resident; empty reads as oneshot.
 	Kind RunKind `json:"kind,omitempty"`
+	// TodoID is the Switchboard todo the run worked: a channel
+	// notification's meta.todo_id, or (ADR-0025) the todo a supervisor-held
+	// lease claimed, with Attempt its attempt number. Opaque: stored, never
+	// interpreted, and capped at 256 bytes by the ledger (SPEC-0022 REQ-4,
+	// REQ-9).
+	TodoID  string `json:"todo_id,omitempty"`
+	Attempt int    `json:"attempt,omitempty"`
 	// Mismatch is the first mismatching call of a model_mismatch record,
 	// set by the model-pinning check on its close (SPEC-0020).
 	Mismatch *RunMismatch `json:"mismatch,omitempty"`
@@ -276,6 +283,11 @@ type RunRequest struct {
 	// id it does not have yet to name its file.
 	// Governing: SPEC-0014 REQ "Event Delivery To The Run".
 	Event *trigger.Envelope
+	// TodoID and Attempt name a Switchboard todo a supervisor-held lease
+	// claimed for this run (ADR-0025). They win over a channel
+	// notification's meta.todo_id. Governing: SPEC-0022 REQ-9.
+	TodoID  string
+	Attempt int
 }
 
 // RunJournal stores run records. The Manager implements it, writing the run
@@ -359,6 +371,17 @@ func decisionRecord(req RunRequest, outcome RunOutcome, now time.Time) RunRecord
 	}
 	if req.Event != nil {
 		rec.EventID = req.Event.EventID
+		if ch := req.Event.Channel; ch != nil {
+			// An identifier the sender chose to attach; the rest of the
+			// notification stays in the event file (ADR-0008).
+			rec.TodoID = ch.Meta["todo_id"]
+		}
+	}
+	// ADR-0025's supervisor-held lease sets TodoID and Attempt on the
+	// request when it claims a todo; the hook is here, where every record a
+	// request makes is built.
+	if req.TodoID != "" {
+		rec.TodoID, rec.Attempt = req.TodoID, req.Attempt
 	}
 	return rec
 }

@@ -578,6 +578,9 @@ type RunInfo struct {
 	// Reason qualifies the outcome: why a skip started no process, why an
 	// interrupted run was (shutdown, daemon_crash). SPEC-0022 REQ-5.
 	Reason string `json:"reason,omitempty"`
+	// TodoID is the Switchboard todo the run worked, when known: an opaque
+	// identifier, never a payload (SPEC-0022 REQ-9).
+	TodoID string `json:"todo_id,omitempty"`
 	// Source is the trigger source reference behind the run, e.g.
 	// "webhook.gitea-pr" (SPEC-0014 REQ "Run Record Fields").
 	Source string `json:"source,omitempty"`
