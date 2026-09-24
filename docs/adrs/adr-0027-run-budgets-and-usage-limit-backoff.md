@@ -442,8 +442,8 @@ merged, and story #488 folds the amendment into SPEC-0012 when it ships.
   ADR-0020 rejected for metrics. It is scoped to one adapter's non-zero exits,
   clamped, and retires with agent-trace#104.
 * Bad, because a budget spent by 09:30 holds the agent for the rest of the day,
-  ADR-0019's objection to Decision 1, Option 4. It is the point of a daily cap. `--over-budget`
-  is the escape hatch, and hours plus budgets together are the intended use.
+  ADR-0019's objection to its Decision 1, Option 4. It is the point of a daily
+  cap. `--over-budget` is the escape hatch, and hours plus budgets together are the intended use.
 * Neutral, because admission gains four checks on a path that runs a handful of
   times a minute at most.
 
