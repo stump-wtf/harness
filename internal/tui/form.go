@@ -201,8 +201,11 @@ func (f HarnessForm) Validate() error {
 	if promptSet && len(f.Args) > 0 {
 		return fmt.Errorf("prompt and args are mutually exclusive")
 	}
+	isCommand := f.Harness == core.AdapterCommand
 	if model := strings.TrimSpace(f.Model); model != "" {
-		if !promptSet {
+		// A command harness passes model through {{model}} in its argv;
+		// validateCommand has already refused one that does not.
+		if !promptSet && !isCommand {
 			return fmt.Errorf("model requires prompt (for a long-running harness, pass --model in args)")
 		}
 		if strings.ContainsFunc(model, unicode.IsSpace) {
@@ -232,8 +235,8 @@ func (f HarnessForm) Validate() error {
 	// combination the parser rejects would leave the file unparseable on disk —
 	// every later reload fails until it is hand-edited.
 	if schedule := strings.TrimSpace(f.Schedule); schedule != "" {
-		if !promptSet {
-			return fmt.Errorf("schedule requires prompt (a scheduled harness is a one-shot agent run)")
+		if !promptSet && !isCommand {
+			return fmt.Errorf("schedule requires prompt, or harness command (a scheduled harness is a one-shot run)")
 		}
 		if f.Enabled {
 			return fmt.Errorf("schedule and enabled are mutually exclusive")
@@ -252,8 +255,8 @@ func (f HarnessForm) Validate() error {
 	// harness_d drop-in, which the form does not read.
 	triggers := normalizeTriggers(f.Triggers)
 	if len(triggers) > 0 {
-		if !promptSet {
-			return fmt.Errorf("triggers requires prompt (a triggered harness is a one-shot agent run)")
+		if !promptSet && !isCommand {
+			return fmt.Errorf("triggers requires prompt, or harness command (a triggered harness is a one-shot run)")
 		}
 		if f.Enabled {
 			return fmt.Errorf("triggers and enabled are mutually exclusive")
@@ -380,14 +383,15 @@ func (f HarnessForm) validateCommand(promptSet bool) error {
 		return fmt.Errorf("args is not accepted on a command harness: put the whole command line in argv")
 	case promptSet:
 		return fmt.Errorf("a command harness takes no prompt yet; use harness crush, claude-code or codex for a prompt one-shot")
-	case strings.TrimSpace(f.Model) != "":
-		return fmt.Errorf("model is unused on a command harness: no argv element references {{model}}")
 	case f.AutoAccept || f.MaxTurns != 0:
 		return fmt.Errorf("auto_accept and max_turns are not accepted on a command harness: it owns its argv")
-	case strings.TrimSpace(f.Schedule) != "" || len(normalizeTriggers(f.Triggers)) > 0:
-		return fmt.Errorf("a command harness is resident only for now: schedule and triggers need a prompt harness")
 	}
-	return core.CheckCommandArgv(f.Argv)
+	if err := core.CheckCommandArgv(f.Argv); err != nil {
+		return err
+	}
+	scheduled := strings.TrimSpace(f.Schedule) != ""
+	triggered := scheduled || len(normalizeTriggers(f.Triggers)) > 0
+	return core.CheckCommandTemplateContext(f.Argv, strings.TrimSpace(f.Model), scheduled, triggered)
 }
 
 // formatRunTimeout renders a timeout the way an operator would type it:
@@ -414,6 +418,8 @@ func (f HarnessForm) TOML() string {
 	fmt.Fprintf(&b, "harness = %s\n", strconv.Quote(f.Harness))
 	prompt := strings.TrimSpace(f.Prompt)
 	promptFile := strings.TrimSpace(f.PromptFile)
+	isCommand := f.Harness == core.AdapterCommand
+	oneShotKind := prompt != "" || promptFile != "" || isCommand
 	if prompt != "" || promptFile != "" {
 		// Prompt harness: `prompt` replaces args entirely (Validate
 		// enforces the exclusivity; the daemon synthesizes the argv at spawn,
@@ -440,12 +446,40 @@ func (f HarnessForm) TOML() string {
 			// output to whoever attaches (issue #60).
 			b.WriteString("quiet = false\n")
 		}
+	} else {
+		if len(f.Args) > 0 {
+			parts := make([]string, len(f.Args))
+			for i, a := range f.Args {
+				parts[i] = strconv.Quote(a)
+			}
+			fmt.Fprintf(&b, "args = [%s]\n", strings.Join(parts, ", "))
+		}
+		if len(f.Argv) > 0 {
+			// A command harness's argv, one TOML string per element exactly
+			// as the operator wrote it (SPEC-0017 REQ-15): quoting each
+			// element keeps "a b" one argument, and a placeholder written
+			// here stays a placeholder, never a rendering.
+			parts := make([]string, len(f.Argv))
+			for i, a := range f.Argv {
+				parts[i] = strconv.Quote(a)
+			}
+			fmt.Fprintf(&b, "argv = [%s]\n", strings.Join(parts, ", "))
+		}
+		if model := strings.TrimSpace(f.Model); model != "" && isCommand {
+			// A command harness's model feeds {{model}} in its argv
+			// (SPEC-0017 REQ-3); Validate refuses it without one.
+			fmt.Fprintf(&b, "model = %s\n", strconv.Quote(model))
+		}
+	}
+	// A prompt harness or a command harness may be a one-shot (SPEC-0017
+	// REQ-3: a command harness needs no prompt for schedule or triggers).
+	// Validate rejects a schedule or triggers on anything else, so this
+	// block is the only place they can appear.
+	if oneShotKind {
 		schedule := strings.TrimSpace(f.Schedule)
 		triggers := normalizeTriggers(f.Triggers)
 		if schedule != "" {
 			// The daemon fires this one-shot on a cron cadence (issue #66).
-			// Prompt-only, like the knobs above: Validate rejects a schedule
-			// without a prompt, so this branch is the only place it can appear.
 			fmt.Fprintf(&b, "schedule = %s\n", strconv.Quote(schedule))
 		}
 		if len(triggers) > 0 {
@@ -483,25 +517,6 @@ func (f HarnessForm) TOML() string {
 				fmt.Fprintf(&b, "keep_runs = %d\n", f.KeepRuns)
 			}
 		}
-	} else {
-		if len(f.Args) > 0 {
-			parts := make([]string, len(f.Args))
-			for i, a := range f.Args {
-				parts[i] = strconv.Quote(a)
-			}
-			fmt.Fprintf(&b, "args = [%s]\n", strings.Join(parts, ", "))
-		}
-		if len(f.Argv) > 0 {
-			// A command harness's argv, one TOML string per element exactly
-			// as the operator wrote it (SPEC-0017 REQ-15): quoting each
-			// element keeps "a b" one argument, and a placeholder written
-			// here stays a placeholder, never a rendering.
-			parts := make([]string, len(f.Argv))
-			for i, a := range f.Argv {
-				parts[i] = strconv.Quote(a)
-			}
-			fmt.Fprintf(&b, "argv = [%s]\n", strings.Join(parts, ", "))
-		}
 	}
 	if f.Workdir != "" {
 		fmt.Fprintf(&b, "workdir = %s\n", strconv.Quote(f.Workdir))
@@ -513,10 +528,12 @@ func (f HarnessForm) TOML() string {
 		fmt.Fprintf(&b, "restart_delay = %d\n", f.RestartDelay)
 	}
 	// Omit restart when it equals the parse default for this harness kind —
-	// "no" for prompt one-shots, "always" otherwise — so an untouched edit
+	// "no" for prompt one-shots and scheduled or triggered command harnesses
+	// (SPEC-0017 REQ-3), "always" otherwise — so an untouched edit
 	// round-trips without growing keys.
 	defaultRestart := string(core.RestartAlways)
-	if prompt != "" || promptFile != "" {
+	commandOneShot := isCommand && (strings.TrimSpace(f.Schedule) != "" || len(normalizeTriggers(f.Triggers)) > 0)
+	if prompt != "" || promptFile != "" || commandOneShot {
 		defaultRestart = string(core.RestartNo)
 	}
 	if f.Restart != "" && f.Restart != defaultRestart {

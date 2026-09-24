@@ -198,8 +198,12 @@ type Harness struct {
 	// cmd's argv, so a cmd harness passes --model through its own Args): the
 	// supervisor folds the value into the synthesized agent argv at spawn time
 	// via AgentCommand, so it never rides Args and, like the prompt text, is
-	// exempt from {workdir} arg expansion.
-	// Governing: ADR-0011; issue #57 (add `model` field for model selection).
+	// exempt from {workdir} arg expansion. The one exception is a "command"
+	// harness, which owns its argv: there Model is accepted only when an Argv
+	// element references {{model}}, and reaches the program only through that
+	// placeholder (CheckCommandTemplateContext).
+	// Governing: ADR-0011; issue #57 (add `model` field for model selection);
+	// SPEC-0017 REQ-3.
 	Model string
 	// AutoAccept enables unattended/yolo mode for a prompt harness, bypassing
 	// the agent CLI's permission prompts. Config truth only, and it requires
@@ -434,12 +438,13 @@ const AdapterCommand = "command"
 //
 // argv[0] is what gets exec'd, so it must be a non-blank literal: a
 // placeholder there would let a rendered value choose the executable.
-// Placeholders in argv[1:] are SPEC-0017 REQ-6 templates, which do not exist
-// yet, so any "{{" there is refused outright rather than passed to the child
-// as literal text an operator meant to be substituted; the template grammar
-// replaces this refusal with a parse and a reference check.
+// argv[1:] elements are SPEC-0017 REQ-6 templates: each must parse, and each
+// reference must be in the argv location's allow set (argvtmpl.go), so an
+// unknown path, a malformed "{{" or untrusted text fails here, located by
+// element, line and column. The rules that also depend on the rest of the
+// harness (model, schedule, triggers) are CheckCommandTemplateContext.
 // Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-6
-// "Template Grammar".
+// "Template Grammar", REQ-7 "Template Context", REQ-10 "Untrusted Free Text".
 func CheckCommandArgv(argv []string) error {
 	if len(argv) == 0 {
 		return errors.New(`harness = "command" requires "argv", a non-empty array (argv[0] is the executable, exec'd without a shell)`)
@@ -450,9 +455,15 @@ func CheckCommandArgv(argv []string) error {
 	case strings.Contains(argv[0], "{{"):
 		return fmt.Errorf(`"argv[0]" %q must be a literal executable: a placeholder cannot choose what runs`, argv[0])
 	}
-	for i, a := range argv[1:] {
-		if strings.Contains(a, "{{") {
-			return fmt.Errorf(`"argv[%d]" %q contains "{{", but argv templates are not supported yet`, i+1, a)
+	ts, err := parseArgvTemplates(argv)
+	if err != nil {
+		return err
+	}
+	for i, t := range ts {
+		for _, r := range t.Refs() {
+			if err := checkArgvRef(i, r); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

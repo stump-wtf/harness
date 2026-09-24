@@ -496,12 +496,17 @@ func checkCommandDef(h core.Harness) error {
 		return errors.New("args is not accepted on a command harness: put the whole command line in argv (argv[0] is the executable)")
 	case h.Prompt != "" || h.PromptFile != "":
 		return errors.New("a command harness takes no prompt yet: nothing delivers a prompt to its argv")
-	case h.Model != "":
-		return errors.New("model is unused: no argv element references {{model}}")
 	case h.AutoAccept || h.MaxTurns != 0:
 		return errors.New("auto_accept and max_turns are not accepted on a command harness: it owns its argv")
 	}
-	return core.CheckCommandArgv(h.Argv)
+	if err := core.CheckCommandArgv(h.Argv); err != nil {
+		return err
+	}
+	// The same template-context rules as the file: `model` only with
+	// {{model}}, and — since schedule and triggers never travel here, so a
+	// wire harness is always resident — no required run.* reference, which
+	// could never render. Governing: SPEC-0017 REQ-7, REQ-14.
+	return core.CheckCommandTemplateContext(h.Argv, h.Model, h.Schedule != "", h.Triggered())
 }
 
 // harnessDefEqual reports whether two definitions are identical field-for-

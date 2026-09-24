@@ -83,7 +83,11 @@ const (
 	// than 12 refuses a project_up or scratchpad definition naming "command"
 	// as an unknown harness kind, so the new field is never silently dropped
 	// into a harness that runs something else.
-	ProtoMinor = 12
+	// ProtoMinor 13 added Reason and MissingPath on RunInfo (SPEC-0017 REQ-11:
+	// a skipped run says why, and a template_unresolved skip names the path
+	// it lacked) — additive only. A daemon older than 13 omits both, and a
+	// client older than 13 shows a bare "skipped".
+	ProtoMinor = 13
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -593,6 +597,13 @@ type RunInfo struct {
 	// run record carries no byte of an event payload, no header value and no
 	// credential (ADR-0008).
 	EventID string `json:"event_id,omitempty"`
+	// Reason says why a skipped run started no process: "overlap",
+	// "stopping", "outside_hours" or "template_unresolved" (SPEC-0014 REQ
+	// "Run Record Fields", SPEC-0017 REQ-11).
+	Reason string `json:"reason,omitempty"`
+	// MissingPath names the template path a template_unresolved skip lacked,
+	// e.g. "run.source" — a name, never a value (SPEC-0017 REQ-11).
+	MissingPath string `json:"missing_path,omitempty"`
 }
 
 // JobInfo is one scheduled harness for the jobs op (SPEC-0008 REQ "Protocol

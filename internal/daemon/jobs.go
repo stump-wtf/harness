@@ -277,6 +277,10 @@ func (c *conn) runInfo(name string, r supervisor.RunRecord) protocol.RunInfo {
 	// Record Fields").
 	info.Source = r.Source
 	info.EventID = r.EventID
+	// A skip's reason, and for template_unresolved the path's name: never a
+	// rendered value (SPEC-0017 REQ-11).
+	info.Reason = string(r.Reason)
+	info.MissingPath = r.MissingPath
 	if path := c.srv.mgr.RunLogPath(name, r.RunID); path != "" {
 		if _, err := os.Stat(path); err == nil {
 			info.HasLog = true

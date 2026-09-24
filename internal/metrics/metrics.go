@@ -247,6 +247,10 @@ const (
 	outcomeFailure = "failure"
 )
 
+// renderFailureReasons are the `reason` values of
+// harness_template_render_failures_total, in exposition order.
+var renderFailureReasons = []string{supervisor.RenderFailureUnresolved, supervisor.RenderFailureGrammar}
+
 // series is the counted state behind one harness label value.
 type series struct {
 	calls           [2]uint64 // success, error
@@ -257,10 +261,13 @@ type series struct {
 	sessionsStarted uint64
 	transitions     map[core.State]uint64
 	runs            [2]uint64 // success, failure
+	// renderFailures counts template render failures by reason
+	// (supervisor.RenderFailure*), SPEC-0017 REQ-11.
+	renderFailures map[string]uint64
 }
 
 func newSeries() *series {
-	return &series{errors: make(map[Class]uint64), transitions: make(map[core.State]uint64)}
+	return &series{errors: make(map[Class]uint64), transitions: make(map[core.State]uint64), renderFailures: make(map[string]uint64)}
 }
 
 // Metrics owns the registry and the counters behind it. Build it with New,
@@ -477,6 +484,10 @@ func (m *Metrics) lifecycle(ev supervisor.Event) {
 		case supervisor.OutcomeFailed, supervisor.OutcomeTimedOut:
 			m.seriesFor(ev.Name).runs[1]++
 		}
+	case supervisor.EventTemplateRenderFailed:
+		// Governing: SPEC-0017 REQ-11 "Rendering", REQ "Error Handling
+		// Standards" — every render failure is a counter increment.
+		m.seriesFor(ev.Name).renderFailures[ev.RenderFailure]++
 	}
 }
 

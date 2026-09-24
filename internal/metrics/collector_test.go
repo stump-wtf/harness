@@ -581,3 +581,35 @@ func TestRuntimeCollectorsAndLint(t *testing.T) {
 		}
 	}
 }
+
+// SPEC-0017 REQ-11: every template render failure is a counter increment,
+// labelled by reason. A command harness reports both reasons at zero before
+// any failure (an absent series and a zero one read the same to an alert), a
+// harness with no templates reports neither, and a failure event moves exactly
+// its own reason.
+func TestTemplateRenderFailuresCounted(t *testing.T) {
+	src := newFakeSource()
+	src.add(core.Harness{Name: "report", Adapter: core.AdapterCommand, Argv: []string{"report", "{{run.id}}"}}, supervisor.Snapshot{State: core.StateStopped})
+	src.add(core.Harness{Name: "svc", Adapter: "generic"}, runningSnap())
+	m := newTestMetrics(t, src, Options{})
+
+	fams := scrape(t, m)
+	for _, r := range []string{"unresolved", "grammar"} {
+		if v := fams.must(t, "harness_template_render_failures_total", lbls("harness", "report", "reason", r)); v != 0 {
+			t.Errorf("%s = %v before any failure, want 0", r, v)
+		}
+	}
+	if got := strings.Join(fams.harnessValues("harness_template_render_failures_total"), ","); got != "report" {
+		t.Errorf("render-failure harnesses = %q, want only the command harness", got)
+	}
+
+	src.bus.Publish(supervisor.Event{Kind: supervisor.EventTemplateRenderFailed, Name: "report", RenderFailure: supervisor.RenderFailureUnresolved})
+	src.bus.Publish(supervisor.Event{Kind: supervisor.EventTemplateRenderFailed, Name: "report", RenderFailure: supervisor.RenderFailureUnresolved})
+	eventually(t, "the render failures counted", func() bool {
+		v, _ := scrape(t, m).get("harness_template_render_failures_total", lbls("harness", "report", "reason", "unresolved"))
+		return v == 2
+	})
+	if v := scrape(t, m).must(t, "harness_template_render_failures_total", lbls("harness", "report", "reason", "grammar")); v != 0 {
+		t.Errorf("grammar = %v, want 0 (only unresolved failures happened)", v)
+	}
+}
