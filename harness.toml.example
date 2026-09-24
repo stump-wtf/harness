@@ -218,7 +218,8 @@ description = "switchboard doorbells for my-agent"
 # `verify` picks the authentication scheme: bearer, hmac-sha256, github,
 # gitea, gitlab or standard-webhooks. The four presets fix their own header
 # names, so setting signature_header/event_header alongside one is an error
-# rather than a silently ignored override.
+# rather than a silently ignored override. standard-webhooks is accepted but
+# not verified yet: its route answers every delivery 401 until it is.
 #
 # `secret` must be exactly one ${NAME} reference — a literal is refused,
 # because harness.toml is routinely committed to a dotfiles repository.
