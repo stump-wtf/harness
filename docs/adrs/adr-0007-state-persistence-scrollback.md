@@ -50,7 +50,7 @@ persisted state file (y).**
   This backs `harness logs <name>` (including after a crash) and gives us a
   durable record independent of the ring. Analogous to today's launchd
   `StandardOutPath`, but uniform across platforms.
-  *(Amended, issue #279: this was originally a raw PTY byte tee, which made
+  *(Amended: this was originally a raw PTY byte tee, which made
   `harness logs` unreadable for full-screen agent TUIs — a stream of ANSI
   repaint frames, one per refresh tick. The log now receives line-oriented
   plain text: the screen rows that actually scrolled off (a repaint-in-place

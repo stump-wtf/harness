@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://stump-wtf.github.io/harness/
+    about: Guides, the configuration reference and every CLI verb.
+  - name: Troubleshooting
+    url: https://stump-wtf.github.io/harness/guides/troubleshooting
+    about: Answers for "it's running but does nothing", restart loops, schedules that didn't fire.
+  - name: Report a security vulnerability
+    url: https://github.com/stump-wtf/harness/security/policy
+    about: Please report security issues privately, not as a public issue.

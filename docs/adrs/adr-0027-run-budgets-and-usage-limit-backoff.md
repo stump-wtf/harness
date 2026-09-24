@@ -18,7 +18,7 @@ four levers on that spend today, and none of them is a budget:
 | `timeout` (SPEC-0008) | Wall time of one one-shot run | Count runs, tokens or dollars |
 | `max_turns` (ADR-0011) | Turns of one Claude Code `-p` run | Anything else. Crush has no such flag, so the key is inert there (`internal/adapter/adapter.go`) |
 | `on_overlap` (SPEC-0008, SPEC-0014) | One process per harness | Limit how many *harnesses* run at once. One webhook that fans out to ten harnesses starts ten runs |
-| `operating_hours` (ADR-0019, enforced since #389) | *When* a resident harness may run | *How much* it may spend inside the window |
+| `operating_hours` (ADR-0019) | *When* a resident harness may run | *How much* it may spend inside the window |
 
 Two failures show what is missing.
 
@@ -48,7 +48,7 @@ each firing claims its todo, fails, and spends one of the todo's Switchboard
 attempts, so an overnight outage turns a queue into dead letters.
 
 SPEC-0013 already classifies these errors (`quota`, `auth`, `timeout`,
-`transport`, `other`) where they are observed, for metrics (#407). Nothing acts
+`transport`, `other`) where they are observed, for metrics. Nothing acts
 on the class.
 
 ADR-0019 considered a token or cost budget (its option 1D) and **deferred** it,
@@ -56,7 +56,7 @@ because "the daemon cannot see tokens without trusting adapter-parsed
 trajectories as a billing meter". Two things have changed since:
 
 * The daemon now watches every supervised harness's agent-trace stream
-  continuously (the observer, #390, merged as #416), and SPEC-0013 already
+  continuously (the observer), and SPEC-0013 already
   trusts it enough to alert on.
 * agent-trace can report token usage, recorded cost, and the model and provider
   that served each message. It does not yet, and stump.wtf/agent-trace#105 asks
@@ -283,7 +283,7 @@ overrun by at most one turn. The docs say so plainly.
 
 A harness is **parked** when its quota is exhausted. The signal is SPEC-0013's
 error class `quota`, from one classifier shared by metrics and budgets. It is
-moved out of `internal/metrics` into its own package once #407 lands, so the two
+moved out of `internal/metrics` into its own package once the metrics implementation lands, so the two
 can never disagree about what a quota error looks like. The error reaches the
 classifier from:
 
@@ -358,15 +358,15 @@ until 15:00 and out of hours at 15:00 stays held for hours, and each surface
 names the reason that will clear last.
 
 SPEC-0012 is not edited here. SPEC-0021 states the amendment to SPEC-0012 REQ
-"Gate Enforcement". #412 (which brought SPEC-0012 in line with what shipped) has
-merged, and story #488 folds the amendment into SPEC-0012 when it ships.
+"Gate Enforcement". The change that brought SPEC-0012 in line with what shipped has
+merged, and a follow-up story folds the amendment into SPEC-0012 when it ships.
 
 ### Visibility
 
 * **`harness list` / `describe` / the TUI**: STATE reads `parked` or
-  `over-budget` (not `stopped`, and never `failed`), styled like `off-hours`
-  (#385). NEXT reads `resets 15:00` or `budget resets 00:00`, and `waiting 4/4`
-  for a firing queued on concurrency. No new column (#343). `describe` shows the
+  `over-budget` (not `stopped`, and never `failed`), styled like `off-hours`.
+  NEXT reads `resets 15:00` or `budget resets 00:00`, and `waiting 4/4`
+  for a firing queued on concurrency. No new column. `describe` shows the
   day's counters against their caps.
 * **`harness doctor`**: the resolved caps and budget day, unmeasurable caps,
   parked harnesses with their reset and the rule that parked them, unused
@@ -432,7 +432,7 @@ merged, and story #488 folds the amendment into SPEC-0012 when it ships.
 * Good, because the hold generalization gives hours, quota and budget one
   release path and one display rule.
 * Bad, because token and cost caps depend on agent-trace#105, and cost for
-  Claude Code and codex needs operator-maintained prices. Until #105 lands only
+  Claude Code and codex needs operator-maintained prices. Until agent-trace#105 lands only
   the meter-free caps and parking work.
 * Bad, because caps overrun by up to one turn, since usage arrives after the
   tokens are spent.
@@ -623,7 +623,7 @@ flowchart TD
   consumer of the served-model data), linked in this ADR's front matter;
   [ADR-0028](adr-0028-run-history-ledger.md) (run history ledger, the
   counters' store and the usage accumulator), which carries the edge to this
-  ADR. ADR-0022 (telemetry export, #408) is not on `main` yet, so it stays
+  ADR. ADR-0022 (telemetry export) is not on `main` yet, so it stays
   cited by number.
 * **Depends on** stump.wtf/agent-trace#105 (usage, cost, model and provider
   items) for token and cost caps, and on stump.wtf/agent-trace#104 (claude-code
