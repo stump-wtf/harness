@@ -754,11 +754,12 @@ It never redirects and never serves files.
 
 | Status | When |
 |---|---|
-| `202` | Verified. `decision` is `fired` with one entry per bound harness (`started`/`skipped` carry `run_id`; `queued` does not), or `ignored` when `events` filtered it out. The response never waits for a run. |
+| `202` | Verified. `decision` is `fired` with one entry per bound harness (`started`/`skipped` carry `run_id`; `queued` does not), `ignored` when `events` filtered it out, or `duplicate` when its delivery ID already fired (with the first firing's `event_id`). `ignored` and `duplicate` fire nothing and make no run record. The response never waits for a run. |
 | `401` | Missing, malformed or wrong credential. Every cause gets the same body; the log names the route and peer, never the value presented. |
 | `404` | The name is unknown, disabled, or bound by no harness. All three are byte-identical, so routes cannot be enumerated. |
 | `405` | Any method other than `POST` on `/hooks/<name>` (or other than `GET` on `/healthz`). |
 | `413` | The body is over `max_body`. Checked before the credential is. |
+| `429` | The route is over its `rate_limit`. `Retry-After` says how many seconds until the next token. |
 | `503` | 64 deliveries are already in flight. |
 
 Every response carries `Content-Security-Policy`, `X-Frame-Options`,
@@ -767,12 +768,29 @@ plus `Strict-Transport-Security` when the listener terminates TLS itself.
 Slow clients are cut off: 10 s to send headers, 30 s to read the request,
 30 s to write the response, 60 s idle, 64 KiB of headers.
 
+After verification, each delivery goes through three filters, in order:
+
+1. **`events`**: an event name not in the list (or no event name at all) is
+   `202 ignored`.
+2. **De-duplication**: when the scheme has a delivery header (`delivery_header`
+   for `bearer`/`hmac-sha256`, the preset's otherwise) and the delivery
+   carries one, an ID that already fired on this route in the last 24 hours —
+   among the last 1024 kept — is `202 duplicate`. The set is in memory and
+   starts empty when the daemon does.
+3. **`rate_limit`**: a token bucket of `n` refilling `n` per unit, so `"2/m"`
+   allows a burst of two, then one every 30 s. Only a delivery that verified,
+   passed `events` and is not a duplicate spends a token, so forged traffic
+   cannot use up the real sender's budget. A `429` is not remembered as seen,
+   so the sender's retry fires. `"0"` turns the limit off.
+
+A reload keeps a route's bucket and de-duplication set as long as its name and
+`rate_limit` are unchanged; changing `rate_limit` starts both afresh.
+
 :::warning Only bearer is verified so far
 **Only `verify = "bearer"` is implemented so far.** A route using
 `hmac-sha256`, `github`, `gitea`, `gitlab` or `standard-webhooks` loads,
 logs a warning, and answers **every** delivery `401` until its verifier
-lands. It never accepts an unverified delivery. De-duplication and
-`rate_limit` are not enforced yet either.
+lands. It never accepts an unverified delivery.
 
 A non-loopback `webhook_listen` without TLS starts with a warning: bearer
 tokens then cross the network in cleartext. Bind loopback behind a
