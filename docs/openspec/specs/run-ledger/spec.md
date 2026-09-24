@@ -292,7 +292,7 @@ the `closed` line. Before agent-trace#105 is available, records SHALL carry
 ### REQ-9: Trace and todo links
 
 Each `sessions` entry SHALL carry the trace id that SPEC-0015's traces signal
-(ADR-0022, PR #408) assigns to that session, or the id agent-trace's
+(ADR-0022) assigns to that session, or the id agent-trace's
 `otel.BuildTrace` would assign when SPEC-0015 is not implemented. When
 `[ledger] trace_url` is set, the record's `trace_url` SHALL be that template with
 `{trace_id}` replaced by the first session's trace id; the template SHALL NOT

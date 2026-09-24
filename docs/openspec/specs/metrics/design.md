@@ -55,7 +55,7 @@ than one that refuses to start with a clear message.
 
 ## Implementation decisions
 
-Recorded 2026-09-21 with the implementation (#356), where the spec left a
+Recorded 2026-09-21 with the implementation, where the spec left a
 choice open.
 
 ### Seven supervisor states onto four
@@ -82,7 +82,7 @@ enum.
 
 ### Where model reachability comes from
 
-The observer (`internal/observe`, #390) reads each agent's own transcript. A
+The observer (`internal/observe`) reads each agent's own transcript. A
 tool call is a successful model call and an agent error mark a failed one; the
 last-success timestamp is the item's own time and never moves backwards. Only
 harnesses whose adapter writes a readable transcript (`claude-code`, `crush`,

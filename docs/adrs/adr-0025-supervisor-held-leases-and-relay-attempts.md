@@ -287,8 +287,8 @@ A `fail` carries a Cairn handle when one exists, chosen in this order:
    replaces the tags outright; there is no per-server fallback between them.
 3. **None.** The summary alone still reaches the next attempt.
 
-A trace handle becomes a fourth source once Harness ADR-0022 (PR #408) exports
-traces and Cairn can ingest them (Cairn ADR-0015, epic #138). The relay does not
+A trace handle becomes a fourth source once Harness ADR-0022 exports
+traces and Cairn can ingest them (Cairn ADR-0015, epic cairn#138). The relay does not
 depend on it.
 
 ### Dead letters, concurrency and budgets
@@ -371,7 +371,7 @@ granted, not a version difference.
 | Switchboard | ADR-0038 / SPEC-0033 (in flight) | Team-owned endpoints and queues; Harness is unaffected because it acts as one endpoint |
 | Cairn | ADR-0027 / SPEC-0021 (in flight) | The attempt receipt's shape |
 | Cairn | ADR-0023 / SPEC-0017 (in flight) | Server-side redaction, a second layer behind Harness's own |
-| Cairn | ADR-0015 (proposed, epic #138) | Trace handles, later |
+| Cairn | ADR-0015 (proposed, epic cairn#138) | Trace handles, later |
 
 ### Visibility
 
@@ -641,7 +641,7 @@ sequenceDiagram
   front matter; [ADR-0026](adr-0026-fail-closed-model-pinning.md),
   [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets) and
   [ADR-0028](adr-0028-run-history-ledger.md) (run history), which carry the
-  `related` edge to this ADR. ADR-0022 (telemetry export, #408) is not on
+  `related` edge to this ADR. ADR-0022 (telemetry export) is not on
   `main` yet, so it stays cited by number.
 * **Cross-repo records, cited by number (accepted in the same review):**
   Switchboard ADR-0039 / SPEC-0034 (attempt history, this ADR's sibling),

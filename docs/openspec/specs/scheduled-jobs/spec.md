@@ -19,9 +19,9 @@ run exiting is terminal for that firing.
 Scheduling is expressed as a key on the existing `[harness.*]` table rather
 than as a distinct table kind. See ADR-0013 for that decision and for the list
 of capability still deferred. Suspend-safe evaluation, missed-window handling,
-`catch_up`, and time zones were added by #117; run history, per-run logs, run
-timeouts, and the overlap policy by #119; the protocol and CLI surface that
-reads and triggers them by #120.
+`catch_up`, and time zones were added later; then run history, per-run logs, run
+timeouts, and the overlap policy; then the protocol and CLI surface that
+reads and triggers them.
 
 SPEC-0014 extends this machinery to *triggered* harnesses, which fire on MCP
 channel notifications and webhooks as well as on a schedule. Where this spec

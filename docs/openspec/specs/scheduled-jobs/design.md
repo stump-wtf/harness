@@ -18,12 +18,12 @@ and logs), ADR-0008 (secrets and file modes), ADR-0011 (prompt harness).
 
 > **Revision note (2026-08-13).** This document originally described the
 > `[job.*]` design proposed on 2026-07-26. It has been rewritten to describe what
-> shipped in #122. The capability it previously specified but that was not built
+> shipped. The capability it previously specified but that was not built
 > — run history, per-run logs, timeouts, catch-up, timezones, queue/replace
 > overlap, wall-clock polling — is tracked in ADR-0013's *Deferred* section and
 > SPEC-0008's *Out Of Scope*.
 >
-> **Revision note (2026-09-11).** #117 built the wall-clock polling, missed-window
+> **Revision note (2026-09-11).** The scheduler-loop rework built the wall-clock polling, missed-window
 > handling, `catch_up`, and time-zone/DST behavior. The decisions, architecture,
 > and risks below are updated to match.
 
@@ -56,8 +56,8 @@ and logs), ADR-0008 (secrets and file modes), ADR-0011 (prompt harness).
 - **Backoff between firings.** The schedule *is* the rate limiter.
 - **Agent-awareness.** The daemon does not know a sweep from a `sleep`.
 - **Distributed or multi-host scheduling.** One daemon, one host, one clock.
-- **Reading run history from a client.** The records and logs exist (#119); the
-  protocol ops and CLI verbs that expose them are #120.
+- **Reading run history from a client.** The records and logs exist; the
+  protocol ops and CLI verbs that expose them are separate work.
 
 ## Decisions
 
@@ -87,8 +87,8 @@ clean exit and make the schedule meaningless.
 prompt harness now supply, and by the parser's ability to reject nonsense, which
 validation on one table achieves at a fraction of the downstream cost. What a
 table kind would still have bought is type-based dispatch in consumers; that is
-the accepted cost, tracked as
-#160.
+the accepted cost, tracked
+separately.
 
 The exclusions are the load-bearing part of this choice and are enumerated in
 SPEC-0008 REQ "Schedule Exclusions". Notably `enabled` is **not** redefined to
@@ -149,7 +149,7 @@ missed. `catch_up = true` runs once for all of them; `catch_up = false` runs
 nothing and hands one `MissedWindow` to the `Recorder` seam. If the latest
 elapsed window is inside the grace it fires on time and only the older ones are
 missed. The interim `LogRecorder` writes a warn-level daemon log line; run
-history (#119) replaces it with a durable `missed` record.
+history replaces it with a durable `missed` record.
 
 **Why**: A laptop cron that silently skips is indistinguishable from one that ran
 and passed. One run (or one record) per wake rather than per window keeps a
@@ -236,7 +236,7 @@ spawn failure, timeout, replace, stop, restart, shutdown — through one
 `finishRun`, which is also the only place a run log is closed. The Manager
 (`manager_runs.go`) implements `RunJournal`: it assigns ids, bounds the history,
 prunes logs, and saves synchronously. Run logs tee the same sanitized history
-the rotating log gets (#279), plus the lifecycle lines.
+the rotating log gets, plus the lifecycle lines.
 
 **Why**: The actor loop is the only place that sees a spawn, an exit, a timeout
 and a stop in a guaranteed order; lifecycle events on the bus are dropped for a
@@ -348,7 +348,7 @@ during shutdown ahead of `srv.Close()` and `mgr.Close()`.
 ## Risks / Trade-offs
 
 - **History is not on the protocol yet.** Records and logs exist, but a client
-  reads them only after #120.
+  reads them only once the protocol ops land.
 - **Footprint is O(scheduled harnesses × `keep_runs`).** Each run log can be as
   large as the run's output; pruning is exact, but the bound is per harness.
 - **A crash leaves an unknown end.** An interrupted run's `ended_at` stays unset
@@ -366,15 +366,12 @@ during shutdown ahead of `srv.Close()` and `mgr.Close()`.
   window.
 - **Enabled intent leaks.** A firing goes through `Manager.Start`, which persists
   `enabled = true`; an unclean daemon exit mid-run can autostart the one-shot
-  off-schedule on the next boot
-  (#159).
+  off-schedule on the next boot.
 - **Consumers branch on a key.** Every surface wanting to render a scheduled
-  harness distinctly tests `Schedule != ""`, and none do yet
-  (#160).
+  harness distinctly tests `Schedule != ""`, and none do yet.
 - **Config writers must be kept in sync.** Because the TUI form rewrites a whole
   `[harness.*]` table, any schema key it does not carry is deleted on save. This
-  bit `schedule` before release and still affects `tmux_socket`
-  (#161). A
+  bit `schedule` before release and still affects `tmux_socket`. A
   table-driven test asserting every `core.Harness` key survives an edit
   round-trip would close the class.
 

@@ -54,7 +54,7 @@ The decision has two orthogonal axes, and this ADR settles both.
 **Axis 1 — who owns the clock:**
 
 * **1A. Daemon-owned scheduler, plus a manual trigger verb** (drafted as
-  `harness run`; shipped by #120 as `harness trigger`).
+  `harness run`; shipped as `harness trigger`).
 * **1B. OS timers** (systemd `.timer`, launchd `StartCalendarInterval`) invoke
   `harness trigger <job> --wait`; the daemon stays ignorant of time.
 * **1C. Daemon-owned scheduler only** — no new manual-trigger verb; the existing
@@ -74,25 +74,25 @@ Chosen options: **1C (daemon-owned scheduler, no new trigger verb)** and **2B
 
 > **Revision note (2026-08-13).** This ADR was drafted on 2026-07-26 proposing
 > **1A + 2A** (a `harness run` verb and distinct `[job.*]` tables) and landed in
-> that form as `status: proposed` via #112. The feature that actually shipped in
-> #122 implements **1C + 2B**. This revision rewrites the Decision Outcome to
+> that form as `status: proposed`. The feature that actually shipped
+> implements **1C + 2B**. This revision rewrites the Decision Outcome to
 > record the decision as taken, and moves the unbuilt `[job.*]` machinery into
 > **Deferred**. The original 2A rationale is preserved verbatim under *Pros and
 > Cons of the Options* — it was not wrong, it was outvoted by a schema change
 > that landed in between. See "Why 2B, given 2A's argument" below.
 >
-> **Revision note (2026-09-11).** #117 replaced the timer-driven `robfig/cron`
+> **Revision note (2026-09-11).** The scheduler-loop rework replaced the timer-driven `robfig/cron`
 > runner with a wall-clock tick, added missed-window detection and the
 > `catch_up` key, persisted each schedule's position in `state.json`, and
 > specified time zones (`CRON_TZ=`/`TZ=` prefixes) and DST behavior. Those move
 > out of **Deferred** and into *Clock* and *Time zones and DST* below. Run
-> history (#119) and the protocol/CLI surface (#120) remain deferred.
+> history and the protocol/CLI surface remain deferred.
 >
-> **Revision note (2026-09-11, #119).** Run history, per-run logs, `timeout`,
+> **Revision note (2026-09-11, run history).** Run history, per-run logs, `timeout`,
 > and `on_overlap` (skip, queue, replace) were built; see *Runs* below. They
-> leave **Deferred**. The protocol/CLI surface that reads them (#120) remains.
+> leave **Deferred**. The protocol/CLI surface that reads them remains.
 >
-> **Revision note (2026-09-11, #120).** The `jobs`, `trigger` and `runs` control
+> **Revision note (2026-09-11, protocol/CLI surface).** The `jobs`, `trigger` and `runs` control
 > ops, a `run` selector on `logs`, the `job_run_*` and `job_schedule_changed`
 > events, and their CLI verbs were built. That adds option 1A's manual-trigger
 > verb after all, named `trigger`; see *Decision Outcome*.
@@ -104,7 +104,7 @@ trigger verb was needed because a scheduled harness is still a harness:
 `harness start <name>` runs it now, through the identical code path the cron
 firing uses, so triggering by hand is a genuine test of what fires at 03:00.
 
-That verb arrived with #120 regardless, once run history made it worth having —
+That verb arrived with the protocol/CLI surface regardless, once run history made it worth having —
 the reason option 1A's Neutral bullet gave for waiting. `harness trigger <name>`
 enters through the same `StartRun` a firing does, so unlike `start` it honors
 `on_overlap`; and `--wait` streams the run and exits with its exit code, which is
@@ -300,10 +300,10 @@ is what makes "it never fired" as visible as "it ran and failed".
 Records carry outcomes, times and exit codes — never environment, `env_file`
 contents, prompt text or output (ADR-0008). Run logs are created private to the
 daemon's user. The histories are exposed to the rest of the daemon as exact run
-windows (`Manager.Runs`), which is what #120's `harness logs <job> --run N` and
+windows (`Manager.Runs`), which is what `harness logs <job> --run N` and
 run correlation need.
 
-Clients read them over the protocol (#120): `jobs` (schedule, next window, the
+Clients read them over the protocol: `jobs` (schedule, next window, the
 run in flight, the latest record, consecutive failures), `runs` (history,
 newest first), `trigger` (a manual run through `StartRun`), a `run` selector on
 `logs`, and `job_run_started` / `job_run_finished` / `job_schedule_changed`
@@ -350,15 +350,14 @@ CLIs generally need.
   exact cost 2A named. Every rendering surface pays it separately: `ls`,
   `describe` and the cockpit each carry their own `Schedule != ""` arm so a
   scheduled harness does not read as an inert disabled one-shot
-  (#160,
-  #205; the shared
+  (the shared
   phrasing lives in `internal/schedfmt`, the branching does not). SPEC-0008 REQ
   "Schedule Visibility" is what holds them to the same answer.
 * Bad, because a firing goes through `Manager.Start`, which persists
   `enabled = true` — so an unclean daemon exit mid-run can autostart the one-shot
   off-schedule on the next boot, defeating the `enabled` exclusion the parser
-  enforces. Tracked as
-  #159; the fix is a
+  enforces. Tracked
+  separately; the fix is a
   supervisor-level "start without persisting intent" primitive.
 * Good, because a laptop that sleeps through a window reaches a deliberate,
   tested decision on wake — run once, or record the miss — rather than whatever
@@ -451,7 +450,7 @@ The daemon carries an internal cron engine driven from config; the existing
 * Neutral, because it adds a scheduler goroutine to a daemon that previously
   only reacted to process exits.
 * Bad, because a daemon that is down at the scheduled instant misses the
-  window. (Since #117 the miss is recorded on the next boot, and `catch_up`
+  window. (Since the scheduler-loop rework the miss is recorded on the next boot, and `catch_up`
   can run it once.)
 * Bad, because DST, timezone data, and suspend/resume correctness become our
   problem rather than systemd's.
@@ -459,7 +458,7 @@ The daemon carries an internal cron engine driven from config; the existing
 ### 1A — Daemon-owned scheduler + a manual trigger verb
 
 As 1C, plus a dedicated manual trigger verb — drafted as `harness run <name>`,
-shipped by #120 as `harness trigger <name>` — with `--wait` streaming output and
+shipped as `harness trigger <name>` — with `--wait` streaming output and
 propagating the run's exit code.
 
 * Good, because `--wait` propagating an exit code is the cheap seam that lets an
@@ -471,8 +470,8 @@ propagating the run's exit code.
   Shipping the verb as `trigger` removes both collisions.
 * Neutral, because without run history there is nothing for `--wait` to report
   beyond the exit code, which `start` plus `attach` already approximates.
-  Reconsider alongside run history. (#119 added run history; #120 then added
-  the verb.)
+  Reconsider alongside run history. (Run history was added first; the verb
+  followed.)
 
 ### 1B — OS timers invoke the trigger verb
 
@@ -602,7 +601,7 @@ flowchart TD
   prompt one-shot; `schedule` requires `prompt`, and the `restart = "no"` prompt
   default is what makes the run terminal.
 * **Related [ADR-0002](adr-0002-daemon-client-architecture.md)** — adds the
-  `jobs`, `trigger` and `runs` control ops (#120), mirrored 1:1 as CLI verbs;
+  `jobs`, `trigger` and `runs` control ops, mirrored 1:1 as CLI verbs;
   `start`/`stop`/`attach` on a scheduled harness remain the existing thin-client
   gestures.
 * **Related [ADR-0003](adr-0003-terminal-multiplexing.md)** — scheduled runs use

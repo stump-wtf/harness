@@ -94,7 +94,7 @@ How should a resident harness get operating hours without changing what
 
 Chosen: **1A + 2A + 4A**, with **3B as the default and 3A one key away**.
 
-> **Revision note (2026-09-17, review of #371).** The first draft chose 3A
+> **Revision note (2026-09-17, design review).** The first draft chose 3A
 > (stop mid-turn) and had `harness stop` on a leased harness keep `enabled`.
 > Review reversed both: graceful shutdown is the configurable default, built on
 > agent-trace, and `harness stop` always stops and clears `enabled`.
@@ -299,7 +299,7 @@ harness loses `operating_hours`, which leaves the lease with nothing to extend.
   is back belongs in the sender (see *More Information*).
 * Bad, because every listing surface gains another branch — held versus
   stopped — on top of ADR-0013's `Schedule != ""`. It reuses the NEXT column
-  rather than adding a column (#343).
+  rather than adding a column.
 * Neutral, because the scheduler tick now has a second consumer. The cost is
   still the wakeup, not the comparison.
 

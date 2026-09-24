@@ -700,7 +700,7 @@ sequenceDiagram
   [ADR-0029](adr-0029-auto-confirm-dev-channels.md) (dev-channels
   auto-confirm, which `init` writes for a resident Claude Code persona only
   when the user opts in for that persona, with its warning). ADR-0022
-  (telemetry export, #408) is not on `main` yet, so it stays cited by number.
+  (telemetry export) is not on `main` yet, so it stays cited by number.
 * Cross-repo records, cited by number (accepted in the same review):
   Switchboard ADR-0030, ADR-0032, ADR-0034, ADR-0038 and SPEC-0024; Cairn
   ADR-0025 and ADR-0029.
