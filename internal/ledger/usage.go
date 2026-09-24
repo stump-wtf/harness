@@ -22,8 +22,19 @@ package ledger
 // the observer drops for it rather than wait. A drop cannot be attributed to a
 // run, so every run open when one is seen reads usage_complete: false.
 //
-// Tokens, cost and the served model are the next story; they need
-// stump.wtf/agent-trace#105's usage items.
+// A usage report (Item.Usage: tokens, a recorded cost, the model and provider
+// that served it) adds its tokens, adds its cost as SPEC-0021 REQ-8 resolves
+// it, and adds its (model, provider) to `models`, with `model` the entry with
+// the most output tokens. A cumulative report (crush keeps only session totals,
+// and a resident crush resumes one session across restarts) is differenced
+// against the last total seen for its session, across runs, so a run counts
+// only what it spent; a total lower than the last is a new baseline, never a
+// negative delta. Every fold hands the run's live totals to OnFold, so a
+// budget cap is checked on the item that crosses it (SPEC-0021 REQ-9).
+//
+// Usage reports need stump.wtf/agent-trace#105. Until the observer delivers
+// them, no item carries one, and records have no tokens, cost_usd or models
+// (REQ-8's last sentence): nothing here invents them.
 //
 // Governing: SPEC-0022 REQ-8, REQ-9, REQ-4; design "The usage accumulator".
 //
@@ -52,6 +63,41 @@ type Item struct {
 	ErrorClass string
 	// Session is the session the item came from.
 	Session Session
+	// Usage is a usage report (agent-trace#105), or nil.
+	Usage *UsageReport
+}
+
+// UsageReport is one usage record from a transcript.
+type UsageReport struct {
+	// Model and Provider served the message; "" when not recorded.
+	Model, Provider string
+	Tokens          Tokens
+	// CostUSD is the cost the agent recorded, or nil. Never computed by
+	// the reader.
+	CostUSD *float64
+	// Cumulative marks session totals rather than a per-message delta.
+	Cumulative bool
+}
+
+// Cost sources (SPEC-0021 REQ-8), strongest first. A run's cost_source is the
+// weakest among its items.
+const (
+	CostRecorded = "recorded"
+	CostPriced   = "priced"
+	CostUnknown  = "unknown"
+)
+
+// PriceFunc prices tokens for a served model from [budget.prices], and
+// reports false when there is no entry. The daemon ships no default prices.
+type PriceFunc func(model, provider string, t Tokens) (usd float64, ok bool)
+
+// LiveTotals is a run's usage so far, handed to OnFold on every fold.
+type LiveTotals struct {
+	Harness    string
+	RunID      int
+	Tokens     Tokens
+	CostUSD    float64
+	CostSource string
 }
 
 // AccumulatorOptions tunes an Accumulator. The zero value is production.
@@ -61,6 +107,12 @@ type AccumulatorOptions struct {
 	CheckpointEvery time.Duration
 	// Now is the clock (default time.Now).
 	Now func() time.Time
+	// Price resolves a cost the agent did not record (SPEC-0021 REQ-8).
+	// Nil prices nothing: every such item is unknown.
+	Price PriceFunc
+	// OnFold receives a run's live totals after every usage fold, outside
+	// the accumulator's lock (SPEC-0021 REQ-9's caps).
+	OnFold func(LiveTotals)
 }
 
 // AccumulatorStats are the accumulator's counters (REQ-18).
@@ -87,6 +139,9 @@ type Accumulator struct {
 	runs     map[key]*usage
 	template string
 	stats    AccumulatorStats
+	// lastTotals is the last cumulative report per session, kept across
+	// runs: the baseline a resident's next run differences against.
+	lastTotals map[string]UsageReport
 }
 
 // usage is one open run's accumulated activity.
@@ -95,6 +150,13 @@ type usage struct {
 	errors     map[string]int
 	sessions   []Session
 	incomplete bool
+	// Usage reports folded in (REQ-8): hasUsage stays false until the first,
+	// so a run with none carries no tokens, cost or models at all.
+	hasUsage bool
+	tokens   Tokens
+	models   []ModelUse
+	cost     float64
+	costSrc  string
 	// dirty is set when something changed since the last checkpoint.
 	dirty     bool
 	lastWrite time.Time
@@ -109,7 +171,7 @@ func NewAccumulator(l *Ledger, opts AccumulatorOptions) *Accumulator {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	a := &Accumulator{l: l, opts: opts, runs: map[key]*usage{}}
+	a := &Accumulator{l: l, opts: opts, runs: map[key]*usage{}, lastTotals: map[string]UsageReport{}}
 	l.SetCloseHook(a.final)
 	return a
 }
@@ -129,12 +191,32 @@ func (a *Accumulator) Fold(it Item) {
 	if !ok || (f.StartedAt != nil && it.At.Before(*f.StartedAt)) {
 		a.mu.Lock()
 		a.stats.NoRun++
+		if it.Usage != nil && it.Usage.Cumulative {
+			// Spent by no open run, but it moves the session's baseline:
+			// the next run must count from here, not from before it.
+			a.lastTotals[it.Session.ID] = *it.Usage
+		}
 		a.mu.Unlock()
 		return
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	u := a.usageLocked(key{f.Harness, f.RunID})
+	var live *LiveTotals
+	if it.Usage != nil {
+		if a.foldUsageLocked(u, it) {
+			live = &LiveTotals{Harness: f.Harness, RunID: f.RunID, Tokens: u.tokens, CostUSD: u.cost, CostSource: u.costSrc}
+		}
+	}
+	a.foldActivityLocked(u, it)
+	a.mu.Unlock()
+	if live != nil && a.opts.OnFold != nil {
+		a.opts.OnFold(*live)
+	}
+}
+
+// foldActivityLocked folds an item's tool call, error and session. Caller
+// holds mu.
+func (a *Accumulator) foldActivityLocked(u *usage, it Item) {
 	switch {
 	case it.Tool:
 		u.calls++
@@ -149,6 +231,85 @@ func (a *Accumulator) Fold(it Item) {
 	}
 	u.dirty = true
 	a.stats.Folded++
+}
+
+// foldUsageLocked folds a usage report into u and reports whether it added
+// anything. Caller holds mu.
+func (a *Accumulator) foldUsageLocked(u *usage, it Item) bool {
+	rep := *it.Usage
+	delta := rep.Tokens
+	var cost *float64 = rep.CostUSD
+	if rep.Cumulative {
+		last, seen := a.lastTotals[it.Session.ID]
+		a.lastTotals[it.Session.ID] = rep
+		if !seen || lower(rep, last) {
+			// The first total this daemon has seen for the session, or one
+			// that went backwards (a new session reusing the id, a reset
+			// store): a baseline, never a negative delta (REQ-8).
+			return false
+		}
+		delta = Tokens{
+			Input:      rep.Tokens.Input - last.Tokens.Input,
+			Output:     rep.Tokens.Output - last.Tokens.Output,
+			CacheRead:  rep.Tokens.CacheRead - last.Tokens.CacheRead,
+			CacheWrite: rep.Tokens.CacheWrite - last.Tokens.CacheWrite,
+		}
+		cost = nil
+		if rep.CostUSD != nil && last.CostUSD != nil && *rep.CostUSD >= *last.CostUSD {
+			d := *rep.CostUSD - *last.CostUSD
+			cost = &d
+		}
+	}
+	u.hasUsage = true
+	u.tokens.Input += delta.Input
+	u.tokens.Output += delta.Output
+	u.tokens.CacheRead += delta.CacheRead
+	u.tokens.CacheWrite += delta.CacheWrite
+
+	// Cost: recorded, else priced, else unknown (SPEC-0021 REQ-8); the
+	// run's source is the weakest of its items'.
+	src := CostUnknown
+	switch {
+	case cost != nil:
+		u.cost += *cost
+		src = CostRecorded
+	case a.opts.Price != nil:
+		if usd, ok := a.opts.Price(rep.Model, rep.Provider, delta); ok {
+			u.cost += usd
+			src = CostPriced
+		}
+	}
+	if u.costSrc == "" || costRank(src) > costRank(u.costSrc) {
+		u.costSrc = src
+	}
+
+	if rep.Model != "" || rep.Provider != "" {
+		i := slices.IndexFunc(u.models, func(m ModelUse) bool { return m.Model == rep.Model && m.Provider == rep.Provider })
+		if i < 0 {
+			u.models = append(u.models, ModelUse{Model: rep.Model, Provider: rep.Provider})
+			i = len(u.models) - 1
+		}
+		u.models[i].OutputTokens += delta.Output
+	}
+	u.dirty = true
+	return true
+}
+
+// lower reports a cumulative total that went backwards on any count.
+func lower(cur, last UsageReport) bool {
+	return cur.Tokens.Input < last.Tokens.Input || cur.Tokens.Output < last.Tokens.Output ||
+		cur.Tokens.CacheRead < last.Tokens.CacheRead || cur.Tokens.CacheWrite < last.Tokens.CacheWrite
+}
+
+// costRank orders cost sources weakest last.
+func costRank(src string) int {
+	switch src {
+	case CostRecorded:
+		return 0
+	case CostPriced:
+		return 1
+	}
+	return 2
 }
 
 // Dropped reports the observer's cumulative drop count for the accumulator's
@@ -239,6 +400,23 @@ func (a *Accumulator) recordLocked(u *usage) Record {
 		Errors:        maps.Clone(u.errors),
 		Sessions:      slices.Clone(u.sessions),
 		UsageComplete: &complete,
+	}
+	if u.hasUsage {
+		t := u.tokens
+		r.Tokens = &t
+		r.Models = slices.Clone(u.models)
+		r.CostSource = u.costSrc
+		if u.costSrc != CostUnknown || u.cost > 0 {
+			c := u.cost
+			r.CostUSD = &c
+		}
+		// model is the served model with the most output tokens (REQ-4).
+		var best int64 = -1
+		for _, m := range u.models {
+			if m.Model != "" && m.OutputTokens > best {
+				r.Model, best = m.Model, m.OutputTokens
+			}
+		}
 	}
 	if a.template != "" {
 		for _, s := range u.sessions {
