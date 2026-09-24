@@ -82,8 +82,13 @@ type command struct {
 	rows    int            // cmdResize
 	sig     syscall.Signal // cmdSignal payload (delivered to the process group)
 	run     *RunRequest    // cmdStartRun payload
-	decided *RunDecision   // cmdStartRun result, written before done closes
-	enable  bool           // cmdHold: also record enabled intent (a held autostart)
+	// trigger is what started a resident for cmdStart (SPEC-0022 REQ-3);
+	// reason qualifies cmdShutdown: empty for a daemon shutdown, or why the
+	// harness is being removed (reload, operator).
+	trigger RunTrigger
+	reason  RunReason
+	decided *RunDecision // cmdStartRun result, written before done closes
+	enable  bool         // cmdHold: also record enabled intent (a held autostart)
 	// cmdHold: the close the gate decided. mode selects graceful vs
 	// immediate; closeAt is the instant the harness went out of hours, from
 	// which the graceful deadline is measured (SPEC-0012 REQ "Graceful
@@ -226,10 +231,15 @@ type Supervisor struct {
 	suppressPersist bool
 
 	// ---- run history, scheduled harnesses only (runs.go) ----
-	journal   RunJournal
-	run       *activeRun  // the run in flight; nil when none
-	queued    *RunRequest // the one firing on_overlap = "queue" holds
-	timeoutCh chan uint64 // run timeout fired (carries run gen)
+	journal RunJournal
+	// resident is the open run record of a resident harness's process, and
+	// startTrigger the trigger the next resident spawn records; both are
+	// loop-owned (SPEC-0022 REQ-3).
+	resident     *residentRun
+	startTrigger RunTrigger
+	run          *activeRun  // the run in flight; nil when none
+	queued       *RunRequest // the one firing on_overlap = "queue" holds
+	timeoutCh    chan uint64 // run timeout fired (carries run gen)
 	// openSkips maps a skip class to the run id of the record covering it,
 	// for the run currently in flight. Loop-owned, like every other field in
 	// this block: coalescing is part of the overlap decision, and the overlap
@@ -317,7 +327,13 @@ func (s *Supervisor) Snapshot() Snapshot {
 
 // Start marks the harness enabled and brings it up (SPEC-0003 REQ "Autostart"
 // path and manual start). Blocks until the request is processed.
-func (s *Supervisor) Start() { s.send(command{kind: cmdStart}) }
+func (s *Supervisor) Start() { s.StartWith(TriggerManual) }
+
+// StartWith is Start, naming the start path for the resident run it opens
+// (SPEC-0022 REQ-3): autostart, lease or manual.
+func (s *Supervisor) StartWith(trigger RunTrigger) {
+	s.send(command{kind: cmdStart, trigger: trigger})
+}
 
 // StartTransient brings the process up WITHOUT setting enabled=true or
 // persisting intent to state.json. Used by the scheduler for one-shot
@@ -385,8 +401,13 @@ func (s *Supervisor) SignalGroup(sig syscall.Signal) { s.send(command{kind: cmdS
 
 // Shutdown stops the harness if running and terminates the actor loop. After
 // Shutdown the Supervisor must not be used.
-func (s *Supervisor) Shutdown() {
-	s.send(command{kind: cmdShutdown})
+func (s *Supervisor) Shutdown() { s.ShutdownFor("") }
+
+// ShutdownFor is Shutdown for a harness being removed rather than a daemon
+// going down: its run closes cancelled with reason (reload, operator) instead
+// of interrupted (SPEC-0022 REQ-5).
+func (s *Supervisor) ShutdownFor(reason RunReason) {
+	s.send(command{kind: cmdShutdown, reason: reason})
 	<-s.done
 }
 
@@ -435,6 +456,7 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.publishChangeUnchanged() // persist intent even if already up
 		if !s.hasProcess() && s.state != core.StateStopping {
 			s.clearFailLatch()
+			s.startTrigger = c.trigger
 			s.startProcess(RunRequest{Trigger: TriggerManual})
 		}
 	case cmdStartTransient:
@@ -468,10 +490,10 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.held = false    // stopped by the operator now, not by its hours (SPEC-0012)
 		s.closing = false // a stop never waits on turn state (SPEC-0012)
 		s.cancelRestartTimer()
-		s.dropQueued(OutcomeCancelled, "")
+		s.dropQueued(OutcomeCancelled, ReasonOperator)
 		if s.hasProcess() {
 			s.gracefulStop()
-			s.finishRun(OutcomeCancelled, &s.lastExitCode)
+			s.finishRunWith(OutcomeCancelled, &s.lastExitCode, ReasonOperator)
 		} else if s.state != core.StateFailed {
 			s.transition(core.StateStopped)
 		} else {
@@ -493,8 +515,9 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.resetCrashState()
 		if s.hasProcess() {
 			s.gracefulStopKeepEnabled()
-			s.finishRun(OutcomeReplaced, &s.lastExitCode)
+			s.finishRunWith(OutcomeReplaced, &s.lastExitCode, ReasonOperator)
 		}
+		s.startTrigger = TriggerManual
 		s.startProcess(RunRequest{Trigger: TriggerManual})
 	case cmdApplyConfig:
 		s.applyConfig(*c.cfg)
@@ -562,10 +585,16 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.cancelRestartTimer()
 		// A run the daemon goes down under is interrupted, not failed: it did
 		// not end on its own terms (SPEC-0008 REQ "Run History").
-		s.dropQueued(OutcomeInterrupted, ReasonShutdown)
+		// A daemon going down interrupts the run; a harness being removed
+		// (a reload, a project down) cancels it (SPEC-0022 REQ-5).
+		outcome, reason := OutcomeInterrupted, ReasonShutdown
+		if c.reason != "" {
+			outcome, reason = OutcomeCancelled, c.reason
+		}
+		s.dropQueued(outcome, reason)
 		if s.hasProcess() {
 			s.gracefulStop()
-			s.finishRunWith(OutcomeInterrupted, &s.lastExitCode, ReasonShutdown)
+			s.finishRunWith(outcome, &s.lastExitCode, reason)
 		}
 		s.closeLog()
 		return true
@@ -610,6 +639,9 @@ func (s *Supervisor) beginStart() {
 	// its hours (SPEC-0012 "Held").
 	s.held = false
 	s.transition(core.StateStarting)
+	// A resident's process lifetime is a run: open its record before the
+	// spawn (SPEC-0022 REQ-3, REQ-6). A one-shot's was opened by beginRun.
+	s.openResident()
 
 	// Born at the attached viewport, not 80×24: a restart (manual, crash, or
 	// `^b s` from attached mode) must land in a PTY the size of the client
@@ -759,6 +791,8 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 	if s.bus != nil {
 		s.bus.Publish(Event{Kind: EventExited, Name: s.harness.Name, Time: now, Code: code})
 	}
+	// The structured record of what "exited code=N" says (SPEC-0022 REQ-3).
+	s.residentExit(code, spawnFailed)
 
 	// A triggered harness is a one-shot: its firing source IS its retry
 	// mechanism (SPEC-0008 REQ "Firing And Overlap"). Respawning it here would
@@ -817,7 +851,11 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 				s.transition(core.StateDegraded)
 			}
 			s.transition(core.StateFailed)
-			s.finishRun(OutcomeFailed, exit)
+			var reason RunReason
+			if spawnFailed {
+				reason = ReasonSpawn
+			}
+			s.finishRunWith(OutcomeFailed, exit, reason)
 		} else {
 			s.transition(core.StateStopped)
 			s.finishRun(OutcomeSuccess, exit)
@@ -853,7 +891,7 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		s.resetCrashState()
 		s.consecFailures = 0
 		s.transition(core.StateStopped)
-		s.finishRun(OutcomeCancelled, &s.lastExitCode)
+		s.finishRunWith(OutcomeCancelled, &s.lastExitCode, ReasonHours)
 		return
 	}
 
@@ -973,6 +1011,7 @@ func (s *Supervisor) handleRestartTimer() {
 	if s.state == core.StateDegraded {
 		s.transition(core.StateRestarting)
 	}
+	s.startTrigger = TriggerRestart
 	s.beginStart()
 }
 

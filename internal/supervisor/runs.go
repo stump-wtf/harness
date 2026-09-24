@@ -59,6 +59,31 @@ const (
 	TriggerChannel RunTrigger = "channel"
 	// TriggerWebhook is a verified delivery to a webhook source's route.
 	TriggerWebhook RunTrigger = "webhook"
+
+	// A resident harness's process lifetime is a run too (SPEC-0022 REQ-3),
+	// and these say which start path spawned it. Manual starts (CLI, TUI,
+	// MCP, a restart) are TriggerManual, as for a one-shot.
+	// Governing: SPEC-0022 REQ-3; design "Hooking residents into RunJournal".
+
+	// TriggerAutostart is Manager.Autostart bringing up the intended set, or
+	// a reload introducing an autostart harness.
+	TriggerAutostart RunTrigger = "autostart"
+	// TriggerRestart is the supervisor respawning after an exit.
+	TriggerRestart RunTrigger = "restart"
+	// TriggerRelease is a hold cleared: hours opened, a park expired, the
+	// budget day rolled.
+	TriggerRelease RunTrigger = "release"
+	// TriggerLease is an after-hours (or over-budget) lease start.
+	TriggerLease RunTrigger = "lease"
+)
+
+// RunKind says whether a run is a one-shot's firing or a resident's process
+// lifetime (SPEC-0022 REQ-4).
+type RunKind string
+
+const (
+	KindOneshot  RunKind = "oneshot"
+	KindResident RunKind = "resident"
 )
 
 // RunReason says why a decision that started no process was taken. It
@@ -86,6 +111,22 @@ const (
 	// ReasonDaemonCrash: an interrupted run found still open when the next
 	// daemon booted; its real end is unknown (SPEC-0022 REQ-7).
 	ReasonDaemonCrash RunReason = "daemon_crash"
+	// ReasonOperator: a cancelled (or replaced) run an operator stopped,
+	// restarted or removed.
+	ReasonOperator RunReason = "operator"
+	// ReasonHours: a cancelled run its operating hours closed.
+	ReasonHours RunReason = "hours"
+	// ReasonReload: a cancelled run whose harness a reload removed.
+	ReasonReload RunReason = "reload"
+	// ReasonSpawn: a failed run whose process never started.
+	ReasonSpawn RunReason = "spawn"
+
+	// Skip reasons the budget and model-pinning work sets (SPEC-0021,
+	// SPEC-0020); defined here so the vocabulary lives in one place.
+	ReasonQuotaParked RunReason = "quota_parked"
+	ReasonBudget      RunReason = "budget"
+	ReasonConcurrency RunReason = "concurrency"
+	ReasonModelHold   RunReason = "model_hold"
 )
 
 // RunOutcome is how a run ended — or, for the outcomes that start no process,
@@ -119,7 +160,39 @@ const (
 	// clean daemon shutdown, or found still "running" on the next boot after a
 	// crash. A queued firing dropped by a shutdown is recorded the same way.
 	OutcomeInterrupted RunOutcome = "interrupted"
+
+	// Outcomes the budget and model-pinning work sets (SPEC-0022 REQ-5).
+	// Defined here with their siblings, and counted by Verdict, before any
+	// code writes them.
+
+	// OutcomeBudgetExceeded: stopped for crossing a per-run or daily cap
+	// (SPEC-0021 REQ-9, REQ-10).
+	OutcomeBudgetExceeded RunOutcome = "budget_exceeded"
+	// OutcomeQuotaParked: ended by a provider quota refusal that parked the
+	// harness (SPEC-0021 REQ-13).
+	OutcomeQuotaParked RunOutcome = "quota_parked"
+	// OutcomeModelMismatch: the served model or provider did not match the
+	// harness's pin (SPEC-0020).
+	OutcomeModelMismatch RunOutcome = "model_mismatch"
+	// OutcomeModelUnattested: a full-attestation pin found no model or
+	// provider evidence for a call, or its final check timed out (SPEC-0020).
+	OutcomeModelUnattested RunOutcome = "model_unattested"
 )
+
+// Verdict is what an outcome says about whether the harness works, for the
+// consecutive-failure count and harness_scheduled_runs_total (SPEC-0022
+// REQ-5): +1 a success, -1 a failure, 0 neither. Neither is deliberate for
+// every outcome in which the harness did not get to prove anything: a skip, a
+// stop, a crash of the daemon, a quota park.
+func (o RunOutcome) Verdict() int {
+	switch o {
+	case OutcomeSuccess:
+		return 1
+	case OutcomeFailed, OutcomeTimedOut, OutcomeBudgetExceeded, OutcomeModelMismatch, OutcomeModelUnattested:
+		return -1
+	}
+	return 0
+}
 
 // RunRecord is one entry in a scheduled harness's run history.
 type RunRecord struct {
@@ -168,6 +241,21 @@ type RunRecord struct {
 	// Governing: SPEC-0022 REQ-4, REQ-12.
 	Log       string `json:"log,omitempty"`
 	LogPruned bool   `json:"log_pruned,omitempty"`
+	// Kind is oneshot or resident; empty reads as oneshot.
+	Kind RunKind `json:"kind,omitempty"`
+	// Mismatch is the first mismatching call of a model_mismatch record,
+	// set by the model-pinning check on its close (SPEC-0020).
+	Mismatch *RunMismatch `json:"mismatch,omitempty"`
+}
+
+// RunMismatch is the first mismatching call of a model_mismatch run
+// (SPEC-0022 REQ-4; SPEC-0020).
+type RunMismatch struct {
+	// Kind is "model" or "provider".
+	Kind           string    `json:"kind"`
+	ServedModel    string    `json:"served_model,omitempty"`
+	ServedProvider string    `json:"served_provider,omitempty"`
+	At             time.Time `json:"at"`
 }
 
 // RunRequest asks for a run of a triggered harness.
@@ -567,6 +655,8 @@ func (s *Supervisor) finishRun(outcome RunOutcome, code *int) {
 // timeout, replace, operator stop and restart, daemon shutdown — so this is the
 // one place the run's log file is closed.
 func (s *Supervisor) finishRunWith(outcome RunOutcome, code *int, reason RunReason) {
+	// A resident's record ends on the same paths (SPEC-0022 REQ-3).
+	s.closeResident(outcome, code, reason)
 	// The process these skips were "during" is over, so the next skip opens
 	// a new record (REQ "Overlap Skip Coalescing": "When the run in flight
 	// ends, the next skip SHALL create a new record"). Cleared BEFORE the
@@ -753,4 +843,86 @@ type teeWriter struct{ primary, secondary io.Writer }
 func (t teeWriter) Write(p []byte) (int, error) {
 	_, _ = t.secondary.Write(p)
 	return t.primary.Write(p)
+}
+
+// residentRun is the open ledger record of a resident harness's process
+// lifetime: one per spawn, opened in beginStart and closed wherever the
+// process ends (SPEC-0022 REQ-3). It has no per-run log; its record names the
+// durable log.
+type residentRun struct {
+	rec RunRecord
+}
+
+// openResident opens a record for the resident spawn about to happen, with the
+// trigger its start path set (startTrigger), consuming it. It runs before the
+// spawn, so the opened line is on disk first (SPEC-0022 REQ-6).
+func (s *Supervisor) openResident() {
+	trig := s.startTrigger
+	s.startTrigger = ""
+	if s.journal == nil || s.harness.Triggered() {
+		return
+	}
+	if trig == "" {
+		trig = TriggerManual
+	}
+	if s.resident != nil {
+		// Every exit path closes the record, so an open one here is a path
+		// that forgot to. Close it rather than leave it open until the next
+		// boot calls it a crash.
+		s.closeResident(OutcomeInterrupted, nil, "")
+	}
+	s.ensureLog()
+	rec := RunRecord{Kind: KindResident, Trigger: trig, Outcome: OutcomeRunning, StartedAt: time.Now()}
+	if s.log != nil {
+		rec.Log = s.log.path()
+	}
+	opened, _, err := s.journal.OpenRun(s.harness.Name, rec)
+	if err != nil {
+		// The run goes on: an unbudgeted harness does not wait on the
+		// ledger (SPEC-0022 REQ-6). The line is queued and retried.
+		s.logEvent("run history not saved", "run_id", opened.RunID, "err", err.Error())
+	}
+	s.resident = &residentRun{rec: opened}
+	s.logEvent("run started", "run_id", opened.RunID, "trigger", string(trig))
+}
+
+// closeResident closes the open resident record, if any, with outcome.
+func (s *Supervisor) closeResident(outcome RunOutcome, code *int, reason RunReason) {
+	if s.resident == nil {
+		return
+	}
+	rec := s.resident.rec
+	s.resident = nil
+	now := time.Now()
+	rec.Outcome, rec.Reason, rec.EndedAt = outcome, reason, &now
+	if code != nil {
+		c := *code
+		rec.ExitCode = &c
+	}
+	kv := []any{"run_id", rec.RunID, "outcome", string(outcome)}
+	if reason != "" {
+		kv = append(kv, "reason", string(reason))
+	}
+	s.logEvent("run finished", kv...)
+	if err := s.journal.CloseRun(s.harness.Name, rec); err != nil {
+		s.logEvent("run history not saved", "run_id", rec.RunID, "err", err.Error())
+	}
+}
+
+// residentExit closes the resident record for a process that ended on its
+// own (SPEC-0022 REQ-5): success for exit 0, failed otherwise, and failed
+// with reason spawn and no exit code for a process that never started. A
+// harness its hours were closing is cancelled, reason hours: the gate asked
+// for this exit.
+func (s *Supervisor) residentExit(code int, spawnFailed bool) {
+	switch {
+	case spawnFailed:
+		s.closeResident(OutcomeFailed, nil, ReasonSpawn)
+	case s.held:
+		s.closeResident(OutcomeCancelled, &code, ReasonHours)
+	case code == 0:
+		s.closeResident(OutcomeSuccess, &code, "")
+	default:
+		s.closeResident(OutcomeFailed, &code, "")
+	}
 }
