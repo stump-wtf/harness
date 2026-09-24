@@ -275,6 +275,10 @@ autostart = true
 # not open a port. It is a server of its own, separate from the SSH front door
 # below and from the metrics listener.
 #
+# `harness daemon --webhook-listen ADDR` or HARNESS_WEBHOOK_LISTEN override it.
+# Only verify = "bearer" is implemented so far; a route using another scheme
+# answers every delivery 401 until its verifier lands.
+#
 # [server]
 # webhook_listen = "127.0.0.1:9080"
 # # Both TLS keys or neither; setting one is a parse error, because a

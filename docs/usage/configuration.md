@@ -717,6 +717,73 @@ metrics_token_file = "~/.config/harness/metrics.token"    # required off loopbac
 
 See [Metrics](./metrics) for the series, alert rules and scrape config.
 
+### Webhook listener
+
+`[webhook.*]` sources are served on an HTTP listener of their own, separate
+from the SSH front door and the metrics listener. It is **off** unless an
+address names it; declaring a `[webhook.*]` table does not open a port.
+
+```toml
+[server]
+webhook_listen = "127.0.0.1:9080"   # or --webhook-listen / HARNESS_WEBHOOK_LISTEN
+# Both or neither; with both set the listener serves HTTPS only.
+# webhook_tls_cert_file = "/etc/harness/webhook.crt"
+# webhook_tls_key_file  = "/etc/harness/webhook.key"
+
+[webhook.ci]
+verify = "bearer"
+env_file = "~/.config/harness/triggers.env"   # CI_HOOK_TOKEN=...
+secret = "${CI_HOOK_TOKEN}"
+
+[harness.on-ci]
+harness = "claude-code"
+prompt_file = "~/.config/harness/prompts/on-ci.md"
+triggers = ["webhook.ci"]
+```
+
+```sh
+curl -X POST -H "Authorization: Bearer $CI_HOOK_TOKEN" \
+     -H 'Content-Type: application/json' -d '{"status":"failed"}' \
+     http://127.0.0.1:9080/hooks/ci
+# 202 {"webhook":"ci","event_id":"wh-…","decision":"fired",
+#      "firings":[{"harness":"on-ci","decision":"started","run_id":4}]}
+```
+
+The listener serves exactly `POST /hooks/<name>` and `GET /healthz` (`ok`).
+It never redirects and never serves files.
+
+| Status | When |
+|---|---|
+| `202` | Verified. `decision` is `fired` with one entry per bound harness (`started`/`skipped` carry `run_id`; `queued` does not), or `ignored` when `events` filtered it out. The response never waits for a run. |
+| `401` | Missing, malformed or wrong credential. Every cause gets the same body; the log names the route and peer, never the value presented. |
+| `404` | The name is unknown, disabled, or bound by no harness. All three are byte-identical, so routes cannot be enumerated. |
+| `405` | Any method other than `POST` on `/hooks/<name>` (or other than `GET` on `/healthz`). |
+| `413` | The body is over `max_body`. Checked before the credential is. |
+| `503` | 64 deliveries are already in flight. |
+
+Every response carries `Content-Security-Policy`, `X-Frame-Options`,
+`X-Content-Type-Options`, `Referrer-Policy` and `Cache-Control: no-store`,
+plus `Strict-Transport-Security` when the listener terminates TLS itself.
+Slow clients are cut off: 10 s to send headers, 30 s to read the request,
+30 s to write the response, 60 s idle, 64 KiB of headers.
+
+:::warning Only bearer is verified so far
+**Only `verify = "bearer"` is implemented so far.** A route using
+`hmac-sha256`, `github`, `gitea`, `gitlab` or `standard-webhooks` loads,
+logs a warning, and answers **every** delivery `401` until its verifier
+lands. It never accepts an unverified delivery. De-duplication and
+`rate_limit` are not enforced yet either.
+
+A non-loopback `webhook_listen` without TLS starts with a warning: bearer
+tokens then cross the network in cleartext. Bind loopback behind a
+TLS-terminating proxy, or set both TLS files.
+:::
+
+Changing `webhook_listen` or the TLS files needs a daemon restart; a reload
+logs that a restart is required and keeps serving on the old settings. Route
+changes (a source added, disabled, rebound) apply on reload. On shutdown the
+listener stops accepting and gives in-flight deliveries 5 seconds.
+
 ## Environment variables
 
 Process-level settings — where the socket lives, how loud the log is, whether
@@ -734,6 +801,7 @@ without baking in a config file.
 | `HARNESS_SCROLLBACK` | `--scrollback` | int | 10000 |
 | `HARNESS_SSH` | `--ssh` | bool | `false` |
 | `HARNESS_SSH_LISTEN` | `--ssh-listen` | `host:port` | unset |
+| `HARNESS_WEBHOOK_LISTEN` | `--webhook-listen` | `host:port` | unset (no webhook listener) |
 | `HARNESS_WATCH_CONFIG` | — | bool | `true` |
 
 Booleans accept `1`, `0`, `true`, `false`, `yes`, `no`, `on`, `off`.
