@@ -17,6 +17,8 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/stump-wtf/harness/internal/ledger"
 	"os"
 	"path/filepath"
 	"strings"
@@ -421,5 +423,79 @@ func TestRunReadersServeFromTheLedger(t *testing.T) {
 	}
 	if len(jobs) != 1 || jobs[0].LastRun == nil || jobs[0].LastRun.RunID != 2 || jobs[0].LastRun.Outcome != "success" {
 		t.Errorf("jobs = %+v, want last run 2 success, read from the ledger", jobs)
+	}
+}
+
+// SPEC-0022 REQ-15 "Paging", over the wire: 2,500 records come back as 1,000,
+// 1,000 and 500 with no duplicate and no gap, and the cursor is the returned
+// oldest_seq.
+func TestRunsOpPagesAcrossTheLedger(t *testing.T) {
+	td, _, _ := newJobsDaemon(t, scheduledSh("nightly", "true", t.TempDir()))
+	c := td.dial(t, nil)
+	l := td.mgr.Ledger()
+	start := time.Now().Add(-time.Hour)
+	for i := 1; i <= 2500; i++ {
+		at := start.Add(time.Duration(i) * time.Millisecond)
+		if _, err := l.Append(ledger.Line{Type: ledger.TypeDecided, At: at, Harness: fmt.Sprintf("h%d", i%4), RunID: i,
+			Record: ledger.Record{Kind: ledger.KindOneshot, Trigger: "schedule", Outcome: "skipped", StartedAt: &at}}, i == 2500); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[uint64]bool{}
+	var sizes []int
+	var before uint64
+	for range 3 {
+		rd, err := c.QueryRuns(client.RunsQuery{Since: start.Add(-time.Minute).Format(time.RFC3339Nano), Limit: 1000, BeforeSeq: before})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sizes = append(sizes, len(rd.Runs))
+		for _, r := range rd.Runs {
+			if seen[r.Seq] || r.Harness == "" {
+				t.Fatalf("record %+v repeated or unnamed", r)
+			}
+			seen[r.Seq] = true
+		}
+		before = rd.OldestSeq
+	}
+	if fmt.Sprint(sizes) != "[1000 1000 500]" || len(seen) != 2500 {
+		t.Errorf("pages %v covering %d records, want [1000 1000 500] covering 2500", sizes, len(seen))
+	}
+	if _, err := c.QueryRuns(client.RunsQuery{Limit: 1001}); errCode(t, err) != protocol.ErrBadRequest {
+		t.Errorf("limit 1001 = %v, want bad_request", err)
+	}
+}
+
+// REQ-14 "A morning sweep": failed, timed-out and interrupted records across
+// every harness, each with its todo_id where known; and a query naming a
+// harness that is no longer configured still reads its history.
+func TestRunsOpMorningSweep(t *testing.T) {
+	td, _, _ := newJobsDaemon(t, scheduledSh("nightly", "true", t.TempDir()))
+	c := td.dial(t, nil)
+	l := td.mgr.Ledger()
+	now := time.Now()
+	for i, tc := range []struct{ h, outcome, todo string }{
+		{"sb-drain", "failed", "t1"}, {"sb-drain", "success", "t2"}, {"removed", "timed_out", ""},
+		{"nightly", "interrupted", ""}, {"nightly", "cancelled", ""},
+	} {
+		at := now.Add(-time.Duration(5-i) * time.Minute)
+		if _, err := l.Append(ledger.Line{Type: ledger.TypeDecided, At: at, Harness: tc.h, RunID: i + 1,
+			Record: ledger.Record{Kind: ledger.KindOneshot, Trigger: "channel", Outcome: tc.outcome, TodoID: tc.todo, StartedAt: &at}}, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rd, err := c.QueryRuns(client.RunsQuery{Since: now.Add(-24 * time.Hour).Format(time.RFC3339Nano), Outcomes: []string{"failed", "timed_out", "interrupted"}, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range rd.Runs {
+		got = append(got, r.Harness+"/"+r.Outcome+"/"+r.TodoID)
+	}
+	if fmt.Sprint(got) != "[nightly/interrupted/ removed/timed_out/ sb-drain/failed/t1]" {
+		t.Errorf("sweep = %v", got)
+	}
+	if _, err := c.QueryRuns(client.RunsQuery{Outcomes: []string{"timeout"}, Limit: 5}); err == nil || !strings.Contains(err.Error(), "timed_out") {
+		t.Errorf("unknown outcome: %v, want an error listing timed_out", err)
 	}
 }

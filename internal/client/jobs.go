@@ -96,3 +96,32 @@ func protoMinor(version string) (int, bool) {
 	}
 	return minor, true
 }
+
+// RunsQuery is a runs query across harnesses (SPEC-0022 REQ-15). Since and
+// Until are RFC 3339 instants; Limit is 1–1000.
+type RunsQuery struct {
+	Names     []string
+	Since     string
+	Until     string
+	Outcomes  []string
+	Triggers  []string
+	Limit     int
+	BeforeSeq uint64
+}
+
+// QueryRuns runs q against the daemon's run ledger. Records come newest first,
+// with the Seq of the oldest for paging.
+func (c *Client) QueryRuns(q RunsQuery) (protocol.RunsData, error) {
+	resp, err := c.call(protocol.ControlReq{
+		Op: protocol.OpRuns, Names: q.Names, Since: q.Since, Until: q.Until,
+		Outcomes: q.Outcomes, Triggers: q.Triggers, Limit: q.Limit, BeforeSeq: q.BeforeSeq,
+	})
+	if err != nil {
+		return protocol.RunsData{}, err
+	}
+	var out protocol.RunsData
+	if err := json.Unmarshal(resp.Data, &out); err != nil {
+		return protocol.RunsData{}, err
+	}
+	return out, nil
+}

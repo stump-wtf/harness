@@ -212,6 +212,30 @@ func Open(dir string, opts Options) (*Ledger, error) {
 	return l, errors.Join(errs...)
 }
 
+// OpenReader opens the ledger in dir read-only, for a reader with no daemon
+// (SPEC-0022 REQ-16): it reads the day files into an index and answers Query
+// and Get, and it changes nothing — no directory is created, no line is
+// written, no open record is reconciled. Append on it fails with ErrClosed.
+func OpenReader(dir string) (*Ledger, error) {
+	l := &Ledger{
+		dir:    dir,
+		opts:   Options{}.normalize(),
+		idx:    newIndex(),
+		closed: true,
+		done:   make(chan struct{}),
+	}
+	l.log = l.opts.Logger
+	l.stats.Dir = dir
+	close(l.done)
+	if _, err := os.Stat(dir); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrLedgerUnavailable, err)
+	}
+	if err := l.boot(); err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
 // Dir is the ledger directory.
 func (l *Ledger) Dir() string { return l.dir }
 

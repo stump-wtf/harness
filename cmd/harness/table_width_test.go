@@ -48,6 +48,7 @@ const minReadable = 3
 var productionHeaders = map[string][]string{
 	"list": {"NAME", "STATE", "SCHEDULE", "NEXT", "RESTARTS", "DESCRIPTION"},
 	"jobs": {"NAME", "STATE", "SCHEDULE", "NEXT", "LAST RUN", "FAILS"},
+	"runs": runsHeaders(false),
 }
 
 // resolveProductionWidths lays out one production header set at an 80-column

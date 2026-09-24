@@ -39,7 +39,7 @@ func TestPlainUsageContent(t *testing.T) {
 		"[--run N]",
 		"jobs",
 		"trigger NAME [--wait]",
-		"runs NAME [--limit N]",
+		"runs [NAME...] [--since D] [--outcome O]",
 		"profiles",
 		"use-profile NAME",
 		"reload",

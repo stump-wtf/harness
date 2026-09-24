@@ -79,6 +79,39 @@ harness trigger <name> --wait   # …stream the run's log and exit with its exit
 harness logs <name> --run 3     # what run 3 did (--raw for its own log)
 ```
 
+### Run history across harnesses
+
+Every run of every harness, one-shot firings and resident process lifetimes
+alike, is a record in the run ledger (`$XDG_STATE_HOME/harness/ledger/`,
+ADR-0028). `harness runs` queries it:
+
+```sh
+harness runs                                   # every harness, the last 24 hours (--limit, default 50)
+harness runs pr-review nightly --since 7d      # these harnesses, the last week
+harness runs --since 24h --outcome failed,timed_out,interrupted --json   # a morning sweep
+harness runs --trigger webhook,channel --wide  # add MODEL, TOKENS, COST and TODO
+```
+
+| Flag | Meaning |
+|------|---------|
+| `NAME...`, `--harness NAME` | harnesses to include (repeatable); none means every harness |
+| `--since DUR\|TIME` | runs started since a duration ago (`7d`, `36h`) or an RFC 3339 instant; default `24h` for a query |
+| `--until TIME` | runs started before an RFC 3339 instant |
+| `--outcome O[,O...]` | only these outcomes; an unknown value fails and lists the valid ones |
+| `--trigger T[,T...]` | only these triggers (`schedule`, `manual`, `catch_up`, `channel`, `webhook`, `autostart`, `restart`, `release`, `lease`) |
+| `--limit N` | at most N records, newest first (1–1000) |
+| `--wide` | add MODEL, TOKENS, COST and TODO |
+| `--json` | the records as a JSON list |
+
+`harness runs NAME` with no other filter is the one-harness history it has
+always been: newest first, default 20, and `--json` prints the same
+`{"name": …, "runs": […]}` object as before, with new fields only added.
+
+With the daemon down, `harness runs` reads the ledger's files directly and says
+so on stderr. It changes nothing on disk, and it shows a run the daemon left
+open as `running?`, since it cannot tell a live run from one a crash left
+behind.
+
 `trigger --wait` exits with the run's own exit code, `124` when the run timed
 out, and `75` when it was skipped because a run was already in flight — so a job
 scripts like the command it wraps. The verb is `trigger` because `harness run`
