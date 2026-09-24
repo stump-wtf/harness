@@ -84,6 +84,14 @@ out, and `75` when it was skipped because a run was already in flight — so a j
 scripts like the command it wraps. The verb is `trigger` because `harness run`
 starts a throwaway scratchpad.
 
+A `command` harness whose `argv` template needs a value the run does not have
+(a required `{{run.source}}` on a manual trigger, say) runs nothing: the run is
+recorded `skipped`, and `harness runs` prints a line under the table naming the
+missing path (`run #4 skipped: template_unresolved ({{run.source}} has no value
+for a manual run)`). `--json` carries it as `"reason": "template_unresolved"`
+and `"missing_path": "run.source"`, and `trigger --wait` exits `75`. See
+[Argv templates](./configuration#argv-templates).
+
 `--wait` polls the run history rather than consuming events, because history is
 authoritative even when an event is dropped. When the trigger was queued behind
 a run already in flight, `--wait` attaches to the oldest manual, non-skipped run

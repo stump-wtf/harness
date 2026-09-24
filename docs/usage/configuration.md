@@ -145,7 +145,9 @@ the [Scheduled sweeps guide](/guides/scheduled-sweeps).
 
 Rules:
 
-- Requires `prompt` or `prompt_file` — only agent one-shots can be scheduled.
+- Requires `prompt` or `prompt_file`, or `harness = "command"` — only
+  one-shots can be scheduled, and a command harness's argv is its whole job
+  (see [The `command` kind](#the-command-kind)).
 - At each firing the harness starts if no run is in flight; a firing that lands
   mid-run follows `on_overlap` (below), and never stacks a second process.
 - The run exiting is terminal for that firing; the restart policy applies only
@@ -367,27 +369,103 @@ enabled = true
   harness's executable. An absolute one is used as is. A relative one with a
   `/` (`"./bin/report"`) resolves against the harness's `workdir`, not
   against wherever the daemon was started.
-- Elements are not expanded: `{workdir}` and `~` in `argv` stay literal.
-  `argv[0]` can never be a `{{…}}` placeholder, so nothing substituted at run
-  time can choose what runs. Templates in the other elements are not
-  supported yet, so any `{{` in `argv` is a config error for now.
+- `{workdir}` and `~` in `argv` stay literal. `argv[0]` can never be a
+  `{{…}}` placeholder, so nothing substituted at run time can choose what
+  runs. The other elements may be templates; see
+  [Argv templates](#argv-templates).
 - `args` is rejected on a `command` harness (put everything in `argv`), and
   `argv` is rejected on every other kind.
 - `auto_accept`, `max_turns` and `quiet` are rejected: the harness owns its
-  argv, so put the program's own flags there. `model` is rejected too,
-  because no element references `{{model}}`.
-- It is a **resident** harness. It takes `enabled`, `restart`,
-  `restart_delay` and `operating_hours` with the same defaults as `generic`
-  (`restart = "always"`). `prompt`, `prompt_file`, `schedule` and `triggers`
-  are refused for now; command one-shots are still to come (issue #500).
+  argv, so put the program's own flags there. `model` is accepted only when
+  an `argv` element references `{{model}}`; otherwise it does nothing and is
+  rejected.
+- With no `schedule` and no `triggers` it is a **resident** harness. It takes
+  `enabled`, `restart`, `restart_delay` and `operating_hours` with the same
+  defaults as `generic` (`restart = "always"`).
+- With `schedule` or `triggers` it is a **one-shot**, and needs no prompt: the
+  argv is the whole job. Each firing produces a run record, a per-run log,
+  `timeout`, `on_overlap` and `keep_runs`, exactly as for an agent one-shot,
+  and it defaults to `restart = "no"`. Every other one-shot exclusion still
+  applies (`enabled = true`, `restart = "always"`, `operating_hours` with a
+  `schedule`, and so on).
+- `prompt` and `prompt_file` are refused for now: nothing delivers a prompt to
+  a command harness's argv yet (issue #500).
 - Like `generic`, it reports no native trajectory (scrollback only).
 - It works in a project `harness.toml`, through `harness up`, and in the TUI
   edit form, where `argv` is edited as the same TOML array. `harness describe`
-  shows the kind and the argv exactly as written.
+  shows the kind and the argv exactly as written, templates included, never a
+  rendering.
 
-Pi, OMP or any other agent CLI not listed above runs this way, as a resident
-harness: `harness = "command"`, `argv = ["omp", …]`. Until command one-shots
-and the `pi`/`omp` adapters ship, it cannot be scheduled or triggered.
+```toml
+[harness.nightly-report]
+harness = "command"
+argv = ["/usr/local/bin/report", "--run", "{{run.id}}", "--date", "{{run.date}}"]
+schedule = "CRON_TZ=Europe/Berlin 0 6 * * *"
+workdir = "~/src/report"
+```
+
+Pi, OMP or any other agent CLI not listed above runs this way:
+`harness = "command"`, `argv = ["omp", …]`, resident, on a `schedule`, or on
+`triggers`.
+
+#### Argv templates
+
+An `argv` element after `argv[0]` may contain placeholders. Each element is
+rendered **once per spawn** into **exactly one argument**: nothing is split,
+trimmed, globbed or re-quoted, and an element that renders empty is passed as
+an empty argument, so the program always receives as many arguments as `argv`
+has elements (SPEC-0017 REQ-6, REQ-11).
+
+| Form | Meaning |
+|------|---------|
+| `{{path}}` | a required value: if the run does not have it, nothing runs |
+| `{{path?}}` | an optional value: empty when the run does not have it |
+| `{{literal_open}}` | the two characters `{{` |
+
+A lone `}}` is literal text. There are no functions, filters, pipelines,
+conditionals or loops; `{{printf …}}` is a config error.
+
+`argv` may reference these paths, and nothing else:
+
+| Path | Value | Present when |
+|------|-------|--------------|
+| `harness.name` | the harness's name | always |
+| `harness.workdir` | the expanded working directory | always |
+| `model` | the harness's `model` | `model` is set |
+| `run.id` | the run's ID | the harness has `schedule` or `triggers` |
+| `run.trigger` | `schedule`, `catch_up`, `manual`, `channel` or `webhook` | the harness has `schedule` or `triggers` |
+| `run.source` | the trigger source, e.g. `webhook.ci` | a source caused the run |
+| `run.started_at` | the run's start, RFC 3339 UTC | always |
+| `run.date` | `YYYY-MM-DD` in the schedule's `CRON_TZ`/`TZ` zone, else the daemon's local zone | always |
+
+Every template is checked when the config loads, and each failure names the
+element, line and column:
+
+- a malformed placeholder, or an unknown path;
+- event text in argv in **any** form (`{{event.title}}`, `{{untrusted
+  event.body}}`, …): text an outside party wrote never becomes an argument.
+  Give the program `$HARNESS_EVENT_FILE` to read instead;
+- `event.*` paths and `{{prompt}}`, which are not available in argv yet;
+- a required `{{run.id}}`, `{{run.trigger}}` or `{{run.source}}` on a harness
+  with neither `schedule` nor `triggers` (it has no run records, so it could
+  never render);
+- a required `{{run.source}}` on a harness with a `schedule` (a clock firing
+  has no source, so every scheduled run would be skipped). Write
+  `{{run.source?}}`;
+- a required `{{model}}` with no `model` set.
+
+If a required value is still absent when a run spawns — a manual run of a
+triggered harness has no `run.source`, say — nothing is exec'd. The run is
+recorded `skipped` with reason `template_unresolved` and the missing path's
+name, which `harness runs` prints under the table and `--json` carries as
+`reason` and `missing_path`. A start with no run record fails instead, with a
+`start failed` line naming the path in the harness log. Either way
+`harness_template_render_failures_total` counts it.
+
+Rendered values are never written anywhere: not to `state.json`, not to run
+records, not to protocol frames, not to logs. They exist only in the child's
+argv, which, like any argv, other local users can read with `ps`. Do not
+template secrets into it.
 
 ```toml
 [harness.my-agent]

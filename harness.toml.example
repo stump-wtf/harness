@@ -142,11 +142,17 @@ enabled = false
 # byte-identical argument ("a b" is one argument; $(...) and ; are just text).
 # argv[0] is looked up on PATH, or resolved against workdir when it is a
 # relative path containing "/". `args` is rejected on "command" and `argv` on
-# every other kind; auto_accept, max_turns, quiet and model are rejected (put
-# the program's own flags in argv). For now a command harness is resident
-# only: prompt, prompt_file, schedule and triggers are refused, and argv may
-# not contain "{{" (templates are still to come, ADR-0023, issue #500). This is
-# also how Pi, OMP or another unlisted agent CLI runs today.
+# every other kind; auto_accept, max_turns and quiet are rejected (put the
+# program's own flags in argv). With `schedule` or `triggers` a command harness
+# is a one-shot that needs NO prompt (restart defaults to "no", and every other
+# one-shot exclusion applies); prompt and prompt_file are still refused.
+# argv[1:] elements may be templates (ADR-0023, SPEC-0017): {{path}} is
+# required (a run lacking it is recorded skipped, reason template_unresolved),
+# {{path?}} is optional (empty when absent). argv may reference harness.name,
+# harness.workdir, model, run.id, run.trigger, run.source, run.started_at and
+# run.date, and never event text. Each element renders to exactly one
+# argument. `model` is accepted only when an element references {{model}}.
+# This is also how Pi, OMP or another unlisted agent CLI runs.
 # Valid values: "crush", "claude-code", "codex", "generic", "command".
 #
 # harness = "claude-code"   # required on every [harness.*] table
@@ -156,6 +162,11 @@ enabled = false
 # argv = ["/usr/local/bin/report", "--listen", ":8080", "--title", "Nightly report"]
 # workdir = "~/src/report"
 # enabled = true
+#
+# [harness.nightly-report]
+# harness = "command"
+# argv = ["/usr/local/bin/report", "--run", "{{run.id}}", "--date", "{{run.date}}"]
+# schedule = "CRON_TZ=Europe/Berlin 0 6 * * *"
 
 # Trajectory harvesting (SPEC-0006 REQ "Harvest Opt-In"): the opt-in for
 # exposing this harness's session transcripts read-only through the MCP facade
@@ -253,8 +264,9 @@ max_body = "2MiB"
 rate_limit = "120/m"
 description = "gitea pull-request events"
 
-# The harness the two sources fire. `triggers` requires a prompt source for
-# the same reason `schedule` does — a triggered unit is a one-shot agent run —
+# The harness the two sources fire. `triggers` requires a prompt source (or
+# harness = "command") for the same reason `schedule` does — a triggered unit
+# is a one-shot run —
 # and is mutually exclusive with `enabled = true`, with profile membership,
 # and with a respawning restart policy: each of those would fire the one-shot
 # with no event for it to act on.

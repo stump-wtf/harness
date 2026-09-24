@@ -126,6 +126,7 @@ up{job="harness"} == 0
 | `harness_session_active{harness}` | gauge | 1 when the process is up and the agent wrote to a session in the last 10 minutes. |
 | `harness_scheduled_runs_total{harness,outcome}` | counter | Scheduled harnesses only. `success`, or `failure` (a run that failed or timed out). Skipped, missed, cancelled and interrupted runs are not counted. |
 | `harness_scheduled_next_run_timestamp{harness}` | gauge | Scheduled harnesses only. Absent when there is no next window. |
+| `harness_template_render_failures_total{harness,reason}` | counter | `command` harnesses only, both reasons starting at zero. `unresolved`: a required `argv` template value was absent, so the run was recorded skipped (`template_unresolved`) or the start failed. `grammar`: a template did not parse at spawn. Nothing was exec'd either way. |
 | `harness_metrics_collection_errors_total{collector}` | counter | `supervisor`, `schedule`, `observer`, `lifecycle`. `observer` and `lifecycle` also count events the collector lost because it fell behind, so the matching counters read low. |
 | `harness_metrics_harnesses_overflowed` | gauge | How many harnesses were folded into `__other__`. |
 | `harness_observer_*` | mixed | Health of the transcript reader: delivered and dropped events, ambiguous and unattributed items, parse errors, scan errors, sessions tracked. |
