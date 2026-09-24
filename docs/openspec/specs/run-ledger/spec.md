@@ -260,7 +260,7 @@ every open record with outcome `interrupted`, reason `shutdown` and an
 The daemon SHALL run a usage accumulator that subscribes to the observer and,
 for each item attributed to a harness with an open run, folds it into that run:
 
-* a usage item (stump.wtf/agent-trace#105) adds its tokens, adds its cost as
+* a usage item (agent-trace's per-message usage) adds its tokens, adds its cost as
   SPEC-0021 REQ-8 resolves it, and adds its `(model, provider)` to `models`;
   a cumulative item (crush session totals) SHALL be differenced against the last
   total seen for that session, and a total lower than the last one SHALL be
@@ -274,7 +274,7 @@ An item with no open run SHALL be dropped and counted. If the observer reports a
 drop for the accumulator's subscription while a run is open, the run's
 `usage_complete` SHALL be false. The accumulator SHALL write `updated` lines no
 more often than every 30 seconds per run, and SHALL fold its final totals into
-the `closed` line. Before agent-trace#105 is available, records SHALL carry
+the `closed` line. Before agent-trace emits usage items, records SHALL carry
 `model_calls`, `errors` and `sessions`, and no `tokens`, `cost_usd` or `models`.
 
 #### Scenario: A crush resident resumed across restarts

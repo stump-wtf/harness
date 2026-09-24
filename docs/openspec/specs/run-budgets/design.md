@@ -286,7 +286,7 @@ sequenceDiagram
     else held / skipped / waiting
         M->>J: AppendRun skipped (reason) or hold(reason)
     end
-    O->>A: usage items (agent-trace#105)
+    O->>A: agent-trace usage items
     A->>M: fold cost/tokens into run + dayTotals
     M->>S: cap crossed → stop (budget_exceeded)
     O->>D: error marks → modelerr.Classify
@@ -312,11 +312,11 @@ stateDiagram-v2
 
 - **The meter lags by a poll and a turn** → caps are documented as approximate
   ceilings; `timeout` remains the hard wall-clock bound.
-- **agent-trace#105 is a hard dependency for token and cost caps** → the
+- **agent-trace's usage items are a hard dependency for token and cost caps** → the
   meter-free half (run counts, concurrency, parking) ships first and does not
   wait on it.
 - **The run-log fallback matches text** → scoped to non-zero one-shot exits and
-  4 KiB, clamped, and retired when agent-trace#104 lands. A test pins that a zero
+  4 KiB, clamped, and retired when claude-code API errors arrive as marks. A test pins that a zero
   exit is never classified.
 - **A false park stops useful work** → loud in every surface, bounded by the
   backoff or the parsed reset, and cleared by one `harness start`.
@@ -356,7 +356,7 @@ left open.
 - **The run-log text fallback.** Resolved (design review 2026-09-22): accepted
   as temporary. Matching the last 4 KiB of a non-zero exit's sanitized run log
   stays until claude-code API errors arrive as marks, then it is removed.
-  stump.wtf/agent-trace#104 closed on 2026-09-22, but
+  agent-trace's claude-code reader gained those marks on 2026-09-22, but
   Harness still pins an agent-trace from 2026-08-10, so the fallback retires
   with the dependency bump that picks the marks up.
 - **Should `--over-budget` on a resident default to the remaining operating

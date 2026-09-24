@@ -215,7 +215,7 @@ a resident's run counts only what it spent. It exposes live totals to the
 budget enforcer (SPEC-0021 REQ-9) through a callback on every fold, so a cap is
 checked on the item that crosses it, not at the next checkpoint.
 
-Until stump.wtf/agent-trace#105 lands there are no usage items; the accumulator
+Until agent-trace emits per-message usage items there are none; the accumulator
 still folds tool events, error marks and sessions.
 
 ### Metrics wiring
@@ -352,8 +352,8 @@ erDiagram
 - **The index's memory** → bounded to 7 days and dominated by resident crash
   loops; a crash loop of one restart per second for a day is 86,400 small
   records, which the retention sizing and the doctor size report surface.
-- **Usage depends on agent-trace#105** → records are useful without it (outcomes,
-  codes, sessions, error counts), and the fields appear when it lands.
+- **Usage depends on agent-trace's usage items** → records are useful without them (outcomes,
+  codes, sessions, error counts), and the fields appear when they land.
 
 ## Migration Plan
 

@@ -89,7 +89,7 @@ harnesses whose adapter writes a readable transcript (`claude-code`, `crush`,
 `codex`) and that have a workdir get model series; for any other the values
 cannot be computed and are omitted (REQ-6). At this agent-trace version
 crush and Claude Code provider errors reach the observer (Claude Code's since
-stump.wtf/agent-trace#104, picked up with the v0.4.0 bump), so those harnesses
+the agent-trace v0.4.0 bump, which carries claude-code API error marks), so those harnesses
 get the error side (the `error` outcome, the classes and the unclassified
 control); codex omits it rather than report a zero no error could move
 (`ErrorsObservable`, pinned to the parser by a test that fails when an

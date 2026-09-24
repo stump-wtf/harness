@@ -7,7 +7,7 @@
 provider or a data policy. Nothing checks what served a call. The daemon
 observer (`internal/observe`) delivers every agent-trace event and mark
 for every harness. agent-trace's `SessionMeta.Model` is session-level, and it
-exposes no provider. stump.wtf/agent-trace#105 adds per-message usage items
+exposes no provider. A planned agent-trace change adds per-message usage items
 carrying model, provider, generation ID, tokens and cost.
 
 ADR-0026 chooses per-client rendering plus transcript attestation, a hold on
@@ -146,7 +146,7 @@ removal is a reviewed change. Scrubbing happens in `buildEnv` after the
 
 ### Evidence capability
 
-| Adapter | Transcript records (with agent-trace#105) | `openrouter` | `anthropic` | `litellm` |
+| Adapter | Transcript records (with agent-trace usage items) | `openrouter` | `anthropic` | `litellm` |
 | --- | --- | --- | --- | --- |
 | Claude Code | per-message `message.model` | n/a | `model+provider` (first party by construction) | `model` |
 | Crush | message `model`; its own provider ID, not the upstream one | `model`, or `model+provider` via generation lookup if a generation ID is recorded | n/a | `model` |
@@ -154,7 +154,7 @@ removal is a reviewed change. Scrubbing happens in `buildEnv` after the
 | `command` | its `transcripts` adapter's row | same | same | same |
 
 The table is data (`PinEvidence`), updated as agent-trace and the clients
-record more. Until agent-trace#105 lands, every row is `model` at best, taken from
+record more. Until agent-trace emits usage items, every row is `model` at best, taken from
 `SessionMeta.Model`, which is session-level only. That makes `attest = "full"`
 a load error everywhere except Claude Code on `anthropic`. The capability check
 states that plainly, rather than pretending.
@@ -297,7 +297,7 @@ flowchart TB
   that captures request bodies in CI, the REQ-4 override check, and attestation
   as the backstop. A renderer that silently stops applying is caught at the
   first call.
-- **Evidence gaps until agent-trace#105.** → A load-time capability error makes
+- **Evidence gaps until agent-trace emits usage items.** → A load-time capability error makes
   the gap explicit. `attest = "model"` is available and doctor warns about it.
   The generation lookup closes the provider gap for OpenRouter wherever a
   generation ID is recorded.
@@ -319,12 +319,12 @@ flowchart TB
    no runtime change. A pin that validates but has no renderer yet fails at
    load, as "not offered".
 2. The Claude Code `anthropic` renderer and argument guard. This is the only
-   `attest = "full"` path available before agent-trace#105.
+   `attest = "full"` path available before agent-trace emits usage items.
 3. Scrubbing.
 4. The checker with `SessionMeta.Model` evidence (`attest = "model"`), the hold,
    run outcomes, visibility and metrics.
 5. Crush, then Pi/OMP renderers. Pi/OMP depend on SPEC-0017's adapters.
-6. The generation lookup and per-message evidence, once agent-trace#105 lands.
+6. The generation lookup and per-message evidence, once agent-trace emits usage items.
    This turns `attest = "full"` on.
 7. `doctor --models` direct cases, then `--through-client`.
 8. Docs: the fail-closed section in `docs/usage/configuration.md` beside the
