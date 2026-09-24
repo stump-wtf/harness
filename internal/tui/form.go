@@ -23,6 +23,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/BurntSushi/toml"
 	"github.com/anmitsu/go-shlex"
 	"github.com/robfig/cron/v3"
 
@@ -37,9 +38,10 @@ import (
 // match the TOML unit (config.rawHarness.RestartDelay).
 type HarnessForm struct {
 	Name string
-	// Harness is the harness-kind enum (crush/claude-code/codex/generic). It
-	// selects the adapter, which supplies the executable for a long-running
-	// harness and the argv synthesis for a prompt one-shot (ADR-0011). It is
+	// Harness is the harness-kind enum (crush/claude-code/codex/generic/
+	// command). It selects the adapter, which supplies the executable for a
+	// long-running harness and the argv synthesis for a prompt one-shot
+	// (ADR-0011); a command harness's Argv is its whole process. It is
 	// REQUIRED — there is no default, so Validate rejects a blank one rather
 	// than picking an agent on the user's behalf.
 	Harness string
@@ -86,10 +88,22 @@ type HarnessForm struct {
 	// Each holds only a value that differs from its parser default — "" / 0
 	// means "the default" — so an untouched edit round-trips without growing
 	// keys. Validate mirrors the parser: a non-default value requires Schedule.
-	Timeout      string
-	OnOverlap    string
-	KeepRuns     int
-	Args         []string
+	Timeout   string
+	OnOverlap string
+	KeepRuns  int
+	Args      []string
+	// Argv is a command harness's whole process (SPEC-0017 REQ-2), argv[0]
+	// first. It replaces Args on that kind and is refused on every other
+	// (Validate mirrors the parser). A round-trip field like Schedule: the
+	// save path rewrites the whole table, so a form that dropped `argv`
+	// would leave a command harness that no longer parses after an edit to
+	// its description. Written verbatim, element for element, never joined
+	// into a command string (SPEC-0017 REQ-15).
+	Argv []string
+	// argvErr is why the argv input did not parse (toForm), reported by
+	// Validate. Unlike args, a malformed argv is not silently dropped: saving
+	// would then write a command harness with no argv at all.
+	argvErr      error
 	Workdir      string
 	EnvFile      string
 	RestartDelay int    // seconds
@@ -170,16 +184,19 @@ func (f HarnessForm) Validate() error {
 		return fmt.Errorf("prompt and prompt_file are mutually exclusive")
 	}
 	switch f.Harness {
-	case "crush", "claude-code", "codex", "generic":
+	case "crush", "claude-code", "codex", "generic", core.AdapterCommand:
 	case "":
-		return fmt.Errorf("harness is required (one of: crush, claude-code, codex, generic)")
+		return fmt.Errorf("harness is required (one of: crush, claude-code, codex, generic, command)")
 	default:
-		return fmt.Errorf("harness must be one of: crush, claude-code, codex, generic")
+		return fmt.Errorf("harness must be one of: crush, claude-code, codex, generic, command")
 	}
 	// Mirror the parser's refusal: saving this would leave harness.toml
 	// unparseable. Governing: SPEC-0017 REQ "Generic Kind Rejects Prompts".
 	if f.Harness == "generic" && promptSet {
-		return fmt.Errorf("generic runs sh and has no prompt synthesis; use harness crush, claude-code or codex for a prompt one-shot")
+		return fmt.Errorf("generic runs sh and has no prompt synthesis; use harness crush, claude-code or codex for a prompt one-shot, or command with argv to run another program without a shell")
+	}
+	if err := f.validateCommand(promptSet); err != nil {
+		return err
 	}
 	if promptSet && len(f.Args) > 0 {
 		return fmt.Errorf("prompt and args are mutually exclusive")
@@ -342,6 +359,37 @@ func (f HarnessForm) Validate() error {
 	return nil
 }
 
+// validateCommand mirrors the parser's `command` key rules
+// (config.checkCommandKeys), for the reason every rule in Validate exists: a
+// combination the parser rejects would leave harness.toml unparseable on
+// disk. The argv shape itself is core.CheckCommandArgv, the same function the
+// parser and the wire call, so the three cannot disagree on it.
+// Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-3.
+func (f HarnessForm) validateCommand(promptSet bool) error {
+	if f.argvErr != nil {
+		return f.argvErr
+	}
+	if f.Harness != core.AdapterCommand {
+		if len(f.Argv) > 0 {
+			return fmt.Errorf("argv is only accepted on harness command (use args for %s)", f.Harness)
+		}
+		return nil
+	}
+	switch {
+	case len(f.Args) > 0:
+		return fmt.Errorf("args is not accepted on a command harness: put the whole command line in argv")
+	case promptSet:
+		return fmt.Errorf("a command harness takes no prompt yet; use harness crush, claude-code or codex for a prompt one-shot")
+	case strings.TrimSpace(f.Model) != "":
+		return fmt.Errorf("model is unused on a command harness: no argv element references {{model}}")
+	case f.AutoAccept || f.MaxTurns != 0:
+		return fmt.Errorf("auto_accept and max_turns are not accepted on a command harness: it owns its argv")
+	case strings.TrimSpace(f.Schedule) != "" || len(normalizeTriggers(f.Triggers)) > 0:
+		return fmt.Errorf("a command harness is resident only for now: schedule and triggers need a prompt harness")
+	}
+	return core.CheckCommandArgv(f.Argv)
+}
+
 // formatRunTimeout renders a timeout the way an operator would type it:
 // "30m", "1h30m", "0s" — not Duration.String's "30m0s".
 func formatRunTimeout(d time.Duration) string {
@@ -442,6 +490,17 @@ func (f HarnessForm) TOML() string {
 				parts[i] = strconv.Quote(a)
 			}
 			fmt.Fprintf(&b, "args = [%s]\n", strings.Join(parts, ", "))
+		}
+		if len(f.Argv) > 0 {
+			// A command harness's argv, one TOML string per element exactly
+			// as the operator wrote it (SPEC-0017 REQ-15): quoting each
+			// element keeps "a b" one argument, and a placeholder written
+			// here stays a placeholder, never a rendering.
+			parts := make([]string, len(f.Argv))
+			for i, a := range f.Argv {
+				parts[i] = strconv.Quote(a)
+			}
+			fmt.Fprintf(&b, "argv = [%s]\n", strings.Join(parts, ", "))
 		}
 	}
 	if f.Workdir != "" {
@@ -622,6 +681,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 		}
 	}
 	fi.args = shellQuoteJoin(h.Args)
+	fi.argv = formatArgvInput(h.Argv)
 	fi.workdir = h.Workdir
 	fi.envFile = h.EnvFile
 	if h.RestartDelay > 0 {
@@ -684,6 +744,7 @@ func (fi formInputs) toForm() HarnessForm {
 	if args, err := shlex.Split(fi.args, true); err == nil && len(args) > 0 {
 		f.Args = args
 	}
+	f.Argv, f.argvErr = parseArgvInput(fi.argv)
 	// Unconditional, unlike args above: strings.Fields returns a non-nil empty
 	// slice for a cleared input, which is how the form expresses the deny-all
 	// `mcp_allow = []` (see TOML). Both the `n` and `e` pre-fills seed this
@@ -758,6 +819,48 @@ func shellQuoteJoin(args []string) string {
 		parts[i] = `"` + esc.Replace(a) + `"`
 	}
 	return strings.Join(parts, " ")
+}
+
+// formatArgvInput renders argv for the single-line argv input as the TOML
+// array the file holds, one quoted string per element — the same text TOML()
+// writes. It is deliberately not args' shell-style encoding: go-shlex drops
+// an empty token wherever it appears, so `""` does not survive a round trip,
+// and a command harness's argv must come back element for element, empty
+// arguments included (SPEC-0017 REQ-15).
+func formatArgvInput(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	parts := make([]string, len(argv))
+	for i, a := range argv {
+		parts[i] = strconv.Quote(a)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// parseArgvInput reads the argv input back: blank is no argv, anything else
+// must be a TOML array of strings, parsed by the same decoder config.Parse
+// uses, so the input means exactly what it would mean in harness.toml. Extra
+// keys smuggled in after a newline are refused rather than ignored.
+func parseArgvInput(in string) ([]string, error) {
+	in = strings.TrimSpace(in)
+	if in == "" {
+		return nil, nil
+	}
+	var v struct {
+		Argv []string `toml:"argv"`
+	}
+	md, err := toml.Decode("argv = "+in, &v)
+	if err == nil && len(md.Undecoded()) > 0 {
+		err = fmt.Errorf("unexpected %s", md.Undecoded()[0])
+	}
+	if err != nil {
+		return nil, fmt.Errorf(`argv must be a TOML array of strings, e.g. ["/usr/local/bin/report", "--date", "a b"]: %v`, err)
+	}
+	if v.Argv == nil {
+		v.Argv = []string{}
+	}
+	return v.Argv, nil
 }
 
 // readFileOrEmpty reads path, returning empty (not an error) when it's absent so

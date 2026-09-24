@@ -105,6 +105,9 @@ type confirmState struct {
 // HarnessForm for TOML serialization.
 type formInputs struct {
 	name, harness, prompt, model, maxTurns, schedule, args, workdir, envFile, delay, restart, backend string
+	// argv is a command harness's argv (SPEC-0017 REQ-2), edited as the TOML
+	// array the file holds (formatArgvInput / parseArgvInput).
+	argv string
 	// promptFile is the path form of the prompt (ADR-0018), carried so an edit
 	// round-trips it — the save path rewrites the whole table, so a dropped
 	// prompt_file is a scheduled harness silently losing its instructions.

@@ -426,8 +426,8 @@ func operatingHoursWarnings(cfg *core.Config) []string {
 		if in, _, ok := h.HoursExpr.In(time.Now()); in && !ok {
 			warns = append(warns, fmt.Sprintf("%s: operating_hours covers the entire week — it gates nothing", name))
 		}
-		if h.HoursShutdown == core.HoursShutdownGraceful && (h.Adapter == "generic" || supervisor.Workdir(h) == "") {
-			warns = append(warns, fmt.Sprintf("%s: graceful shutdown but nothing can be attributed to it (generic adapter or no workdir) — every close is immediate", name))
+		if h.HoursShutdown == core.HoursShutdownGraceful && (h.Adapter == "generic" || h.Adapter == core.AdapterCommand || supervisor.Workdir(h) == "") {
+			warns = append(warns, fmt.Sprintf("%s: graceful shutdown but nothing can be attributed to it (generic or command adapter, or no workdir) — every close is immediate", name))
 		}
 	}
 	return warns
