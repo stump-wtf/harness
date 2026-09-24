@@ -304,12 +304,18 @@ func (s *Supervisor) Name() string { return s.harness.Name }
 //
 // @joestump-agent 09/23/2026 - Clear a recovered run's ConsecutiveFailures
 // (review, harness#589).
-func (s *Supervisor) Snapshot() Snapshot {
+// @joestump-agent 09/24/2026 - Judge it at an explicit instant (snapshotAt), so a
+// test can check the rule without racing a wall-clock window.
+func (s *Supervisor) Snapshot() Snapshot { return s.snapshotAt(time.Now()) }
+
+// snapshotAt is Snapshot with the healthy-run rule judged at now — the clock
+// seam that lets a test land either side of HealthyRun deterministically.
+func (s *Supervisor) snapshotAt(now time.Time) Snapshot {
 	s.mu.Lock()
 	snap := s.snap
 	s.mu.Unlock()
 	if snap.ConsecutiveFailures > 0 && snap.PID != 0 && !snap.LastStarted.IsZero() &&
-		time.Since(snap.LastStarted) > s.policy.HealthyRun {
+		now.Sub(snap.LastStarted) > s.policy.HealthyRun {
 		snap.ConsecutiveFailures = 0
 	}
 	return snap
