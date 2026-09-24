@@ -87,13 +87,13 @@ func TestBearerVerifier(t *testing.T) {
 }
 
 // TestUnimplementedSchemeRefusesEveryDelivery pins fail-closed: the parser
-// accepts `github` today, the verifier does not exist yet (#462), and a
-// delivery to such a route must be a 401 — never a firing.
+// accepts `standard-webhooks` today, the verifier does not exist yet (#466),
+// and a delivery to such a route must be a 401 — never a firing.
 func TestUnimplementedSchemeRefusesEveryDelivery(t *testing.T) {
 	src := bearerSource("gh")
-	src.Verify = core.VerifyGitHub
+	src.Verify = core.VerifyStandardWebhooks
 	if _, err := NewVerifier(src); !errors.Is(err, ErrSchemeUnavailable) {
-		t.Fatalf("NewVerifier(github) = %v, want ErrSchemeUnavailable", err)
+		t.Fatalf("NewVerifier(standard-webhooks) = %v, want ErrSchemeUnavailable", err)
 	}
 	empty := bearerSource("nosecret")
 	empty.Secret = ""
@@ -105,7 +105,7 @@ func TestUnimplementedSchemeRefusesEveryDelivery(t *testing.T) {
 	srv, logs := startServer(t, Options{Firer: f}, testConfig([]core.WebhookSource{src, empty}, "gh", "nosecret"))
 	for _, name := range []string{"gh", "nosecret"} {
 		// Even an empty Authorization, and even the "right" bearer token.
-		for _, hdr := range []map[string]string{nil, bearer(), {"X-Hub-Signature-256": "sha256=00"}} {
+		for _, hdr := range []map[string]string{nil, bearer(), {"webhook-signature": "v1,AAAA"}} {
 			resp, _ := do(t, "POST", "http://"+srv.Addr()+"/hooks/"+name, hdr, `{}`)
 			if resp.StatusCode != http.StatusUnauthorized {
 				t.Errorf("%s: status %d, want 401", name, resp.StatusCode)
