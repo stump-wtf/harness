@@ -11,7 +11,8 @@ Harness, [Switchboard](https://switchboard.stump.wtf/docs/) and
 and together they close a loop around your agents. This is the canonical page for
 how they fit: what each one is, what each one is **not**, and how a small team
 divides the work between them and what it already owns. Every term in bold
-below has an entry in the [glossary](./glossary).
+below has an entry in the [glossary](./glossary). To set the stack up one proven
+layer at a time, follow the [onboarding path](./onboarding).
 
 ## Roles
 
@@ -186,6 +187,7 @@ A feature request goes round the loop like this:
 
 | To | Read |
 |---|---|
+| Set up all three, one proven layer at a time | [Onboarding path](./onboarding) |
 | Run the Harness daemon as a service | [Run the daemon as a service](./run-as-a-service) |
 | Supervise an agent | [Your first supervised agent](./first-agent) |
 | Run agents on a clock | [Scheduled sweeps](./scheduled-sweeps) |
