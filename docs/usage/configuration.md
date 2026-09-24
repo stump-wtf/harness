@@ -735,15 +735,49 @@ plus `Strict-Transport-Security` when the listener terminates TLS itself.
 Slow clients are cut off: 10 s to send headers, 30 s to read the request,
 30 s to write the response, 60 s idle, 64 KiB of headers.
 
-:::warning Only bearer is verified so far
-**Only `verify = "bearer"` is implemented so far.** A route using
-`hmac-sha256`, `github`, `gitea`, `gitlab` or `standard-webhooks` loads,
-logs a warning, and answers **every** delivery `401` until its verifier
-lands. It never accepts an unverified delivery. De-duplication and
-`rate_limit` are not enforced yet either.
+#### Verification schemes
 
-A non-loopback `webhook_listen` without TLS starts with a warning: bearer
-tokens then cross the network in cleartext. Bind loopback behind a
+`verify` picks how a delivery proves it came from whoever holds the secret.
+The check runs over the body bytes exactly as they arrived, before anything
+parses them. The four presets fix their header names, so a GitHub, Gitea or
+GitLab route is three lines:
+
+```toml
+[webhook.gh]
+verify = "github"
+env_file = "~/.config/harness/triggers.env"   # GH_HOOK_SECRET=...
+secret = "${GH_HOOK_SECRET}"
+```
+
+| `verify` | Credential the sender presents | Event header | Delivery header |
+|---|---|---|---|
+| `bearer` | `Authorization: Bearer <secret>` | `event_header` | `delivery_header` |
+| `hmac-sha256` | hex HMAC-SHA256 of the body, keyed by the secret, in `signature_header` after `signature_prefix` | `event_header` | `delivery_header` |
+| `github` | `X-Hub-Signature-256: sha256=<hex HMAC-SHA256>` | `X-GitHub-Event` | `X-GitHub-Delivery` |
+| `gitea` | `X-Gitea-Signature: <hex HMAC-SHA256>` | `X-Gitea-Event` | `X-Gitea-Delivery` |
+| `gitlab` | `X-Gitlab-Token: <secret>` | `X-Gitlab-Event` | `X-Gitlab-Event-UUID` |
+| `standard-webhooks` | not implemented yet; see below | — | — |
+
+For `github` and `gitea`, set the same value as the forge hook's **Secret**;
+for `gitlab`, as its **Secret token**. A missing signature header, two of
+them, a wrong prefix, anything but 64 hex digits, or a MAC that does not
+match is a `401`. The event header becomes the event name `events` matches,
+and the delivery header becomes the run's `event_id`. The event file carries
+only `Content-Type`, `User-Agent` and those two headers, never the signature
+or token.
+
+A `gitlab` token is a shared password, not a signature: it proves the sender
+knows the secret, but does not cover the body. Prefer `gitea`- or
+`github`-style signing where the sender offers it, and TLS either way.
+
+:::warning standard-webhooks is not verified yet
+A route using `verify = "standard-webhooks"` loads, logs a warning, and
+answers **every** delivery `401` until its verifier lands. It never accepts
+an unverified delivery. De-duplication and `rate_limit` are not enforced yet
+either.
+
+A non-loopback `webhook_listen` without TLS starts with a warning: bearer and
+GitLab tokens then cross the network in cleartext. Bind loopback behind a
 TLS-terminating proxy, or set both TLS files.
 :::
 
