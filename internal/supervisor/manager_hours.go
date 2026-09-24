@@ -177,7 +177,7 @@ func (m *Manager) follow(name string, closeAt time.Time) {
 	if s == nil || !known {
 		return
 	}
-	target := runtrace.Scope{Name: name, Adapter: h.Adapter, Workdir: Workdir(h), Args: h.Args}
+	target := runtrace.Scope{Name: name, Adapter: h.TrajectoryKind(), Workdir: Workdir(h), Args: h.Args}
 	env, err := DiscoveryEnv(h, runtrace.DiscoveryEnvKeys)
 	if err != nil {
 		log.Warn("turn-state watch cannot read env_file; discovering with the daemon's environment", "harness", name, "err", err)
@@ -206,7 +206,7 @@ func (m *Manager) peerScopes(target runtrace.Scope) []runtrace.Scope {
 		if !ok {
 			continue
 		}
-		p := runtrace.Scope{Name: snap.Name, Adapter: h.Adapter, Workdir: Workdir(h), Args: h.Args}
+		p := runtrace.Scope{Name: snap.Name, Adapter: h.TrajectoryKind(), Workdir: Workdir(h), Args: h.Args}
 		if p.Workdir == "" {
 			p.Workdir = daemonDir
 		}

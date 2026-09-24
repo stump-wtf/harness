@@ -1,0 +1,7 @@
+{"type":"title","v":1,"title":"fix the build","source":"auto","updatedAt":"2026-09-24T08:00:05.000Z","pad":"                                                                                                                                                 "}
+{"type":"session","version":3,"id":"omp-fixture-1","timestamp":"2026-09-24T08:00:00.000Z","cwd":"/work/omp"}
+{"type":"model_change","id":"e1","parentId":null,"timestamp":"2026-09-24T08:00:01.000Z","provider":"openrouter","modelId":"z-ai/glm-5.3-flash"}
+{"type":"message","id":"e2","parentId":"e1","timestamp":"2026-09-24T08:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"fix the build"}]}}
+{"type":"message","id":"e3","parentId":"e2","timestamp":"2026-09-24T08:00:03.000Z","message":{"role":"assistant","model":"z-ai/glm-5.3-flash","stopReason":"toolUse","content":[{"type":"toolCall","id":"call_1","name":"read","arguments":{"path":"Makefile"}}]}}
+{"type":"message","id":"e4","parentId":"e3","timestamp":"2026-09-24T08:00:04.000Z","message":{"role":"toolResult","toolCallId":"call_1","toolName":"read","content":[{"type":"text","text":"all: build"}],"isError":false}}
+{"type":"message","id":"e5","parentId":"e4","timestamp":"2026-09-24T08:00:05.000Z","message":{"role":"assistant","model":"z-ai/glm-5.3-flash","stopReason":"stop","content":[{"type":"text","text":"The build passes."}]}}

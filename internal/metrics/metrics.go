@@ -53,6 +53,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/stump-wtf/harness/internal/adapter"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/observe"
 	"github.com/stump-wtf/harness/internal/supervisor"
@@ -211,10 +212,17 @@ func StateValue(s supervisor.Snapshot) string {
 // a workdir to correlate sessions against (runtrace.ErrNoWorkdir). For any
 // other harness the model-call series are uncomputable, so they are omitted
 // rather than reported as a zero that looks like a healthy, idle agent.
+//
+// The kind is the harness's TrajectoryKind, so a command harness bound with
+// `transcripts` is observable as the adapter it names (SPEC-0017 REQ-4). pi is
+// observable; omp is not until agent-trace reads its sessions
+// (adapter.PiFamily.Observed), and flips here with it.
 func Observable(h core.Harness) bool {
-	switch h.Adapter {
-	case "crush", "claude-code", "codex":
+	switch h.TrajectoryKind() {
+	case "crush", "claude-code", "codex", core.AdapterPi:
 		return h.Workdir != ""
+	case core.AdapterOMP:
+		return adapter.OMP.Observed() && h.Workdir != ""
 	}
 	return false
 }
@@ -237,7 +245,7 @@ func Observable(h core.Harness) bool {
 // @joestump-agent 09/23/2026 - Added in review (harness#589): claude-code and
 // codex emitted a permanent class="quota" 0.
 func ErrorsObservable(h core.Harness) bool {
-	return Observable(h) && h.Adapter == "crush"
+	return Observable(h) && h.TrajectoryKind() == "crush"
 }
 
 // Outcomes of harness_model_calls_total and harness_scheduled_runs_total.

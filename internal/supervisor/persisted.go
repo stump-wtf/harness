@@ -94,6 +94,10 @@ type persistedProjectHarness struct {
 	// ExportTelemetry is a project's telemetry opt-out, kept so a daemon
 	// restart does not quietly re-include the harness (SPEC-0015 REQ-2).
 	ExportTelemetry *bool `json:"export_telemetry,omitempty"`
+
+	// Transcripts is a command harness's transcript binding (SPEC-0017
+	// REQ-4), kept so a restored project harness stays observed.
+	Transcripts string `json:"transcripts,omitempty"`
 }
 
 // toPersistedProject captures a project record's definitions in persisted
@@ -111,6 +115,7 @@ func toPersistedProjectHarness(h core.Harness) persistedProjectHarness {
 		Harness:         h.Adapter,
 		Args:            h.Args,
 		Argv:            h.Argv,
+		Transcripts:     h.Transcripts,
 		Prompt:          h.Prompt,
 		PromptFile:      h.PromptFile,
 		Model:           h.Model,
@@ -153,6 +158,7 @@ func (p persistedProjectHarness) toCore() core.Harness {
 		Adapter:         p.Harness,
 		Args:            p.Args,
 		Argv:            p.Argv,
+		Transcripts:     p.Transcripts,
 		Prompt:          p.Prompt,
 		PromptFile:      p.PromptFile,
 		Model:           p.Model,

@@ -45,6 +45,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stump-wtf/agent-trace/tail"
 
+	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/tui/chatroom"
 )
@@ -140,7 +141,7 @@ func (m *Model) liveAction(h protocol.HarnessInfo) string {
 	var best sessionActivity
 	var found bool
 	for key, act := range m.lastActions {
-		if !underDir(key.cwd, work) || !adapterHandles(h.Adapter, key.kind) {
+		if !underDir(key.cwd, work) || !adapterHandles(trajectoryKind(h), key.kind) {
 			continue
 		}
 		if !found || act.at.After(best.at) {
@@ -168,14 +169,26 @@ func fitAction(s string) string {
 //
 // A `generic` harness runs an arbitrary command — it may well be an agent, and
 // which one is not knowable from the config — so for it the workdir is the only
-// evidence there is and the kind is not filtered on. Every other adapter names
-// exactly the agent it spawns.
+// evidence there is and the kind is not filtered on; so is an unbound `command`
+// harness, for the same reason. Every other adapter names exactly the agent it
+// spawns, and a command harness bound with `transcripts` arrives here as the
+// agent it names (trajectoryKind).
 func adapterHandles(adapter string, kind tail.Harness) bool {
 	adapter = orDefault(adapter, "crush")
-	if adapter == "generic" {
+	if adapter == "generic" || adapter == core.AdapterCommand {
 		return true
 	}
 	return adapter == string(kind)
+}
+
+// trajectoryKind is core.Harness.TrajectoryKind for the wire's view of a
+// harness: a command harness's `transcripts` binding when it has one, else its
+// kind (SPEC-0017 REQ-4).
+func trajectoryKind(h protocol.HarnessInfo) string {
+	if h.Adapter == core.AdapterCommand && h.Transcripts != "" {
+		return h.Transcripts
+	}
+	return h.Adapter
 }
 
 // underDir reports whether path is dir or sits beneath it, comparing whole path

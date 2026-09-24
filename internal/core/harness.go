@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -294,17 +295,26 @@ type Harness struct {
 	// History"; issue #119.
 	KeepRuns int
 	// Adapter is the harness kind — the config `harness` key, an enum:
-	// "crush", "claude-code", "codex", "generic", "command". It selects the
-	// adapter, which supplies BOTH the tool-specific behaviour (trajectory
-	// discovery, prompt flag mapping) and the executable a long-running
-	// (non-prompt) harness runs; `args` are appended after it. Naming an
-	// unknown value is a config-validation error. "generic" runs sh and has
-	// no prompt synthesis, so it is only valid for a long-running harness: a
-	// prompt on it is a config-validation error. "command" has no executable
-	// of its own either: its Argv is the whole process. Governing: ADR-0011,
-	// SPEC-0006 REQ "Adapter Selection", SPEC-0017 REQ "Generic Kind Rejects
-	// Prompts", REQ-2 "Command Harness Kind".
+	// "crush", "claude-code", "codex", "pi", "omp", "generic", "command". It
+	// selects the adapter, which supplies BOTH the tool-specific behaviour
+	// (trajectory discovery, prompt flag mapping) and the executable a
+	// long-running (non-prompt) harness runs; `args` are appended after it.
+	// Naming an unknown value is a config-validation error. "generic" runs sh
+	// and has no prompt synthesis, so it is only valid for a long-running
+	// harness: a prompt on it is a config-validation error. "command" has no
+	// executable of its own either: its Argv is the whole process. Governing:
+	// ADR-0011, SPEC-0006 REQ "Adapter Selection", SPEC-0017 REQ "Generic
+	// Kind Rejects Prompts", REQ-2 "Command Harness Kind", REQ-13 "Pi And OMP
+	// Adapters".
 	Adapter string
+	// Transcripts binds a "command" harness to an agent adapter's trajectory
+	// discovery, run correlation and observer attribution (one of
+	// TranscriptSources), so a hand-built agent argv is observed like the
+	// adapter's own harnesses. Empty means unbound: no native trajectory,
+	// like "generic". Set only when Adapter is "command"; every other kind
+	// binds its own source. TrajectoryKind is what consumers read.
+	// Governing: ADR-0023, SPEC-0017 REQ-4 "Transcript Binding".
+	Transcripts string
 	// HarvestTrajectory controls whether the harness's trajectory is exposed
 	// read-only through the facade (list_trajectories / get_trajectory).
 	// Defaults to false: a trajectory may contain secrets the harnessed
@@ -426,6 +436,57 @@ func ReadPromptFile(path string) (string, error) {
 // AdapterCommand is the `harness` kind whose process is its own Argv, exec'd
 // without a shell (SPEC-0017 REQ-2).
 const AdapterCommand = "command"
+
+// AdapterPi and AdapterOMP are the Pi coding agent and its fork, OMP
+// (oh-my-pi): one adapter implementation registered under two names
+// (SPEC-0017 REQ-13).
+const (
+	AdapterPi  = "pi"
+	AdapterOMP = "omp"
+)
+
+// HarnessKinds is the `harness` enum, in the order errors list it. Every front
+// door (config files, the project-up and scratchpad wire, the TUI form)
+// checks against this one list so they cannot disagree on what exists.
+// Governing: SPEC-0006 REQ "Adapter Selection" as amended by SPEC-0017 REQ-17.
+var HarnessKinds = []string{"crush", "claude-code", "codex", AdapterPi, AdapterOMP, "generic", AdapterCommand}
+
+// TranscriptSources are the values `transcripts` accepts on a command harness:
+// every adapter kind with a trajectory store of its own. The order is the one
+// errors list them in.
+var TranscriptSources = []string{"claude-code", "crush", "codex", AdapterPi, AdapterOMP}
+
+// CheckTranscripts enforces SPEC-0017 REQ-4 for a harness of kind adapter
+// declaring transcripts, shared by every front door so they cannot drift. An
+// adapter kind binds its own source, so the key is refused there even when it
+// names that same source; on a command harness it must name a TranscriptSource.
+// The error is meant to follow "harness %q: ".
+// Governing: ADR-0023, SPEC-0017 REQ-4 "Transcript Binding".
+func CheckTranscripts(adapter, transcripts string) error {
+	if transcripts == "" {
+		return nil
+	}
+	if adapter != AdapterCommand {
+		return fmt.Errorf(`"transcripts" is only accepted on harness = "command": a %q harness binds its own transcript source`, adapter)
+	}
+	if !slices.Contains(TranscriptSources, transcripts) {
+		return fmt.Errorf(`unknown "transcripts" source %q (want one of: %s)`, transcripts, strings.Join(TranscriptSources, ", "))
+	}
+	return nil
+}
+
+// TrajectoryKind is the adapter kind whose transcripts h's process writes, as
+// trajectory discovery, run correlation, the observer and the metrics read it:
+// a command harness's Transcripts binding when it has one, and otherwise the
+// harness kind itself. Spawn never reads it — a bound command harness still
+// execs its own argv.
+// Governing: ADR-0023, SPEC-0017 REQ-4 "Transcript Binding".
+func (h Harness) TrajectoryKind() string {
+	if h.Adapter == AdapterCommand && h.Transcripts != "" {
+		return h.Transcripts
+	}
+	return h.Adapter
+}
 
 // CheckCommandArgv enforces the shape of a "command" harness's argv, shared by
 // every front door (config files, the project-up and scratchpad wire, the TUI

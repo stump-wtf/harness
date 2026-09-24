@@ -83,7 +83,13 @@ const (
 	// than 12 refuses a project_up or scratchpad definition naming "command"
 	// as an unknown harness kind, so the new field is never silently dropped
 	// into a harness that runs something else.
-	ProtoMinor = 12
+	// ProtoMinor 13 added the pi and omp harness kinds and the command
+	// harness's transcripts binding (SPEC-0017 REQ-4, REQ-13): the "pi" and
+	// "omp" values of the harness enum, and Transcripts on ProjectHarness and
+	// HarnessInfo — additive only. A daemon older than 13 refuses a
+	// definition naming "pi" or "omp" as an unknown kind; one that drops
+	// Transcripts runs the same argv, unobserved.
+	ProtoMinor = 13
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -220,14 +226,17 @@ type ControlReq struct {
 type ProjectHarness struct {
 	Name string `json:"name"`
 	// Harness is the harness-kind enum ("crush", "claude-code", "codex",
-	// "generic", "command"); required, and re-validated by the daemon. It
-	// selects the adapter and the executable (ADR-0011).
+	// "pi", "omp", "generic", "command"); required, and re-validated by the
+	// daemon. It selects the adapter and the executable (ADR-0011).
 	Harness string   `json:"harness,omitempty"`
 	Args    []string `json:"args,omitempty"`
 	// Argv is a "command" harness's whole process, argv[0] first, carried
 	// verbatim and re-validated by the daemon (SPEC-0017 REQ-2, REQ-14).
 	// Set only with Harness = "command", which takes no Args.
 	Argv []string `json:"argv,omitempty"`
+	// Transcripts is a "command" harness's transcript binding (SPEC-0017
+	// REQ-4), re-validated by the daemon. Set only with Harness = "command".
+	Transcripts string `json:"transcripts,omitempty"`
 	// Prompt mirrors the schema's agent one-shot `prompt`: exactly one of
 	// harness/prompt defines the argv, and a prompt harness carries empty
 	// args — the daemon synthesizes its argv at spawn time (ADR-0011).
@@ -327,6 +336,11 @@ type HarnessInfo struct {
 	// as exec'd: `describe` shows it so an operator can see what runs
 	// (SPEC-0017 REQ-16).
 	Argv []string `json:"argv,omitempty"`
+	// Transcripts is a "command" harness's transcript binding (SPEC-0017
+	// REQ-4). It is on the wire for the same reason Workdir is: a client
+	// correlating a session back to its harness must treat a bound command
+	// harness as the agent it names, not as an arbitrary command.
+	Transcripts string `json:"transcripts,omitempty"`
 	// LastStarted / LastExitAt (RFC 3339) bound the harness's latest run, so a
 	// client can attribute a session to the harness whose run covers it, not
 	// merely to one sharing its workdir (SPEC-0006 REQ "Run Correlation";

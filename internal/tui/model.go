@@ -108,6 +108,9 @@ type formInputs struct {
 	// argv is a command harness's argv (SPEC-0017 REQ-2), edited as the TOML
 	// array the file holds (formatArgvInput / parseArgvInput).
 	argv string
+	// transcripts is a command harness's transcript binding (SPEC-0017
+	// REQ-4), carried so an edit round-trips it.
+	transcripts string
 	// promptFile is the path form of the prompt (ADR-0018), carried so an edit
 	// round-trips it — the save path rewrites the whole table, so a dropped
 	// prompt_file is a scheduled harness silently losing its instructions.

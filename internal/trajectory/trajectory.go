@@ -113,7 +113,9 @@ func (s *Service) SetScrollbackDir(dir string) {
 //
 // When the harness's adapter reports a native trajectory directory, sessions
 // are enumerated from there (filtered by the harness's workdir when available).
-// When the adapter reports no native trajectory (Generic), the scrollback log
+// A command harness with `transcripts` lists the bound adapter's sessions
+// (SPEC-0017 REQ-4). When the adapter reports no native trajectory (Generic,
+// an unbound command harness, OMP), the scrollback log
 // is reported as the single trajectory source (ADR-0007 fallback).
 func (s *Service) List(cfg *core.Config, name string) ([]SessionSummary, error) {
 	h, ok := cfg.Harnesses[name]
@@ -124,7 +126,7 @@ func (s *Service) List(cfg *core.Config, name string) ([]SessionSummary, error) 
 		return nil, fmt.Errorf("%w: %s", ErrHarvestDisabled, name)
 	}
 
-	adp := s.registry.Resolve(h)
+	adp := s.registry.TrajectoryAdapter(h)
 
 	// Native trajectory path.
 	td := adp.TailAdapter()
@@ -206,7 +208,7 @@ func (s *Service) Get(cfg *core.Config, name, sessionPath string) (*Trajectory, 
 		return nil, fmt.Errorf("trajectory read %s: %w", name, err)
 	}
 
-	adp := s.registry.Resolve(h)
+	adp := s.registry.TrajectoryAdapter(h)
 	source := "scrollback"
 	if adp != nil && adp.TailAdapter() != nil {
 		source = "native"

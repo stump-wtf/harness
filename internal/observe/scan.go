@@ -239,7 +239,7 @@ func (o *Observer) targets() ([]runtrace.Scope, map[string]*target, []string) {
 		}
 		t := &target{scope: runtrace.Scope{
 			Name:    snap.Name,
-			Adapter: h.Adapter,
+			Adapter: h.TrajectoryKind(),
 			Workdir: supervisor.Workdir(h),
 			Args:    h.Args,
 			Env:     o.opts.DiscoveryEnv(h),

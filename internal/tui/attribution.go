@@ -44,7 +44,7 @@ func traceScopes(infos []protocol.HarnessInfo) []runtrace.Scope {
 		if h.Workdir == "" {
 			continue
 		}
-		s := runtrace.Scope{Name: h.Name, Adapter: h.Adapter, Workdir: h.Workdir, Args: h.Args}
+		s := runtrace.Scope{Name: h.Name, Adapter: trajectoryKind(h), Workdir: h.Workdir, Args: h.Args}
 		if w, ok := latestRun(h); ok {
 			s.Runs = []runtrace.Window{w}
 			s.KnownSince = w.Start

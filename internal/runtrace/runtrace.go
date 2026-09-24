@@ -46,6 +46,8 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
+	"github.com/stump-wtf/harness/internal/adapter"
+	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/redact"
 )
 
@@ -73,7 +75,7 @@ var (
 // relocates a tool's store; none of them is a credential. The daemon resolves
 // them from a harness's env_file layered over its own environment and never
 // hands this package anything else from that file (ADR-0008).
-var DiscoveryEnvKeys = []string{"HOME", "XDG_DATA_HOME", "CRUSH_GLOBAL_DATA", "CLAUDE_CONFIG_DIR", "CODEX_HOME"}
+var DiscoveryEnvKeys = []string{"HOME", "XDG_DATA_HOME", "CRUSH_GLOBAL_DATA", "CLAUDE_CONFIG_DIR", "CODEX_HOME", adapter.PiAgentDirEnv}
 
 // Window is one run's time interval. End is zero while the run is in flight;
 // an open window extends to the moment it is evaluated.
@@ -107,9 +109,12 @@ func (w Window) bounds(now time.Time) (time.Time, time.Time) {
 type Scope struct {
 	// Name is the harness name, the identity attribution reports.
 	Name string
-	// Adapter is the harness kind ("crush", "claude-code", "codex",
-	// "generic"). An empty or unrecognised value is treated as generic, the
-	// same way adapter.Registry.Resolve treats it.
+	// Adapter is the kind of transcript the harness writes ("crush",
+	// "claude-code", "codex", "pi", "omp", "generic"): core.Harness's
+	// TrajectoryKind, so a command harness bound with `transcripts` is
+	// correlated as the adapter it names (SPEC-0017 REQ-4). An empty or
+	// unrecognised value is treated as generic, the same way
+	// adapter.Registry.Resolve treats it.
 	Adapter string
 	// Workdir is the resolved absolute working directory the process was
 	// spawned in. Empty means none was configured.
@@ -203,6 +208,21 @@ func Sources(s Scope) ([]tail.Adapter, error) {
 			dir = filepath.Join(s.home(), ".codex")
 		}
 		return []tail.Adapter{&tail.CodexAdapter{Dir: filepath.Join(dir, "sessions")}}, nil
+	case core.AdapterPi, core.AdapterOMP:
+		// One reader for the family, at the root the harness's own
+		// environment gives it (PI_CODING_AGENT_DIR, then the CLI's default
+		// under HOME), so an env_file that relocates the agent directory is
+		// followed. OMP's sessions do not parse with agent-trace's Pi reader
+		// yet (adapter.PiFamily.Observed), so an omp harness reports no
+		// trajectory rather than a store that always lists empty.
+		// Governing: SPEC-0017 REQ-13 "Pi And OMP Adapters".
+		fam := adapter.Pi
+		if s.Adapter == core.AdapterOMP {
+			fam = adapter.OMP
+		}
+		if fam.Observed() {
+			return []tail.Adapter{&tail.PiAdapter{Dir: fam.SessionRoot(s.Env, s.home())}}, nil
+		}
 	}
 	return nil, fmt.Errorf("%w: %q", ErrNoTrajectory, s.Adapter)
 }
@@ -462,14 +482,16 @@ func claimants(target Scope, targetStore string, peers []Scope, peerStores []str
 }
 
 // CouldWrite reports whether a harness of kind adapter could have produced a
-// session of kind kind. A generic harness runs an arbitrary command — which
-// may be that very tool — so it is always a possible author. Counting it can
-// only hide a session, never misattribute one.
+// session of kind kind. A generic harness, or an unbound command harness, runs
+// an arbitrary command — which may be that very tool — so it is always a
+// possible author. Counting it can only hide a session, never misattribute
+// one. A command harness bound with `transcripts` arrives here as the kind it
+// names (core.Harness.TrajectoryKind).
 func CouldWrite(adapter, kind string) bool {
 	switch adapter {
 	case kind:
 		return true
-	case "crush", "claude-code", "codex":
+	case "crush", "claude-code", "codex", core.AdapterPi, core.AdapterOMP:
 		return false
 	}
 	return true

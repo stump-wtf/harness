@@ -29,6 +29,8 @@ func TestScratchpadDefKindDispatch(t *testing.T) {
 		{"generic command with flag", "", "", []string{"htop", "-t"}, "generic", []string{"-c", "htop -t"}},
 		{"kind override forces generic", "generic", "", []string{"crush"}, "generic", []string{"-c", "crush"}},
 		{"kind override keeps args", "codex", "", []string{"--yolo"}, "codex", []string{"--yolo"}},
+		{"pi is an agent kind", "", "", []string{"pi", "--continue"}, "pi", []string{"--continue"}},
+		{"omp is an agent kind", "", "", []string{"omp"}, "omp", []string{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
