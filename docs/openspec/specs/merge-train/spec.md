@@ -34,9 +34,10 @@ Terms:
 ### Requirement: REQ-1 Off by default, two modes
 
 The merge train SHALL NOT run unless `[mergetrain] enabled = true` and `repos`
-is non-empty. It SHALL support two modes: `report`, which performs every step
-except the merge and the post-merge verification, and `merge`. The default
-mode SHALL be `report`. When enabled, the daemon SHALL log one line at startup
+is non-empty. It SHALL support two modes: `report`, which builds and tests
+trains exactly as `merge` does but writes nothing to any pull request — no
+merge, no comment — and logs `would merge` and `would comment` instead; and
+`merge`. The default mode SHALL be `report`. When enabled, the daemon SHALL log one line at startup
 naming the mode and every repo it will act on.
 
 #### Scenario: No section
@@ -52,7 +53,8 @@ naming the mode and every repo it will act on.
 #### Scenario: Report mode
 
 - **WHEN** the mode is `report` and a train goes green
-- **THEN** the driver logs `would merge` for the PR and calls no merge endpoint
+- **THEN** the driver logs `would merge` for the PR and calls no merge or
+  comment endpoint
 
 ### Requirement: REQ-2 Eligibility
 
@@ -232,7 +234,7 @@ Every transition SHALL produce one structured log line whose message is
 `mergetrain <event>` with keys `repo` and, where they apply, `pr`, `head`,
 `base`, `train`, `tree`, `cause`, `err`. Events: `started`, `queue`,
 `building`, `built`, `ci`, `green`, `red`, `conflict`, `timeout`, `stale`,
-`deleted`, `delete failed`, `would merge`, `merged`, `verified`,
+`deleted`, `delete failed`, `would merge`, `would comment`, `merged`, `verified`,
 `merge refused`, `commented`, `tick failed`, `bypass detected`, `halted`,
 `stopped`.
 

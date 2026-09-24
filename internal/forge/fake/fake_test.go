@@ -293,3 +293,30 @@ func TestCancelledContextFails(t *testing.T) {
 		t.Fatalf("cancelled calls not recorded: %v", got)
 	}
 }
+
+func TestHooksMayCallSetters(t *testing.T) {
+	f := New()
+	f.AddPR(repo, pr(1, "h1"))
+	f.SetBranch(repo, "main", "base")
+	f.OnTrain(func(s forge.TrainSpec) (forge.TrainBranch, error) {
+		f.SetFile(repo, "t1", "a", []byte("x")) // would deadlock under f.mu
+		return forge.TrainBranch{SHA: "t1", Tree: "T"}, nil
+	})
+	f.OnStatus(func(string, int) string { f.SetBranch(repo, "other", "o"); return "success" })
+	f.OnMerge(func(int, forge.TrainBranch) string { f.SetTree(repo, "x", "y"); return "T" })
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = f.CreateTrainBranch(ctx, repo, forge.TrainSpec{Branch: "train/1", PR: 1, HeadSHA: "h1"})
+		_, _ = f.CombinedStatus(ctx, repo, "t1")
+		_, _ = f.SquashMerge(ctx, repo, 1, "h1", "", "")
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a hook calling a setter deadlocked the fake")
+	}
+	if b, _ := f.FileContentAtRef(ctx, repo, "a", "t1"); string(b) != "x" {
+		t.Fatal("hook's SetFile lost")
+	}
+}
