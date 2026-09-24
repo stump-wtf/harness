@@ -30,6 +30,9 @@
 //     block the supervisor (ADR-0007); loss on either feed is counted in
 //     harness_metrics_collection_errors_total rather than hidden.
 //
+// The trigger sources of SPEC-0014 join the same scrape (triggers.go), read at
+// scrape time from the source manager like supervisor state.
+//
 // Honest absence (SPEC-0013 REQ-6) runs through all of it: a value the daemon
 // cannot compute is omitted, never zeroed. A harness whose adapter writes no
 // transcript the observer can read (generic, or no workdir to attribute
@@ -108,9 +111,10 @@ const (
 	collectorSchedule   = "schedule"   // scrape-time next-run read
 	collectorObserver   = "observer"   // the agent event feed
 	collectorLifecycle  = "lifecycle"  // the Manager's lifecycle bus
+	collectorTriggers   = "triggers"   // scrape-time trigger source read
 )
 
-var collectorNames = []string{collectorSupervisor, collectorSchedule, collectorObserver, collectorLifecycle}
+var collectorNames = []string{collectorSupervisor, collectorSchedule, collectorObserver, collectorLifecycle, collectorTriggers}
 
 // Options configures Metrics. The zero value is production defaults with no
 // observer and no schedule reader.
@@ -121,6 +125,9 @@ type Options struct {
 	// NextRun reports a scheduled harness's next window (the scheduler's
 	// NextFire). Nil omits harness_scheduled_next_run_timestamp.
 	NextRun func(name string) (time.Time, bool)
+	// Triggers is the trigger source manager (SPEC-0014). Nil omits every
+	// harness_trigger_* series.
+	Triggers TriggerSource
 	// MaxHarnesses caps distinct harness label values (default
 	// DefaultMaxHarnesses).
 	MaxHarnesses int

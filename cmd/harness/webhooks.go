@@ -26,6 +26,8 @@ package main
 // "Source Reconciliation On Reload"; SPEC-0010 REQ "Precedence Order".
 //
 // @joestump 09/23/2026 - Introduced with the SPEC-0014 webhook listener (#458).
+// @joestump 09/24/2026 - The listener counts into the source manager's
+// counters (#480).
 
 import (
 	"context"
@@ -85,6 +87,10 @@ func (d *daemonWebhooks) serve() {
 	opts := d.opts
 	opts.Settings = settings
 	opts.Firer = d.sources
+	// The source manager's counters, not the server's own: a refusal counted
+	// here and a firing counted there must be one source's numbers in
+	// `harness triggers` and /metrics (SPEC-0014 REQ "Trigger Metrics").
+	opts.Outcomes = d.sources.Counters()
 	opts.Log = log.Default()
 	srv := webhook.New(opts, cfg)
 	if err := srv.Listen(); err != nil {

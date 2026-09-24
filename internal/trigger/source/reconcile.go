@@ -212,6 +212,16 @@ func (m *Manager) Reconcile(cfg *core.Config) {
 			m.startSessionLocked(ctx, ref, src, seed)
 		}
 	}
+
+	// m.sources is now exactly the declared set. A removed or renamed
+	// source's counters go with it, so nothing — `harness triggers`, a
+	// scrape — can report a name the config no longer has.
+	// Governing: SPEC-0014 REQ "Trigger Metrics".
+	declared := make(map[string]bool, len(m.sources))
+	for ref := range m.sources {
+		declared[ref] = true
+	}
+	m.counters.Retain(declared)
 }
 
 // Kind is the source kind this state describes.
