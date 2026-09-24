@@ -211,7 +211,7 @@ type Stats struct {
 	// could claim when they were read (its harness had exited, say).
 	Unattributed uint64
 	// ParseErrors counts failed session reads per agent-trace adapter
-	// ("crush", "claude-code", "codex").
+	// ("crush", "claude-code", "codex", "pi").
 	ParseErrors map[string]uint64
 	// ScanErrors counts failed store listings.
 	ScanErrors uint64

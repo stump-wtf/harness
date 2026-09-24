@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,6 +84,11 @@ type rawHarness struct {
 	// `catch_up = false` is rejected without schedule.
 	HoursShutdown        *string `toml:"hours_shutdown"`
 	HoursShutdownTimeout *string `toml:"hours_shutdown_timeout"`
+
+	// Transcripts binds a `command` harness to an adapter's trajectory
+	// discovery and observer attribution (SPEC-0017 REQ-4); rejected on every
+	// other kind.
+	Transcripts string `toml:"transcripts"`
 
 	// Removed keys, still decoded so their presence can be REJECTED with a
 	// migration error. TOML decoding here ignores unknown keys, so deleting
@@ -507,7 +513,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	// other error message would be a red herring.
 	if strings.TrimSpace(rh.RemovedCmd) != "" {
 		return newError(filename, line,
-			"harness %q: \"cmd\" was replaced by the \"harness\" enum — set harness = \"crush\"|\"claude-code\"|\"codex\" for an agent, or harness = \"command\" with argv = [%q, …] to run an arbitrary program",
+			"harness %q: \"cmd\" was replaced by the \"harness\" enum — set harness = \"crush\"|\"claude-code\"|\"codex\"|\"pi\"|\"omp\" for an agent, or harness = \"command\" with argv = [%q, …] to run an arbitrary program",
 			name, strings.TrimSpace(rh.RemovedCmd))
 	}
 	if strings.TrimSpace(rh.RemovedAgent) != "" {
@@ -529,17 +535,15 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	switch {
 	case rh.Harness == "":
 		return newError(filename, line,
-			"harness %q: missing required key \"harness\" (want one of: crush, claude-code, codex, generic, command — use \"command\" with argv = [\"…\"] for an arbitrary program)",
-			name)
+			"harness %q: missing required key \"harness\" (want one of: %s — use \"command\" with argv = [\"…\"] for an arbitrary program)",
+			name, strings.Join(core.HarnessKinds, ", "))
 	case adapter == "":
 		return newError(filename, line, "harness %q: \"harness\" must not be blank", name)
 	}
-	switch adapter {
-	case "crush", "claude-code", "codex", "generic", core.AdapterCommand:
-	default:
+	if !slices.Contains(core.HarnessKinds, adapter) {
 		return newError(filename, line,
-			"harness %q: unknown harness kind %q (want one of: crush, claude-code, codex, generic, command)",
-			name, adapter)
+			"harness %q: unknown harness kind %q (want one of: %s)",
+			name, adapter, strings.Join(core.HarnessKinds, ", "))
 	}
 	// `generic` runs sh; it has no prompt synthesis. It used to borrow
 	// Crush's, so an operator whose CLI was not in the list wrote `generic` +
@@ -551,12 +555,18 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}} {
 			if k.val != "" {
 				return newError(filename, line,
-					"harness %q: \"generic\" runs sh and has no prompt synthesis, so it takes no %q; use harness = \"crush\"|\"claude-code\"|\"codex\" for a prompt one-shot, or harness = \"command\" with argv to run another program without a shell",
+					"harness %q: \"generic\" runs sh and has no prompt synthesis, so it takes no %q; use harness = \"crush\"|\"claude-code\"|\"codex\"|\"pi\"|\"omp\" for a prompt one-shot, or harness = \"command\" with argv to run another program without a shell",
 					name, k.key)
 			}
 		}
 	}
 	if err := checkCommandKeys(adapter, rh); err != nil {
+		return newError(filename, line, "harness %q: %v", name, err)
+	}
+	// `transcripts` binds a command harness's hand-built agent argv to that
+	// agent's transcripts; an adapter kind binds its own, so it is refused
+	// there. Governing: ADR-0023, SPEC-0017 REQ-4 "Transcript Binding".
+	if err := core.CheckTranscripts(adapter, rh.Transcripts); err != nil {
 		return newError(filename, line, "harness %q: %v", name, err)
 	}
 	prompt := strings.TrimSpace(rh.Prompt)
@@ -992,6 +1002,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		Adapter:      adapter,
 		Args:         rh.Args,
 		Argv:         rh.Argv,
+		Transcripts:  rh.Transcripts,
 		AutoAccept:   autoAccept,
 		MaxTurns:     maxTurns,
 		Model:        model,

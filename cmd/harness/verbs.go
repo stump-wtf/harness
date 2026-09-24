@@ -157,6 +157,11 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 		if len(h.Argv) > 0 {
 			t.Row("argv", t.faintPlain(formatArgv(h.Argv)))
 		}
+		// The binding decides whether this harness is observed at all, so
+		// it is shown beside the argv it describes (SPEC-0017 REQ-4).
+		if h.Transcripts != "" {
+			t.Row("transcripts", t.faintPlain(h.Transcripts))
+		}
 	}
 	if h.Model != "" {
 		t.Row("model", t.faintPlain(h.Model))

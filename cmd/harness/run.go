@@ -49,6 +49,8 @@ var kindAliases = map[string]string{
 	"claude":      "claude-code",
 	"claude-code": "claude-code",
 	"codex":       "codex",
+	"pi":          "pi",
+	"omp":         "omp",
 	"generic":     "generic",
 }
 
@@ -97,7 +99,7 @@ func newRunCmd(g *globalOpts) *cobra.Command {
 	// invocation.
 	cmd.Flags().SetInterspersed(false)
 	cmd.Flags().StringVar(&workdir, "workdir", "", "working directory (default: the caller's cwd)")
-	cmd.Flags().StringVar(&kind, "kind", "", "harness kind override (crush, claude-code, codex, generic)")
+	cmd.Flags().StringVar(&kind, "kind", "", "harness kind override (crush, claude-code, codex, pi, omp, generic)")
 	cmd.Flags().StringVar(&name, "name", "", "name slug override (a random suffix is still appended)")
 	cmd.Flags().StringVar(&model, "model", "", "model selection passed to the harness command as `--model MODEL` (e.g. claude-opus-5)")
 	cmd.Flags().BoolVar(&detach, "detach", false, "don't attach; print the name and leave it running")

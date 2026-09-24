@@ -18,6 +18,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -38,9 +39,9 @@ import (
 // match the TOML unit (config.rawHarness.RestartDelay).
 type HarnessForm struct {
 	Name string
-	// Harness is the harness-kind enum (crush/claude-code/codex/generic/
-	// command). It selects the adapter, which supplies the executable for a
-	// long-running harness and the argv synthesis for a prompt one-shot
+	// Harness is the harness-kind enum (crush/claude-code/codex/pi/omp/
+	// generic/command). It selects the adapter, which supplies the executable
+	// for a long-running harness and the argv synthesis for a prompt one-shot
 	// (ADR-0011); a command harness's Argv is its whole process. It is
 	// REQUIRED — there is no default, so Validate rejects a blank one rather
 	// than picking an agent on the user's behalf.
@@ -109,6 +110,10 @@ type HarnessForm struct {
 	RestartDelay int    // seconds
 	Restart      string // core.RestartPolicy; empty = the parse default
 	Backend      string
+	// Transcripts is a command harness's transcript binding (SPEC-0017
+	// REQ-4), round-tripped for the reason Argv is: a save that dropped it
+	// would silently unobserve the harness.
+	Transcripts string
 	// TmuxSocket names the tmux server socket; inert unless Backend == tmux
 	// (ADR-0006 keeps it for backward compatibility). Carried through the form
 	// for the same reason as Schedule: the save path rewrites the whole table,
@@ -183,19 +188,22 @@ func (f HarnessForm) Validate() error {
 	if strings.TrimSpace(f.Prompt) != "" && strings.TrimSpace(f.PromptFile) != "" {
 		return fmt.Errorf("prompt and prompt_file are mutually exclusive")
 	}
-	switch f.Harness {
-	case "crush", "claude-code", "codex", "generic", core.AdapterCommand:
-	case "":
-		return fmt.Errorf("harness is required (one of: crush, claude-code, codex, generic, command)")
-	default:
-		return fmt.Errorf("harness must be one of: crush, claude-code, codex, generic, command")
+	switch {
+	case f.Harness == "":
+		return fmt.Errorf("harness is required (one of: %s)", strings.Join(core.HarnessKinds, ", "))
+	case !slices.Contains(core.HarnessKinds, f.Harness):
+		return fmt.Errorf("harness must be one of: %s", strings.Join(core.HarnessKinds, ", "))
 	}
 	// Mirror the parser's refusal: saving this would leave harness.toml
 	// unparseable. Governing: SPEC-0017 REQ "Generic Kind Rejects Prompts".
 	if f.Harness == "generic" && promptSet {
-		return fmt.Errorf("generic runs sh and has no prompt synthesis; use harness crush, claude-code or codex for a prompt one-shot, or command with argv to run another program without a shell")
+		return fmt.Errorf("generic runs sh and has no prompt synthesis; use harness crush, claude-code, codex, pi or omp for a prompt one-shot, or command with argv to run another program without a shell")
 	}
 	if err := f.validateCommand(promptSet); err != nil {
+		return err
+	}
+	// The parser's transcripts rule, the same function (SPEC-0017 REQ-4).
+	if err := core.CheckTranscripts(f.Harness, strings.TrimSpace(f.Transcripts)); err != nil {
 		return err
 	}
 	if promptSet && len(f.Args) > 0 {
@@ -503,6 +511,9 @@ func (f HarnessForm) TOML() string {
 			fmt.Fprintf(&b, "argv = [%s]\n", strings.Join(parts, ", "))
 		}
 	}
+	if t := strings.TrimSpace(f.Transcripts); t != "" {
+		fmt.Fprintf(&b, "transcripts = %s\n", strconv.Quote(t))
+	}
 	if f.Workdir != "" {
 		fmt.Fprintf(&b, "workdir = %s\n", strconv.Quote(f.Workdir))
 	}
@@ -682,6 +693,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	}
 	fi.args = shellQuoteJoin(h.Args)
 	fi.argv = formatArgvInput(h.Argv)
+	fi.transcripts = h.Transcripts
 	fi.workdir = h.Workdir
 	fi.envFile = h.EnvFile
 	if h.RestartDelay > 0 {
@@ -745,6 +757,7 @@ func (fi formInputs) toForm() HarnessForm {
 		f.Args = args
 	}
 	f.Argv, f.argvErr = parseArgvInput(fi.argv)
+	f.Transcripts = strings.TrimSpace(fi.transcripts)
 	// Unconditional, unlike args above: strings.Fields returns a non-nil empty
 	// slice for a cleared input, which is how the form expresses the deny-all
 	// `mcp_allow = []` (see TOML). Both the `n` and `e` pre-fills seed this

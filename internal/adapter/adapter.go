@@ -33,7 +33,7 @@ var ErrUnknownAdapter = errors.New("unknown adapter")
 // the trajectory surface — skill methods arrive in later stories.
 type Adapter interface {
 	// Name is the adapter's registry key: "claude-code", "crush", "codex",
-	// "generic", "command".
+	// "pi", "omp", "generic", "command".
 	Name() string
 
 	// TrajectoryDir returns the directory where this tool stores session
@@ -72,7 +72,7 @@ type Registry struct {
 }
 
 // NewRegistry returns a Registry populated with the built-in adapters:
-// claude-code, crush, codex, generic, and command.
+// claude-code, crush, codex, pi, omp, generic, and command.
 func NewRegistry() *Registry {
 	r := &Registry{
 		entries: make(map[string]Adapter),
@@ -80,6 +80,8 @@ func NewRegistry() *Registry {
 	r.register(&ClaudeCode{})
 	r.register(&Crush{})
 	r.register(&Codex{})
+	r.register(Pi)
+	r.register(OMP)
 	r.register(&Generic{})
 	r.register(&Command{})
 	return r
@@ -100,7 +102,7 @@ func (r *Registry) Get(name string) (Adapter, error) {
 
 // Names returns every registered adapter name in insertion order.
 func (r *Registry) Names() []string {
-	return []string{"claude-code", "crush", "codex", "generic", "command"}
+	return []string{"claude-code", "crush", "codex", core.AdapterPi, core.AdapterOMP, "generic", "command"}
 }
 
 // Resolve selects the adapter for a harness from its `harness` enum key. Per
@@ -114,6 +116,20 @@ func (r *Registry) Names() []string {
 // and harvests no trajectory.
 func (r *Registry) Resolve(h core.Harness) Adapter {
 	if a, ok := r.entries[h.Adapter]; ok {
+		return a
+	}
+	return r.entries["generic"]
+}
+
+// TrajectoryAdapter selects the adapter whose trajectory surface (TailAdapter,
+// TrajectoryDir) applies to h: the one named by h.TrajectoryKind(). For every
+// kind but a bound command harness that is Resolve's answer; a command harness
+// with `transcripts` gets the bound adapter's, so its hand-built agent argv is
+// discovered like that adapter's own harnesses. Spawn never uses this — the
+// process is still the command harness's own argv.
+// Governing: ADR-0023, SPEC-0017 REQ-4 "Transcript Binding".
+func (r *Registry) TrajectoryAdapter(h core.Harness) Adapter {
+	if a, ok := r.entries[h.TrajectoryKind()]; ok {
 		return a
 	}
 	return r.entries["generic"]
@@ -226,6 +242,126 @@ func (a *Codex) PromptCommand(prompt string, opts core.AgentOpts) (string, []str
 	return "codex", append(args, prompt)
 }
 
+// PiAgentDirEnv relocates the agent directory, sessions included, for both Pi
+// and OMP: OMP kept Pi's variable name rather than minting its own (its
+// pi-utils dirs.ts reads PI_CODING_AGENT_DIR for the default profile). Run
+// correlation resolves it from the harness's own environment
+// (runtrace.Sources), so an env_file that moves the agent directory is
+// followed.
+const PiAgentDirEnv = "PI_CODING_AGENT_DIR"
+
+// PiFamily is the adapter for Pi and for its fork OMP (oh-my-pi): one
+// implementation registered twice, because the two CLIs share their
+// print-mode flags, their agent-dir variable and their session directory
+// layout, and differ only in the executable, the default agent directory and
+// whether agent-trace can read the session files.
+//
+// Flags and directories were verified against the source of Pi v0.87.1
+// (github.com/badlogic/pi-mono packages/coding-agent at 8676a0dc: cli/args.ts,
+// config.ts) and OMP v18.3.0 (github.com/can1357/oh-my-pi at 62bc57be:
+// packages/coding-agent/src/cli/args.ts, packages/utils/src/dirs.ts) on
+// 2026-09-24. Neither binary was run. The argv golden in adapter_test.go pins
+// the flags; a CLI that drifts from them runs as `harness = "command"` with
+// its own argv and `transcripts` until this is updated.
+//
+// Governing: ADR-0023, SPEC-0017 REQ-13 "Pi And OMP Adapters", design.md
+// "pi and omp: one implementation, two registry entries".
+type PiFamily struct {
+	name string
+	exe  string
+	// agentDir is the default agent directory relative to HOME; sessions
+	// live in its "sessions" subdirectory.
+	agentDir string
+	// observed reports whether agent-trace's Pi session reader parses this
+	// CLI's session files. OMP's do not at the pinned agent-trace: every OMP
+	// session opens with a fixed 256-byte {"type":"title"} slot line before
+	// the {"type":"session"} header, and the reader recognises a session only
+	// by a header on its first line. TestOMPSessionsAreNotReadByPiReader
+	// fails once agent-trace reads them, so this is flipped then — together
+	// with run correlation's kind match, since the reader labels every session
+	// it reads tail.HarnessPi, which an "omp" scope does not claim today
+	// (runtrace.CouldWrite, ClaimantAt).
+	observed bool
+}
+
+// Pi and OMP are the two registered members of the family.
+var (
+	Pi  = &PiFamily{name: core.AdapterPi, exe: "pi", agentDir: filepath.Join(".pi", "agent"), observed: true}
+	OMP = &PiFamily{name: core.AdapterOMP, exe: "omp", agentDir: filepath.Join(".omp", "agent"), observed: false}
+)
+
+func (a *PiFamily) Name() string { return a.name }
+
+func (a *PiFamily) Executable() string { return a.exe }
+
+// SessionRoot is where this CLI writes session files, as a process whose
+// environment is env and whose home directory is home sees it:
+// $PI_CODING_AGENT_DIR/sessions when the variable is set, else
+// <home>/<agentDir>/sessions. A leading "~/" in the variable is expanded
+// against home, as both CLIs expand it.
+//
+// Not modelled (OMP only): a named profile (OMP_PROFILE / PI_PROFILE, which
+// moves the agent directory under ~/.omp/profiles/<name>), PI_CONFIG_DIR, the
+// XDG_DATA_HOME migration on Linux, and PI_CODING_AGENT_SESSION_DIR or
+// --session-dir. None of them matters while OMP is unobserved.
+func (a *PiFamily) SessionRoot(env map[string]string, home string) string {
+	if d := env[PiAgentDirEnv]; d != "" {
+		if d == "~" {
+			d = home
+		} else if rest, ok := strings.CutPrefix(d, "~/"); ok {
+			d = filepath.Join(home, rest)
+		}
+		return filepath.Join(d, "sessions")
+	}
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, a.agentDir, "sessions")
+}
+
+// Observed reports whether agent-trace reads this CLI's sessions, and so
+// whether its harnesses are observed and appear in the SPEC-0013 series.
+func (a *PiFamily) Observed() bool { return a.observed }
+
+// TrajectoryDir is the session root under the daemon's own environment; run
+// correlation resolves it from the harness's environment instead
+// (SessionRoot). Empty for a member agent-trace cannot read.
+func (a *PiFamily) TrajectoryDir(_ string) string {
+	if !a.observed {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return a.SessionRoot(map[string]string{PiAgentDirEnv: os.Getenv(PiAgentDirEnv)}, home)
+}
+
+// TailAdapter is agent-trace's Pi reader at the session root, or nil for a
+// member whose sessions it cannot read (OMP), which then falls back to the
+// scrollback record like Generic (ADR-0007).
+func (a *PiFamily) TailAdapter() tail.Adapter {
+	dir := a.TrajectoryDir("")
+	if dir == "" {
+		return nil
+	}
+	return &tail.PiAdapter{Dir: dir}
+}
+
+// PromptCommand is `<exe> --print [--model M] <prompt>`. --print is the
+// non-interactive mode and already prints only the final response, so quiet
+// adds nothing. --model takes the CLI's "provider/id" pattern verbatim.
+// auto_accept emits nothing because neither CLI prompts for tool permission,
+// and max_turns emits nothing because neither has a turn budget (as for
+// Crush). The prompt is the final element.
+func (a *PiFamily) PromptCommand(prompt string, opts core.AgentOpts) (string, []string) {
+	args := []string{"--print"}
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
+	}
+	return a.exe, append(args, prompt)
+}
+
 // Generic is the adapter for unrecognized tools. It reports no trajectory —
 // the daemon falls back to the SPEC-0002 scrollback ring (ADR-0007). Per
 // SPEC-0006 REQ "Adapter Selection", this is a real adapter, not an error.
@@ -268,9 +404,10 @@ type ArgvOwner interface {
 // process, exec'd directly. It is the shell-free replacement for `generic` +
 // args = ["-c", "…"]: an argument containing spaces, `$(…)` or `;` reaches the
 // child as one byte-identical argument, because nothing ever parses it. Like
-// Generic it reports no native trajectory (a `transcripts` binding is
-// SPEC-0017 REQ-4, not yet here).
-// Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind".
+// Generic it reports no native trajectory of its own: a harness that binds one
+// with `transcripts` gets that adapter's through Registry.TrajectoryAdapter.
+// Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-4
+// "Transcript Binding".
 type Command struct{}
 
 func (a *Command) Name() string { return "command" }

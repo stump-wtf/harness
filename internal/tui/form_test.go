@@ -936,7 +936,7 @@ func TestTOMLKeepsTmuxSocketOnNativeBackend(t *testing.T) {
 // issue #161's "audit the rest in the same pass". Name is the table name, and
 // is carried implicitly by the header the rewrite emits.
 var harnessFormFields = []string{
-	"Name", "Adapter", "Args", "Argv", "Prompt", "PromptFile", "Model", "AutoAccept",
+	"Name", "Adapter", "Args", "Argv", "Transcripts", "Prompt", "PromptFile", "Model", "AutoAccept",
 	"Quiet", "MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart",
 	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule", "CatchUp",
 	"Timeout", "OnOverlap", "KeepRuns", "HarvestTrajectory", "MCPAllow",
@@ -1107,11 +1107,28 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				"[harness.report]",
 				`harness = "command"`,
 				`argv = ["./bin/report", "a b", "it's \"quoted\"", "C:\\Users\\joe", "$(id)", ";", ""]`,
+				`transcripts = "claude-code"`,
 				`workdir = "~/src/report"`,
 				"enabled = true",
 				`restart = "on-failure"`,
 				`operating_hours = "Mon-Fri 09:00-17:00"`,
 				`description = "nightly report"`,
+			},
+		},
+		{
+			// The pi/omp kinds (SPEC-0017 REQ-13) are ordinary prompt
+			// adapters to the form; the fixture pins that the new enum
+			// values survive an edit, with the flags they accept inertly.
+			name: "omp prompt one-shot",
+			table: []string{
+				"[harness.omp-review]",
+				`harness = "omp"`,
+				`prompt = "review the open PRs"`,
+				`model = "openrouter/z-ai/glm-5.3-flash"`,
+				"auto_accept = true",
+				"max_turns = 12",
+				`schedule = "0 7 * * *"`,
+				`workdir = "~/src/review"`,
 			},
 		},
 	}
