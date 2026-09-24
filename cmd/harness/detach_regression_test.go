@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // TestDetachChildReachesReadiness execs each `daemon` verb form with --detach
@@ -66,15 +65,11 @@ func TestDetachChildReachesReadiness_Regression_Issue292(t *testing.T) {
 
 			// The parent returning success is not enough — the whole point of
 			// the bug is that the child died after the fork. Assert readiness.
-			deadline := time.Now().Add(10 * time.Second)
-			for time.Now().Before(deadline) {
-				if daemonAnswers(bin, env, socket) {
-					return
-				}
-				time.Sleep(100 * time.Millisecond)
+			// The child is not ours to reap, so only the ceiling ends a wait.
+			if err := awaitDaemon(bin, env, socket, daemonStartupCeiling(t), nil); err != nil {
+				log, _ := os.ReadFile(logFile)
+				t.Fatalf("child started via %v never reached readiness: %v\nlog:\n%s", form, err, log)
 			}
-			log, _ := os.ReadFile(logFile)
-			t.Fatalf("child started via %v never reached readiness\nlog:\n%s", form, log)
 		})
 	}
 
