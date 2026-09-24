@@ -1,7 +1,7 @@
 ---
 title: "Glossary"
 sidebar_label: "Glossary"
-sidebar_position: 9
+sidebar_position: 10
 toc_max_heading_level: 2
 ---
 
