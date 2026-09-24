@@ -10,7 +10,8 @@ Harness, [Switchboard](https://switchboard.stump.wtf/docs/) and
 [Cairn](https://cairn.stump.wtf/docs/) are three small tools. Each does one job,
 and together they close a loop around your agents. This is the canonical page for
 how they fit: what each one is, what each one is **not**, and how a small team
-divides the work between them and what it already owns.
+divides the work between them and what it already owns. Every term in bold
+below has an entry in the [glossary](./glossary).
 
 ## Roles
 
@@ -43,23 +44,27 @@ flowchart TD
 ```
 
 1. **An event arrives.** A forge, CI, Cairn or anything else that signs its
-   webhooks posts to a Switchboard ingest URL. Switchboard verifies the
-   signature, runs your routing rules, and writes a **todo** on a queue. A
+   webhooks posts to a Switchboard [ingest URL](./glossary#ingest-url).
+   Switchboard verifies the signature, runs your routing rules, and writes a
+   **[todo](./glossary#todo)** on a [queue](./glossary#queue). A
    webhook the sender redelivers while that todo is still open collapses onto
    it rather than creating a second one.
 2. **Switchboard rings.** A connected agent session gets a one-line
-   **doorbell** over an MCP channel. The doorbell is a hint; the queue is the
+   **[doorbell](./glossary#doorbell)** over an
+   [MCP channel](./glossary#channel). The doorbell is a hint; the queue is the
    record. If nobody is listening, the todo waits.
 3. **An agent picks it up**, in one of two shapes:
-   - a **resident** session Harness keeps running (an interactive Claude Code or
-     Crush session with the channel loaded; see [Push events](./push-events)), or
-   - an **on-demand one-shot**: the Harness daemon holds the channel session
-     itself and starts a prompt harness when the doorbell rings (a `[channel.*]`
-     trigger, [ADR-0021](/decisions/adr-0021-on-demand-one-shots)). The
+   - a **[resident](./glossary#harness)** session Harness keeps running (an
+     interactive Claude Code or Crush session with the channel loaded; see
+     [Push events](./push-events)), or
+   - an **on-demand [one-shot](./glossary#one-shot)**: the Harness daemon holds
+     the channel session itself and starts a prompt harness when the doorbell
+     rings (a `[channel.*]` [trigger](./glossary#triggered-harness),
+     [ADR-0021](/decisions/adr-0021-on-demand-one-shots)). The
      `[webhook.*]` trigger, which lets a reachable server receive a webhook
      directly, is configured the same way, but its HTTP listener has not shipped
      yet.
-4. **The agent claims, works and reports.** `claim_next` takes a lease on one
+4. **The agent claims, works and reports.** `claim_next` takes a [lease](./glossary#lease) on one
    todo, so two workers never get the same one. The agent does the work,
    publishes the output to Cairn, and completes the todo with the artifact's
    link as its result.
@@ -109,8 +114,8 @@ The only thing an event buys over a schedule is latency. See
 
 | | Is | Is not |
 |---|---|---|
-| **Switchboard todo** | a **dispatch lease**: claimed, heartbeated, completed or dead-lettered | a second tracker. The status of record stays in your tracker. |
-| **Cairn artifact** | **evidence**, linked **from** your tracker item | a second place anyone has to look |
+| **Switchboard todo** | a **dispatch lease**: claimed, [heartbeated](./glossary#heartbeat), completed or [dead-lettered](./glossary#dead-letter) | a second tracker. The status of record stays in your tracker. |
+| **Cairn [artifact](./glossary#artifact)** | **evidence**, linked **from** your tracker item | a second place anyone has to look |
 | **Harness** | a **process supervisor**: start, restart, schedule, trigger, attach, run history | a task manager, or an authority on what to do |
 
 The same boundary, from the other side:
@@ -186,6 +191,7 @@ A feature request goes round the loop like this:
 | Run agents on a clock | [Scheduled sweeps](./scheduled-sweeps) |
 | Wake agents on events | [Push events with MCP channels](./push-events) |
 | See what every agent did | [Observability](./observability) |
+| Look up a term from any of the three | [Glossary](./glossary) |
 | Learn Switchboard's vocabulary | [Switchboard concepts](https://switchboard.stump.wtf/docs/getting-started/concepts) |
 | Send your first webhook into Switchboard | [First webhook](https://switchboard.stump.wtf/docs/getting-started/first-webhook) |
 | Give an agent a Switchboard endpoint | [Connect an agent](https://switchboard.stump.wtf/docs/getting-started/connect-an-agent) |
