@@ -61,6 +61,8 @@ func (c *conn) handleControl(payload []byte) {
 		c.opTrigger(req)
 	case protocol.OpRuns:
 		c.opRuns(req)
+	case protocol.OpTriggers:
+		c.respond(req, c.opTriggers())
 	default:
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownOp, "unknown op %q", req.Op)
 	}
@@ -118,6 +120,7 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		info.Description = h.Description
 		info.Schedule = h.Schedule
 		info.OperatingHours = h.OperatingHours
+		info.Triggers = c.triggerBindings(h)
 	}
 	info.Project = project
 	// Next-run comes from the live cron, not the config snapshot: the spec
@@ -406,6 +409,9 @@ func (c *conn) opDaemonInfo() protocol.DaemonInfo {
 		res.SshAddr = addr
 		res.SshKeys = keys
 	}
+	// The webhook listener, likewise only when it actually bound (SPEC-0014
+	// REQ "Webhook Listener"), so doctor judges the live bind.
+	res.WebhookAddr, res.WebhookTLS = c.srv.webhook()
 	return res
 }
 

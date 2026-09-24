@@ -137,6 +137,15 @@ type Manager struct {
 	// decides between `listening` and `no_listener` for a bound, enabled
 	// webhook source (webhooks.go). Guarded by mu.
 	webhookListening bool
+
+	// stats are each source's counters and last event, keyed by reference
+	// and kept apart from sources so a reload that replaces a source's
+	// record does not zero them (visibility.go). Guarded by mu.
+	stats map[string]*sourceStats
+	// pending and draining are the ordered OnState queue (visibility.go).
+	// Guarded by mu.
+	pending  []Status
+	draining bool
 }
 
 // New builds a Manager. It does nothing until Start.
@@ -173,6 +182,7 @@ func New(opts Options) *Manager {
 		sleep:   sleep,
 		rand:    opts.Rand,
 		sources: map[string]*sourceState{},
+		stats:   map[string]*sourceStats{},
 	}
 }
 
@@ -259,6 +269,7 @@ func (m *Manager) Fire(ev *trigger.Envelope) []Decision {
 	}
 	if err := ev.Validate(); err != nil {
 		m.log.Warn("trigger event dropped: invalid envelope", "source", ev.Source, "err", err.Error())
+		m.NoteOutcome(ev.Source, trigger.OutcomeInvalid)
 		return nil
 	}
 
@@ -277,6 +288,10 @@ func (m *Manager) Fire(ev *trigger.Envelope) []Decision {
 		m.log.Debug("trigger event dropped: shutting down", "source", ev.Source)
 		return nil
 	}
+	// Counted here, once the event is valid and the manager is taking
+	// firings, and before the bound check: an event nobody is bound to still
+	// arrived, and REQ "Trigger Visibility"'s last event should say so.
+	m.NoteOutcome(ev.Source, trigger.OutcomeFired)
 
 	bound := m.config().BoundHarnesses(ev.Source)
 	if len(bound) == 0 {

@@ -264,17 +264,20 @@ func (t *Theme) RenderState(s core.State) string {
 // is right for surfaces that genuinely have only a state (the start/stop
 // progress TUI). Anywhere a whole harness is in hand, this is the one to
 // call, so the cockpit and `harness list` cannot describe it two ways.
-func (t *Theme) RenderHarnessState(state, schedule string, held, closing bool) string {
+//
+// firing is schedfmt.Firing's key: the schedule, or the triggered marker for a
+// harness only trigger sources fire (SPEC-0014 REQ "Trigger Visibility").
+func (t *Theme) RenderHarnessState(state, firing string, held, closing bool) string {
 	style := t.StateStyle(core.State(state))
 	switch {
 	case closing:
 		style = t.ClosingStyle()
 	case schedfmt.IsOffHours(state, held):
 		style = t.IdleStyle()
-	case schedfmt.IsArmed(state, schedule):
+	case schedfmt.IsArmed(state, firing):
 		style = t.IdleStyle()
 	}
-	return style.Render(schedfmt.Glyph(state, schedule) + " " + schedfmt.StateLabel(state, schedule, held, closing))
+	return style.Render(schedfmt.Glyph(state, firing) + " " + schedfmt.StateLabel(state, firing, held, closing))
 }
 
 // RenderGlyph renders just the colored glyph (row-leading marker). Even alone

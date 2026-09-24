@@ -159,6 +159,11 @@ func harnessMeta(h protocol.HarnessInfo) (what string, rest []string) {
 		// Hours Visibility").
 		rest = append(rest, schedfmt.HoursExprLabel(h.OperatingHours, schedfmt.DaemonZoneName()))
 	}
+	// And what else fires it: its trigger sources, as `harness list`'s
+	// SCHEDULE column shows them (SPEC-0014 REQ "Trigger Visibility").
+	if refs := schedfmt.TriggersLabel(protocol.TriggerRefs(h.Triggers)); refs != "" {
+		rest = append(rest, refs)
+	}
 	rest = append(rest,
 		orDefault(h.Backend, "native"),
 		fmt.Sprintf("exit %d", h.LastExitCode),

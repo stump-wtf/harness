@@ -202,6 +202,10 @@ func defaultColumnWidths(headers []string, budget, nameWidth int) (widths []int,
 		"CHECK":     12,
 		"STATUS":    10,
 		"AUTOSTART": 10,
+		// `harness triggers` (#476): "down 10m", "5m ago", a count.
+		"FOR":        9,
+		"LAST EVENT": 10,
+		"FIRED":      6,
 	}
 	widths = make([]int, n)
 	truncate = make([]bool, n)
@@ -209,7 +213,7 @@ func defaultColumnWidths(headers []string, budget, nameWidth int) (widths []int,
 	nameIdx := -1
 	for i, h := range headers {
 		key := strings.ToUpper(strings.TrimSpace(h))
-		if key == "NAME" {
+		if isIdentityHeader(key) {
 			nameIdx = i
 			// Fit the measured longest name, but never below the header
 			// label and never above the cap.
@@ -532,7 +536,7 @@ func (t *Table) resolveWidths() {
 	nameW := 0
 	nameIdx := -1
 	for i, h := range t.headers {
-		if strings.ToUpper(strings.TrimSpace(h)) == "NAME" {
+		if isIdentityHeader(strings.ToUpper(strings.TrimSpace(h))) {
 			nameIdx = i
 			break
 		}
@@ -551,6 +555,12 @@ func (t *Table) resolveWidths() {
 	}
 	t.widths, t.truncated = defaultColumnWidths(t.headers, t.width, nameW)
 }
+
+// isIdentityHeader reports whether an (upper-cased) header names the row's
+// identity column: NAME for a harness, SOURCE for a trigger source (#476).
+// That column is measured from the data and never truncated, because a cut
+// identity is a row nobody can act on.
+func isIdentityHeader(key string) bool { return key == "NAME" || key == "SOURCE" }
 
 // bold renders s bold in the foreground color when coloring is on.
 func (t *Table) bold(s string) string {
@@ -583,11 +593,16 @@ func (t *Table) bold(s string) string {
 // two never compete for the same row. Callers with nothing to say about hours
 // pass false, false.
 //
-// Governing: ADR-0019, SPEC-0012 REQ "Operating Hours Visibility".
-func (t *Table) stateCell(state, schedule string, held, closing bool) string {
+// firing is schedfmt.Firing's key, not a bare schedule: a harness only trigger
+// sources fire reads "armed" with the trigger glyph exactly as a scheduled one
+// reads "armed" with the clock (SPEC-0014 REQ "Trigger Visibility").
+//
+// Governing: ADR-0019, SPEC-0012 REQ "Operating Hours Visibility"; SPEC-0014
+// REQ "Trigger Visibility".
+func (t *Table) stateCell(state, firing string, held, closing bool) string {
 	s := core.State(state)
-	glyph := schedfmt.Glyph(state, schedule)
-	label := schedfmt.StateLabel(state, schedule, held, closing)
+	glyph := schedfmt.Glyph(state, firing)
+	label := schedfmt.StateLabel(state, firing, held, closing)
 	if !t.colored {
 		return fmt.Sprintf("%s %s", glyph, label)
 	}
@@ -597,7 +612,7 @@ func (t *Table) stateCell(state, schedule string, held, closing bool) string {
 		color = t.pal.Cyan
 	case schedfmt.IsOffHours(state, held):
 		color = t.pal.Amber
-	case schedfmt.IsArmed(state, schedule):
+	case schedfmt.IsArmed(state, firing):
 		color = t.pal.Amber
 	}
 	return lipgloss.NewStyle().Foreground(color).Bold(true).
@@ -624,6 +639,22 @@ func (t *Table) scheduleCell(schedule, operatingHours string) string {
 	return "—"
 }
 
+// firingCell renders the SCHEDULE column for a whole harness: scheduleCell's
+// cadence or hours window, and the trigger sources that fire it after that —
+// "daily 09:00 UTC + webhook.ci", or just "webhook.ci" for a harness only its
+// sources fire (SPEC-0014 REQ "Trigger Visibility": "shown as triggered, with
+// its sources").
+func (t *Table) firingCell(h protocol.HarnessInfo) string {
+	refs := schedfmt.TriggersLabel(protocol.TriggerRefs(h.Triggers))
+	switch {
+	case refs == "":
+		return t.scheduleCell(h.Schedule, h.OperatingHours)
+	case h.Schedule == "":
+		return t.cyanBold(refs)
+	}
+	return t.scheduleCell(h.Schedule, h.OperatingHours) + " + " + t.cyanBold(refs)
+}
+
 // nextRunCell renders the NEXT column: the countdown to the next firing
 // ("in 2h", "due") for a scheduled one-shot, in accent. A gated resident
 // harness shows its hours phrasing instead — "opens Mon 09:00", "closes
@@ -638,12 +669,19 @@ func (t *Table) nextRunCell(h protocol.HarnessInfo) string {
 		s = schedfmt.NextIn(h.NextRun)
 	case h.OperatingHours != "":
 		s = schedfmt.HoursNext(h.Held, h.ClosingUntil != "", h.LeaseUntil, h.ClosingUntil, h.HoursNext)
+	case len(h.Triggers) > 0:
+		// No window to count down to: it fires when its source hears
+		// something (SPEC-0014 REQ "Trigger Visibility").
+		s = triggeredNext
 	}
 	if s == "" {
 		return "—"
 	}
 	return t.accentBoldWords(s)
 }
+
+// triggeredNext is the NEXT cell of a harness only trigger sources fire.
+const triggeredNext = "on event"
 
 // stateGlyphOnly renders just the colored glyph for leading-column use.
 func (t *Table) stateGlyphOnly(state string) string {

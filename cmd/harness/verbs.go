@@ -77,20 +77,26 @@ func printHarnessTable(w io.Writer, hs []protocol.HarnessInfo) error {
 	for _, h := range hs {
 		// A stalled session (issue #347) reads healthy in every process
 		// signal; the marker is the one place the truth shows in `list`.
-		state := t.stateCell(h.State, h.Schedule, h.Held, h.ClosingUntil != "")
+		state := t.stateCell(h.State, harnessFiring(h), h.Held, h.ClosingUntil != "")
 		if h.SessionStalled {
 			state += " ⚠ session stalled"
 		}
 		t.Row(
 			h.Name,
 			state,
-			t.scheduleCell(h.Schedule, h.OperatingHours),
+			t.firingCell(h),
 			t.nextRunCell(h),
 			fmt.Sprintf("%d", h.RestartCount),
 			t.dimPlain(h.Description),
 		)
 	}
 	return t.Flush()
+}
+
+// harnessFiring is the schedfmt firing key of a listed harness: its schedule,
+// or the triggered marker when trigger sources are all that fire it.
+func harnessFiring(h protocol.HarnessInfo) string {
+	return schedfmt.Firing(h.Schedule, len(h.Triggers) > 0)
 }
 
 // nextRunSuffix renders a human-readable next-run time ("in 3h", "in 12m",
@@ -117,11 +123,12 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	// Pass the schedule: without it describe renders "stopped" in pink for the
 	// same harness `harness list` shows as amber "armed" (#268, #331). schedfmt exists
 	// so the surfaces cannot phrase one harness two ways.
-	t.Row("state", t.stateCell(h.State, h.Schedule, h.Held, h.ClosingUntil != ""))
-	// A scheduled harness is always enabled = false (SPEC-0008 REQ "Schedule
-	// Exclusions"), so printing "enabled no" says nothing true about it: the
-	// schedule is its intent. Show whether it is armed instead (#331).
-	if h.Schedule != "" {
+	t.Row("state", t.stateCell(h.State, harnessFiring(h), h.Held, h.ClosingUntil != ""))
+	// A triggered harness is always enabled = false (SPEC-0008 REQ "Schedule
+	// Exclusions", SPEC-0014 REQ "Triggered Harness Exclusions"), so printing
+	// "enabled no" says nothing true about it: its schedule or its triggers
+	// are its intent. Show whether it is armed instead (#331, #476).
+	if harnessFiring(h) != "" {
 		t.Row("armed", t.faintPlain("yes"))
 	} else {
 		t.Row("enabled", t.enabledCell(h.Enabled))
@@ -169,6 +176,16 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 		if h.LeaseUntil != "" {
 			t.Row("lease_until", t.faintPlain(h.LeaseUntil))
 		}
+	}
+	// Each trigger source with its state (SPEC-0014 REQ "Trigger
+	// Visibility"). References and states only: a source's URL, headers and
+	// counters are `harness triggers`' to show.
+	for i, b := range h.Triggers {
+		key := ""
+		if i == 0 {
+			key = "triggers"
+		}
+		t.Row(key, t.faintPlain(bindingLabel(b)))
 	}
 	t.Row("restarts", fmt.Sprintf("%d", h.RestartCount))
 	t.Row("last_exit", fmt.Sprintf("%d", h.LastExitCode))

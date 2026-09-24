@@ -12,6 +12,7 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/stump-wtf/harness/internal/protocol"
@@ -83,6 +84,30 @@ func (c *Client) RunLogs(name string, run, lines int) (protocol.LogsData, error)
 	var out protocol.LogsData
 	return out, json.Unmarshal(resp.Data, &out)
 }
+
+// Triggers lists every declared trigger source with its state, its last event
+// and error, its counters and the harnesses it fires (SPEC-0014 REQ "Trigger
+// Visibility").
+//
+// A daemon older than ProtoMinor 12 does not know the op. It answers
+// unknown_op, which on its own reads like a typo in the client; the error
+// says what it actually means.
+func (c *Client) Triggers() ([]protocol.TriggerSourceInfo, error) {
+	resp, err := c.call(protocol.ControlReq{Op: protocol.OpTriggers})
+	if err != nil {
+		var em *protocol.ErrorMsg
+		if errors.As(err, &em) && em.Code == protocol.ErrUnknownOp {
+			return nil, fmt.Errorf("client: daemon proto %q predates `harness triggers` (needs 1.%d); restart the daemon on this version",
+				c.daemon.ProtoVersion, triggersMinor)
+		}
+		return nil, err
+	}
+	var out []protocol.TriggerSourceInfo
+	return out, json.Unmarshal(resp.Data, &out)
+}
+
+// triggersMinor is the ProtoMinor that added the triggers op.
+const triggersMinor = 12
 
 // eventTriggerMinor is the ProtoMinor that added ControlReq.Event.
 const eventTriggerMinor = 11

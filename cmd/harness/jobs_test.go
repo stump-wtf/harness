@@ -68,7 +68,7 @@ func TestPrintJobsTable(t *testing.T) {
 	}
 
 	buf.Reset()
-	if err := printJobsTable(&buf, nil, now); err != nil || !strings.Contains(buf.String(), "no scheduled harnesses") {
+	if err := printJobsTable(&buf, nil, now); err != nil || !strings.Contains(buf.String(), "no triggered harnesses") {
 		t.Errorf("empty jobs table = %q, %v", buf.String(), err)
 	}
 }

@@ -55,6 +55,16 @@ type daemonWebhooks struct {
 	// or failed to bind.
 	srv  *webhook.Server
 	done chan struct{}
+	// report tells daemon_info what is bound: the address and whether it is
+	// TLS, or "" once it stops. Nil until wireTriggerVisibility sets it.
+	report func(addr string, tls bool)
+}
+
+// setReporter installs the bind reporter.
+func (d *daemonWebhooks) setReporter(fn func(addr string, tls bool)) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.report = fn
 }
 
 // beginDaemonWebhooks prepares the listener wiring. It binds nothing; serve
@@ -104,12 +114,19 @@ func (d *daemonWebhooks) serve() {
 	done := make(chan struct{})
 	d.srv, d.done = srv, done
 	d.sources.SetWebhookListening(true)
+	report := d.report
+	if report != nil {
+		report(srv.Addr(), settings.TLS())
+	}
 	log.Info("webhook listener serving", "addr", srv.Addr(), "tls", settings.TLS())
 	go func() {
 		defer close(done)
 		if err := srv.Serve(); err != nil {
 			log.Error("webhook listener stopped", "err", err)
 			d.sources.SetWebhookListening(false)
+			if report != nil {
+				report("", false)
+			}
 		}
 	}()
 }

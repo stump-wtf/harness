@@ -968,6 +968,15 @@ func TestRenderRowLabelsDisabledAndScheduled(t *testing.T) {
 	if strings.Contains(sched, "(scheduled)") {
 		t.Errorf("scheduled row = %q, still carries the redundant suffix", sched)
 	}
+
+	// An event-only harness is disabled by config exactly as a cron job is,
+	// and must not read that way either (SPEC-0014 REQ "Trigger
+	// Visibility", #476).
+	evented := m.renderRow(protocol.HarnessInfo{Name: "pr-review", State: "stopped",
+		Triggers: []protocol.TriggerBinding{{Source: "webhook.ci", State: "listening"}}}, false)
+	if strings.Contains(evented, "(disabled)") || !strings.Contains(evented, "armed") {
+		t.Errorf("event-only row = %q, want armed and not disabled", evented)
+	}
 }
 
 // TestRenderRowIdleForScheduledStopped: the dashboard must phrase a resting
