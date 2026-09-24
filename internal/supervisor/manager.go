@@ -492,13 +492,13 @@ func (m *Manager) Autostart() {
 			until, leased := m.leases[s.Name()]
 			m.mu.Unlock()
 			if leased && now.Before(until) {
-				s.Start()
+				s.StartWith(TriggerLease)
 				continue
 			}
 			s.Hold(core.HoursShutdownImmediate, time.Time{})
 			continue
 		}
-		s.Start()
+		s.StartWith(TriggerAutostart)
 	}
 }
 
@@ -509,10 +509,13 @@ func (m *Manager) Autostart() {
 // intent (it keeps running and closes at its window's end), and a failed one
 // is started as before — Release never starts a failed harness, so holding it
 // would strand it. Governing: SPEC-0012 REQ "Operating Hours Reload", ADR-0014.
-func startOrHold(s *Supervisor) {
+//
+// trigger names the start path for the resident run it opens (SPEC-0022
+// REQ-3): manual for an operator's profile switch, autostart for a reload.
+func startOrHold(s *Supervisor, trigger RunTrigger) {
 	snap := s.Snapshot()
 	if !snap.Gated || snap.State == core.StateFailed || snapUp(snap.State) {
-		s.Start()
+		s.StartWith(trigger)
 		return
 	}
 	s.EnableHeld()
@@ -670,7 +673,7 @@ func (m *Manager) StartFor(name string, forDur time.Duration) error {
 	}
 	log.Info("after-hours lease", "harness", name, "until", until.Format(time.RFC3339))
 	m.unfollowWatch(name) // a lease starting cancels the close (SPEC-0012)
-	m.Start(name)
+	m.startWith(name, TriggerLease)
 	return nil
 }
 
@@ -707,9 +710,12 @@ func (m *Manager) LeaseApplies(name string) bool {
 }
 
 // Start marks a single harness enabled and brings it up.
-func (m *Manager) Start(name string) bool {
+func (m *Manager) Start(name string) bool { return m.startWith(name, TriggerManual) }
+
+// startWith is Start naming the start path its resident run records.
+func (m *Manager) startWith(name string, trigger RunTrigger) bool {
 	if s := m.get(name); s != nil {
-		s.Start()
+		s.StartWith(trigger)
 		// Starting it IS the fix for a dormant autostart member, so stop
 		// reporting it — otherwise boot's warning and doctor's row outlive the
 		// condition they describe, until the next restore.
@@ -879,7 +885,7 @@ func (m *Manager) UseProfile(name string) bool {
 			// A gated member that is down records intent and stays held; the
 			// gate decides whether its process exists (SPEC-0012 REQ
 			// "Operating Hours Reload").
-			startOrHold(s)
+			startOrHold(s, TriggerManual)
 		}
 	}
 	m.markDirty()
@@ -1019,7 +1025,7 @@ func (m *Manager) Reload(newCfg *core.Config) {
 	m.mu.Unlock()
 
 	for _, r := range removed {
-		r.Shutdown()
+		r.ShutdownFor(ReasonReload)
 	}
 	for _, a := range toApply {
 		a.s.ApplyConfig(a.h)
@@ -1028,7 +1034,7 @@ func (m *Manager) Reload(newCfg *core.Config) {
 	// A gated one records intent true and begins held instead (ADR-0014,
 	// SPEC-0012 REQ "Operating Hours Reload").
 	for _, s := range newAutostart {
-		startOrHold(s)
+		startOrHold(s, TriggerAutostart)
 	}
 	m.markDirty()
 	// Invoked outside m.mu: the hook (scheduler re-apply) reads Config(),
