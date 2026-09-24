@@ -35,6 +35,7 @@ Read these in order the first time; each one assumes the previous.
 | 7 | [The stack: Harness, Switchboard and Cairn](./harness-switchboard-cairn) | the whole loop end to end: roles, what each tool is and is not, a worked team example |
 | 8 | [Run the merge train](./merge-train) | approved PRs landing one at a time, each tested as the exact tree that merges |
 | — | [Troubleshooting](./troubleshooting) | answers for the usual "it's green but nothing happens" moments |
+| — | [Glossary](./glossary) | every Harness, Switchboard and Cairn term on one page, with an anchor to link |
 
 The [Usage](/usage) section is the reference behind these guides: every verb,
 every config key, every flag.
