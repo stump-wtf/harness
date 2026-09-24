@@ -199,7 +199,7 @@ harness daemon --detach       # fork into the background (dev convenience)
 ```
 
 Daemon flags: `--config`, `--socket`, `--scrollback N` (per-harness ring depth),
-`--ssh`, `--ssh-listen`, `--log-level`, `--log-file`, `--detach`.
+`--ssh`, `--ssh-listen`, `--webhook-listen`, `--log-level`, `--log-file`, `--detach`.
 
 ## Exit codes & error handling
 
