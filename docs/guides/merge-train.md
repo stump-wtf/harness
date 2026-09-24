@@ -56,8 +56,8 @@ Watch the daemon log for these lines:
 | `mergetrain bypass detected` | `main` moved without the train |
 
 Run it for a week and count trains built, green versus red, and the causes of
-failures. The bar for going further is in stumpcloud/stumpcloud#466 and
-stump.wtf/harness#540:
+failures. The bar for going further is set by the agent-contention epic that
+proposed the train, and by stump.wtf/harness#540:
 
 - replays under 3% of PRs;
 - no untested tree merged;
