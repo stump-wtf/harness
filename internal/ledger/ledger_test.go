@@ -215,7 +215,7 @@ func TestUnknownFieldsAreIgnored(t *testing.T) {
 func TestClosedWithoutOpenedIsPartial(t *testing.T) {
 	dir := t.TempDir()
 	l := openT(t, dir, Options{})
-	mustAppend(t, l, Line{Type: TypeUpdated, Harness: "a", RunID: 3, Record: Record{ModelCalls: 2}}, false)
+	mustAppend(t, l, Line{Type: TypeUpdated, Harness: "a", RunID: 3, Record: Record{ModelCalls: 2}}, true)
 	r := l.Records("a")
 	if len(r) != 1 || !r[0].Partial() || r[0].Open() {
 		t.Fatalf("an updated line alone should fold to a partial, not-open record: %+v", r)
@@ -350,6 +350,16 @@ func TestFailingDiskQueuesInOrderAndDoesNotBlock(t *testing.T) {
 	if st.AppendErrors == 0 || st.Queued != 5 || !st.Degraded {
 		t.Errorf("stats = %+v, want errors counted and 5 lines queued", st)
 	}
+	// Committed before counted: nothing on disk, so no reader reports it.
+	if recs := l.Records("a"); len(recs) != 0 {
+		t.Errorf("readers see %d records whose lines are not on disk", len(recs))
+	}
+	if recs, _, err := l.Query(Query{Names: []string{"a"}}); err != nil || len(recs) != 0 {
+		t.Errorf("Query sees %d records whose lines are not on disk (%v)", len(recs), err)
+	}
+	if f, ok, _ := l.Pending("a", 3); !ok || !f.Open() {
+		t.Errorf("Pending, the writer's own view, lost a queued line: %+v", f)
+	}
 
 	mu.Lock()
 	failing = false
@@ -357,6 +367,9 @@ func TestFailingDiskQueuesInOrderAndDoesNotBlock(t *testing.T) {
 	waitFor(t, func() bool { return l.Stats().Queued == 0 })
 	if l.Stats().Degraded {
 		t.Error("still degraded after the disk recovered")
+	}
+	if n := len(l.Records("a")); n != 5 {
+		t.Errorf("after recovery readers see %d records, want 5", n)
 	}
 	lines := fileLines(t, dir)
 	var seqs []float64

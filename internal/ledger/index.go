@@ -208,7 +208,7 @@ func sortNewestFirst(out []Folded) {
 // Query returns the records q selects, newest first, and the Seq of the oldest
 // one returned (0 when none), which is the next page's BeforeSeq (REQ-15).
 // It answers from memory when the index can prove its answer whole, and reads
-// the day files otherwise.
+// the day files otherwise. Either way it sees only committed lines.
 func (l *Ledger) Query(q Query) ([]Folded, uint64, error) {
 	l.mu.Lock()
 	out, ok := l.idx.fromMemory(q)
@@ -228,8 +228,8 @@ func (l *Ledger) Query(q Query) ([]Folded, uint64, error) {
 	return out, oldest, nil
 }
 
-// fromFiles folds every day file, overlays what the index holds (lines still
-// queued behind a failing disk exist only there), and applies q.
+// fromFiles folds every day file, overlays what the index holds (a line the
+// writer committed after the scan passed its file), and applies q.
 func (l *Ledger) fromFiles(q Query) ([]Folded, error) {
 	l.mu.Lock()
 	files := slices.Clone(l.files)
@@ -339,6 +339,35 @@ func (l *Ledger) Get(harness string, id int) (Folded, bool, error) {
 		return c, true, nil
 	}
 	return Folded{}, false, nil
+}
+
+// Pending returns one record as it will read once every queued line is
+// written: the committed record with the queue folded over it. It is the
+// writer's own read-your-writes, for a caller that computes its next line from
+// its last (a coalesced skip counting firings), and never a view to publish:
+// what it adds is not on disk yet.
+func (l *Ledger) Pending(harness string, id int) (Folded, bool, error) {
+	// One lock hold for the index and the queue: the writer moves a line from
+	// one to the other under this lock, so reading them apart could see it in
+	// neither and drop it.
+	l.mu.Lock()
+	var f Folded
+	mem, ok := l.idx.recs[key{harness, id}]
+	if ok {
+		f = *mem
+	}
+	for _, p := range l.queue {
+		if p.line.Harness == harness && p.line.RunID == id {
+			f.apply(p.line)
+			ok = true
+		}
+	}
+	l.mu.Unlock()
+	if ok {
+		return f, true, nil
+	}
+	// Not in memory at all: an old record, which has nothing queued either.
+	return l.Get(harness, id)
 }
 
 // Records returns every record of harness the index holds, oldest first: the
