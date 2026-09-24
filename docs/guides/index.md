@@ -33,6 +33,7 @@ Read these in order the first time; each one assumes the previous.
 | 5 | [Push events with MCP channels](./push-events) | an always-on agent that wakes on a Switchboard todo |
 | 6 | [Observability](./observability) | post-mortems with `harness logs`, the chatroom, `doctor`, and the SSH cockpit |
 | 7 | [How Harness, Switchboard and Cairn fit together](./harness-switchboard-cairn) | the whole loop, end to end |
+| 8 | [Run the merge train](./merge-train) | approved PRs landing one at a time, each tested as the exact tree that merges |
 | — | [Troubleshooting](./troubleshooting) | answers for the usual "it's green but nothing happens" moments |
 
 The [Usage](/usage) section is the reference behind these guides: every verb,

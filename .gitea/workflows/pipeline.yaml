@@ -24,7 +24,10 @@ name: pipeline
 
 on:
   push:
-    branches: [main]
+    # train/** is the merge train (ADR-0032): a train commit is main plus one
+    # PR, and it must run exactly the pipeline a PR does. The image push and
+    # the docs deploy stay limited to main inside their own workflows.
+    branches: [main, 'train/**']
   pull_request:
 
 permissions:
