@@ -534,6 +534,21 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 			"harness %q: unknown harness kind %q (want one of: crush, claude-code, codex, generic)",
 			name, adapter)
 	}
+	// `generic` runs sh; it has no prompt synthesis. It used to borrow
+	// Crush's, so an operator whose CLI was not in the list wrote `generic` +
+	// `prompt` and got `crush run <prompt>`, or a crash loop naming a binary
+	// they never configured. Checked before either prompt key is validated or
+	// prompt_file is read: whatever those say, this harness cannot run them.
+	// Governing: ADR-0023, SPEC-0017 REQ "Generic Kind Rejects Prompts".
+	if adapter == "generic" {
+		for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}} {
+			if k.val != "" {
+				return newError(filename, line,
+					"harness %q: \"generic\" runs sh and has no prompt synthesis, so it takes no %q; use harness = \"crush\"|\"claude-code\"|\"codex\" for a prompt one-shot",
+					name, k.key)
+			}
+		}
+	}
 	prompt := strings.TrimSpace(rh.Prompt)
 	switch {
 	case rh.Prompt != "" && prompt == "":

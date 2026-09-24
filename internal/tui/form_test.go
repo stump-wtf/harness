@@ -673,6 +673,25 @@ func TestFormValidate(t *testing.T) {
 	}
 }
 
+// TestFormValidateRefusesGenericPrompt: the form refuses what the parser
+// refuses, so saving cannot write a harness.toml that fails every later
+// reload. Resident generic still validates. SPEC-0017 REQ "Generic Kind
+// Rejects Prompts".
+func TestFormValidateRefusesGenericPrompt(t *testing.T) {
+	for _, f := range []HarnessForm{
+		{Name: "x", Harness: "generic", Prompt: "triage the queue"},
+		{Name: "x", Harness: "generic", PromptFile: "~/prompts/triage.md"},
+	} {
+		err := f.Validate()
+		if err == nil || !strings.Contains(err.Error(), "no prompt synthesis") {
+			t.Errorf("Validate(generic, prompt=%q, prompt_file=%q) = %v, want the generic-prompt refusal", f.Prompt, f.PromptFile, err)
+		}
+	}
+	if err := (HarnessForm{Name: "x", Harness: "generic", Args: []string{"-c", "sleep 1"}}).Validate(); err != nil {
+		t.Errorf("resident generic form should validate: %v", err)
+	}
+}
+
 // TestRemoveHarnessTOML verifies delete drops exactly the target table and keeps
 // the rest of the file (ADR-0006 file-is-truth; SPEC-0001 delete guard).
 func TestRemoveHarnessTOML(t *testing.T) {

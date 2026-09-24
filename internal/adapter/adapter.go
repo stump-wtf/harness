@@ -56,7 +56,10 @@ type Adapter interface {
 	// one-shot with this adapter's CLI. Each adapter maps the generic
 	// AgentOpts onto its own flags (e.g. crush uses --yolo, claude uses
 	// --dangerously-skip-permissions). The prompt is always the final argv
-	// element. Governing: issue #74 (adapter-aware prompt synthesis).
+	// element. An adapter with no prompt mode (Generic) returns an empty
+	// cmd, which spawn treats as a refusal, never as something to exec.
+	// Governing: issue #74 (adapter-aware prompt synthesis), SPEC-0017 REQ
+	// "Generic Kind Rejects Prompts".
 	PromptCommand(prompt string, opts core.AgentOpts) (cmd string, args []string)
 }
 
@@ -236,8 +239,15 @@ func (a *Generic) TrajectoryDir(_ string) string { return "" }
 
 func (a *Generic) TailAdapter() tail.Adapter { return nil }
 
-func (a *Generic) PromptCommand(prompt string, opts core.AgentOpts) (string, []string) {
-	return (&Crush{}).PromptCommand(prompt, opts)
+// PromptCommand returns no argv: Generic runs sh and has no prompt synthesis.
+// It used to delegate to Crush, so an operator whose CLI was not in the list
+// wrote `generic` + `prompt` and got `crush run <prompt>` (or a crash loop
+// naming a binary they never configured). Config validation now rejects the
+// combination at every front door; the empty executable is what lets spawn
+// refuse one that got past them, rather than guessing an agent.
+// Governing: ADR-0023, SPEC-0017 REQ "Generic Kind Rejects Prompts".
+func (a *Generic) PromptCommand(string, core.AgentOpts) (string, []string) {
+	return "", nil
 }
 
 // NewRegistryWithDefaults returns a Registry with the built-in adapters.
