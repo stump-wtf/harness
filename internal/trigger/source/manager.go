@@ -133,6 +133,10 @@ type Manager struct {
 	// them rather than leaving one reading a stream after the daemon thinks
 	// it has shut down.
 	sessions sync.WaitGroup
+	// webhookListening is whether the daemon's webhook listener is bound. It
+	// decides between `listening` and `no_listener` for a bound, enabled
+	// webhook source (webhooks.go). Guarded by mu.
+	webhookListening bool
 }
 
 // New builds a Manager. It does nothing until Start.
@@ -203,6 +207,7 @@ func (m *Manager) Start(ctx context.Context) {
 	// Fire racing with Start either sees the manager closed or sees a live
 	// context — never a half-built one.
 	m.openChannelsLocked(m.ctx)
+	m.reconcileWebhooksLocked(m.config())
 }
 
 // Close stops accepting firings and waits for those in progress to reach the

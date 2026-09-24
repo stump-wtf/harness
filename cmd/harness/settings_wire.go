@@ -107,6 +107,18 @@ func resolveDaemonSettings(cmd *cobra.Command, g *globalOpts, d *daemonOpts) err
 	if err != nil {
 		return err
 	}
+	// Only a flag or HARNESS_WEBHOOK_LISTEN is carried as an override. The
+	// file's value is read by internal/config with the rest of [server], and
+	// re-read on every reload; carrying it here too would freeze it at boot
+	// and hide a reload's change to it (see daemonOpts.webhookListen).
+	webhook, err := r.Resolve("webhook-listen")
+	if err != nil {
+		return err
+	}
+	webhookListen := ""
+	if webhook.Source == settings.SourceFlag || webhook.Source == settings.SourceEnv {
+		webhookListen, _ = webhook.Value.(string)
+	}
 	logLevel, err := r.String("log-level")
 	if err != nil {
 		return err
@@ -118,6 +130,7 @@ func resolveDaemonSettings(cmd *cobra.Command, g *globalOpts, d *daemonOpts) err
 
 	d.configPath, d.socketPath = configPath, socket
 	d.ringLines, d.sshEnable, d.sshListen = ring, sshEnable, sshListen
+	d.webhookListen = webhookListen
 	d.logLevel, d.logFile = logLevel, logFile
 
 	g.configPath, g.socket = configPath, socket
