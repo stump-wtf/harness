@@ -144,7 +144,8 @@ harness                 # terminal 2: the dashboard (q to quit)
 | What | Default path |
 |------|--------------|
 | Config | `~/.config/harness/harness.toml` (honors `$XDG_CONFIG_HOME`) |
-| State, intent and run history | `~/.local/state/harness/state.json` (honors `$XDG_STATE_HOME`) |
+| State and intent | `~/.local/state/harness/state.json` (honors `$XDG_STATE_HOME`) |
+| Run history (the run ledger) | `~/.local/state/harness/ledger/YYYY-MM-DD.jsonl` |
 | Per-harness logs | `~/.local/state/harness/logs/NAME.log` |
 | Per-run logs of scheduled harnesses | `~/.local/state/harness/jobs/NAME/RUN_ID.log` |
 | Control socket (Linux) | `$XDG_RUNTIME_DIR/harness.sock`, usually `/run/user/UID/harness.sock` |

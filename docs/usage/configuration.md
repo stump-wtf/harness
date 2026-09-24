@@ -207,15 +207,26 @@ on_overlap = "queue"   # default "skip"; or "replace"
 keep_runs = 30         # default 20
 ```
 
-- **History** lives in `state.json`: run id, trigger (`schedule`, `manual`,
-  `catch_up`), start, end, exit code, and an outcome — `success`, `failed`,
+- **History** lives in the run ledger, `$XDG_STATE_HOME/harness/ledger/`: one
+  append-only JSONL file per UTC day, private to your user (ADR-0028). Each run
+  records its id, trigger (`schedule`, `manual`, `catch_up`, `channel`,
+  `webhook`), start, end, exit code, and an outcome: `success`, `failed`,
   `timed_out`, `skipped`, `replaced`, `missed`, `cancelled`, or `interrupted`.
   Firings that start nothing (skipped, missed) are recorded too. Run ids never
-  repeat, and a run the daemon crashed under reads `interrupted` on the next
-  boot.
+  repeat. A run the daemon crashed under reads `interrupted` (reason
+  `daemon_crash`) on the next boot; one a clean shutdown stopped reads
+  `interrupted` (reason `shutdown`).
 - **Logs** are at `$XDG_STATE_HOME/harness/jobs/<name>/<run_id>.log` — the run's
-  output history and lifecycle lines, alongside the usual harness log. The oldest
-  records beyond `keep_runs`, and their logs, are pruned together.
+  output history and lifecycle lines, alongside the usual harness log.
+  `keep_runs` bounds these log files only: the oldest logs are deleted, and
+  their records stay in the ledger, marked `log_pruned`.
+
+:::note Upgrading from a release before the ledger
+The first daemon that has the ledger copies each harness's run history out of
+`state.json` into `ledger/` once, then drops it from `state.json`, which keeps
+only each harness's last run id. Downgrading past that release loses the view
+of run history.
+:::
 - **`timeout`** stops a run that goes on too long: SIGTERM, then SIGKILL after
   the stop grace. The run is `timed_out` and the harness shows `failed`.
 - **`on_overlap`** decides a firing that lands while a run is still going:
