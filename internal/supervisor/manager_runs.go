@@ -665,6 +665,8 @@ func toLedger(r RunRecord) ledger.Record {
 		Trigger:     string(r.Trigger),
 		Source:      r.Source,
 		EventID:     r.EventID,
+		TodoID:      r.TodoID,
+		Attempt:     r.Attempt,
 		EndedAt:     r.EndedAt,
 		ExitCode:    r.ExitCode,
 		Outcome:     string(r.Outcome),
@@ -706,6 +708,8 @@ func fromLedger(f ledger.Folded) RunRecord {
 		Log:         f.Log,
 		LogPruned:   f.LogPruned,
 		Kind:        RunKind(f.Kind),
+		TodoID:      f.TodoID,
+		Attempt:     f.Attempt,
 	}
 	if f.Mismatch != nil {
 		r.Mismatch = &RunMismatch{Kind: f.Mismatch.Kind, ServedModel: f.Mismatch.ServedModel, ServedProvider: f.Mismatch.ServedProvider, At: f.Mismatch.At}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/ledger"
+	"github.com/stump-wtf/harness/internal/trigger"
 )
 
 func (e runsEnv) ledgerDir() string { return filepath.Join(e.dir, "ledger") }
@@ -291,5 +292,39 @@ func TestLedgerCarriesNoEventPayload(t *testing.T) {
 	}
 	if strings.Contains(text, sentinelPayload) {
 		t.Error("a ledger line carries the event payload")
+	}
+}
+
+// REQ-9: a channel notification's meta.todo_id is the run's todo_id; REQ-4
+// "An oversized todo id": 4 KiB of it is stored as its first 256 bytes, and
+// the cut is counted.
+func TestChannelTodoIDIsRecordedAndCapped(t *testing.T) {
+	e := newRunsEnv(t)
+	h := triggeredSweep("sb-drain", "true", "channel.sb")
+	m, _ := e.manager(t, sweepCfg(h), fastPolicy())
+	for _, tc := range []struct{ todo, want string }{
+		{"t1", "t1"},
+		{strings.Repeat("x", 4096), strings.Repeat("x", 256)},
+	} {
+		env := &trigger.Envelope{
+			Version: trigger.EnvelopeVersion, Kind: trigger.KindChannel, Source: "channel.sb", EventID: "ev-" + tc.want[:2],
+			ReceivedAt: time.Now().UTC(),
+			Channel:    &trigger.ChannelEvent{Content: "a todo is waiting", Meta: map[string]string{"todo_id": tc.todo}},
+		}
+		before := m.Ledger().Stats().Truncated
+		m.StartRun("sb-drain", RunRequest{Trigger: TriggerChannel, Source: env.Source, Event: env})
+		rs := waitRuns(t, m, "sb-drain", "run finishes", func(rs []RunRecord) bool {
+			return len(rs) > 0 && rs[len(rs)-1].Outcome == OutcomeSuccess && rs[len(rs)-1].TodoID != ""
+		})
+		last := rs[len(rs)-1]
+		if last.TodoID != tc.want || last.Trigger != TriggerChannel || last.Source != "channel.sb" {
+			t.Errorf("record = trigger %s source %s todo_id of %d bytes, want channel.sb and %d bytes", last.Trigger, last.Source, len(last.TodoID), len(tc.want))
+		}
+		if cut := m.Ledger().Stats().Truncated - before; (len(tc.todo) > 256) != (cut > 0) {
+			t.Errorf("todo_id of %d bytes: %d fields counted as cut", len(tc.todo), cut)
+		}
+	}
+	if strings.Contains(ledgerText(t, e), "a todo is waiting") {
+		t.Error("the notification's content reached the ledger")
 	}
 }

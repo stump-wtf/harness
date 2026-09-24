@@ -251,7 +251,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 		line    int
 	}
 	var pending []pendingProfile
-	var serverSeen, daemonSeen, telemetrySeen, mergeTrainSeen bool
+	var serverSeen, daemonSeen, telemetrySeen, mergeTrainSeen, ledgerSeen bool
 	var harnessDPath string
 
 	// Sources and the harnesses that bind them form one config view across
@@ -326,6 +326,22 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 				return nil, err
 			}
 			cfg.Telemetry = tc
+
+		case len(h.parts) == 1 && h.parts[0] == "ledger":
+			// The global run ledger table (ADR-0028, SPEC-0022 REQ-19).
+			if ledgerSeen {
+				return nil, newError(filename, h.line, "duplicate [ledger] table")
+			}
+			ledgerSeen = true
+			var rl rawLedger
+			if err := md.PrimitiveDecode(top["ledger"], &rl); err != nil {
+				return nil, newError(filename, h.line, "[ledger]: %v", err)
+			}
+			lc, err := buildLedger(filename, h.line, rl)
+			if err != nil {
+				return nil, err
+			}
+			cfg.Ledger = lc
 
 		case len(h.parts) == 2 && h.parts[0] == "telemetry" && h.parts[1] == "headers":
 			return nil, telemetryHeadersErr(filename, h.line)

@@ -148,6 +148,10 @@ type Ledger struct {
 	quit chan struct{}
 	done chan struct{}
 
+	// closeHook supplies fields for every closed line (usage.go).
+	hookMu    sync.Mutex
+	closeHook func(harness string, id int) Record
+
 	// Owned by the writer goroutine.
 	f       *os.File
 	fday    string
@@ -309,6 +313,16 @@ func (l *Ledger) Enqueue(ln Line, sync bool) (uint64, func() error, error) {
 	}
 	if ln.Harness == "" || ln.RunID < 1 {
 		return 0, nil, errorf(ErrLedgerCorrupt, ln, "a line needs a harness and a run id")
+	}
+	if ln.Type == TypeClosed {
+		l.hookMu.Lock()
+		hook := l.closeHook
+		l.hookMu.Unlock()
+		if hook != nil {
+			// The run's final usage rides its close (REQ-8); what the
+			// closing path set itself wins.
+			mergeUnder(&ln.Record, hook(ln.Harness, ln.RunID))
+		}
 	}
 	ln.V = Version
 	if ln.At.IsZero() {
