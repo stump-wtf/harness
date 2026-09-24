@@ -45,9 +45,14 @@ type daemonOpts struct {
 	ringLines  int
 	sshEnable  bool
 	sshListen  string
-	logLevel   string
-	logFile    string
-	detach     bool
+	// webhookListen is the webhook listener address from --webhook-listen or
+	// HARNESS_WEBHOOK_LISTEN ONLY — never the file's [server] webhook_listen.
+	// It is an override on top of the config, so a reload that changes the
+	// file can be told apart from one that leaves an explicit override alone.
+	webhookListen string
+	logLevel      string
+	logFile       string
+	detach        bool
 }
 
 func newDaemonCmd(g *globalOpts) *cobra.Command {
@@ -70,6 +75,7 @@ func newDaemonCmd(g *globalOpts) *cobra.Command {
 	daemon.PersistentFlags().IntVar(&d.ringLines, "scrollback", attach.DefaultRingLines, "per-harness scrollback ring depth (lines)")
 	daemon.PersistentFlags().BoolVar(&d.sshEnable, "ssh", false, "enable the remote Wish SSH server (ADR-0004; overrides [server] enabled)")
 	daemon.PersistentFlags().StringVar(&d.sshListen, "ssh-listen", "", "SSH bind address host:port (overrides [server] listen)")
+	daemon.PersistentFlags().StringVar(&d.webhookListen, "webhook-listen", "", "webhook listener bind address host:port (SPEC-0014; overrides [server] webhook_listen)")
 	daemon.PersistentFlags().StringVar(&d.logLevel, "log-level", "", "log level: debug, info, warn, error")
 	daemon.PersistentFlags().StringVar(&d.logFile, "log-file", "", "append logs to this file instead of stderr")
 	daemon.PersistentFlags().BoolVar(&d.detach, "detach", false, "fork into the background; redirect stdio to --log-file (dev convenience; prefer systemd in production)")
@@ -158,6 +164,9 @@ func (d *daemonOpts) childArgs() []string {
 	}
 	if d.sshListen != "" {
 		args = append(args, "--ssh-listen", d.sshListen)
+	}
+	if d.webhookListen != "" {
+		args = append(args, "--webhook-listen", d.webhookListen)
 	}
 	if d.logLevel != "" {
 		args = append(args, "--log-level", d.logLevel)

@@ -91,6 +91,7 @@ func TestPlainDaemonUsageContent(t *testing.T) {
 		"--detach",
 		"--ssh",
 		"--ssh-listen H:P",
+		"--webhook-listen H:P",
 		"--version",
 		"examples:",
 		"harness daemon start --detach",

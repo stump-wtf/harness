@@ -117,6 +117,7 @@ var daemonHelpText = struct {
 		{"--detach", "fork into the background; redirect stdio to --log-file (default: $XDG_STATE_HOME/harness/harness-daemon.log)"},
 		{"--ssh", "enable the remote Wish SSH server"},
 		{"--ssh-listen H:P", "SSH bind address (overrides [server] listen)"},
+		{"--webhook-listen H:P", "webhook listener bind address (overrides [server] webhook_listen)"},
 		{"--version", "print version and exit"},
 	},
 	exHead: "examples:",

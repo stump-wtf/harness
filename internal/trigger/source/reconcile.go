@@ -182,6 +182,7 @@ func (m *Manager) Reconcile(cfg *core.Config) {
 	if m.closed {
 		return
 	}
+	m.reconcileWebhooksLocked(cfg)
 	for _, src := range cfg.OrderedChannels() {
 		ref := core.SourceKindChannel + "." + src.Name
 		existing := m.sources[ref]

@@ -102,6 +102,7 @@ var Registry = []Setting{
 	{Name: "scrollback", Env: "HARNESS_SCROLLBACK", FileKey: "daemon.scrollback", Kind: KindInt, Desc: "scrollback ring depth (lines)"},
 	{Name: "ssh", Env: "HARNESS_SSH", FileKey: "server.enabled", Kind: KindBool, Default: false, Desc: "remote SSH server enabled"},
 	{Name: "ssh-listen", Env: "HARNESS_SSH_LISTEN", FileKey: "server.listen", Kind: KindString, Default: "", Desc: "SSH bind address"},
+	{Name: "webhook-listen", Env: "HARNESS_WEBHOOK_LISTEN", FileKey: "server.webhook_listen", Kind: KindString, Default: "", Desc: "webhook listener bind address (empty = off)"},
 	{Name: "watch-config", Env: "HARNESS_WATCH_CONFIG", FileKey: "daemon.watch_config", Kind: KindBool, Default: true, Desc: "watch the config file for changes"},
 }
 

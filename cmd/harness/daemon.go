@@ -322,6 +322,12 @@ func runDaemon(o daemonOpts) {
 	// After startDaemonScheduler, which registered its own hook: this
 	// composes onto it rather than replacing it (see wireSourceReload).
 	wireSourceReload(mgr, sources)
+	// The webhook listener's reload rides the same hook, composed after
+	// source reconciliation, and has to be registered here — before the
+	// config watcher or SIGHUP can reload — even though the listener binds
+	// beside startRemote below.
+	webhooks := beginDaemonWebhooks(mgr, sources, o.webhookListen)
+	wireWebhookReload(mgr, webhooks)
 
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
@@ -408,6 +414,12 @@ func runDaemon(o daemonOpts) {
 		srv.SetRemote(remoteSrv.Addr(), remoteSrv.Keys())
 	}
 
+	// The webhook listener (ADR-0021 / SPEC-0014): the second network front
+	// door, for machines. Off unless [server] webhook_listen,
+	// --webhook-listen or HARNESS_WEBHOOK_LISTEN names an address, and every
+	// route on it is authenticated.
+	webhooks.serve()
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	for {
@@ -447,6 +459,10 @@ func runDaemon(o daemonOpts) {
 		cfgWatcher.Close()
 	}
 	sched.Close()
+	// Before the source manager closes: stop taking deliveries, and give the
+	// ones in flight webhook.ShutdownGrace to reach it and answer, rather
+	// than have them fire into a closed manager.
+	webhooks.shutdown()
 	// Before the Manager closes: a firing in progress is still holding a
 	// reference to it, and Close waits for those to reach StartRun.
 	sources.Close()
