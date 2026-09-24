@@ -30,6 +30,7 @@ enabled = false
 | `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `generic`, `command`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args. To run any other program, use `command` with an `argv` — see [The `command` kind](#the-command-kind). `generic` takes no `prompt` or `prompt_file` — see [Agent adapters](#agent-adapters) |
 | `args` | argument list appended after the adapter's executable. Not accepted on `command`, which takes `argv` instead |
 | `argv` | `command` only: the whole process, `argv[0]` first, exec'd **without a shell**. See [The `command` kind](#the-command-kind) |
+| `prompt_delivery` | `command` only, and only with `prompt` or `prompt_file`: how the prompt reaches the program — `argv`, `stdin` or `file`. See [Prompt delivery](#prompt-delivery) |
 | `workdir` | working directory (**required** for most commands) |
 | `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config) |
 | `description` | free-text shown in the dashboard |
@@ -388,13 +389,13 @@ enabled = true
   and it defaults to `restart = "no"`. Every other one-shot exclusion still
   applies (`enabled = true`, `restart = "always"`, `operating_hours` with a
   `schedule`, and so on).
-- `prompt` and `prompt_file` are refused for now: nothing delivers a prompt to
-  a command harness's argv yet (issue #500).
+- It may carry a `prompt` or `prompt_file`, as long as something delivers
+  it: see [Prompt delivery](#prompt-delivery).
 - Like `generic`, it reports no native trajectory (scrollback only).
 - It works in a project `harness.toml`, through `harness up`, and in the TUI
   edit form, where `argv` is edited as the same TOML array. `harness describe`
-  shows the kind and the argv exactly as written, templates included, never a
-  rendering.
+  shows the kind, the argv exactly as written, templates included, never a
+  rendering, and its `prompt_delivery`.
 
 ```toml
 [harness.nightly-report]
@@ -437,6 +438,8 @@ conditionals or loops; `{{printf …}}` is a config error.
 | `run.source` | the trigger source, e.g. `webhook.ci` | a source caused the run |
 | `run.started_at` | the run's start, RFC 3339 UTC | always |
 | `run.date` | `YYYY-MM-DD` in the schedule's `CRON_TZ`/`TZ` zone, else the daemon's local zone | always |
+| `prompt` | the harness's prompt, verbatim | `prompt_delivery` is `argv` (see [Prompt delivery](#prompt-delivery)) |
+| `prompt_file` | the absolute path of the run's `0600` prompt file | `prompt_delivery = "file"` |
 
 Every template is checked when the config loads, and each failure names the
 element, line and column:
@@ -445,7 +448,9 @@ element, line and column:
 - event text in argv in **any** form (`{{event.title}}`, `{{untrusted
   event.body}}`, …): text an outside party wrote never becomes an argument.
   Give the program `$HARNESS_EVENT_FILE` to read instead;
-- `event.*` paths and `{{prompt}}`, which are not available in argv yet;
+- `event.*` paths, which are not available in argv yet;
+- `{{prompt}}` or `{{prompt_file}}` under the wrong delivery, or with no
+  prompt at all (see [Prompt delivery](#prompt-delivery));
 - a required `{{run.id}}`, `{{run.trigger}}` or `{{run.source}}` on a harness
   with neither `schedule` nor `triggers` (it has no run records, so it could
   never render);
@@ -466,6 +471,79 @@ Rendered values are never written anywhere: not to `state.json`, not to run
 records, not to protocol frames, not to logs. They exist only in the child's
 argv, which, like any argv, other local users can read with `ps`. Do not
 template secrets into it.
+
+#### Prompt delivery
+
+A `command` harness may carry a `prompt` (or a `prompt_file`), and
+`prompt_delivery` says how the program receives it (SPEC-0017 REQ-12). The
+prompt is your text, verbatim: `prompt` and `prompt_file` are never
+template-expanded, and nothing a webhook or channel event carries is ever part
+of it. Event text reaches a run only as the `0600` file named by
+`$HARNESS_EVENT_FILE`.
+
+| `prompt_delivery` | The program gets the prompt… | Use it for |
+|---|---|---|
+| `argv` (the default when an `argv` element references `{{prompt}}`) | as the `{{prompt}}` placeholder: one element, never split | a CLI that takes the prompt as an argument, e.g. `omp --print "…"` |
+| `stdin` | on standard input: fd 0 is a pipe the daemon writes the prompt into and then closes | a CLI or script that reads its prompt from stdin |
+| `file` | as a file, mode `0600`, whose absolute path is `$HARNESS_PROMPT_FILE` and `{{prompt_file}}` | a CLI that takes a path, or a prompt too large or too private for argv |
+
+```toml
+[harness.omp-sweep]
+harness = "command"
+argv = ["omp", "--print", "{{prompt}}"]       # delivery "argv", implied
+prompt = "summarise yesterday's failed runs"
+schedule = "0 7 * * *"
+
+[harness.digest]
+harness = "command"
+argv = ["/usr/local/bin/digest", "--run", "{{run.id}}"]
+prompt_file = "~/prompts/digest.md"
+prompt_delivery = "stdin"
+schedule = "30 7 * * *"
+
+[harness.review]
+harness = "command"
+argv = ["/usr/local/bin/review", "--instructions", "{{prompt_file}}"]
+prompt = "review the open pull requests"
+prompt_delivery = "file"
+schedule = "0 9 * * 1-5"
+```
+
+- **`argv`.** The prompt is an argument, so other local users can read it with
+  `ps`, and the platform caps how long it can be (about 128 KiB for one
+  argument on Linux, 1 MiB for the whole argv on macOS). A start whose argv
+  is over the limit fails, the run is recorded `failed`, and the harness log
+  names the cause and recommends `file` or `stdin`.
+- **`stdin`.** The prompt is written through a pipe, never through the
+  terminal, so it arrives byte for byte at any size: a terminal would echo it,
+  cap each line near 4 KiB (1 KiB on macOS) and turn `^C`, `^D` and `^Z` into
+  signals. Standard output and standard error stay on the harness's terminal,
+  which is the program's controlling terminal through fd 1, so its output
+  streams, logs and attaches as usual. **Attach is view-only for that run**:
+  what you type is not delivered, and the client shows one line saying the
+  run's stdin is its prompt. A program that exits without reading all of its
+  stdin is not a failure; its exit status decides the run.
+- **`file`.** The file is written before the program starts. For a run with a
+  record it is `<jobs dir>/<harness>/<run_id>.prompt`, beside the run's log,
+  and it is deleted when `keep_runs` prunes the run. A start with no run
+  record uses `$XDG_STATE_HOME/harness/prompts/<harness>.prompt`, rewritten on
+  each start. `HARNESS_PROMPT_FILE` always wins over a variable of the same
+  name in the daemon's environment or the `env_file`, and it is unset for
+  every other delivery.
+
+The config fails to load, naming the harness, when:
+
+- a `command` harness has a prompt and nothing delivers it (no `{{prompt}}`
+  in `argv` and no `prompt_delivery`): the prompt would be dropped;
+- `{{prompt}}` is used with `prompt_delivery = "stdin"` or `"file"`, or
+  `{{prompt_file}}` with anything but `"file"`;
+- `prompt_delivery` is set without a `prompt` or `prompt_file`;
+- `prompt_delivery` is set on any kind other than `command`: the built-in
+  adapters always pass the prompt as an argument.
+
+The prompt itself is never written to `state.json`, run records, protocol
+frames or log lines. The `0600` prompt file is the only copy the daemon
+keeps, and only for as long as the run's record.
 
 ```toml
 [harness.my-agent]

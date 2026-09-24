@@ -145,7 +145,15 @@ enabled = false
 # every other kind; auto_accept, max_turns and quiet are rejected (put the
 # program's own flags in argv). With `schedule` or `triggers` a command harness
 # is a one-shot that needs NO prompt (restart defaults to "no", and every other
-# one-shot exclusion applies); prompt and prompt_file are still refused.
+# one-shot exclusion applies).
+# A command harness may also carry a prompt or prompt_file, handed to the
+# program by `prompt_delivery` (SPEC-0017 REQ-12): "argv" fills {{prompt}} in
+# an argv element (the default when one references it); "stdin" pipes the
+# prompt into fd 0 and closes it (attach is view-only for that run); "file"
+# writes it 0600 to a file named by $HARNESS_PROMPT_FILE and {{prompt_file}},
+# pruned with the run. A prompt nothing delivers is a config error, and
+# prompt_delivery is refused on every other kind. The prompt is your text,
+# verbatim; event text never becomes part of it.
 # argv[1:] elements may be templates (ADR-0023, SPEC-0017): {{path}} is
 # required (a run lacking it is recorded skipped, reason template_unresolved),
 # {{path?}} is optional (empty when absent). argv may reference harness.name,
@@ -167,6 +175,19 @@ enabled = false
 # harness = "command"
 # argv = ["/usr/local/bin/report", "--run", "{{run.id}}", "--date", "{{run.date}}"]
 # schedule = "CRON_TZ=Europe/Berlin 0 6 * * *"
+#
+# [harness.omp-digest]
+# harness = "command"
+# argv = ["omp", "--print", "{{prompt}}"]
+# prompt = "summarise yesterday's failed runs"
+# schedule = "0 7 * * *"
+#
+# [harness.stdin-digest]
+# harness = "command"
+# argv = ["/usr/local/bin/digest"]
+# prompt = "summarise yesterday's failed runs"
+# prompt_delivery = "stdin"
+# schedule = "30 7 * * *"
 
 # Trajectory harvesting (SPEC-0006 REQ "Harvest Opt-In"): the opt-in for
 # exposing this harness's session transcripts read-only through the MCP facade
