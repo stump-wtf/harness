@@ -524,6 +524,33 @@ type LedgerConfig struct {
 	// replaced by the run's first session's trace id, and nothing else is
 	// substituted (REQ-9). Empty records no trace_url.
 	TraceURL string
+	// Retention is how long a day file is kept after its day ends, and MaxMB
+	// the most the ledger may hold; the oldest files go first (REQ-12).
+	// Zero means the default.
+	Retention time.Duration
+	MaxMB     int
+}
+
+// Ledger defaults (SPEC-0022 REQ-12).
+const (
+	DefaultLedgerRetention = 90 * 24 * time.Hour
+	DefaultLedgerMaxMB     = 256
+)
+
+// RetentionOrDefault is Retention, or its default.
+func (c LedgerConfig) RetentionOrDefault() time.Duration {
+	if c.Retention > 0 {
+		return c.Retention
+	}
+	return DefaultLedgerRetention
+}
+
+// MaxMBOrDefault is MaxMB, or its default.
+func (c LedgerConfig) MaxMBOrDefault() int {
+	if c.MaxMB > 0 {
+		return c.MaxMB
+	}
+	return DefaultLedgerMaxMB
 }
 
 // Config is a fully parsed, validated harness.toml: the harness registry and

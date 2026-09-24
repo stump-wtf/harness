@@ -29,6 +29,16 @@
 # env_file = "/etc/harness/otel.env" # OTEL_EXPORTER_OTLP_* incl. headers
 # export_all = false
 
+# Optional run ledger settings (ADR-0028, SPEC-0022). The ledger is every
+# run's record, under $XDG_STATE_HOME/harness/ledger/. Global only: a project
+# file or drop-in carrying [ledger] is refused. A reload applies retention and
+# max_mb at the next daily prune, and trace_url to runs closed after it.
+#
+# [ledger]
+# retention = "90d"   # delete day files this long after their day (min 1d)
+# max_mb = 256        # then the oldest, until the ledger fits (min 16)
+# trace_url = "https://grafana.example.com/explore?traceId={trace_id}"
+
 # Each harness is one supervised process. The new-style [harness.<name>]
 # form is preferred; a bare [name] table is supported for backward
 # compatibility (ADR-0006).

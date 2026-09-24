@@ -48,3 +48,27 @@ func TestLedgerIsRejectedInADropIn(t *testing.T) {
 		t.Fatal("a drop-in carrying [ledger] loaded")
 	}
 }
+
+// REQ-12, REQ-19: retention (at least 1d) and max_mb (at least 16), with
+// defaults when absent.
+func TestLedgerRetentionAndMaxMB(t *testing.T) {
+	cfg, err := Parse([]byte("[ledger]\nretention = \"30d\"\nmax_mb = 64\n"), "/etc/harness/harness.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Ledger.RetentionOrDefault().Hours() != 30*24 || cfg.Ledger.MaxMBOrDefault() != 64 {
+		t.Errorf("ledger = %+v", cfg.Ledger)
+	}
+	def, err := Parse([]byte("[harness.a]\nharness = \"crush\"\n"), "/etc/harness/harness.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.Ledger.RetentionOrDefault().Hours() != 90*24 || def.Ledger.MaxMBOrDefault() != 256 {
+		t.Errorf("defaults = %v, %d; want 90d and 256", def.Ledger.RetentionOrDefault(), def.Ledger.MaxMBOrDefault())
+	}
+	for _, bad := range []string{"retention = \"12h\"", "retention = \"soon\"", "max_mb = 8"} {
+		if _, err := Parse([]byte("[ledger]\n"+bad+"\n"), "/etc/harness/harness.toml"); err == nil {
+			t.Errorf("%s loaded", bad)
+		}
+	}
+}

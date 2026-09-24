@@ -499,3 +499,24 @@ func TestRunsOpMorningSweep(t *testing.T) {
 		t.Errorf("unknown outcome: %v, want an error listing timed_out", err)
 	}
 }
+
+// SPEC-0022 REQ-18: daemon_info carries the ledger's health for doctor.
+func TestDaemonInfoReportsTheLedger(t *testing.T) {
+	td, _, _ := newJobsDaemon(t, scheduledSh("nightly", "true", t.TempDir()))
+	c := td.dial(t, nil)
+	if _, err := c.Trigger("nightly"); err != nil {
+		t.Fatal(err)
+	}
+	waitRunsOver(t, c, "nightly", finishedN(1))
+	di, err := c.DaemonInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	li := di.Ledger
+	if li == nil || li.Dir != td.mgr.Ledger().Dir() || li.Bytes <= 0 || li.MaxMB != 256 || li.RetentionSec != 90*24*3600 || li.OldestDay == "" {
+		t.Errorf("ledger info = %+v", li)
+	}
+	if _, ok := li.FeedDropped["metrics"]; ok {
+		t.Error("a feed subscriber is reported that this daemon never started")
+	}
+}

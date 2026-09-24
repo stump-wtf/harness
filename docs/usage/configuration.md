@@ -459,6 +459,40 @@ table with `traces = true` (and/or `logs = true`) and set `endpoint` there or
 not an alias: an inert line in an old config must not start publishing agent
 transcripts on upgrade.
 
+## Run ledger (`[ledger]`)
+
+Every run of every harness, one-shot firings and resident process lifetimes
+alike, is a record in the run ledger: one JSONL file per UTC day under
+`$XDG_STATE_HOME/harness/ledger/`, private to your user (ADR-0028). `harness
+runs`, `harness jobs`, `/metrics` and `harness doctor` all read it. The optional
+global table tunes it:
+
+```toml
+[ledger]
+retention = "90d"   # delete a day file this long after its day ends (at least 1d)
+max_mb = 256        # then delete the oldest files until the ledger fits (at least 16)
+trace_url = "https://grafana.example.com/explore?traceId={trace_id}"
+```
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `retention` | `90d` | How long a day file is kept after its day. A duration with a `d` suffix, or any Go duration of at least a day. |
+| `max_mb` | `256` | The most the ledger may hold. Once retention has run, the oldest files go until the total fits. Today's file is never deleted. |
+| `trace_url` | none | A link to a run's trace. `{trace_id}` becomes the run's first agent session's trace id. It is the only placeholder, and any other fails the load. |
+
+The prune runs when the daemon starts and at each UTC midnight. A run still
+open when the file that opened it is due to go (a resident up for months) is
+re-opened in today's file first, so its record survives. `keep_runs` is a
+different bound: it deletes old per-run **log files** only, and their records
+stay in the ledger, marked `log_pruned`.
+
+`[ledger]` is global only: a project file or a `harness_d` drop-in that
+carries it is refused. A reload applies `retention` and `max_mb` at the next
+prune and `trace_url` to runs closed after it, without restarting anything.
+`harness doctor` reports the ledger's directory and permissions, its size
+against `max_mb`, the oldest day kept, and any write errors, skipped lines,
+shortened fields or dropped feed records.
+
 ## Telemetry export (`[telemetry]`)
 
 The daemon can export what its supervised agents do — every tool call and every

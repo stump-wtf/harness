@@ -116,21 +116,8 @@ func ParseSince(s string, now time.Time) (time.Time, error) {
 	return now.Add(-d), nil
 }
 
-// ParseDuration is time.ParseDuration plus a whole-day suffix, "7d".
-func ParseDuration(s string) (time.Duration, error) {
-	if days, ok := strings.CutSuffix(s, "d"); ok {
-		var n int
-		if _, err := fmt.Sscanf(days, "%d", &n); err == nil && fmt.Sprint(n) == days && n >= 0 {
-			return time.Duration(n) * 24 * time.Hour, nil
-		}
-		return 0, fmt.Errorf("bad day count %q", s)
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil || d < 0 {
-		return 0, fmt.Errorf("bad duration %q", s)
-	}
-	return d, nil
-}
+// ParseDuration is ledger.ParseDuration: a Go duration or whole days ("7d").
+func ParseDuration(s string) (time.Duration, error) { return ledger.ParseDuration(s) }
 
 // Info projects a ledger record onto the wire. HasLog reports a log that is
 // there to read with logs --run.

@@ -2,7 +2,9 @@ package config
 
 // Ledger Table
 //
-// Parses the global [ledger] table (SPEC-0022 REQ-19) into core.LedgerConfig.
+// Parses the global [ledger] table (SPEC-0022 REQ-19) into core.LedgerConfig:
+// trace_url, retention (at least 1d, default 90d) and max_mb (at least 16,
+// default 256).
 // It is global-only: the run ledger is one per daemon, so a project file that
 // carries it is refused (project.go), and a harness_d drop-in refuses it with
 // every other table it does not know.
@@ -18,6 +20,7 @@ package config
 
 import (
 	"regexp"
+	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/ledger"
@@ -25,7 +28,9 @@ import (
 
 // rawLedger mirrors the [ledger] table before validation.
 type rawLedger struct {
-	TraceURL string `toml:"trace_url"`
+	TraceURL  string `toml:"trace_url"`
+	Retention string `toml:"retention"`
+	MaxMB     *int   `toml:"max_mb"`
 }
 
 // placeholderRE finds {…} placeholders in a template.
@@ -39,8 +44,27 @@ func buildLedger(filename string, line int, rl rawLedger) (core.LedgerConfig, er
 				"[ledger] trace_url: unsupported placeholder %s (the only substitution is %s)", ph, ledger.TraceIDPlaceholder)
 		}
 	}
-	return core.LedgerConfig{TraceURL: rl.TraceURL}, nil
+	lc := core.LedgerConfig{TraceURL: rl.TraceURL}
+	if rl.Retention != "" {
+		d, err := ledger.ParseDuration(rl.Retention)
+		if err != nil || d < 24*time.Hour {
+			return core.LedgerConfig{}, newError(filename, line,
+				"[ledger] retention %q: want a duration of at least 1d (e.g. \"90d\")", rl.Retention)
+		}
+		lc.Retention = d
+	}
+	if rl.MaxMB != nil {
+		if *rl.MaxMB < minLedgerMaxMB {
+			return core.LedgerConfig{}, newError(filename, line,
+				"[ledger] max_mb %d: want at least %d", *rl.MaxMB, minLedgerMaxMB)
+		}
+		lc.MaxMB = *rl.MaxMB
+	}
+	return lc, nil
 }
+
+// minLedgerMaxMB is the smallest max_mb (REQ-12).
+const minLedgerMaxMB = 16
 
 // ledgerGlobalOnlyErr refuses a [ledger] table outside the global file.
 func ledgerGlobalOnlyErr(filename string, line int) *Error {

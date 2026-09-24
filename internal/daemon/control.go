@@ -406,7 +406,32 @@ func (c *conn) opDaemonInfo() protocol.DaemonInfo {
 		res.SshAddr = addr
 		res.SshKeys = keys
 	}
+	res.Ledger = c.ledgerInfo()
 	return res
+}
+
+// ledgerInfo reports the run ledger's health for doctor (SPEC-0022 REQ-18).
+func (c *conn) ledgerInfo() *protocol.LedgerInfo {
+	l := c.srv.mgr.Ledger()
+	if l == nil {
+		return nil
+	}
+	st := l.Stats()
+	lc := c.srv.mgr.Config().Ledger
+	info := &protocol.LedgerInfo{
+		Dir: l.Dir(), Bytes: l.Bytes(), MaxMB: lc.MaxMBOrDefault(),
+		RetentionSec: int64(lc.RetentionOrDefault().Seconds()),
+		AppendErrors: st.AppendErrors, Queued: st.Queued, LastError: st.LastError,
+		Skipped: st.Skipped, Truncated: st.Truncated, Imported: st.Imported,
+		FeedDropped: l.FeedDropped(),
+	}
+	if d := l.OldestDay(); !d.IsZero() {
+		info.OldestDay = d.Format(time.DateOnly)
+	}
+	if us, ok := l.UsageStats(); ok {
+		info.UsageDropped, info.UsageIncomplete = us.Dropped, us.Incomplete
+	}
+	return info
 }
 
 // timeSince returns whole seconds elapsed since t.
