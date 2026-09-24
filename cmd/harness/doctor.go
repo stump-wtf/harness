@@ -56,6 +56,10 @@ type doctorResult struct {
 	Autostart      *checkResult `json:"autostart,omitempty"`
 	Ssh            *checkResult `json:"ssh,omitempty"`
 	OperatingHours *checkResult `json:"operating_hours,omitempty"`
+	// Triggers is the trigger-source row (SPEC-0014): an insecure webhook
+	// bind, a source no listener serves, a readable env_file, a channel in
+	// error — or all healthy. Absent when nothing is declared.
+	Triggers *checkResult `json:"triggers,omitempty"`
 	// TelemetryCheck is the warning row for a [telemetry] config that does
 	// not resolve (the daemon would refuse to start).
 	TelemetryCheck *checkResult `json:"telemetry_check,omitempty"`
@@ -169,6 +173,12 @@ func runDoctor(o verbOpts) int {
 		// "Operating Hours Visibility") — no point skipping them just because
 		// the daemon is down.
 		rows = appendOperatingHoursCheck(rows, cfg)
+		// The trigger-source row's config-only half (SPEC-0014): an
+		// insecure bind or an unserved webhook is as true with the daemon
+		// down, and a readable env_file more so.
+		if r := triggersCheck(triggerInputs{cfg: cfg}); r != nil {
+			rows = append(rows, *r)
+		}
 		// No point continuing further: every later check needs the daemon.
 		// Resolved process settings and where each came from. A resolve failure
 		// is non-fatal but reported — see resolvedSettings.
@@ -235,6 +245,24 @@ func runDoctor(o verbOpts) int {
 	// --- Check: operating hours misconfiguration ---------------------------
 	// Governing: ADR-0019, SPEC-0012 REQ "Operating Hours Visibility".
 	rows = appendOperatingHoursCheck(rows, cfg)
+
+	// --- Check: trigger sources ---------------------------------------------
+	// Governing: ADR-0021; SPEC-0014 REQ "Webhook Listener", REQ "Credential
+	// Resolution", REQ "Trigger Visibility". Judged from the listener the
+	// daemon bound and the states its sources reached; a daemon too old to
+	// answer triggers leaves the config-derived half.
+	{
+		in := triggerInputs{cfg: cfg}
+		if diOK {
+			in.daemon = &di
+		}
+		if srcs, err := c.Triggers(); err == nil {
+			in.sources = srcs
+		}
+		if r := triggersCheck(in); r != nil {
+			rows = append(rows, *r)
+		}
+	}
 
 	// --- Check 5: harnesses in healthy state -------------------------------
 	// Governing: SPEC-0003 (the state model and its healthy/degraded/failed
@@ -491,6 +519,9 @@ func emitDoctorJSON(w io.Writer, rows []check, resolved []settings.Resolved, tel
 		case "operating_hours":
 			c := cr
 			res.OperatingHours = &c
+		case "triggers":
+			c := cr
+			res.Triggers = &c
 		case "telemetry":
 			c := cr
 			res.TelemetryCheck = &c

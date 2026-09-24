@@ -113,6 +113,10 @@ func run(verb string, o verbOpts) error {
 		return withClient(o, nil, cmdTrigger)
 	case "runs":
 		return withClient(o, nil, cmdRuns)
+	case "triggers":
+		// Trigger sources are global-config only (SPEC-0014 REQ "Channel
+		// Source Table"), so, like jobs, never project-scoped.
+		return withClient(o, nil, cmdTriggers)
 	case "profiles":
 		return withClient(o, nil, cmdProfiles)
 	case "use-profile":

@@ -322,6 +322,7 @@ func runDaemon(o daemonOpts) {
 		Manager:    mgr,
 		Registry:   reg,
 		Scheduler:  sched,
+		Triggers:   sources,
 		SocketPath: o.socketPath,
 		ConfigPath: o.configPath,
 		Version:    buildinfo.Version,
@@ -332,6 +333,10 @@ func runDaemon(o daemonOpts) {
 		mgr.Close()
 		os.Exit(1)
 	}
+	// trigger_source_changed and daemon_info's webhook listener (SPEC-0014
+	// REQ "Trigger Visibility"). Here, not at startDaemonSources: the
+	// server that broadcasts them does not exist until now.
+	wireTriggerVisibility(srv, sources, webhooks)
 
 	log.Info("serving",
 		"socket", srv.SocketPath(),
@@ -479,6 +484,19 @@ func startDaemonSources(mgr *supervisor.Manager) *source.Manager {
 	})
 	sm.Start(context.Background())
 	return sm
+}
+
+// wireTriggerVisibility connects the source manager and the webhook listener
+// to the protocol server: every source state change becomes a
+// trigger_source_changed event, and the listener's live bind is what
+// daemon_info reports. A function for the reason startDaemonSources is — a
+// wiring test drives what the daemon itself connects (#315).
+//
+// Governing: ADR-0021; SPEC-0014 REQ "Trigger Visibility", REQ "Webhook
+// Listener".
+func wireTriggerVisibility(srv *daemon.Server, sources *source.Manager, webhooks *daemonWebhooks) {
+	sources.SetOnState(srv.PublishTriggerSource)
+	webhooks.setReporter(srv.SetWebhook)
 }
 
 // wireSourceReload composes source reconciliation onto the Manager's reload

@@ -77,7 +77,17 @@ const (
 	// event, and ignores Event, so `trigger --event` against one silently
 	// starts a run with no event; the client refuses the flag rather than
 	// letting that happen (see client.TriggerWithEvent).
-	ProtoMinor = 11
+	// ProtoMinor 12 added trigger visibility (SPEC-0014 REQ "Trigger
+	// Visibility", #476): the triggers op and TriggerSourceInfo; Triggers on
+	// HarnessInfo and JobInfo; the trigger_source_changed event with Source,
+	// SourceKind, State and Error on EventMsg, and Source on job_run_*;
+	// WebhookAddr and WebhookTLS on DaemonInfo. jobs now lists every
+	// TRIGGERED harness, so an entry may have an empty Schedule and no
+	// NextRun — additive only, since an older client renders an unknown
+	// empty schedule as a harness with no next window. A daemon older than
+	// 12 answers triggers with unknown_op, which the client reports as
+	// "restart the daemon" rather than an empty table.
+	ProtoMinor = 12
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -151,6 +161,11 @@ const (
 	OpJobs    Op = "jobs"
 	OpTrigger Op = "trigger"
 	OpRuns    Op = "runs"
+
+	// OpTriggers lists every declared trigger source with its state, its
+	// last event and error, its counters and the harnesses it fires.
+	// Governing: ADR-0021, SPEC-0014 REQ "Trigger Visibility".
+	OpTriggers Op = "triggers"
 )
 
 // ControlReq is a control-plane request. ID correlates the response; Name
@@ -355,6 +370,12 @@ type HarnessInfo struct {
 	// NextRun is when Schedule next fires, RFC 3339 local time. Empty when
 	// there is no schedule or the daemon has not resolved a firing time yet.
 	NextRun string `json:"next_run,omitempty"`
+	// Triggers are the sources that fire this harness, in config order, each
+	// with its source's current state (SPEC-0014 REQ "Trigger Visibility").
+	// Empty for a harness nothing but a schedule or an operator starts. A
+	// harness with Triggers is triggered like one with a Schedule: a listing
+	// shows it as such, not as disabled.
+	Triggers []TriggerBinding `json:"triggers,omitempty"`
 
 	// Operating-hours projection (ADR-0019, SPEC-0012 REQ "Operating Hours
 	// Visibility"). OperatingHours is the raw expression as configured, empty
@@ -581,18 +602,91 @@ type RunInfo struct {
 	EventID string `json:"event_id,omitempty"`
 }
 
-// JobInfo is one scheduled harness for the jobs op (SPEC-0008 REQ "Protocol
-// Operations"). NextRun is computed daemon-side from the live scheduler, so a
-// client renders "in 6h" without doing cron math.
+// TriggerBinding is one entry of a harness's `triggers`, with the state of
+// the source it names (SPEC-0014 REQ "Trigger Visibility").
+type TriggerBinding struct {
+	// Source is the reference as configured, e.g. "webhook.gitea-pr".
+	Source string `json:"source"`
+	// State is the source's state; see TriggerSourceInfo.State. Empty when
+	// the daemon reports no state for it (no source manager).
+	State string `json:"state,omitempty"`
+}
+
+// TriggerRefs returns the source references of bs, in order — the form a
+// listing renders.
+func TriggerRefs(bs []TriggerBinding) []string {
+	out := make([]string, 0, len(bs))
+	for _, b := range bs {
+		out = append(out, b.Source)
+	}
+	return out
+}
+
+// TriggerSourceInfo is one declared trigger source for the triggers op
+// (SPEC-0014 REQ "Trigger Visibility").
+//
+// It carries no credential in any field: header NAMES, never values; a
+// channel URL with its query removed; a last error the daemon scrubbed of
+// both (REQ "Credential Resolution", REQ "Error Handling Standards").
+type TriggerSourceInfo struct {
+	// Source is the reference, e.g. "channel.sb".
+	Source string `json:"source"`
+	// Kind is "channel" or "webhook".
+	Kind string `json:"kind"`
+	// State is "disabled", "unbound", "connecting", "connected", "backoff",
+	// "error", "listening" or "no_listener".
+	State string `json:"state"`
+	// Since is when State last changed, RFC 3339.
+	Since string `json:"since,omitempty"`
+	// DownSince is when a channel source left connected (or, never having
+	// connected, first tried), RFC 3339. Present only while it is not
+	// connected — the answer to "how long has this been down?", which Since
+	// cannot give because an outage cycles backoff and connecting.
+	DownSince string `json:"down_since,omitempty"`
+	// LastEvent is when the source last fired, RFC 3339; empty for never.
+	LastEvent string `json:"last_event,omitempty"`
+	// Error is why a source is in error or backoff.
+	Error string `json:"error,omitempty"`
+	// Harnesses are the harnesses the source fires, in config order.
+	Harnesses []string `json:"harnesses"`
+	// Counters are the per-outcome counts since the daemon started, keyed by
+	// REQ "Trigger Metrics"'s outcome: fired, ignored, duplicate,
+	// unauthorized, too_large, rate_limited, invalid. Every outcome is
+	// present, zeros included.
+	Counters map[string]int `json:"counters"`
+	// Description is the source table's operator prose.
+	Description string `json:"description,omitempty"`
+
+	// URL is a channel source's endpoint with its query and fragment removed.
+	URL string `json:"url,omitempty"`
+	// Headers are a channel source's header NAMES, sorted. Never values.
+	Headers []string `json:"headers,omitempty"`
+
+	// Path is a webhook source's route, "/hooks/<name>".
+	Path string `json:"path,omitempty"`
+	// Verify is a webhook source's verification scheme.
+	Verify string `json:"verify,omitempty"`
+	// Events is a webhook source's event allowlist; empty passes every event.
+	Events []string `json:"events,omitempty"`
+}
+
+// JobInfo is one triggered harness for the jobs op (SPEC-0008 REQ "Protocol
+// Operations"; SPEC-0014 REQ "Trigger Visibility"). NextRun is computed
+// daemon-side from the live scheduler, so a client renders "in 6h" without
+// doing cron math.
 type JobInfo struct {
-	Name        string `json:"name"`
+	Name string `json:"name"`
+	// Schedule is empty for a harness only trigger sources fire.
 	Schedule    string `json:"schedule"`
 	Description string `json:"description,omitempty"`
 	// State is the harness state, as on HarnessInfo.
 	State string `json:"state"`
-	// NextRun is RFC 3339; empty when the schedule never fires again.
+	// NextRun is RFC 3339; empty when the schedule never fires again, and
+	// always for a harness with no schedule.
 	NextRun string `json:"next_run,omitempty"`
-	CatchUp bool   `json:"catch_up,omitempty"`
+	// Triggers are the harness's trigger sources, each with its state.
+	Triggers []TriggerBinding `json:"triggers,omitempty"`
+	CatchUp  bool             `json:"catch_up,omitempty"`
 	// TimeoutMs bounds each run; 0 means no limit.
 	TimeoutMs int64  `json:"timeout_ms"`
 	OnOverlap string `json:"on_overlap"`
@@ -661,6 +755,13 @@ type DaemonInfo struct {
 	// allowlist, ADR-0008).
 	SshAddr string `json:"ssh_addr,omitempty"`
 	SshKeys int    `json:"ssh_keys,omitempty"`
+	// WebhookAddr is the bound address of the running webhook listener
+	// (SPEC-0014 REQ "Webhook Listener"), empty when none is running; and
+	// WebhookTLS whether it serves HTTPS. Reported from what actually bound,
+	// like SshAddr, so doctor judges the listener rather than a config the
+	// daemon's own flag or environment may have overridden.
+	WebhookAddr string `json:"webhook_addr,omitempty"`
+	WebhookTLS  bool   `json:"webhook_tls,omitempty"`
 }
 
 // ---- Structured errors (SPEC-0002 REQ "Control Operations") --------------
@@ -763,6 +864,11 @@ const (
 	// transition (SPEC-0012 REQ "Operating Hours Visibility"). Carries InHours
 	// and HoursNext (empty when the expression covers the entire week).
 	EvHoursChanged EventKind = "harness_hours_changed"
+
+	// EvTriggerSourceChanged is emitted on every trigger source state
+	// transition, in order per source (SPEC-0014 REQ "Trigger Visibility").
+	// Carries Source, SourceKind, State and, for error and backoff, Error.
+	EvTriggerSourceChanged EventKind = "trigger_source_changed"
 )
 
 // EventMsg is a pushed EVENT frame body. Only the fields relevant to Kind are
@@ -793,6 +899,17 @@ type EventMsg struct {
 	// the next flip, empty when OperatingHours covers the entire week.
 	InHours   bool   `json:"in_hours,omitempty"`
 	HoursNext string `json:"hours_next,omitempty"`
+
+	// Source is the trigger source reference: the source that changed on
+	// trigger_source_changed, and the source behind the run on job_run_*
+	// (SPEC-0014 REQ "Trigger Visibility"). SourceKind, State and Error are
+	// trigger_source_changed's. SourceKind is REQ's `kind`, renamed because
+	// Kind above already names the event; Error is scrubbed of credentials
+	// daemon-side.
+	Source     string `json:"source,omitempty"`
+	SourceKind string `json:"source_kind,omitempty"`
+	State      string `json:"state,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // ---- Attach data plane (SPEC-0002 REQ "Attach Session") ------------------

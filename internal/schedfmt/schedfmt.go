@@ -376,13 +376,57 @@ func cronDayName(dow string) string {
 // schedule was removed.
 const ArmedLabel = "armed"
 
-// IsArmed reports whether this state/schedule pair is a scheduled harness
-// waiting for its next firing — the one combination StateLabel renames.
-// Callers use it to pick amber over the stopped color; every other state of a
-// scheduled harness (running, failed, degraded) keeps its own color, because
-// each still means exactly what it says.
-func IsArmed(state, schedule string) bool {
-	return schedule != "" && core.State(state) == core.StateStopped
+// Triggered Harness Presentation
+//
+// A harness fired only by trigger sources (SPEC-0014 `triggers`, no
+// `schedule`) is a one-shot exactly as a cron one is: config forces it
+// disabled, it spends its life stopped, and it runs when its source hears
+// something. So it is armed, not stopped and not "disabled" — SPEC-0014 REQ
+// "Trigger Visibility" requires every listing to say so, as SPEC-0008 REQ
+// "Schedule Visibility" does for schedules.
+//
+// The functions below take a FIRING key rather than a bare schedule so one
+// parameter carries both: the schedule when there is one, TriggeredFiring
+// when trigger sources are all that fire the harness, "" for neither. Firing
+// builds it. A schedule wins when both are set, because it is the one with a
+// next window, and the clock is the more specific glyph.
+//
+// @joestump 09/24/2026 - Added for stump.wtf/harness#476.
+
+// TriggeredFiring is the firing key of a harness only trigger sources fire.
+// It cannot collide with a schedule: "@triggers" is not a cron descriptor, and
+// config refuses a schedule that does not parse.
+const TriggeredFiring = "@triggers"
+
+// TriggerGlyph is what a harness only trigger sources fire shows in place of
+// its state glyph, as a scheduled one shows the clock. One cell wide, like the
+// state glyphs, so a table column does not shift.
+const TriggerGlyph = "↯"
+
+// Firing returns the firing key a harness is presented by: its schedule when
+// it has one, TriggeredFiring when it has only triggers, "" for neither.
+func Firing(schedule string, triggered bool) string {
+	switch {
+	case schedule != "":
+		return schedule
+	case triggered:
+		return TriggeredFiring
+	}
+	return ""
+}
+
+// TriggersLabel renders a harness's trigger sources for a listing:
+// "webhook.ci, channel.sb", or "" for none.
+func TriggersLabel(refs []string) string { return strings.Join(refs, ", ") }
+
+// IsArmed reports whether this state/firing pair is a triggered harness —
+// scheduled, event-fired, or both — waiting for its next firing: the one
+// combination StateLabel renames. Callers use it to pick amber over the
+// stopped color; every other state of a triggered harness (running, failed,
+// degraded) keeps its own color, because each still means exactly what it
+// says.
+func IsArmed(state, firing string) bool {
+	return firing != "" && core.State(state) == core.StateStopped
 }
 
 // OffHoursLabel is what a held gated harness is called instead of "stopped".
@@ -419,13 +463,13 @@ func IsOffHours(state string, held bool) bool {
 // only once the process actually stops) but its true state is not yet
 // StateStopped, so IsOffHours never matches it anyway — the order here just
 // keeps that reasoning in one place instead of relying on it implicitly.
-func StateLabel(state, schedule string, held, closing bool) string {
+func StateLabel(state, firing string, held, closing bool) string {
 	switch {
 	case closing:
 		return ClosingLabel
 	case IsOffHours(state, held):
 		return OffHoursLabel
-	case IsArmed(state, schedule):
+	case IsArmed(state, firing):
 		return ArmedLabel
 	}
 	return state
@@ -437,16 +481,21 @@ func StateLabel(state, schedule string, held, closing bool) string {
 const ScheduleGlyph = "⏱"
 
 // Glyph returns the status glyph for a harness: the clock for anything with a
-// schedule, otherwise the SPEC-0003 state glyph. An unknown state falls back
-// to a neutral bullet so a row is never blank.
+// schedule, TriggerGlyph for one only trigger sources fire, otherwise the
+// SPEC-0003 state glyph. An unknown state falls back to a neutral bullet so a
+// row is never blank. firing is Firing's key.
 //
 // Here rather than per-surface for the same reason StateLabel is: `harness
 // list` swapped in the clock, the cockpit did not, so the two surfaces drew
 // the same harness with different icons — the exact drift this package was
 // extracted to prevent. A caller that renders its own live spinner for the
 // transient states (the TUI does) picks that before consulting this.
-func Glyph(state, schedule string) string {
-	if schedule != "" {
+func Glyph(state, firing string) string {
+	switch firing {
+	case "":
+	case TriggeredFiring:
+		return TriggerGlyph
+	default:
 		return ScheduleGlyph
 	}
 	s := core.State(state)

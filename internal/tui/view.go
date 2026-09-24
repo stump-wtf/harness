@@ -400,6 +400,10 @@ const minWhatWidth = 8
 // mono terminal is fully legible (SPEC-0001 REQ "State Presentation").
 func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 	st := core.State(h.State)
+	// The firing key, not the bare schedule: a harness only trigger sources
+	// fire is armed exactly as a scheduled one is, and must not read as
+	// "stopped (disabled)" (SPEC-0014 REQ "Trigger Visibility").
+	firing := schedfmt.Firing(h.Schedule, len(h.Triggers) > 0)
 	// Transient states get the live spinner frame in place of the static
 	// glyph so the row reads as "alive" while the harness is booting/
 	// bouncing (SPEC-0001 REQ "State Presentation": cyan + spinner).
@@ -415,7 +419,7 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 		// schedfmt.Glyph, not theme.Glyph: a scheduled harness wears the clock
 		// on EVERY surface. Deriving the glyph from the state alone here drew
 		// the same cron job with ⏱ in `harness list` and ○ in the cockpit.
-		glyph = m.theme.StateStyle(st).Render(schedfmt.Glyph(h.State, h.Schedule))
+		glyph = m.theme.StateStyle(st).Render(schedfmt.Glyph(h.State, firing))
 	}
 	name := h.Name
 	held, closing := h.Held, h.ClosingUntil != ""
@@ -424,22 +428,23 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 	// same way, and one mid graceful close is "closing" (outranks off-hours).
 	// Shared with `harness list` via schedfmt so the surfaces never phrase the
 	// same harness two ways (SPEC-0012 REQ "Operating Hours Visibility").
-	state := schedfmt.StateLabel(h.State, h.Schedule, held, closing)
+	state := schedfmt.StateLabel(h.State, firing, held, closing)
 	switch {
 	case closing:
-		glyph = m.theme.ClosingStyle().Render(schedfmt.Glyph(h.State, h.Schedule))
+		glyph = m.theme.ClosingStyle().Render(schedfmt.Glyph(h.State, firing))
 	case schedfmt.IsOffHours(h.State, held):
-		glyph = m.theme.IdleStyle().Render(schedfmt.Glyph(h.State, h.Schedule))
-	case schedfmt.IsArmed(h.State, h.Schedule):
-		glyph = m.theme.IdleStyle().Render(schedfmt.Glyph(h.State, h.Schedule))
+		glyph = m.theme.IdleStyle().Render(schedfmt.Glyph(h.State, firing))
+	case schedfmt.IsArmed(h.State, firing):
+		glyph = m.theme.IdleStyle().Render(schedfmt.Glyph(h.State, firing))
 	}
 	switch {
-	case h.Schedule != "":
-		// A scheduled one-shot is ALWAYS Enabled=false — config rejects
-		// `schedule` alongside `enabled = true` — so the disabled label would
-		// be wrong on every cron job, reading as "someone turned this off"
-		// for a harness that fires on its own (ADR-0013). The clock glyph and
-		// the armed label already say it is scheduled, so no suffix is added.
+	case firing != "":
+		// A triggered one-shot is ALWAYS Enabled=false — config rejects
+		// `schedule` or `triggers` alongside `enabled = true` — so the
+		// disabled label would be wrong on every one, reading as "someone
+		// turned this off" for a harness that fires on its own (ADR-0013,
+		// ADR-0021). The glyph and the armed label already say it is
+		// triggered, so no suffix is added.
 	case !h.Enabled:
 		state += " (disabled)"
 	}
@@ -772,7 +777,7 @@ func (m *Model) viewStatusBar() string {
 		// Schedule-aware, like every other listing surface: attached to an
 		// idle cron job this said "○ stopped" in pink while `harness list`
 		// and the dashboard row beside it both said "⏱ idle" in amber.
-		stateText = " " + m.theme.RenderHarnessState(h.State, h.Schedule, h.Held, h.ClosingUntil != "")
+		stateText = " " + m.theme.RenderHarnessState(h.State, schedfmt.Firing(h.Schedule, len(h.Triggers) > 0), h.Held, h.ClosingUntil != "")
 	}
 	// The hop flash reverses the identity segment briefly.
 	identStyle := m.theme.Ribbon()

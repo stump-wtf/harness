@@ -49,6 +49,13 @@ type Status struct {
 	Reason string
 	// Since is when the state last changed.
 	Since time.Time
+	// DownSince is when a channel source stopped being connected — or, for
+	// one that has never connected, when it first tried. Zero while
+	// connected, and for a source with no session. It is the answer to REQ
+	// "Trigger Visibility"'s "the time it left connected", which Since
+	// cannot give: a source in an outage cycles backoff → connecting →
+	// backoff, and Since moves with every cycle.
+	DownSince time.Time
 	// LastEvent is when this source last produced a firing, zero for never.
 	LastEvent time.Time
 	// Events counts valid events this source has produced.
@@ -56,6 +63,12 @@ type Status struct {
 	// Invalid counts messages dropped for violating REQ "Channel
 	// Notification Handling".
 	Invalid int
+	// Counts is every REQ "Trigger Metrics" outcome's count since the daemon
+	// started, zeros included. Events and Invalid are the fired and invalid
+	// entries of it. It survives a reload that replaces the source's session:
+	// "since daemon start" means since the daemon started, not since the
+	// last token rotation.
+	Counts map[trigger.Outcome]int
 }
 
 // sourceState is the manager's mutable record for one source.
@@ -125,7 +138,7 @@ func (m *Manager) startSessionLocked(ctx context.Context, ref string, src core.C
 	sctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	st := &sourceState{
-		status:   Status{Source: ref, Kind: core.SourceKindChannel, State: trigger.StateConnecting, Since: time.Now()},
+		status:   Status{Source: ref, Kind: core.SourceKindChannel, State: trigger.StateConnecting, Since: time.Now(), DownSince: seed.downSince},
 		cancel:   cancel,
 		done:     done,
 		identity: identityOf(src),
@@ -144,17 +157,13 @@ func (m *Manager) startSessionLocked(ctx context.Context, ref string, src core.C
 	}()
 }
 
-// notifyStatus reports a source's current status to OnState, off the lock.
+// notifyStatus queues a source's current status for OnState, which the
+// drainer delivers off the lock and in order (visibility.go).
 func (m *Manager) notifyStatus(ref string) {
 	m.mu.Lock()
-	st, notify := m.sources[ref], m.onState
-	var status Status
-	if st != nil {
-		status = st.status
-	}
-	m.mu.Unlock()
-	if st != nil && notify != nil {
-		notify(status)
+	defer m.mu.Unlock()
+	if st := m.sources[ref]; st != nil {
+		m.publishLocked(st.status)
 	}
 }
 
@@ -232,7 +241,11 @@ func (m *Manager) runSession(ctx context.Context, ref string, src core.ChannelSo
 		state, delay := trigger.StateBackoff, bo.Next()
 		reason := "the server closed the stream"
 		if err != nil {
-			reason = err.Error()
+			// Scrubbed: an error from the HTTP client quotes the request
+			// URL, query and all, and a vended endpoint's query can be its
+			// credential. The reason reaches `harness triggers` and every
+			// subscriber (REQ "Error Handling Standards").
+			reason = scrubReason(err.Error(), src)
 			if terminalState(err) == trigger.StateError {
 				// A wrong credential, a server that is not a channel server,
 				// a protocol violation: trying sooner will not fix it, and
@@ -455,12 +468,13 @@ func (h *sessionHandler) Notification(content string, meta map[string]string) {
 		ReceivedAt: time.Now().UTC(),
 		Channel:    &trigger.ChannelEvent{Content: content, Meta: meta},
 	}
-	h.m.noteEvent(h.ref)
+	// Fire counts it: every source's `fired` is counted in one place, so a
+	// webhook's and a channel's mean the same thing.
 	h.m.Fire(ev)
 }
 
 // Invalid records a dropped message. It fires nothing.
-func (h *sessionHandler) Invalid(reason string) { h.m.noteInvalid(h.ref) }
+func (h *sessionHandler) Invalid(reason string) { h.m.NoteOutcome(h.ref, trigger.OutcomeInvalid) }
 
 // closeChannels ends every session and waits for them.
 func (m *Manager) closeChannels() {
@@ -486,16 +500,21 @@ func (m *Manager) setState(ref string, state trigger.SourceState, reason string)
 		m.mu.Unlock()
 		return
 	}
-	st.status.State, st.status.Reason, st.status.Since = state, reason, time.Now()
-	status := st.status
-	notify := m.onState
-	m.mu.Unlock()
-	// Outside the lock: a handler is free to call back into Status without
-	// deadlocking, and a slow one cannot hold up the session goroutine's
-	// own lock.
-	if notify != nil {
-		notify(status)
+	now := time.Now()
+	switch {
+	case state == trigger.StateConnected:
+		st.status.DownSince = time.Time{}
+	case st.status.DownSince.IsZero():
+		// Leaving connected. Only then: backoff → connecting → backoff is
+		// one outage, and its start is what an operator needs.
+		st.status.DownSince = now
 	}
+	st.status.State, st.status.Reason, st.status.Since = state, reason, now
+	// Queued, and delivered off the lock by publishLocked's drainer: a
+	// handler is free to call back into Status without deadlocking, and a
+	// slow one cannot hold up the session goroutine.
+	m.publishLocked(st.status)
+	m.mu.Unlock()
 }
 
 // setStatusLocked records a state for a source with no session. Caller holds
@@ -504,29 +523,12 @@ func (m *Manager) setStatusLocked(ref, kind string, state trigger.SourceState, r
 	m.sources[ref] = &sourceState{status: Status{
 		Source: ref, Kind: kind, State: state, Reason: reason, Since: time.Now(),
 	}}
-	if m.onState != nil {
-		// Deferred off the lock for the reason setState explains.
-		status := m.sources[ref].status
-		notify := m.onState
-		go notify(status)
-	}
-}
-
-func (m *Manager) noteEvent(ref string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if st := m.sources[ref]; st != nil {
-		st.status.Events++
-		st.status.LastEvent = time.Now()
-	}
-}
-
-func (m *Manager) noteInvalid(ref string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if st := m.sources[ref]; st != nil {
-		st.status.Invalid++
-	}
+	// Through the same ordered queue setState uses. This used to be a `go
+	// notify(...)` per change, which let two quick changes to one source —
+	// `no_listener` at Start, `listening` a moment later when the listener
+	// binds — reach a subscriber in either order, and a subscriber takes the
+	// last change it saw as the truth.
+	m.publishLocked(m.sources[ref].status)
 }
 
 // Status returns a snapshot of every source's state, sorted by reference so a
@@ -536,7 +538,7 @@ func (m *Manager) Status() []Status {
 	defer m.mu.Unlock()
 	out := make([]Status, 0, len(m.sources))
 	for _, st := range m.sources {
-		out = append(out, st.status)
+		out = append(out, m.withStatsLocked(st.status))
 	}
 	sortStatus(out)
 	return out
@@ -550,7 +552,7 @@ func (m *Manager) StatusOf(ref string) (Status, bool) {
 	if st == nil {
 		return Status{}, false
 	}
-	return st.status, true
+	return m.withStatsLocked(st.status), true
 }
 
 // sortStatus orders statuses by source reference.
