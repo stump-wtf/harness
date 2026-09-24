@@ -57,9 +57,9 @@ type Review = forge.Review
 
 Every signature in the stories keeps its spelling: `mergetrain.PullRequest`,
 `mergetrain.Eligible(pr)`, `forge.Forge`, `VerifyLanded(ctx, f forge.Forge, …)`.
-Tests in `internal/mergetrain` that use the fake are in the external
-`mergetrain_test` package, because `forge/fake` imports `forge`, which a
-`package mergetrain` test importing the fake would otherwise cycle through.
+`internal/forge` imports nothing internal, and `internal/forge/fake` imports
+only `internal/forge`, so tests in `package mergetrain` can use the fake
+directly.
 
 ### The types
 
