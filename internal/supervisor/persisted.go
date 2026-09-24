@@ -41,11 +41,12 @@ type persistedState struct {
 	// older daemon ignores the key, and a newer one reading an older file just
 	// arms every schedule from now.
 	Schedules map[string]persistedSchedule `json:"schedules,omitempty"`
-	// Runs holds each scheduled harness's bounded run history (SPEC-0008 REQ
-	// "Run History"), keyed by harness name. Kept raw and decoded per harness
-	// (Manager.restoreRunsLocked), so a malformed history costs that one
-	// harness its records instead of failing the whole document. Additive: an
-	// older daemon ignores the key.
+	// Runs holds each harness's run id allocator, {"last_run_id": N}, keyed by
+	// harness name. The records themselves live in the run ledger (SPEC-0022
+	// REQ-13); a pre-ledger file's record lists are read once, for the
+	// first-boot import, and dropped by the next save. Kept raw and decoded
+	// per harness (Manager.restoreRunsLocked), so a malformed entry costs that
+	// one harness instead of failing the whole document.
 	Runs json.RawMessage `json:"runs,omitempty"`
 }
 

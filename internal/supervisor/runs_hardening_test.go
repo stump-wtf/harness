@@ -152,8 +152,8 @@ func TestRunTimeoutDoesNotRespawn(t *testing.T) {
 }
 
 // TestRunIDsSurviveRestartWithoutLogs: when the newest ids belong to records
-// with no log (a missed window) and older logs have been pruned, only the
-// persisted last id stands between a restart and a reissued id.
+// with no log (a missed window) and older logs have been pruned, the log floor
+// cannot see them: the persisted last id, and the ledger, must.
 func TestRunIDsSurviveRestartWithoutLogs(t *testing.T) {
 	e := newRunsEnv(t)
 	h := sweep("sweep", "exit 0")
@@ -163,30 +163,35 @@ func TestRunIDsSurviveRestartWithoutLogs(t *testing.T) {
 
 	m.StartRun("sweep", RunRequest{Trigger: TriggerSchedule})
 	waitRuns(t, m, "sweep", "run 1", outcomesAre(OutcomeSuccess))
+	m.StartRun("sweep", RunRequest{Trigger: TriggerSchedule})
+	waitRuns(t, m, "sweep", "run 2", outcomesAre(OutcomeSuccess, OutcomeSuccess))
 	now := time.Now()
 	if err := m.RecordMissed("sweep", now, now, 1, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(m.RunLogPath("sweep", 1)); !os.IsNotExist(err) {
-		t.Fatalf("run 1's log should have been pruned with its record: %v", err)
+		t.Fatalf("run 1's log should have been pruned by keep_runs = 1: %v", err)
+	}
+	if r, ok := m.Run("sweep", 1); !ok || !r.LogPruned {
+		t.Errorf("run 1 = %+v, want its record kept and reading log_pruned", r)
 	}
 	closeM()
 
 	m2, _ := e.manager(t, cfg, fastPolicy())
 	m2.StartRun("sweep", RunRequest{Trigger: TriggerSchedule})
 	rs := waitRuns(t, m2, "sweep", "run after restart finishes", func(rs []RunRecord) bool {
-		return len(rs) == 1 && rs[0].Outcome == OutcomeSuccess
+		return len(rs) == 4 && rs[3].Outcome == OutcomeSuccess
 	})
-	if rs[0].RunID != 3 {
-		t.Errorf("run id after restart = %d, want 3 (after missed record 2)", rs[0].RunID)
+	if rs[3].RunID != 4 {
+		t.Errorf("run id after restart = %d, want 4 (after missed record 3)", rs[3].RunID)
 	}
 }
 
-// TestRunHistoryPruningUnderConcurrency: appends from the actor loop (firings
-// the skip policy drops) and from outside it (missed windows) race with each
-// other and with readers. The bound holds, the run in flight survives with its
-// log, ids are unique and in order, and no other log is left behind.
-func TestRunHistoryPruningUnderConcurrency(t *testing.T) {
+// TestRunHistoryUnderConcurrency: appends from the actor loop (firings the
+// skip policy drops) and from outside it (missed windows) race with each other
+// and with readers. Every decision is recorded exactly once, ids are unique and
+// in order, the run in flight keeps its log, and nothing else leaves one.
+func TestRunHistoryUnderConcurrency(t *testing.T) {
 	e := newRunsEnv(t)
 	h := sweep("busy", "sleep 30")
 	h.KeepRuns = 3
@@ -216,28 +221,32 @@ func TestRunHistoryPruningUnderConcurrency(t *testing.T) {
 	wg.Wait()
 
 	rs := m.Runs("busy")
-	if len(rs) != 3 || rs[0].RunID != 1 || rs[0].Outcome != OutcomeRunning {
-		t.Fatalf("history = %+v, want 3 records led by run 1 in flight", rs)
+	if len(rs) == 0 || rs[0].RunID != 1 || rs[0].Outcome != OutcomeRunning {
+		t.Fatalf("history = %+v, want run 1 still in flight first", rs)
 	}
 	for i := 1; i < len(rs); i++ {
 		if rs[i].RunID <= rs[i-1].RunID {
 			t.Errorf("ids out of order: %d then %d", rs[i-1].RunID, rs[i].RunID)
 		}
 	}
-	// SPEC-0014's skip coalescing changed what this bound can be. The 80
-	// schedule firings no longer allocate 80 ids: they collapse into one open
-	// record per run in flight, which this test's keep_runs = 3 can prune out
-	// from under them — and a pruned record is re-opened rather than losing
-	// the skip. So the exact total is no longer deterministic.
-	//
-	// What must still hold, and is what this test was always about, is that
-	// no id is lost or reissued: the ids are strictly increasing (above), the
-	// highest is at least one per missed record — those always allocate — and
-	// never more than one per firing.
-	missed := workers / 2 * each
-	if last := rs[len(rs)-1].RunID; last <= missed || last > 1+workers*each {
-		t.Errorf("last id = %d, want more than %d (one per missed record) and at most %d (one per firing): an id was lost or reissued",
-			last, missed, 1+workers*each)
+	// With records no longer pruned, SPEC-0014's coalescing is exact again:
+	// the 80 dropped firings are ONE skipped record counting 80, and each of
+	// the 80 missed windows is a record of its own.
+	firings := workers / 2 * each
+	var missed, skipped []RunRecord
+	for _, r := range rs {
+		switch r.Outcome {
+		case OutcomeMissed:
+			missed = append(missed, r)
+		case OutcomeSkipped:
+			skipped = append(skipped, r)
+		}
+	}
+	if len(missed) != firings || len(skipped) != 1 || skipped[0].Coalesced != firings {
+		t.Errorf("missed = %d, skipped = %+v; want %d missed and one skip coalescing %d", len(missed), skipped, firings, firings)
+	}
+	if last := rs[len(rs)-1].RunID; last != 2+firings {
+		t.Errorf("last id = %d, want %d: an id was lost or reissued", last, 2+firings)
 	}
 	entries, err := os.ReadDir(filepath.Join(e.jobs, "busy"))
 	if err != nil {

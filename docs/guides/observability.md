@@ -113,7 +113,8 @@ It lives on disk too, so you can read it with ordinary tools:
 |------|-------|
 | `~/.local/state/harness/logs/NAME.log` | everything a harness printed, across runs (rotated) |
 | `~/.local/state/harness/jobs/NAME/RUN_ID.log` | one scheduled run's output and lifecycle |
-| `~/.local/state/harness/state.json` | intent, and the run history for scheduled harnesses |
+| `~/.local/state/harness/state.json` | intent, and each harness's last run id |
+| `~/.local/state/harness/ledger/YYYY-MM-DD.jsonl` | the run ledger: one record per run, for every harness |
 
 :::caution Check raw output before you share it
 

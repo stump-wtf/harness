@@ -468,7 +468,7 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.held = false    // stopped by the operator now, not by its hours (SPEC-0012)
 		s.closing = false // a stop never waits on turn state (SPEC-0012)
 		s.cancelRestartTimer()
-		s.dropQueued(OutcomeCancelled)
+		s.dropQueued(OutcomeCancelled, "")
 		if s.hasProcess() {
 			s.gracefulStop()
 			s.finishRun(OutcomeCancelled, &s.lastExitCode)
@@ -562,10 +562,10 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.cancelRestartTimer()
 		// A run the daemon goes down under is interrupted, not failed: it did
 		// not end on its own terms (SPEC-0008 REQ "Run History").
-		s.dropQueued(OutcomeInterrupted)
+		s.dropQueued(OutcomeInterrupted, ReasonShutdown)
 		if s.hasProcess() {
 			s.gracefulStop()
-			s.finishRun(OutcomeInterrupted, &s.lastExitCode)
+			s.finishRunWith(OutcomeInterrupted, &s.lastExitCode, ReasonShutdown)
 		}
 		s.closeLog()
 		return true
@@ -838,7 +838,7 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		if spawnFailed || code != 0 {
 			outcome = OutcomeFailed
 		}
-		s.dropQueued(OutcomeSkipped)
+		s.dropQueued(OutcomeSkipped, "")
 		s.finishRun(outcome, exit)
 	}
 

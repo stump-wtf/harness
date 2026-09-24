@@ -165,7 +165,7 @@ func (s *Supervisor) hold(enable bool, mode core.HoursShutdownMode, closeAt time
 	}
 	// (1) cancel any pending respawn; (5) crash-loop bookkeeping reset.
 	s.cancelRestartTimer()
-	s.dropQueued(OutcomeCancelled)
+	s.dropQueued(OutcomeCancelled, "")
 	s.resetCrashState()
 	s.consecFailures = 0
 	s.held = true
