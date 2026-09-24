@@ -189,6 +189,25 @@ func TestBearerDeliveryFires(t *testing.T) {
 	}
 }
 
+// TestReceivedAtComesFromTheClock: the event is stamped from Options.Now, not
+// a wall-clock read buried in the handler.
+func TestReceivedAtComesFromTheClock(t *testing.T) {
+	pinned := time.Date(2031, 2, 3, 4, 5, 6, 0, time.UTC)
+	f := &fakeFirer{}
+	srv, _ := startServer(t, Options{Firer: f, Now: func() time.Time { return pinned }}, testConfig([]core.WebhookSource{bearerSource("ci")}, "ci"))
+	resp, body := do(t, "POST", "http://"+srv.Addr()+"/hooks/ci", bearer(), `{}`)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	evs := f.fired()
+	if len(evs) != 1 || !evs[0].ReceivedAt.Equal(pinned) {
+		t.Fatalf("received_at = %v, want %v", evs[0].ReceivedAt, pinned)
+	}
+	if !strings.Contains(string(body), `"event_id":"wh-20310203T040506.000-`) {
+		t.Errorf("daemon-made event_id is not from the clock: %s", body)
+	}
+}
+
 // TestUnusableDeliveryIDIsReplaced: a sender-supplied delivery ID becomes the
 // run record's event_id only when it looks like an ID.
 func TestUnusableDeliveryIDIsReplaced(t *testing.T) {
@@ -750,4 +769,3 @@ func selfSigned(t *testing.T) (certFile, keyFile string) {
 	}
 	return certFile, keyFile
 }
-
