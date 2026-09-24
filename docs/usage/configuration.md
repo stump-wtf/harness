@@ -27,9 +27,10 @@ enabled = false
 
 | Field | Meaning |
 |-------|---------|
-| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `generic`, `command`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args. To run any other program, use `command` with an `argv` — see [The `command` kind](#the-command-kind). `generic` takes no `prompt` or `prompt_file` — see [Agent adapters](#agent-adapters) |
+| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `pi`, `omp`, `generic`, `command`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args. To run any other program, use `command` with an `argv` — see [The `command` kind](#the-command-kind). `generic` takes no `prompt` or `prompt_file` — see [Agent adapters](#agent-adapters) |
 | `args` | argument list appended after the adapter's executable. Not accepted on `command`, which takes `argv` instead |
 | `argv` | `command` only: the whole process, `argv[0]` first, exec'd **without a shell**. See [The `command` kind](#the-command-kind) |
+| `transcripts` | `command` only: observe the harness's sessions as those of `claude-code`, `crush`, `codex`, `pi` or `omp`. See [Binding transcripts](#binding-transcripts) |
 | `workdir` | working directory (**required** for most commands) |
 | `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config) |
 | `description` | free-text shown in the dashboard |
@@ -89,6 +90,8 @@ is dropped, not emulated:
 | `crush` | `crush [--yolo] run [--quiet] [--model M] <prompt>` | `max_turns` (Crush has no turn cap) |
 | `claude-code` | `claude -p [--dangerously-skip-permissions] [--model M] [--max-turns N] --verbose --output-format stream-json <prompt>` | `quiet` (`-p` is already headless) |
 | `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
+| `pi` | `pi --print [--model M] <prompt>` | `auto_accept` (Pi has no permission prompts), `max_turns`, `quiet` (`--print` is already headless) |
+| `omp` | `omp --print [--model M] <prompt>` | `auto_accept`, `max_turns`, `quiet`, as for `pi` |
 | `generic` | none — a `prompt` or `prompt_file` on `generic` is a config error | — |
 
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
@@ -314,13 +317,14 @@ columns carry it.
 ## Agent adapters
 
 The `harness` key is a **required** enum selecting the adapter (ADR-0011,
-SPEC-0006): `crush`, `claude-code`, `codex`, `generic`, `command`. It has no default —
+SPEC-0006): `crush`, `claude-code`, `codex`, `pi`, `omp`, `generic`, `command`. It has no default —
 what a harness runs is the most consequential thing it declares, so a table
 that omits the key is a config error rather than an agent nobody asked for:
 
 ```
 harness "web": missing required key "harness" (want one of: crush, claude-code,
-codex, generic, command — use "command" with argv = ["…"] for an arbitrary program)
+codex, pi, omp, generic, command — use "command" with argv = ["…"] for an arbitrary
+program)
 ```
  The
 adapter owns both the tool-specific behaviour (trajectory discovery) and the
@@ -338,7 +342,7 @@ scratchpad and the edit form refuse it too:
 
 ```
 harness "triage": "generic" runs sh and has no prompt synthesis, so it takes no
-"prompt"; use harness = "crush"|"claude-code"|"codex" for a prompt one-shot, or
+"prompt"; use harness = "crush"|"claude-code"|"codex"|"pi"|"omp" for a prompt one-shot, or
 harness = "command" with argv to run another program without a shell
 ```
 
@@ -380,14 +384,81 @@ enabled = true
   `restart_delay` and `operating_hours` with the same defaults as `generic`
   (`restart = "always"`). `prompt`, `prompt_file`, `schedule` and `triggers`
   are refused for now; command one-shots are still to come (issue #500).
-- Like `generic`, it reports no native trajectory (scrollback only).
+- Like `generic`, it reports no native trajectory (scrollback only), unless it
+  binds one with `transcripts` (below).
 - It works in a project `harness.toml`, through `harness up`, and in the TUI
   edit form, where `argv` is edited as the same TOML array. `harness describe`
   shows the kind and the argv exactly as written.
 
-Pi, OMP or any other agent CLI not listed above runs this way, as a resident
-harness: `harness = "command"`, `argv = ["omp", …]`. Until command one-shots
-and the `pi`/`omp` adapters ship, it cannot be scheduled or triggered.
+Pi and OMP have adapters of their own (below). Any other agent CLI runs this
+way, as a resident harness, with `transcripts` if it writes one of the formats
+Harness reads.
+
+#### Binding transcripts
+
+A `command` harness that runs an agent CLI by hand can declare whose
+transcripts it writes, so the daemon discovers its sessions, correlates them
+to its runs, attributes its tool calls and counts them in the model-call
+metrics exactly as it does for that adapter's own harnesses (SPEC-0017 REQ-4):
+
+```toml
+[harness.claude-by-hand]
+harness = "command"
+argv = ["claude", "--remote-control", "--continue"]
+transcripts = "claude-code"
+workdir = "~/src/app"
+enabled = true
+```
+
+- The value is one of `claude-code`, `crush`, `codex`, `pi` or `omp`; anything
+  else fails to load, listing those.
+- It is accepted on `command` only. An adapter kind already binds its own
+  transcripts, so `transcripts` on `crush` (even `transcripts = "crush"`) is a
+  config error.
+- It changes what is observed, never what runs: the argv is exec'd exactly as
+  written. Store relocation follows the named adapter's rules, read from the
+  harness's `env_file` (`CLAUDE_CONFIG_DIR`, `CRUSH_GLOBAL_DATA`,
+  `CODEX_HOME`, `PI_CODING_AGENT_DIR`), and crush's `--data-dir` in `argv` is
+  not read.
+- It is the fallback when an adapter's flags drift from the CLI: run the CLI
+  with the flags it now takes, and keep the observation.
+- `harness describe` shows it next to the argv.
+
+### Pi and OMP
+
+`pi` runs the [Pi coding agent](https://github.com/badlogic/pi-mono) and `omp`
+runs OMP ([oh-my-pi](https://github.com/can1357/oh-my-pi)), a Pi fork. They are
+ordinary adapters: a resident harness runs `pi` or `omp` with `args` appended,
+and a prompt one-shot runs the print mode in the table above, with `model`
+passed as `--model` in the CLI's `provider/id` form. `auto_accept` and
+`max_turns` are accepted and add nothing, since neither CLI prompts for tool
+permission or has a turn budget.
+
+```toml
+[harness.omp-review]
+harness = "omp"
+model = "openrouter/z-ai/glm-5.3-flash"
+prompt = "review the open pull requests"
+schedule = "0 7 * * 1-5"
+workdir = "~/src/app"
+```
+
+The flags were checked against the source of Pi v0.87.1 and OMP v18.3.0.
+
+**Observation.** A `pi` harness's sessions are read from
+`$PI_CODING_AGENT_DIR/sessions`, or `~/.pi/agent/sessions` when the variable is
+unset, resolved from the harness's own `env_file`. They are attributed to it
+and counted in the model-call metrics.
+
+⚠️ **OMP is not observed yet.** OMP writes its sessions under
+`~/.omp/agent/sessions` (it reads the same `PI_CODING_AGENT_DIR` variable) in a
+layout the session reader Harness uses does not parse yet: each file opens with
+a fixed-width title line before the session header. Until that reader learns
+the layout, an `omp` harness runs and is supervised normally but has no
+trajectory, no attributed tool calls and no model-call series (they are
+absent, not zero), and `harness logs` shows its output log. Binding
+`transcripts = "omp"` on a `command` harness gives the same result for the same
+reason.
 
 ```toml
 [harness.my-agent]
