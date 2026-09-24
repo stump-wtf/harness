@@ -747,6 +747,11 @@ tokens then cross the network in cleartext. Bind loopback behind a
 TLS-terminating proxy, or set both TLS files.
 :::
 
+`harness triggers` shows each source's state — `listening`, or `no_listener`
+when no address is set — and `harness doctor` flags both a non-loopback bind
+without TLS and a bound source no listener serves (see
+[CLI → Trigger sources](./cli#trigger-sources)).
+
 Changing `webhook_listen` or the TLS files needs a daemon restart; a reload
 logs that a restart is required and keeps serving on the old settings. Route
 changes (a source added, disabled, rebound) apply on reload. On shutdown the

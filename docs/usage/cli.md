@@ -71,8 +71,15 @@ next firing reads `⏱ armed` rather than `stopped`, because it is loaded and
 will fire on its own; `harness describe` reports `armed` instead of an
 `enabled` that is false for every scheduled harness by construction.
 
+A harness fired by trigger sources (`triggers`, see
+[Trigger sources](#trigger-sources)) is a one-shot too, and reads the same
+way: `↯ armed` between firings, never `stopped` or `(disabled)`. Its SCHEDULE
+column lists its sources (`webhook.ci, channel.sb`, after the cadence when it
+also has a `schedule`), and NEXT reads `on event` when there is no window to
+count down to.
+
 ```sh
-harness jobs                    # every scheduled harness: next run, last run, consecutive failures
+harness jobs                    # every triggered harness: sources, next run, last run, consecutive failures
 harness runs <name>             # its run history, newest first (--limit N, default 20)
 harness trigger <name>          # run it now — on_overlap applies, as for a firing
 harness trigger <name> --wait   # …stream the run's log and exit with its exit code
@@ -90,6 +97,61 @@ a run already in flight, `--wait` attaches to the oldest manual, non-skipped run
 newer than the moment it was issued — so if two manual triggers fire
 concurrently, either may pick up the other's run and both stream the same log.
 Scheduled firings never collide this way.
+
+`jobs` lists every harness with a `schedule`, `triggers`, or both. Its
+TRIGGERS column shows each source with that source's state
+(`webhook.ci listening, channel.sb backoff`), so a job that never runs starts
+its explanation in the row; a harness with no `schedule` shows no next
+window.
+
+## Trigger sources
+
+```sh
+harness triggers                # every [channel.*] / [webhook.*] source
+harness triggers --json         # …with every per-outcome counter
+```
+
+`harness triggers` answers "did anything hear the doorbell?" — the one
+question no run record can, because a source that never fired leaves none.
+One row per declared source:
+
+| Column | Meaning |
+|---|---|
+| SOURCE | The reference a harness's `triggers` names, e.g. `channel.sb` |
+| STATE | `connecting`, `connected`, `backoff` or `error` for a channel; `listening` or `no_listener` for a webhook; `disabled` (`enabled = false`) or `unbound` (no harness lists it) for either |
+| FOR | How long it has been in that state. For a channel that is not connected, how long it has been **down** — `down 10m` — measured from when it left `connected`, not from its latest retry |
+| LAST EVENT | When it last fired |
+| FIRED | Events fired since the daemon started |
+| HARNESSES | The harnesses it fires, in config order |
+
+Under the table, each source gets its endpoint — a channel's `url` with the
+query removed and its header **names**, or a webhook's `POST /hooks/<name>`,
+`verify` scheme and `events` — then its last error, and any deliveries it
+dropped by outcome. `--json` carries the same fields plus every counter
+(`fired`, `ignored`, `duplicate`, `unauthorized`, `too_large`,
+`rate_limited`, `invalid`), zeros included.
+
+No output of `triggers`, `describe` or the event stream carries a header value,
+a URL query or a secret: the daemon scrubs a channel's last error of both
+before it leaves the daemon, because Go's HTTP client quotes the request URL
+in its errors. `describe` lists a harness's triggers with each source's state.
+
+A client subscribed to events receives `trigger_source_changed` (`source`,
+`source_kind`, `state`, `error`) on every source state change, in order, and
+`job_run_started`/`job_run_finished` carry the `source` that fired the run.
+
+`harness doctor` adds a `triggers` row that flags the setups that fail
+quietly: a webhook listener bound off loopback without TLS, a `[webhook.*]`
+source no listener serves (`no_listener`), a source `env_file` readable by
+group or other, and a channel source in `error`. With the daemon down it still
+checks what the config alone can show.
+
+:::note Rejected webhook deliveries are not counted yet
+`fired` and a channel's `invalid` are counted today. A webhook delivery the
+listener rejects — `unauthorized`, `too_large`, `rate_limited`, `duplicate`,
+`ignored` — is answered and logged but not yet counted, so those counters read
+`0` until the listener reports them.
+:::
 
 ## Operating hours
 
