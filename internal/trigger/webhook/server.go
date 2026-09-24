@@ -112,6 +112,11 @@ type Options struct {
 	Firer Firer
 	// Log defaults to the package logger.
 	Log *log.Logger
+	// Now is the clock a delivery's received_at (and a daemon-made event
+	// ID) is stamped from. Defaults to time.Now. It is the one place this
+	// package reads the time, so the daemon can hand it the same clock the
+	// source manager and scheduler use.
+	Now func() time.Time
 
 	ReadHeaderTimeout time.Duration
 	ReadTimeout       time.Duration
@@ -131,6 +136,7 @@ type Server struct {
 	settings    Settings
 	firer       Firer
 	log         *log.Logger
+	now         func() time.Time
 	newVerifier NewVerifierFunc
 
 	// routes is the current route table, swapped whole on reload.
@@ -157,10 +163,15 @@ func New(opts Options, cfg *core.Config) *Server {
 	if nv == nil {
 		nv = NewVerifier
 	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
 	s := &Server{
 		settings:    opts.Settings,
 		firer:       opts.Firer,
 		log:         logger,
+		now:         now,
 		newVerifier: nv,
 		slots:       make(chan struct{}, orDefault(opts.MaxConcurrent, DefaultMaxConcurrent)),
 	}
@@ -366,7 +377,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ev := newEnvelope(rt, r, body)
+	ev := newEnvelope(rt, r, body, s.now().UTC())
 
 	// 6. Events.
 	if !rt.eventAllowed(ev.Webhook.Event) {
@@ -418,7 +429,7 @@ func (rt *route) eventAllowed(event string) bool {
 // the signature — and the body is stored verbatim, uninterpreted.
 // Governing: SPEC-0014 REQ "Event Delivery To The Run", REQ "Run Record
 // Fields".
-func newEnvelope(rt *route, r *http.Request, body []byte) *trigger.Envelope {
+func newEnvelope(rt *route, r *http.Request, body []byte, at time.Time) *trigger.Envelope {
 	wh := &trigger.WebhookEvent{
 		ContentType: r.Header.Get("Content-Type"),
 		Headers:     trigger.AllowedHeaders(rt.src, r.Header.Get),
@@ -432,14 +443,14 @@ func newEnvelope(rt *route, r *http.Request, body []byte) *trigger.Envelope {
 	wh.SetBody(wh.ContentType, body)
 	id := wh.Delivery
 	if !usableEventID(id) {
-		id = newEventID()
+		id = newEventID(at)
 	}
 	return &trigger.Envelope{
 		Version:    trigger.EnvelopeVersion,
 		Kind:       trigger.KindWebhook,
 		Source:     rt.ref,
 		EventID:    id,
-		ReceivedAt: time.Now().UTC(),
+		ReceivedAt: at,
 		Webhook:    wh,
 	}
 }
@@ -471,6 +482,6 @@ var eventIDs atomic.Int64
 
 // newEventID makes an ID for a delivery that carried no usable one, so two
 // such firings stay distinguishable in a run history.
-func newEventID() string {
-	return fmt.Sprintf("wh-%s-%d", time.Now().UTC().Format("20060102T150405.000"), eventIDs.Add(1))
+func newEventID(at time.Time) string {
+	return fmt.Sprintf("wh-%s-%d", at.Format("20060102T150405.000"), eventIDs.Add(1))
 }

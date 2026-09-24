@@ -80,6 +80,10 @@ const decisionError = "error"
 // firingsFrom renders the source manager's decisions for the 202. Always a
 // non-nil slice, so a fan-out that reached no harness (a reload unbound the
 // route mid-request) renders as `"firings": []` rather than disappearing.
+//
+// It is the ONLY place a source.Decision becomes response JSON, so a new
+// decision field (a skip reason such as `outside_hours`, #484) is surfaced by
+// editing this function and Firing, and nothing else.
 func firingsFrom(ds []source.Decision) []Firing {
 	out := make([]Firing, 0, len(ds))
 	for _, d := range ds {
