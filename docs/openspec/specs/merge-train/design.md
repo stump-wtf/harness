@@ -22,13 +22,13 @@ it.
 
 - A GitHub implementation. Gitea is where our CI gates merges.
 - Batching several PRs into one train commit.
-- Writing Switchboard todos (ADR-0032 E1).
+- Writing Switchboard todos (ADR-0032, Decision 5, Option 1).
 
 ## Decisions
 
 ### Package layout, and why the PR types live in `internal/forge`
 
-```
+```text
 internal/forge/            types.go   PullRequest, Review
                            forge.go   Forge, TrainSpec, TrainBranch, errors
 internal/forge/fake/       fake.go    in-memory Forge
@@ -137,7 +137,7 @@ Departures from the interface sketched in #599, each forced by ADR-0032:
 
 | Change | Why |
 |---|---|
-| `CreateBranch(name, fromSHA)` → `CreateTrainBranch(spec)` | the train commit does not exist on the forge until the train makes it; a branch-at-SHA call cannot create a merge (ADR-0032 A1) |
+| `CreateBranch(name, fromSHA)` → `CreateTrainBranch(spec)` | the train commit does not exist on the forge until the train makes it; a branch-at-SHA call cannot create a merge (ADR-0032, Decision 1, Option 1) |
 | `SquashMerge` gains `headSHA` | pins the head in the merge call itself, so the forge refuses a merge of a head that moved (REQ-7) |
 | `+ BranchHead` | `base` is read before the build and re-read before the merge (REQ-4, REQ-7, REQ-8) |
 | `+ ListComments` | the one-comment-per-head dedupe lives on the forge and survives a restart (REQ-9) |
@@ -210,7 +210,7 @@ repos = ["stump.wtf/harness"]
 base_branch = "main"
 poll_interval = "60s"
 ci_timeout = "30m"
-forge_base_url = "https://gitea.stump.rocks"
+forge_base_url = "https://gitea.example.com"
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN"   # the variable's NAME
 ```
 
@@ -232,7 +232,7 @@ A change to `[mergetrain]` takes effect at the next daemon restart, like
 
 1. Land the code with the train off (#597–#604).
 2. Add `train/**` to the pipeline's `push` trigger and a `train/*` protection
-   rule allowing only `joestump-agent` to push (#605).
+   rule allowing only the bot account to push (#605).
 3. Pilot in `report` mode on `stump.wtf/harness`, with
    `block_on_outdated_branch` still on (#605).
 4. In one change: `mode = "merge"` and `block_on_outdated_branch: false` on

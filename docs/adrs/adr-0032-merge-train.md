@@ -3,14 +3,13 @@ status: proposed
 date: 2026-09-23
 decision-makers: [joestump]
 related: [ADR-0005, ADR-0006, ADR-0008, ADR-0016]
+governs: [SPEC-0025]
 ---
 
 # ADR-0032: A merge train — one deterministic merger per repo tests the exact tree that lands, and only it moves `main`
 
-> **Not yet implemented.** Design stage for epic
-> [stump.wtf/harness#540](https://gitea.stump.rocks/stump.wtf/harness/issues/540).
-> SPEC-0025 (`docs/openspec/specs/merge-train/`) specifies the behaviour; the
-> stories #597–#605 implement it.
+> **Not yet implemented.** Design stage for epic #540. SPEC-0025 specifies the
+> behaviour; the stories #597–#605 implement it.
 
 ## Context and Problem Statement
 
@@ -37,8 +36,8 @@ Two things changed since the epic was written:
    replays a PR onto `main` server-side, CI then runs on that head, and under a
    squash merge that head is the tree that lands. That stops the replay churn
    on its own, at one CI run and one re-approval per PR per intervening merge.
-2. **D3: LLM sessions never merge.** Reviewers approve; something
-   deterministic, running as `joestump-agent`, merges.
+2. **Epic decision D3: LLM sessions never merge.** Reviewers approve; something
+   deterministic, running as a dedicated bot account, merges.
 
 So the train is no longer the only fix for churn. It is a **throughput and
 governance** component: approved work lands without an agent (or a human)
@@ -54,7 +53,7 @@ PR?
 
 - **Tested tree == merged tree.** The property the block provides today must
   survive turning the block off.
-- **No LLM merges** (D3). The merger is plain code with no model calls.
+- **No LLM merges** (epic decision D3). The merger is plain code with no model calls.
 - **Nobody's branch is rewritten.** The PR head is read, never pushed to.
 - **Loud failure.** A PR that cannot land is told so, once, with the reason; a
   failure the train cannot explain halts the train.
@@ -65,46 +64,49 @@ PR?
 
 ## Considered Options
 
-**A. How the train tree is built**
+### Decision 1 — How the train tree is built
 
-- **A1 — local git plumbing, pushed as a new `train/<pr>` branch** (chosen).
+- **Option 1 — Local git plumbing, pushed as a new `train/<pr>` branch** (chosen).
   Keep a bare cache clone per repo; `git merge-tree --write-tree <main> <head>`
   computes the merge without a work tree and exits 1 on conflict;
   `git commit-tree` makes one commit whose parent is `main`; push it to
   `refs/heads/train/<pr>`.
-- **A2 — Gitea's contents API** (`POST /repos/{o}/{r}/contents` with
+- **Option 2 — Gitea's contents API** (`POST /repos/{o}/{r}/contents` with
   `new_branch`), writing the PR's changed files onto `main`.
-- **A3 — push the train commit to the PR branch** (the rebase update, done by
+- **Option 3 — Push the train commit to the PR branch** (the rebase update, done by
   the train).
 
-**B. How the tested tree lands**
+### Decision 2 — How the tested tree lands
 
-- **B1 — API squash merge, pinned on both sides, then verified by tree**
+- **Option 1 — API squash merge, pinned on both sides, then verified by tree**
   (chosen).
-- **B2 — fast-forward `main` to the train commit** by a direct push.
+- **Option 2 — Fast-forward `main` to the train commit** by a direct push.
 
-**C. Ordering**
+### Decision 3 — Ordering
 
-- **C1 — earliest qualifying approval, then PR number** (chosen).
-- **C2 — priority label, then approval.**
-- **C3 — smallest diff first.**
+- **Option 1 — Earliest qualifying approval, then PR number** (chosen).
+- **Option 2 — Priority label, then approval.**
+- **Option 3 — Smallest diff first.**
 
-**D. The per-repo singleton**
+### Decision 4 — The per-repo singleton
 
-- **D1 — an exclusive, non-blocking `flock` on a per-repo lock file, held for
-  the driver's lifetime** (chosen).
-- **D2 — a mutex held by the daemon.**
-- **D3 — a lock branch on the forge.**
+- **Option 1 — An exclusive, non-blocking `flock` on a per-repo lock file, held
+  for the driver's lifetime** (chosen).
+- **Option 2 — A mutex held by the daemon.**
+- **Option 3 — A lock branch on the forge.**
 
-**E. The author todo**
+### Decision 5 — The author todo
 
-- **E1 — one PR comment that @mentions the author and carries a machine
+- **Option 1 — One PR comment that @mentions the author and carries a machine
   marker; Switchboard routes it to the author's queue** (chosen).
-- **E2 — Harness writes the todo through a Switchboard client.**
+- **Option 2 — Harness writes the todo through a Switchboard client.**
 
 ## Decision Outcome
 
-Chosen: **A1, B1, C1, D1, E1**.
+Chosen options: **Decision 1, Option 1** (git plumbing on a new branch),
+**Decision 2, Option 1** (pinned API squash, then verify), **Decision 3,
+Option 1** (earliest qualifying approval), **Decision 4, Option 1** (a per-repo
+`flock`) and **Decision 5, Option 1** (one marked PR comment).
 
 ### The loop
 
@@ -133,7 +135,7 @@ not that several PRs share one CI run. One PR per train keeps the tree-equality
 argument simple and a red run attributable; combining PRs is a later, separate
 decision (see *More Information*).
 
-### Why tested == merged (A1 + B1)
+### Why tested == merged (Decisions 1 and 2)
 
 The train commit's tree is `merge(base, head)`. CI runs on that commit. The
 merge is performed only if, immediately before it, `main` is still `base` and
@@ -147,7 +149,7 @@ the fact, which halts the train**:
 
 - Gitea's merge and ours could disagree (a git version or strategy difference).
 - `main` could move in the milliseconds between the re-read and the merge (a
-  human bypass, or a second train on another host — see D).
+  human bypass, or a second train on another host — see Decision 4).
 
 So after every merge the driver fetches the merge commit into its cache and
 compares **real git tree ids**: `rev-parse <merged>^{tree}` against the train
@@ -164,16 +166,16 @@ the PR's changed paths. It is weaker than tree equality and exists for the
 failure the epic names: the `merged` flag says yes and the change is not on
 `main`.
 
-A2 was rejected because the contents API cannot express a file mode: a PR that
+Decision 1, Option 2 was rejected because the contents API cannot express a file mode: a PR that
 adds an executable script would be tested without its `+x`, which is exactly a
 tested tree that differs from the landed one. It also cannot do a three-way
 merge, so any file both sides touched would be a false conflict.
 
-A3 was rejected because it rewrites the author's branch, which
+Decision 1, Option 3 was rejected because it rewrites the author's branch, which
 `dismiss_stale_approvals` then answers by dismissing the approval the train is
 acting on.
 
-B2 was rejected: Gitea cannot mark a PR merged by a commit that is not its
+Decision 2, Option 2 was rejected: Gitea cannot mark a PR merged by a commit that is not its
 head when the history is squashed, the bot would need push rights on `main`,
 and every repo merges by squash for a linear history.
 
@@ -217,8 +219,8 @@ with no statuses).
   `success` with at least one status. Every job of the pipeline registers a
   pending status when the run is created, so a combined success means the
   whole run passed, not the first job to report.
-- `train/*` gets a branch-protection rule whose push allowlist is
-  `joestump-agent` only, so nobody else can create a train branch that looks
+- `train/*` gets a branch-protection rule whose push allowlist is the bot
+  account only, so nobody else can create a train branch that looks
   tested.
 
 Pinning an explicit list of required contexts (rather than "all that ran") is
@@ -234,7 +236,7 @@ the next tick finds the PR still eligible. If an approval *is* dismissed, a
 human or an author pushed, and the PR correctly drops out of the queue until
 it is re-approved on the new head.
 
-### Singleton (D1)
+### Singleton (Decision 4)
 
 A driver takes an exclusive, non-blocking `flock` on
 `$XDG_STATE_HOME/harness/mergetrain/<owner>_<repo>.lock` and holds it for its
@@ -243,31 +245,31 @@ daemon on the host — fails fast with `another merge train holds <repo>`. It is
 refused, never raced. The lock dies with the process, so a crash leaves no
 stale lock.
 
-D2 was rejected because it does not cover two daemons on one host (a service
-unit and a foreground `harness daemon` is the common way to get two). D3 was
+Option 2 was rejected because it does not cover two daemons on one host (a service
+unit and a foreground `harness daemon` is the common way to get two). Option 3 was
 rejected for v1: a forge lock branch needs a lease and a reaper to survive a
 crash, and Gitea gives no atomic compare-and-set on a branch's age.
 
 Cross-host exclusion is operational: the train is enabled in one daemon's
-config only (the `joestump-agent` daemon). The base re-check and the tree
+config only (the bot account's daemon). The base re-check and the tree
 verification above bound the damage if that is ever violated: at most one
 untested tree lands, and the train halts.
 
-### Ordering (C1)
+### Ordering (Decision 3)
 
 Earliest **qualifying** approval first — the first `APPROVED` review by a
 non-author on the current head — then PR number. It is first-come,
 first-served on the only signal that means "a reviewer is done", it is
 deterministic, and it cannot be gamed by the author.
 
-C2 was rejected because every label we have is self-asserted by whoever opens
-the PR. C3 starves large PRs, and they are the ones that have waited longest.
+Option 2 was rejected because every label we have is self-asserted by whoever opens
+the PR. Option 3 starves large PRs, and they are the ones that have waited longest.
 
-### Author todo (E1)
+### Author todo (Decision 5)
 
 The failure comment @mentions the author and ends with a marker:
 
-```
+```text
 <!-- harness-mergetrain v1 pr=123 head=<sha> cause=red -->
 ```
 
@@ -275,7 +277,7 @@ The @mention is a Gitea notification. The comment's `issue_comment` webhook
 reaches Switchboard, where a routing rule matching the marker makes one
 `author` todo. Harness writes no todo itself.
 
-E2 was rejected: Harness holds no Switchboard write credential and ADR-0008
+Option 2 was rejected: Harness holds no Switchboard write credential and ADR-0008
 keeps it that way; the forge comment is also the dedupe record, so a second
 channel would be a second source of truth.
 
@@ -306,18 +308,18 @@ testing trains.
 
 ### Consequences
 
-- Good: approved work lands with no agent or human in the loop, in a
+- Good, because approved work lands with no agent or human in the loop, in a
   predictable order, and every landed tree was CI-tested as that tree.
-- Good: turning off `block_on_outdated_branch` no longer costs the tested ==
+- Good, because turning off `block_on_outdated_branch` no longer costs the tested ==
   merged guarantee, so replays end on repos with the train.
-- Good: the only thing that merges is a few hundred lines of Go with a fake
+- Good, because the only thing that merges is a few hundred lines of Go with a fake
   forge under test.
-- Bad: one CI run per PR, serialised. A repo with a 10-minute pipeline lands
+- Bad, because one CI run per PR, serialised. A repo with a 10-minute pipeline lands
   at most ~6 PRs an hour. Batching is the fix if that bites.
-- Bad: the daemon now shells out to `git` and holds a bare clone per repo.
-- Bad: a verification failure means an untested tree already reached `main`.
+- Bad, because the daemon now shells out to `git` and holds a bare clone per repo.
+- Bad, because a verification failure means an untested tree already reached `main`.
   It is detected, never silent, and bounded to one merge.
-- Neutral: the train needs a forge token with write access; it is read from
+- Neutral, because the train needs a forge token with write access; it is read from
   an environment variable named in config, never stored in `harness.toml`.
 
 ### Confirmation
@@ -333,65 +335,87 @@ testing trains.
 
 ## Pros and Cons of the Options
 
-### A1 — git plumbing, new branch (chosen)
+### Decision 1 — How the train tree is built
 
-- Good: a real three-way merge, the same one Gitea performs; file modes,
-  symlinks and binaries are exact.
-- Good: `merge-tree --write-tree` needs no work tree and reports conflicts by
-  exit code.
-- Bad: needs `git` ≥ 2.38 on the daemon host, and disk for a bare clone.
+#### Option 1 — Git plumbing, new branch (chosen)
 
-### A2 — contents API
+- Good, because it is a real three-way merge, the same one Gitea performs; file
+  modes, symlinks and binaries are exact.
+- Good, because `merge-tree --write-tree` needs no work tree and reports
+  conflicts by exit code.
+- Bad, because it needs `git` ≥ 2.38 on the daemon host, and disk for a bare
+  clone.
 
-- Good: HTTP only.
-- Bad: loses file modes; no three-way merge.
+#### Option 2 — Contents API
 
-### A3 — push to the PR branch
+- Good, because it is HTTP only.
+- Bad, because it loses file modes and has no three-way merge.
 
-- Bad: rewrites the author's branch and dismisses the approval.
+#### Option 3 — Push to the PR branch
 
-### B1 — pinned API squash, then verify (chosen)
+- Bad, because it rewrites the author's branch and dismisses the approval.
 
-- Good: the forge records the merge normally; the PR is marked merged.
-- Bad: tested == merged is argued, then checked; not guaranteed by identity.
+### Decision 2 — How the tested tree lands
 
-### B2 — fast-forward `main`
+#### Option 1 — Pinned API squash, then verify (chosen)
 
-- Good: the landed commit *is* the tested commit.
-- Bad: bot push rights on `main`; breaks the PR's merged state under squash.
+- Good, because the forge records the merge normally; the PR is marked merged.
+- Bad, because tested == merged is argued, then checked; not guaranteed by
+  identity.
 
-### C1 (chosen), C2, C3 — see *Ordering*.
+#### Option 2 — Fast-forward `main`
 
-### D1 (chosen), D2, D3 — see *Singleton*.
+- Good, because the landed commit *is* the tested commit.
+- Bad, because it needs bot push rights on `main` and breaks the PR's merged
+  state under squash.
 
-### E1 (chosen), E2 — see *Author todo*.
+### Decision 3 — Ordering
+
+Options 1 (chosen), 2 and 3 are weighed in *Ordering* above.
+
+### Decision 4 — The per-repo singleton
+
+Options 1 (chosen), 2 and 3 are weighed in *Singleton* above.
+
+### Decision 5 — The author todo
+
+Options 1 (chosen) and 2 are weighed in *Author todo* above.
 
 ## Architecture Diagram
 
-```
-                ┌──────────────────── harness daemon ───────────────────┐
-                │  driver (one per repo, flock-held)                     │
-                │    Eligible → Order → Train → merge → Verify           │
-                │                  │                                     │
-                │            forge.Forge  ◀── fake (tests)               │
-                │                  │                                     │
-                │          forge/gitea: REST + git (bare cache clone)    │
-                └──────────────────┬─────────────────────────────────────┘
-                                   │ token from env (joestump-agent)
-                  ┌────────────────▼───────────────┐
-                  │ Gitea                           │
-                  │  push train/<pr> ─▶ pipeline    │── combined status
-                  │  squash-merge PR (head pinned)  │
-                  │  issue_comment ─▶ Switchboard ──┼─▶ author todo
-                  └─────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph daemon["harness daemon"]
+        driver["driver<br/>(one per repo, flock-held)<br/>Eligible → Order → Train → merge → Verify"]:::daemon
+        iface["forge.Forge"]:::daemon
+        fake["fake forge (tests)"]:::daemon
+        gitea_impl["forge/gitea:<br/>REST + git (bare cache clone)"]:::daemon
+    end
+    subgraph forge["Gitea"]
+        push["push train/&lt;pr&gt;"]:::external
+        pipeline["pipeline"]:::external
+        merge["squash-merge PR<br/>(head pinned)"]:::external
+        comment["issue_comment"]:::external
+    end
+    sb["Switchboard"]:::external
+    todo["author todo"]:::client
+
+    driver --> iface
+    fake -.-> iface
+    iface --> gitea_impl
+    gitea_impl -->|token from env| push
+    push --> pipeline
+    pipeline -->|combined status| gitea_impl
+    gitea_impl --> merge
+    gitea_impl --> comment
+    comment --> sb --> todo
 ```
 
 ## More Information
 
-- Epic: https://gitea.stump.rocks/stump.wtf/harness/issues/540; contention
-  epic and decisions D1–D5:
-  https://gitea.stump.rocks/stumpcloud/stumpcloud/issues/466.
-- SPEC-0025 (`docs/openspec/specs/merge-train/spec.md`) is the behaviour;
+- Epic: harness#540; the contention epic and its decisions D1–D5:
+  stumpcloud/stumpcloud#466.
+- **Governs SPEC-0025** — the behaviour;
   its design companion records the package layout and the `Forge` interface,
   including where it departs from the interface first sketched in #599.
 - Later, not decided here: batching several PRs into one train (bisect on

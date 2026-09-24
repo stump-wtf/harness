@@ -57,7 +57,7 @@ migration nicety, not a break).
 ```toml
 # ~/.config/harness/harness.toml
 
-# ── harnesses ─────────────────────────────────────────────
+# Harnesses
 [harness.claude-src]
 cmd = "claude"
 args = ["--remote-control", "--dangerously-skip-permissions"]
@@ -75,7 +75,7 @@ cmd = "claude"
 args = ["--dangerously-skip-permissions"]
 workdir = "~/src/reduit"
 
-# ── profiles: named sets you "hop into" ───────────────────
+# Profiles: named sets you "hop into"
 [profile.default]
 harnesses = ["claude-src"]
 autostart = true            # daemon starts this profile's harnesses on boot

@@ -89,7 +89,7 @@ payload.
     "action": "opened",
     "repo": "stump.wtf/harness",
     "number": 412,
-    "url": "https://gitea.stump.rocks/stump.wtf/harness/pulls/412",
+    "url": "https://gitea.example.com/stump.wtf/harness/pulls/412",
     "sha": "8febab3c79a7a61c31f69f33a762ef49262b175e",
     "actor": "alice"
   }

@@ -12,8 +12,8 @@ requires: [SPEC-0010]
 A **merge train** is a deterministic loop inside the Harness daemon that lands
 approved pull requests on one repository, one at a time, so that the tree CI
 tested is the tree that reaches `main`. ADR-0032 records the decision and the
-options; this spec is the behaviour, and `design.md` beside it is the package
-layout and the `Forge` interface.
+options; this spec is the behaviour, and the [design notes](./design.md) beside it
+cover the package layout and the `Forge` interface.
 
 Terms:
 
@@ -174,7 +174,7 @@ On `conflict`, `red`, `timeout`, `merge-refused` and `verify-failed`, the
 driver SHALL post exactly one comment on the PR that @mentions the PR's author,
 states the cause and the train commit or head, and ends with the marker
 
-```
+```text
 <!-- harness-mergetrain v1 pr=<n> head=<head> cause=<cause> -->
 ```
 
@@ -216,7 +216,7 @@ SHALL NOT wait for the lock.
 ### Requirement: REQ-12 Forge access and credentials
 
 Every forge interaction SHALL go through the `forge.Forge` interface
-(`design.md`). The forge token SHALL be read from the environment variable
+(see the [design notes](./design.md)). The forge token SHALL be read from the environment variable
 named by `forge_token_env` and SHALL NOT appear in `harness.toml`, in any log
 line, in any error string, or in any process argv; git SHALL receive it through
 the environment. A non-2xx response SHALL become an error naming the method,
@@ -253,13 +253,22 @@ this driver performed.
 
 ## State machine (one attempt)
 
-```
-          ┌───────────┐ build ok ┌──────────┐ success ┌───────────┐ ok  ┌─────────┐ ok ┌───────────┐ ok ┌────────┐
- queue ─▶ │ building  │─────────▶│ testing  │────────▶│ recheck   │────▶│ merging │───▶│ verifying │───▶│ landed │
-          └───────────┘          └──────────┘         └───────────┘     └─────────┘    └───────────┘    └────────┘
-            │conflict │stale       │failure/error        │moved            │4xx           │mismatch
-            ▼         ▼            │timeout │cancel      ▼                 ▼              ▼
-         conflict   stale         red  timeout  (abort) stale       merge-refused       HALTED
+```mermaid
+stateDiagram-v2
+    [*] --> building: queue
+    building --> testing: build ok
+    building --> conflict:::danger: conflict
+    building --> stale: stale
+    testing --> recheck: success
+    testing --> red:::danger: failure / error
+    testing --> timeout:::danger: timeout
+    testing --> aborted: cancel
+    recheck --> merging: ok
+    recheck --> stale: moved
+    merging --> verifying: ok
+    merging --> merge_refused:::danger: 4xx
+    verifying --> landed: ok
+    verifying --> HALTED:::danger: mismatch
 ```
 
 `report` mode ends at `recheck` with `would merge`. The train branch is deleted
@@ -267,7 +276,7 @@ on every exit from `testing`.
 
 ## Forge calls per transition
 
-| Transition | Call | Gitea endpoint (see `design.md`) |
+| Transition | Call | Gitea endpoint (see the [design notes](./design.md)) |
 |---|---|---|
 | queue | `ListOpenPRs` | `GET /repos/{r}/pulls?state=open`, `GET …/pulls/{n}/reviews`, `GET …/commits/{head}/status` |
 | queue → building | `BranchHead` | `GET /repos/{r}/branches/{base}` |
