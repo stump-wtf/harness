@@ -193,3 +193,161 @@ func TestAccumulatorDoesNotWaitOnAFailingWriter(t *testing.T) {
 	failing = false
 	mu.Unlock()
 }
+
+// usageItem is a usage report for harness h's session s.
+func usageItem(h, s string, at time.Time, rep UsageReport) Item {
+	return Item{Harness: h, At: at, Session: Session{ID: s, Adapter: "crush"}, Usage: &rep}
+}
+
+func pfloat(f float64) *float64 { return &f }
+
+// REQ-8 "A crush resident resumed across restarts": totals of 10,000 when run
+// 5 starts and 14,000 when it ends give run 5 tokens.input 4,000. The 10,000
+// was seen during run 4, so it is run 5's baseline.
+func TestCumulativeTotalsAreDifferencedAcrossRuns(t *testing.T) {
+	dir := t.TempDir()
+	l := openT(t, dir, Options{})
+	a := NewAccumulator(l, AccumulatorOptions{})
+	t0 := time.Now().Add(-time.Hour)
+	crush := func(in, out int64, cost float64) UsageReport {
+		return UsageReport{Model: "gpt-5", Provider: "openrouter", Tokens: Tokens{Input: in, Output: out}, CostUSD: pfloat(cost), Cumulative: true}
+	}
+
+	mustAppend(t, l, opened("res", 4, t0), true)
+	a.Fold(usageItem("res", "s1", t0.Add(time.Minute), crush(6_000, 600, 0.06)))
+	a.Fold(usageItem("res", "s1", t0.Add(2*time.Minute), crush(10_000, 1_000, 0.10)))
+	mustAppend(t, l, closed("res", 4, t0.Add(3*time.Minute), "failed"), true)
+
+	mustAppend(t, l, opened("res", 5, t0.Add(4*time.Minute)), true)
+	a.Fold(usageItem("res", "s1", t0.Add(5*time.Minute), crush(12_000, 1_200, 0.12)))
+	a.Fold(usageItem("res", "s1", t0.Add(6*time.Minute), crush(14_000, 1_400, 0.14)))
+	mustAppend(t, l, closed("res", 5, t0.Add(7*time.Minute), "success"), true)
+
+	c := lastLineOf(t, dir, "res", 5, TypeClosed)
+	tok := c["tokens"].(map[string]any)
+	if tok["input"] != float64(4_000) || tok["output"] != float64(400) {
+		t.Errorf("run 5 tokens = %v, want input 4000, output 400", tok)
+	}
+	if cost := c["cost_usd"].(float64); cost < 0.0399 || cost > 0.0401 || c["cost_source"] != "recorded" {
+		t.Errorf("run 5 cost = %v (%v), want 0.04 recorded", c["cost_usd"], c["cost_source"])
+	}
+	if c["model"] != "gpt-5" {
+		t.Errorf("model = %v", c["model"])
+	}
+}
+
+// A lower cumulative total is a new baseline: no negative tokens, ever.
+func TestLowerCumulativeTotalRebaselines(t *testing.T) {
+	dir := t.TempDir()
+	l := openT(t, dir, Options{})
+	a := NewAccumulator(l, AccumulatorOptions{})
+	now := time.Now()
+	mustAppend(t, l, opened("res", 1, now.Add(-time.Minute)), true)
+	for _, in := range []int64{5_000, 7_000, 300, 900} {
+		a.Fold(usageItem("res", "s1", now, UsageReport{Tokens: Tokens{Input: in}, Cumulative: true}))
+	}
+	mustAppend(t, l, closed("res", 1, now, "success"), true)
+	tok := lastLineOf(t, dir, "res", 1, TypeClosed)["tokens"].(map[string]any)
+	// 5,000 is the baseline, +2,000, 300 re-baselines, +600.
+	if tok["input"] != float64(2_600) {
+		t.Errorf("tokens.input = %v, want 2600 with no negative delta", tok["input"])
+	}
+}
+
+// Per-message usage sums into the run; `model` is the served model with the
+// most output tokens; with no price and no recorded cost the source is
+// unknown and there is no cost figure to mistake for zero.
+func TestPerMessageUsageSumsAndCostIsUnknownWithoutAPrice(t *testing.T) {
+	dir := t.TempDir()
+	l := openT(t, dir, Options{})
+	var live []LiveTotals
+	a := NewAccumulator(l, AccumulatorOptions{OnFold: func(lt LiveTotals) { live = append(live, lt) }})
+	now := time.Now()
+	mustAppend(t, l, opened("cc", 1, now.Add(-time.Minute)), true)
+	msg := func(model string, in, out int64) UsageReport {
+		return UsageReport{Model: model, Tokens: Tokens{Input: in, Output: out, CacheRead: 10}}
+	}
+	a.Fold(usageItem("cc", "s", now, msg("claude-haiku-4-5", 100, 10)))
+	a.Fold(usageItem("cc", "s", now, msg("claude-sonnet-5", 200, 50)))
+	a.Fold(usageItem("cc", "s", now, msg("claude-sonnet-5", 300, 60)))
+	mustAppend(t, l, closed("cc", 1, now, "success"), true)
+
+	c := lastLineOf(t, dir, "cc", 1, TypeClosed)
+	tok := c["tokens"].(map[string]any)
+	if tok["input"] != float64(600) || tok["output"] != float64(120) || tok["cache_read"] != float64(30) {
+		t.Errorf("tokens = %v", tok)
+	}
+	if c["model"] != "claude-sonnet-5" || len(c["models"].([]any)) != 2 {
+		t.Errorf("model = %v, models = %v", c["model"], c["models"])
+	}
+	if c["cost_source"] != "unknown" || c["cost_usd"] != nil {
+		t.Errorf("cost = %v (%v), want no figure and source unknown", c["cost_usd"], c["cost_source"])
+	}
+	if len(live) != 3 || live[2].Tokens.Input != 600 {
+		t.Errorf("live totals = %+v, want one per fold ending at 600 input", live)
+	}
+}
+
+// SPEC-0021 REQ-8: priced when a price exists; the run's source is the weakest
+// of its items'.
+func TestCostSourceIsTheWeakestItem(t *testing.T) {
+	dir := t.TempDir()
+	l := openT(t, dir, Options{})
+	price := func(model, _ string, tk Tokens) (float64, bool) {
+		if model != "priced-model" {
+			return 0, false
+		}
+		return float64(tk.Input) / 1e6, true
+	}
+	a := NewAccumulator(l, AccumulatorOptions{Price: price})
+	now := time.Now()
+	mustAppend(t, l, opened("x", 1, now.Add(-time.Minute)), true)
+	a.Fold(usageItem("x", "s", now, UsageReport{Model: "recorded-model", Tokens: Tokens{Input: 1}, CostUSD: pfloat(0.5)}))
+	a.Fold(usageItem("x", "s", now, UsageReport{Model: "priced-model", Tokens: Tokens{Input: 1_000_000}}))
+	mustAppend(t, l, closed("x", 1, now, "success"), true)
+	c := lastLineOf(t, dir, "x", 1, TypeClosed)
+	if c["cost_source"] != "priced" || c["cost_usd"] != float64(1.5) {
+		t.Errorf("cost = %v (%v), want 1.5 priced", c["cost_usd"], c["cost_source"])
+	}
+}
+
+// Before agent-trace#105 no item carries usage, and a run's record must not
+// grow tokens, cost or models fields: absent, not zero.
+func TestNoUsageItemsMeansNoUsageFields(t *testing.T) {
+	dir := t.TempDir()
+	l := openT(t, dir, Options{})
+	a := NewAccumulator(l, AccumulatorOptions{})
+	now := time.Now()
+	mustAppend(t, l, opened("x", 1, now.Add(-time.Minute)), true)
+	a.Fold(Item{Harness: "x", At: now, Tool: true})
+	mustAppend(t, l, closed("x", 1, now, "success"), true)
+	c := lastLineOf(t, dir, "x", 1, TypeClosed)
+	for _, k := range []string{"tokens", "cost_usd", "cost_source", "models", "model"} {
+		if _, has := c[k]; has {
+			t.Errorf("a run with no usage items carries %q: %v", k, c[k])
+		}
+	}
+}
+
+// A cumulative total reported while no run is open (between a resident's
+// runs) is nobody's spend, but it moves the baseline: the next run counts
+// from it.
+func TestCumulativeTotalBetweenRunsMovesTheBaseline(t *testing.T) {
+	dir := t.TempDir()
+	l := openT(t, dir, Options{})
+	a := NewAccumulator(l, AccumulatorOptions{})
+	t0 := time.Now().Add(-time.Hour)
+	tot := func(in int64) UsageReport { return UsageReport{Tokens: Tokens{Input: in}, Cumulative: true} }
+
+	mustAppend(t, l, opened("res", 1, t0), true)
+	a.Fold(usageItem("res", "s1", t0.Add(time.Minute), tot(10_000)))
+	mustAppend(t, l, closed("res", 1, t0.Add(2*time.Minute), "success"), true)
+	a.Fold(usageItem("res", "s1", t0.Add(3*time.Minute), tot(11_000))) // no run open
+	mustAppend(t, l, opened("res", 2, t0.Add(4*time.Minute)), true)
+	a.Fold(usageItem("res", "s1", t0.Add(5*time.Minute), tot(14_000)))
+	mustAppend(t, l, closed("res", 2, t0.Add(6*time.Minute), "success"), true)
+
+	if tok := lastLineOf(t, dir, "res", 2, TypeClosed)["tokens"].(map[string]any); tok["input"] != float64(3_000) {
+		t.Errorf("run 2 tokens.input = %v, want 3000: the 1,000 spent between runs is not run 2's", tok["input"])
+	}
+}
