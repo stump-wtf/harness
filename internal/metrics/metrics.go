@@ -110,7 +110,7 @@ const (
 	collectorLifecycle  = "lifecycle"  // the Manager's lifecycle bus
 )
 
-var collectorNames = []string{collectorSupervisor, collectorSchedule, collectorObserver, collectorLifecycle}
+var collectorNames = []string{collectorSupervisor, collectorSchedule, collectorObserver, collectorLifecycle, collectorRuns}
 
 // Options configures Metrics. The zero value is production defaults with no
 // observer and no schedule reader.
@@ -118,6 +118,10 @@ type Options struct {
 	// Observer is the agent event feed. Nil omits every model-reachability
 	// and session series: without it they cannot be computed (REQ-6).
 	Observer EventSource
+	// Runs is the run ledger's feed (SPEC-0022 REQ-11): every run count
+	// comes from it. Nil omits the run series, harness_scheduled_runs_total
+	// included, rather than counting runs from anywhere else.
+	Runs RunFeed
 	// NextRun reports a scheduled harness's next window (the scheduler's
 	// NextFire). Nil omits harness_scheduled_next_run_timestamp.
 	NextRun func(name string) (time.Time, bool)
@@ -256,7 +260,8 @@ type series struct {
 	lastItem        time.Time // latest agent item of any kind
 	sessionsStarted uint64
 	transitions     map[core.State]uint64
-	runs            [2]uint64 // success, failure
+	runs            [2]uint64 // success, failure: harness_scheduled_runs_total
+	ledgerRuns      *runSeries
 }
 
 func newSeries() *series {
@@ -368,6 +373,9 @@ func (m *Metrics) Start() {
 	if m.opts.Observer != nil {
 		m.subscribeObserverLocked()
 	}
+	if m.opts.Runs != nil {
+		m.subscribeRunsLocked()
+	}
 }
 
 // Attach supplies the agent event feed and the schedule reader after New,
@@ -460,23 +468,17 @@ func (m *Metrics) seriesFor(name string) *series {
 	return s
 }
 
-// lifecycle applies one Manager bus event.
+// lifecycle applies one Manager bus event: state transitions only. Run
+// outcomes are counted from the run ledger's feed (runs.go), never from this
+// lossy bus, so /metrics and `harness runs` count the same committed facts
+// (SPEC-0022 REQ-10, REQ-11).
+//
+// @joestump 09/24/2026 - Stopped counting EventRunFinished (harness#450).
 func (m *Metrics) lifecycle(ev supervisor.Event) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	switch ev.Kind {
-	case supervisor.EventStateChanged:
+	if ev.Kind == supervisor.EventStateChanged {
 		m.seriesFor(ev.Name).transitions[ev.To]++
-	case supervisor.EventRunFinished:
-		// Only runs that pass a verdict on the job count, the same rule as
-		// supervisor.ConsecutiveFailures: skipped, missed, replaced,
-		// cancelled and interrupted runs say nothing about whether it works.
-		switch ev.Run.Outcome {
-		case supervisor.OutcomeSuccess:
-			m.seriesFor(ev.Name).runs[0]++
-		case supervisor.OutcomeFailed, supervisor.OutcomeTimedOut:
-			m.seriesFor(ev.Name).runs[1]++
-		}
 	}
 }
 

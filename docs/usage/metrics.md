@@ -124,9 +124,16 @@ up{job="harness"} == 0
 | `harness_last_successful_call_timestamp{harness}` | gauge | Unix seconds. **Absent** until the harness's first success in this daemon's lifetime. It is never reported as zero, because zero would read as 1970. |
 | `harness_sessions_started_total{harness}` | counter | Agent sessions the daemon has seen become active. |
 | `harness_session_active{harness}` | gauge | 1 when the process is up and the agent wrote to a session in the last 10 minutes. |
-| `harness_scheduled_runs_total{harness,outcome}` | counter | Scheduled harnesses only. `success`, or `failure` (a run that failed or timed out). Skipped, missed, cancelled and interrupted runs are not counted. |
+| `harness_scheduled_runs_total{harness,outcome}` | counter | Scheduled harnesses only, counted from the run ledger. `success`, or `failure` (a run that `failed`, `timed_out`, `budget_exceeded`, `model_mismatch` or `model_unattested`). Skipped, missed, cancelled, interrupted and quota-parked runs are not counted. |
+| `harness_runs_total{harness,kind,outcome}` | counter | Every closed run in the run ledger, one-shot (`kind="oneshot"`) and resident process lifetimes (`kind="resident"`). Every harness reports every outcome its kind can produce, starting at zero. `harness runs --since … --outcome … --json` returns the same records. |
+| `harness_run_duration_seconds{harness,kind}` | histogram | Closed runs with a known end. Buckets from 1s to 24h. |
+| `harness_run_tokens_total{harness,type}` | counter | `input`, `output`, `cache_read`, `cache_write`. **Absent** until a run records token usage, which needs agent-trace usage items. |
+| `harness_run_cost_usd_total{harness,source}` | counter | `recorded` (the agent recorded it) or `priced` (from a price table). An unknown cost is not counted. Absent until a run carries a cost. |
+| `harness_ledger_append_errors_total` | counter | Failed run ledger writes and syncs, retries included. Non-zero means the ledger's disk is failing. |
+| `harness_ledger_bytes` | gauge | Total size of the run ledger's day files. |
+| `harness_run_feed_dropped_total{subscriber}` | counter | Run records a feed subscriber missed because it fell behind. `subscriber="metrics"` above zero means the run counters above read low. |
 | `harness_scheduled_next_run_timestamp{harness}` | gauge | Scheduled harnesses only. Absent when there is no next window. |
-| `harness_metrics_collection_errors_total{collector}` | counter | `supervisor`, `schedule`, `observer`, `lifecycle`. `observer` and `lifecycle` also count events the collector lost because it fell behind, so the matching counters read low. |
+| `harness_metrics_collection_errors_total{collector}` | counter | `supervisor`, `schedule`, `observer`, `lifecycle`, `runs`. `observer` and `lifecycle` also count events the collector lost because it fell behind, so the matching counters read low; `runs` counts a run feed that closed while the daemon ran. |
 | `harness_metrics_harnesses_overflowed` | gauge | How many harnesses were folded into `__other__`. |
 | `harness_observer_*` | mixed | Health of the transcript reader: delivered and dropped events, ambiguous and unattributed items, parse errors, scan errors, sessions tracked. |
 | `go_*`, `process_*` | | The daemon's own runtime. |
