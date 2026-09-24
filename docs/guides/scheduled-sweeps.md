@@ -367,6 +367,15 @@ closing the gap between that and "the sweep did its job".
 
 ## Designing a sweep you can trust
 
+:::tip Polling for a forge event?
+
+If your sweep's job is to notice a pull request, a CI result or a review, read
+[when to react to events and when to run on a schedule](/patterns/events-vs-schedules)
+first. An event can start the agent within seconds; the sweep then only has to
+reconcile.
+
+:::
+
 A sweep runs with nobody watching. The failure modes are quiet: the agent
 misreads the task, stops halfway, can't authenticate and apologizes, or does
 the work and never tells anyone. All of those exit 0. A few habits make them

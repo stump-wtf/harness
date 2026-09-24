@@ -17,7 +17,7 @@ all of them:
 | Pattern | What it solves | Lives in |
 |---|---|---|
 | [Author/reviewer pairs on different model families](./author-reviewer-pairs) | a reviewer that doesn't share its author's blind spots, and never approves its own work | Harness |
-| When to react to events and when to run on a schedule (**coming**) | doorbells for work that arrives, schedules for work that sweeps | Harness |
+| [When to react to events and when to run on a schedule](./events-vs-schedules) | doorbells for work that arrives, schedules for work that sweeps | Harness |
 | Human in the loop through notifications, not a ticket queue (**coming**) | asking a person to sign off without making them drain a queue | [Switchboard](https://switchboard.stump.wtf/docs/) |
 | Environment binding (**coming**) | one queue and endpoint per environment, refusing work that arrives on the wrong one | [Switchboard](https://switchboard.stump.wtf/docs/) |
 | Receipts and evidence (**coming**) | what goes in Cairn, what goes in the tracker, and what goes in the repo | [Cairn](https://cairn.stump.wtf/docs/) |
