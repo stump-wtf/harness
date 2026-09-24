@@ -361,7 +361,7 @@ organization's `channelsEnabled` policy, and SHALL link the docs callout
 
 The daemon SHALL expose, under SPEC-0013's registry and cardinality cap:
 
-```
+```text
 harness_dev_channels_autoconfirm_total{harness,outcome}   counter
 ```
 

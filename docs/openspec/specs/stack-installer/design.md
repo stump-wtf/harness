@@ -563,8 +563,8 @@ flowchart TB
   keys are optional.
 - **Docs first, independent of the code.** The headless Claude Code auth
   correction (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, instead of
-  `ANTHROPIC_API_KEY`, in `first-agent.md`, `run-as-a-service.md` and
-  `push-events.md`) lands before any installer code.
+  `ANTHROPIC_API_KEY`, in the first-agent, run-as-a-service and
+  push-events guides) lands before any installer code.
 - **Order of work.** Adapter keys and `env_file` lists; the persona and client
   writers; `harness init`; the manifest and bundle; `stack up`/`down`/`status`;
   the self-test; `upgrade` and `doctor`.
@@ -576,26 +576,25 @@ flowchart TB
   Gitea Actions runner cannot provide one, the test runs on release tags from a
   runner that can, and manifest-only PRs carry the run's result in their body.
 
-## Open Questions
+## Settled Questions
 
 Every question below was settled in the Operation Stumply design review. None is
 left open.
 
-- **Bundle an identity provider?** Resolved (design review 2026-09-22): no, not
+- **Bundle an identity provider?** No, not
   in v1. The bundle requires an OIDC issuer or a GitHub OAuth app (REQ-18).
-- **Channel `url` by reference.** Resolved (design review 2026-09-22): no, as
-  proposed. SPEC-0014 keeps a channel `url` literal; the URL is not a secret.
-- **Garage or external-only.** Resolved (design review 2026-09-22): bundle
+- **Channel `url` by reference.** No. SPEC-0014 keeps a channel `url` literal; the URL is not a secret.
+- **Garage or external-only.** Bundle
   Garage by default for Cairn's S3, with an external S3 endpoint as the option.
   Revisit only if Cairn's single-binary work adds a filesystem store.
-- **Plugin tags.** Resolved (design review 2026-09-22): pin
+- **Plugin tags.** Pin
   `claude-plugin-switchboard` and `claude-plugin-cairn` to release tags once
   they exist. Cutting those tags is tracked in each plugin repository; until
   then the manifest pins a commit, never a branch (REQ-14).
-- **Operator sign-up policy.** Resolved (design review 2026-09-22): `stack init`
+- **Operator sign-up policy.** `stack init`
   offers GitHub login only with an enrollment mode configured: it writes
   `SWITCHBOARD_ENROLLMENT_MODE` and `CAIRN_ENROLLMENT_MODE` (`allowlist`,
   `invite` or `open`), defaulting to `invite` (REQ-18). Open sign-up is opt-in.
-- **The `cairn` CLI formula.** Resolved (design review 2026-09-22): it ships
+- **The `cairn` CLI formula.** It ships
   through the Homebrew tap (homebrew-tap#20); the `harness` formula still gains
   no dependency.

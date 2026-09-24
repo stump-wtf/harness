@@ -227,7 +227,7 @@ Three commits, deliberately separable so a bisect lands on a real cause:
    behaviour change; step 1's tests are the proof.
 3. **Viper + `HARNESS_*`.** Add `internal/settings`, bind the flags, wire the
    precedence ladder, extend `doctor` with source attribution, and document the
-   variable table in `docs/usage/configuration.md`.
+   variable table in the [configuration reference](https://stump-wtf.github.io/harness/usage/configuration).
 
 Rollback is per-commit. Steps 1 and 2 are independently valuable — the
 characterization tests are worth having regardless, and the Cobra tree fixes the

@@ -171,7 +171,7 @@ daemon's process environment and from `[telemetry] env_file`:
 
 Precedence for each OTLP setting, per signal, highest first:
 
-```
+```text
 signal-specific env var  >  generic env var  >  harness.toml [telemetry]  >  default
 ```
 
@@ -325,7 +325,7 @@ and a test MUST pin the two derivations equal.
 **Item and span IDs.** Every item's ID MUST be the first 8 bytes, as 16
 lowercase hex characters, of
 
-```
+```text
 SHA-256("harness-item:" + traceID + ":" + kind + ":" + seq + ":" + content)
 ```
 
@@ -532,7 +532,7 @@ concurrently without blocking export.
 
 Once SPEC-0013's `/metrics` endpoint exists, it SHOULD publish them as:
 
-```
+```text
 harness_telemetry_items_total{signal,outcome}              counter  outcome: exported|rejected|failed|dropped_queue|dropped_observer
 harness_telemetry_requests_total{signal,result}            counter  result: success|retryable|permanent
 harness_telemetry_queue_items{signal}                      gauge

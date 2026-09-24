@@ -341,24 +341,21 @@ stateDiagram-v2
    a downgraded daemon ignores `parks` (a parked resident would then start on
    boot and re-park on its first refusal).
 
-## Open Questions
+## Settled Questions
 
 Every question below was settled in the Operation Stumply design review. None is
 left open.
 
-- **Should a quota group be inferred from a shared `env_file`?** Resolved
-  (design review 2026-09-22): no. It would mean reading credentials; operators
+- **Should a quota group be inferred from a shared `env_file`?** No. It would mean reading credentials; operators
   set `quota_group` explicitly.
-- **Is 10 minutes / 3 errors the right "stuck" threshold?** Resolved (design
-  review 2026-09-22): yes. A harness parks after 3 quota errors with no success
+- **Is 10 minutes / 3 errors the right "stuck" threshold?** Yes. A harness parks after 3 quota errors with no success
   in 10 minutes. The values are constants in the first cut, promoted to keys
   only if field data asks.
-- **The run-log text fallback.** Resolved (design review 2026-09-22): accepted
+- **The run-log text fallback.** Accepted
   as temporary. Matching the last 4 KiB of a non-zero exit's sanitized run log
   stays until claude-code API errors arrive as marks, then it is removed.
   stump.wtf/agent-trace#104 closed on 2026-09-22 (agent-trace PR #111), but
   Harness still pins an agent-trace from 2026-08-10, so the fallback retires
   with the dependency bump that picks the marks up.
 - **Should `--over-budget` on a resident default to the remaining operating
-  window instead of 1h?** Resolved (design review 2026-09-22): no; it stays 1h,
-  as proposed.
+  window instead of 1h?** No; it stays 1h.

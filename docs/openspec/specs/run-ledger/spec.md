@@ -343,7 +343,7 @@ events SHALL remain for clients and the TUI.
 When SPEC-0013's endpoint is enabled, the daemon SHALL export, counted from the
 run feed:
 
-```
+```text
 harness_runs_total{harness,kind,outcome}          counter
 harness_run_duration_seconds{harness,kind}        histogram  closed runs with an ended_at
 harness_run_tokens_total{harness,type}            counter    type: input|output|cache_read|cache_write
@@ -435,7 +435,7 @@ release notes saying that run history now lives only in `ledger/` and that
 
 The CLI SHALL accept:
 
-```
+```text
 harness runs [NAME...] [--harness NAME]... [--since DUR|TIME] [--until TIME]
              [--outcome O[,O...]] [--trigger T[,T...]] [--limit N] [--wide] [--json]
 ```

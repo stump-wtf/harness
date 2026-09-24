@@ -420,9 +420,9 @@ itself, stop the firing. Filtering a firing by actor stays Switchboard's job
 
 #### Scenario: A trusted sender
 
-- **WHEN** `trusted_actors = ["joestump"]` and a delivery's `sender.login` is
-  `JoeStump`
-- **THEN** `{{event.actor}}` renders `JoeStump`
+- **WHEN** `trusted_actors = ["alice"]` and a delivery's `sender.login` is
+  `Alice`
+- **THEN** `{{event.actor}}` renders `Alice`
 
 #### Scenario: An untrusted sender
 

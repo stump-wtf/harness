@@ -39,7 +39,7 @@ mistake, not a choice, and it is better refused at startup than discovered.
 
 ### REQ-2: Harness state
 
-```
+```text
 harness_harness_state{harness,state}  gauge   1 for the current state, 0 otherwise
 ```
 
@@ -49,7 +49,7 @@ Every declared harness MUST report every state value, including zeros. An absent
 series and a zero series are indistinguishable to an alert, and `failed` is
 precisely the state an operator wants to alert on by equality.
 
-```
+```text
 harness_restarts_total{harness}                  counter
 harness_consecutive_failures{harness}            gauge
 harness_state_transitions_total{harness,to}      counter
@@ -60,7 +60,7 @@ harness walking its budget toward terminal `failed` is visible before it arrives
 
 ### REQ-3: Model reachability — the mandatory set
 
-```
+```text
 harness_model_calls_total{harness,outcome}          counter  outcome: success|error
 harness_model_call_errors_total{harness,class}      counter
 harness_model_call_errors_unclassified_total{harness}  counter
@@ -90,7 +90,7 @@ staleness on every dashboard.
 
 ### REQ-4: Sessions and schedules
 
-```
+```text
 harness_sessions_started_total{harness}            counter
 harness_session_active{harness}                    gauge  0|1
 harness_scheduled_runs_total{harness,outcome}      counter  outcome: success|failure

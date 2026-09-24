@@ -74,7 +74,7 @@ The scheduler already owns the one-second wall-clock ticker with the monotonic
 component stripped. A second ticker would double the daemon's wakeups for no
 gain. The scheduler gains a gate pass per tick:
 
-```
+```text
 for each gated harness (skipping one whose last decision is still in flight):
     in, next, _ := expr.In(now)
     up, held, closing := gate.Status(name)

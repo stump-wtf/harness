@@ -24,7 +24,8 @@ what is already true on `origin/main` of the three repositories:
   digest. The manifest has a place for a signature, unpopulated, and the build
   gate refuses an entry that promises one without a key.
 * Harness already generates service units for its own daemon
-  (ADR-0005; `docs/guides/run-as-a-service.md`), so the launchd and
+  (ADR-0005 and the
+  [run-as-a-service guide](https://stump-wtf.github.io/harness/guides/run-as-a-service)), so the launchd and
   `systemd --user` shapes are known and documented rather than invented here.
 
 ## Goals / Non-Goals
@@ -184,7 +185,7 @@ RestartSec=5
 
 `KeepAlive SuccessfulExit=false` and `Restart=on-failure` are the same
 contract: restart a crash, never restart a clean `stack down`. Following
-`run-as-a-service.md`'s own warning, the units declare no `Requires=` or
+the run-as-a-service guide's own warning, the units declare no `Requires=` or
 `After=` edge on anything that restarts — notably not on a local Postgres,
 whose routine restart would otherwise propagate a stop into both services.
 
@@ -326,11 +327,11 @@ sequenceDiagram
   S->>D: connect, version, isolation, object round trip
   D-->>S: ok
   S->>R: GET artifact (per component, os/arch)
-  S->>S: sha256 vs manifest; signature if present
+  S->>S: sha256 vs manifest, signature if present
   S->>S: install bin/<c>/<v>/, 0755, atomic
   S->>M: write unit, load, start
   M-->>S: running
-  S->>S: binary digest vs lock; reported version vs manifest
+  S->>S: binary digest vs lock, reported version vs manifest
   S->>S: harness init --connect, then self-test
   S-->>O: report, or exit non-zero naming the step
 ```

@@ -15,7 +15,8 @@ between **profiles** ("configurations"), and start/stop/edit — without ever
 touching `systemctl`, `tmux`, or `$EDITOR` unless you want to. Built with
 Bubble Tea / Bubbles / Lip Gloss / Huh (ADR-0001) as a thin client of the
 daemon protocol (SPEC-0002). Layouts, visual direction, and the design
-exploration live in `design.md` and `docs/design/`.
+exploration live in the [design notes](./design.md) and the repository's
+`docs/design/` directory.
 
 ## Requirements
 

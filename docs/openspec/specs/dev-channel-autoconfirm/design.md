@@ -255,18 +255,16 @@ Purely additive, opt-in. Existing harnesses are unaffected. The push-events
 guide's "attach and confirm" instructions remain for anyone who does not opt
 in, and gain the callout and the new key. Rollback: remove the key.
 
-## Open Questions
+## Settled Questions
 
 Every question below was settled in the Operation Stumply design review. None is
 left open.
 
-- **Does the dialog offer numbered choices, or only arrow navigation?** Resolved
-  (design review 2026-09-22): the first captured fixture decides `KeysSelect`,
-  as proposed; the design prefers absolute selection.
+- **Does the dialog offer numbered choices, or only arrow navigation?** The first captured fixture decides `KeysSelect`; the design prefers absolute selection.
 - **Should `doctor` escalate to `fail` for a confirmation under an unknown
-  Claude Code version?** Resolved (design review 2026-09-22): no, deferred as
+  Claude Code version?** No, deferred as
   proposed. Matching is by text, and an unknown version with matching text is
   still a match.
-- **Opt-in and loudness.** Resolved (design review 2026-09-22): auto-confirm
+- **Opt-in and loudness.** Auto-confirm
   stays opt-in per entry, with a WARN every time it fires and a standing
   `doctor` warning (REQ-10 to REQ-14).

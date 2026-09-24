@@ -293,5 +293,5 @@ structured error handling:
 
 ## Design
 
-This spec is paired with `design.md`, which covers the architecture, the
+This spec is paired with the [design notes](./design.md), which covers the architecture, the
 library split, and the staged migration.

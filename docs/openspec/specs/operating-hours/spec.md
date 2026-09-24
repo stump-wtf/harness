@@ -14,7 +14,7 @@ is allowed to run. Outside them the daemon holds the harness down: it shuts the
 process down without clearing `enabled` (by default letting the agent finish its
 turn first), and starts it again when a window opens.
 The purpose is cost. An agent that is not running does not spend tokens. See
-ADR-0019 for the decision and `design.md` for the implementation shape.
+ADR-0019 for the decision and the [design notes](./design.md) for the implementation shape.
 
 This spec amends SPEC-0003 REQ "Autostart", REQ "Restart On Exit" and REQ
 "Graceful Stop" (the last so that an hours stop leaves `enabled` alone, while an
@@ -46,7 +46,7 @@ Terms used throughout:
 The daemon SHALL accept an optional string key `operating_hours` on a
 `[harness.*]` table in the daemon config of record. Its grammar SHALL be:
 
-```
+```text
 operating_hours = [ zone-prefix " " ] window *( ";" window )
 zone-prefix     = ( "TZ=" / "CRON_TZ=" ) zone-name
 window          = [ day-spec " " ] time "-" time

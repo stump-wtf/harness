@@ -36,7 +36,7 @@ and ADR-0025 (supervisor-held leases).
   does not own the gateway.
 - Proving data retention per call. It is requested and canaried, not attested.
 - Codex pinning in v1.
-- A Harness egress proxy (ADR-0026 option 1C). It is the fallback if
+- A Harness egress proxy (ADR-0026, Decision 1, Option 3). It is the fallback if
   transcripts prove insufficient.
 - Budget and cost enforcement. ADR-0027 owns that, from the same usage items.
 
@@ -327,13 +327,14 @@ flowchart TB
 6. The generation lookup and per-message evidence, once agent-trace#105 lands.
    This turns `attest = "full"` on.
 7. `doctor --models` direct cases, then `--through-client`.
-8. Docs: the fail-closed section in `docs/usage/configuration.md` beside the
+8. Docs: the fail-closed section in the
+   [configuration reference](https://stump-wtf.github.io/harness/usage/configuration) beside the
    failover advice, sequenced after PR #408, which also edits that page.
 
 Rollback: remove `model_pin` from a harness. The pins directory is removed at
 its next spawn.
 
-## Open Questions
+## Settled Questions
 
 One question stays open; the rest were settled in the Operation Stumply design
 review.
@@ -342,13 +343,11 @@ review.
   `provider` preferences natively?** **Open** (design review 2026-09-22): it is
   unverified. Story #520 checks it first. If it does not, Pi/OMP pins are
   `litellm`-only until it does, or until a Pi extension ships.
-- **What happens on a mismatch by default?** Resolved (design review
-  2026-09-22): `on_mismatch = "hold"` is the default (REQ-12). A pin fails
+- **What happens on a mismatch by default?** `on_mismatch = "hold"` is the default (REQ-12). A pin fails
   closed; `fail-run` is the opt-in alternative.
-- **What does a LiteLLM gateway report as the served model?** Resolved (design
-  review 2026-09-22): measured, not decided in advance: the canary's `gateway`
+- **What does a LiteLLM gateway report as the served model?** Measured, not decided in advance: the canary's `gateway`
   case records whether it is the upstream ID or the alias. Until it shows the
   upstream ID, `litellm` attestation is on the alias.
 - **Should `accept_served` accept a pattern for dated suffixes beyond the
-  eight-digit rule?** Resolved (design review 2026-09-22): deferred until a real
-  route needs it, as proposed.
+  eight-digit rule?** Deferred until a real
+  route needs it.

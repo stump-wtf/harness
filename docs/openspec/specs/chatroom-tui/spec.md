@@ -19,8 +19,8 @@ The chatroom view is a new mode in the Harness TUI (bubbletea-based), accessible
 See ADR-0015 for the architectural decision context.
 
 This spec **extends SPEC-0001**. SPEC-0001 REQ "Mode Machine" declares two primary
-modes — Dashboard and Attached; the chatroom is a third, and that requirement is
-amended accordingly. Every binding below is a default, declared through the
+modes — Dashboard and Attached; this spec adds the chatroom as a third primary
+mode. Every binding below is a default, declared through the
 Bubbles `key.Binding` registry that SPEC-0001 REQ "Keybinding Registry" already
 requires, so `?` renders them and a future config can remap them.
 
@@ -279,4 +279,4 @@ All errors from `tail.Watcher`, adapters, and bubbletea SHALL be wrapped with co
 
 ## Design
 
-This spec is paired with `design.md`, which covers the architecture, decisions, and implementation details.
+This spec is paired with the [design notes](./design.md), which covers the architecture, decisions, and implementation details.

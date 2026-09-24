@@ -40,7 +40,7 @@ prefix** is the bundle-relative directory holding verified binaries; a
 **datastore** is the operator's Postgres or object store.
 
 See ADR-0031 for the decision, the options, and exactly which part of ADR-0024's
-rejected option "2B" this adopts and which part it continues to reject.
+rejected Decision 2, Option 2 this adopts and which part it continues to reject.
 
 ## Requirements
 

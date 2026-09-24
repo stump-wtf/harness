@@ -368,20 +368,18 @@ erDiagram
    lives only in `ledger/`; `state.json` no longer carries it, and `keep_runs`
    bounds only per-run logs. Downgrading loses the view of run history.
 
-## Open Questions
+## Settled Questions
 
 Every question below was settled in the Operation Stumply design review. None is
 left open.
 
-- **Should the in-memory window be configurable?** Resolved (design review
-  2026-09-22): no. It stays 7 days, as proposed; a key is added only if field
+- **Should the in-memory window be configurable?** No. It stays 7 days; a key is added only if field
   data asks.
 - **Should `harness runs` default to 24 hours or to "since the last daemon
-  start"?** Resolved (design review 2026-09-22): 24 hours, as REQ-14 states.
+  start"?** 24 hours, as REQ-14 states.
 - **Should the first-boot import parse `exited code=` lines to backfill resident
-  history?** Resolved (design review 2026-09-22): no. It is best-effort text
+  history?** No. It is best-effort text
   parsing, which this ADR exists to retire.
-- **Trace push and `internal/cairnexport`.** Resolved (design review
-  2026-09-22): delete the unused `internal/cairnexport` package once ADR-0022's
+- **Trace push and `internal/cairnexport`.** Delete the unused `internal/cairnexport` package once ADR-0022's
   telemetry export (#408) lands on `main`; #499 tracks it. Runs link to
   traces through `trace_url`, not through that package.

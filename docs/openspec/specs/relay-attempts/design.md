@@ -383,18 +383,17 @@ client can be built in parallel, and its relay behaviour lands once firings
 exist. Rolling back means removing `lease` from config; in-flight attempts are
 stopped and their leases lapse.
 
-## Open Questions
+## Settled Questions
 
 Every question below was settled in the Operation Stumply design review. None is
 left open.
 
 - **Should `harness trigger <name>` on a leased harness accept `--todo <id>`?**
-  Resolved (design review 2026-09-22): not in this spec, as proposed. It is the
-  one place option 4B has a real use; add it as a debugging follow-up if
-  operators ask.
+  Not in this spec. It is the one place ADR-0025's Decision 4, Option 2 has a
+  real use; add it as a debugging follow-up if operators ask.
 - **Should a relay record which model served the attempt (ADR-0026) in
-  `result.harness`?** Resolved (design review 2026-09-22): yes, as a follow-up
+  `result.harness`?** Yes, as a follow-up
   once model attestation lands; it is not part of the first cut.
 - **Should `success_check` also be allowed on an unleased triggered harness?**
-  Resolved (design review 2026-09-22): out of scope here, as proposed; a small
+  Out of scope here; a small
   follow-up if wanted.

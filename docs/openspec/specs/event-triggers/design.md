@@ -30,7 +30,7 @@ Related ADRs:
 
 * ADR-0004 and ADR-0008: front doors and secrets.
 * ADR-0010: the future MCP server side.
-* ADR-0019: option 1E, "the daemon must receive the demand".
+* ADR-0019, Decision 1, Option 5: "the daemon must receive the demand".
 
 ## Goals / Non-Goals
 
@@ -80,8 +80,8 @@ asking about `Schedule`.
 
 **Alternatives considered:**
 
-- A distinct harness kind for event harnesses: rejected for the reasons 2A lost
-  in ADR-0013.
+- A distinct harness kind for event harnesses: rejected for the reasons Decision 2, Option 1
+  lost in ADR-0013.
 
 ### The event rides the `RunRequest`, and is written at `beginRun`
 
@@ -441,7 +441,7 @@ sequenceDiagram
 - **Cold starts.** Every event pays agent startup. → This is documented. A
   resident channel worker remains the tool for chatty, low-value streams.
 - **Coalescing changes SPEC-0008's observable history.** A burst of cron skips
-  now yields one record with a count. → Recorded as an amendment. No consumer
+  now yields one record with a count. → No consumer
   depended on one-record-per-skip, and the `coalesced` field makes the count
   explicit.
 - **Two clocks could disagree about a boundary.** The firing gate runs in the
@@ -474,32 +474,29 @@ Suggested delivery order, each step shippable on its own:
 Rollback is removing the tables: a config without `triggers` or source tables
 behaves exactly as before.
 
-## Open Questions
+## Settled Questions
 
 Every question below was settled in the Operation Stumply design review. None is
 left open.
 
 - **Should Switchboard ring only sessions that declare the channel capability
-  client-side?** Resolved (design review 2026-09-22): not a Harness decision.
-  This spec keeps making the signal available, as proposed; whether to ring only
+  client-side?** Not a Harness decision.
+  This spec keeps making the signal available; whether to ring only
   capability-declaring sessions is Switchboard's call.
 - **Is `60/m` the right default `rate_limit` for a forge organization with
-  bursty bulk edits?** Resolved (design review 2026-09-22): yes, `60/m` stays
-  the default, as proposed. A burst mostly coalesces, so the limit mainly
+  bursty bulk edits?** Yes, `60/m` stays
+  the default. A burst mostly coalesces, so the limit mainly
   protects the daemon; an operator can raise it per webhook.
-- **Should the listener serve an optional `GET /hooks/<name>` probe?** Resolved
-  (design review 2026-09-22): no. None of the four presets needs one; add it
+- **Should the listener serve an optional `GET /hooks/<name>` probe?** No. None of the four presets needs one; add it
   only when a sender does.
 - **The two Switchboard notify-hook dependencies** (a real Standard Webhooks
-  secret, and dual signing on rotation). Resolved (design review 2026-09-22):
-  both belong to Switchboard's notify-hook spec, SPEC-0024, which specifies
+  secret, and dual signing on rotation). Both belong to Switchboard's notify-hook spec, SPEC-0024, which specifies
   them: secrets are `whsec_` plus padded standard base64 and the HMAC key is the
   decoded bytes, and `rotate_notify_hook` signs with both the old and the new
   secret for a 24-hour grace period. Each retry also carries its own timestamp.
-- **Pool dispatch (`dispatch = "one"`).** Resolved (design review 2026-09-22):
-  stays deferred, as proposed. Revisit when a single drainer with
+- **Pool dispatch (`dispatch = "one"`).** Stays deferred. Revisit when a single drainer with
   `claim_next`-until-empty measurably cannot keep up.
-- **F-X2 latency budget.** Resolved (design review 2026-09-22): the end-to-end
+- **F-X2 latency budget.** The end-to-end
   acceptance test (a trusted, labelled issue waking a one-shot) passes when the
   Harness run starts within **30 seconds** of Switchboard receiving the forge's
   webhook, with no polling (ADR-0021 "Confirmation").

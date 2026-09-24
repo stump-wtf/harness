@@ -179,9 +179,6 @@ C4Container
 
 ## Caller attribution and wiring
 
-*Resolved 2026-09-22, when SPEC-0007's `serve_to` scoping made the question
-unavoidable.*
-
 **Choice**: A per-spawn token in the harness's environment (`HARNESS_MCP_TOKEN`,
 alongside an informational `HARNESS_NAME`). The token is presented by a
 `harness mcp` stdio bridge, which adapters wire in at launch through a flag, and

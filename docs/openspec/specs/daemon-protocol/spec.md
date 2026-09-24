@@ -15,7 +15,7 @@ a single connection: **control** (structured request/response plus a
 state-change subscription) and **attach** (opaque terminal byte streams).
 Remote clients never speak a separate wire protocol — the Wish/SSH session runs
 the TUI inside the daemon, and that TUI is a local client of this same contract
-(ADR-0004). See `design.md` for framing details and rationale.
+(ADR-0004). See the [design notes](./design.md) for framing details and rationale.
 
 ## Requirements
 

@@ -994,7 +994,7 @@ Also:
 
 When the metrics endpoint of SPEC-0013 is enabled, the daemon SHALL export:
 
-```
+```text
 harness_trigger_source_up{source,kind}             gauge    1 while connected or listening, else 0
 harness_trigger_events_total{source,outcome}       counter
 harness_trigger_last_event_timestamp{source}       gauge    unix seconds

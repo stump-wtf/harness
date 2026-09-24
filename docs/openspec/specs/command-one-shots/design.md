@@ -91,7 +91,7 @@ payload.
     "number": 412,
     "url": "https://gitea.stump.rocks/stump.wtf/harness/pulls/412",
     "sha": "8febab3c79a7a61c31f69f33a762ef49262b175e",
-    "actor": "joestump"
+    "actor": "alice"
   }
 }
 ```
@@ -327,26 +327,24 @@ flowchart TD
 Rollback: every new key is opt-in. Removing the keys restores today's
 behaviour, except REQ-1, which is intentionally not reverted.
 
-## Open Questions
+## Settled Questions
 
 Every question below was settled in the Operation Stumply design review. None is
 left open.
 
 - **Should `stdin` and `file` delivery extend to the built-in adapters?**
-  Resolved (design review 2026-09-22): not in this spec, as proposed. The
+  Not in this spec. The
   built-in adapters keep their argv contracts; extending delivery to them is a
   later change.
-- **Should `trusted_actors` also accept an org or team?** Resolved (design
-  review 2026-09-22): no. That needs a forge client in the daemon, which
+- **Should `trusted_actors` also accept an org or team?** No. That needs a forge client in the daemon, which
   ADR-0021 avoided. Switchboard's trusted-actor work (Switchboard ADR-0031) owns
   org and team trust when Switchboard is in front.
-- **`switchboard` and `cairn` extractors.** Resolved (design review 2026-09-22):
-  they wait for their payload contracts, as proposed: Switchboard SPEC-0024
+- **`switchboard` and `cairn` extractors.** They wait for their payload contracts: Switchboard SPEC-0024
   (notify hooks) and Cairn ADR-0022 (annotation events), both accepted in the
   same review. Each extractor follows once its contract is implemented.
-- **Pi and OMP.** Resolved (design review 2026-09-22): keep the built-in `pi`
-  and `omp` adapters (ADR-0023 option 4A), with the `command` kind as the
+- **Pi and OMP.** Keep the built-in `pi`
+  and `omp` adapters (ADR-0023, Decision 4, Option 1), with the `command` kind as the
   fallback for any other CLI.
-- **The untrusted fence.** Resolved (design review 2026-09-22): it ships, off by
+- **The untrusted fence.** It ships, off by
   default and gated by `untrusted_inline`, with a WARN each time it renders
   (REQ-10, already on `main`).

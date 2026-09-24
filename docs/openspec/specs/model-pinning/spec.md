@@ -454,7 +454,7 @@ credentials or generation-lookup responses (ADR-0008).
 The daemon SHALL expose, under SPEC-0013's registry, listener and cardinality
 cap:
 
-```
+```text
 harness_model_calls_attested_total{harness,outcome}   counter  outcome: attested|mismatch|unattested
 harness_model_mismatch_total{harness,kind}            counter  kind: model|provider
 harness_model_pin_held{harness}                       gauge    0|1

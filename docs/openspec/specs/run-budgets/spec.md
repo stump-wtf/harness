@@ -370,7 +370,7 @@ resident harness or for a zero exit.
 
 A harness SHALL be parked when a `quota` error either:
 
-* carries a reset time the daemon can parse (REQ-12 formats in `design.md`),
+* carries a reset time the daemon can parse (REQ-12 formats in the [design notes](./design.md)),
   in which case the harness is parked until that time; or
 * leaves the harness **stuck on quota**: for a resident, at least 3 `quota` errors
   and no successful model call within the last 10 minutes; for a one-shot, a run
@@ -554,7 +554,7 @@ shown firing in a test.
 
 When SPEC-0013's endpoint is enabled, the daemon SHALL export:
 
-```
+```text
 harness_budget_runs_today{harness}                 gauge
 harness_budget_runs_limit{harness}                 gauge    absent when unset
 harness_budget_cost_today_usd{harness}             gauge

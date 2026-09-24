@@ -9,10 +9,11 @@ implements: [ADR-0005, ADR-0006, ADR-0007]
 ## Overview
 
 The explicit state machine every harness moves through under daemon
-supervision. Today's implementation collapses everything to green/yellow/red by
-ANDing "supervisor active" with "tmux session up"; this spec makes the machine
-explicit, adds crash-loop safety, and gives the TUI real states to render. See
-ADR-0005 (supervision layers) and `design.md` for the transition diagram.
+supervision. The predecessor, `zsh-harnessd`, collapsed everything to
+green/yellow/red by ANDing "supervisor active" with "tmux session up"; this
+spec makes the machine explicit, adds crash-loop safety, and gives the TUI real
+states to render. See ADR-0005 (supervision layers) and the
+[design notes](./design.md) for the transition diagram.
 
 ## Requirements
 

@@ -172,7 +172,7 @@ SHALL call `claim_next` on the lease source with:
 
 The claim SHALL use `claim_next` for every trigger, including channel and
 webhook firings whose event names a todo. The daemon SHALL NOT parse an event
-payload to choose a todo (ADR-0025, option 4A).
+payload to choose a todo (ADR-0025, Decision 4, Option 1).
 
 * If the response is `empty: true`, the daemon SHALL record the run `skipped`
   with reason `no_work`, SHALL spawn nothing, and SHALL write no context file.
