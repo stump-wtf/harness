@@ -22,6 +22,15 @@ type Controller interface {
 	SignalGroup(name string, sig syscall.Signal) bool
 }
 
+// InputGate is implemented by a Controller that can refuse a harness's attach
+// input outright — today, a run whose stdin is its prompt (SPEC-0017 REQ-12).
+// InputRefusal returns the one-line reason to show the client, or "" when
+// input is accepted. *supervisor.Manager satisfies it. Optional, so a
+// Controller without it accepts all input as before.
+type InputGate interface {
+	InputRefusal(name string) string
+}
+
 // Registry maps harness name → Mux, creating each lazily on first use. It is
 // safe for concurrent use.
 type Registry struct {
@@ -74,6 +83,12 @@ func (r *Registry) Mux(name string) *Mux {
 			}
 		},
 	)
+	m.inputRefusal = func() string {
+		if g, ok := r.controller().(InputGate); ok {
+			return g.InputRefusal(name)
+		}
+		return ""
+	}
 	r.muxes[name] = m
 	return m
 }

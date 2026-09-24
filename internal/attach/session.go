@@ -33,6 +33,11 @@ type Session struct {
 	once   sync.Once
 	wg     sync.WaitGroup
 
+	// refusalShown records that this session has been shown the current
+	// input refusal (Mux.Input), so a burst of keystrokes yields one notice.
+	// Guarded by mux.mu.
+	refusalShown bool
+
 	// createdAt stamps when the attach opened, for visibility (#183): a
 	// session that has been "attached" for six hours next to a six-minute
 	// one is the prime suspect for a stale client clamping the PTY.

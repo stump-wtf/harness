@@ -100,6 +100,11 @@ type HarnessForm struct {
 	// its description. Written verbatim, element for element, never joined
 	// into a command string (SPEC-0017 REQ-15).
 	Argv []string
+	// PromptDelivery is a command harness's prompt_delivery (SPEC-0017
+	// REQ-12): how its prompt reaches the program. A round-trip field like
+	// Argv, and validated by the same matrix the parser uses
+	// (core.CheckCommandPrompt).
+	PromptDelivery string
 	// argvErr is why the argv input did not parse (toForm), reported by
 	// Validate. Unlike args, a malformed argv is not silently dropped: saving
 	// would then write a command harness with no argv at all.
@@ -372,21 +377,25 @@ func (f HarnessForm) validateCommand(promptSet bool) error {
 	if f.argvErr != nil {
 		return f.argvErr
 	}
+	delivery := strings.TrimSpace(f.PromptDelivery)
 	if f.Harness != core.AdapterCommand {
 		if len(f.Argv) > 0 {
 			return fmt.Errorf("argv is only accepted on harness command (use args for %s)", f.Harness)
 		}
-		return nil
+		return core.CheckCommandPrompt(f.Harness, nil, delivery, promptSet)
 	}
 	switch {
 	case len(f.Args) > 0:
 		return fmt.Errorf("args is not accepted on a command harness: put the whole command line in argv")
-	case promptSet:
-		return fmt.Errorf("a command harness takes no prompt yet; use harness crush, claude-code or codex for a prompt one-shot")
 	case f.AutoAccept || f.MaxTurns != 0:
 		return fmt.Errorf("auto_accept and max_turns are not accepted on a command harness: it owns its argv")
 	}
 	if err := core.CheckCommandArgv(f.Argv); err != nil {
+		return err
+	}
+	// The parser's prompt delivery matrix (SPEC-0017 REQ-12): a prompt the
+	// argv never passes on, with no stdin or file delivery, would be dropped.
+	if err := core.CheckCommandPrompt(f.Harness, f.Argv, delivery, promptSet); err != nil {
 		return err
 	}
 	scheduled := strings.TrimSpace(f.Schedule) != ""
@@ -420,7 +429,35 @@ func (f HarnessForm) TOML() string {
 	promptFile := strings.TrimSpace(f.PromptFile)
 	isCommand := f.Harness == core.AdapterCommand
 	oneShotKind := prompt != "" || promptFile != "" || isCommand
-	if prompt != "" || promptFile != "" {
+	if isCommand {
+		// A command harness owns its argv; a prompt rides beside it and
+		// reaches the program by prompt_delivery (SPEC-0017 REQ-12), never
+		// through synthesized flags, so none of the agent keys are written.
+		// Placeholders are written as the operator typed them (REQ-15).
+		if prompt != "" {
+			fmt.Fprintf(&b, "prompt = %s\n", strconv.Quote(prompt))
+		} else if promptFile != "" {
+			fmt.Fprintf(&b, "prompt_file = %s\n", strconv.Quote(promptFile))
+		}
+		if len(f.Argv) > 0 {
+			// One TOML string per element exactly as the operator wrote it:
+			// quoting each element keeps "a b" one argument, and a
+			// placeholder stays a placeholder, never a rendering.
+			parts := make([]string, len(f.Argv))
+			for i, a := range f.Argv {
+				parts[i] = strconv.Quote(a)
+			}
+			fmt.Fprintf(&b, "argv = [%s]\n", strings.Join(parts, ", "))
+		}
+		if d := strings.TrimSpace(f.PromptDelivery); d != "" {
+			fmt.Fprintf(&b, "prompt_delivery = %s\n", strconv.Quote(d))
+		}
+		if model := strings.TrimSpace(f.Model); model != "" {
+			// A command harness's model feeds {{model}} in its argv
+			// (SPEC-0017 REQ-3); Validate refuses it without one.
+			fmt.Fprintf(&b, "model = %s\n", strconv.Quote(model))
+		}
+	} else if prompt != "" || promptFile != "" {
 		// Prompt harness: `prompt` replaces args entirely (Validate
 		// enforces the exclusivity; the daemon synthesizes the argv at spawn,
 		// ADR-0011). `model`, `auto_accept`, and `max_turns` ride beside it as
@@ -453,22 +490,6 @@ func (f HarnessForm) TOML() string {
 				parts[i] = strconv.Quote(a)
 			}
 			fmt.Fprintf(&b, "args = [%s]\n", strings.Join(parts, ", "))
-		}
-		if len(f.Argv) > 0 {
-			// A command harness's argv, one TOML string per element exactly
-			// as the operator wrote it (SPEC-0017 REQ-15): quoting each
-			// element keeps "a b" one argument, and a placeholder written
-			// here stays a placeholder, never a rendering.
-			parts := make([]string, len(f.Argv))
-			for i, a := range f.Argv {
-				parts[i] = strconv.Quote(a)
-			}
-			fmt.Fprintf(&b, "argv = [%s]\n", strings.Join(parts, ", "))
-		}
-		if model := strings.TrimSpace(f.Model); model != "" && isCommand {
-			// A command harness's model feeds {{model}} in its argv
-			// (SPEC-0017 REQ-3); Validate refuses it without one.
-			fmt.Fprintf(&b, "model = %s\n", strconv.Quote(model))
 		}
 	}
 	// A prompt harness or a command harness may be a one-shot (SPEC-0017
@@ -643,17 +664,18 @@ func AppendHarness(existing []byte, f HarnessForm) []byte {
 // harness the daemon knows but that isn't in the file yet).
 func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi := formInputs{
-		name:        sel.Name,
-		harness:     sel.Adapter,
-		prompt:      sel.Prompt,
-		promptFile:  sel.PromptFile,
-		model:       sel.Model,
-		autoAccept:  sel.AutoAccept,
-		quiet:       sel.Quiet,
-		maxTurns:    strconv.Itoa(sel.MaxTurns),
-		backend:     orDefault(sel.Backend, string(core.BackendNative)),
-		description: sel.Description,
-		enabled:     sel.Enabled,
+		name:           sel.Name,
+		harness:        sel.Adapter,
+		prompt:         sel.Prompt,
+		promptFile:     sel.PromptFile,
+		promptDelivery: sel.PromptDelivery,
+		model:          sel.Model,
+		autoAccept:     sel.AutoAccept,
+		quiet:          sel.Quiet,
+		maxTurns:       strconv.Itoa(sel.MaxTurns),
+		backend:        orDefault(sel.Backend, string(core.BackendNative)),
+		description:    sel.Description,
+		enabled:        sel.Enabled,
 		// The fallback (file unreadable, or the table isn't there yet) must
 		// match the parser's default scope, not blank — blank now means the
 		// deny-all `mcp_allow = []`.
@@ -699,6 +721,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	}
 	fi.args = shellQuoteJoin(h.Args)
 	fi.argv = formatArgvInput(h.Argv)
+	fi.promptDelivery = h.PromptDelivery
 	fi.workdir = h.Workdir
 	fi.envFile = h.EnvFile
 	if h.RestartDelay > 0 {
@@ -762,6 +785,7 @@ func (fi formInputs) toForm() HarnessForm {
 		f.Args = args
 	}
 	f.Argv, f.argvErr = parseArgvInput(fi.argv)
+	f.PromptDelivery = strings.TrimSpace(fi.promptDelivery)
 	// Unconditional, unlike args above: strings.Fields returns a non-nil empty
 	// slice for a cleared input, which is how the form expresses the deny-all
 	// `mcp_allow = []` (see TOML). Both the `n` and `e` pre-fills seed this

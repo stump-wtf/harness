@@ -251,6 +251,12 @@ type activeRun struct {
 	// put one in). It is read back out by runEnv, so a restart of the same
 	// run spawns with the same HARNESS_EVENT_FILE.
 	eventFile string
+	// promptFile is where a file-delivery prompt for this run is written,
+	// <jobs dir>/<harness>/<run_id>.prompt, beside its log so it is pruned
+	// with it; "" when the harness has no per-run log directory. It is only
+	// a path: spawn writes the file, and only for prompt_delivery = "file"
+	// (SPEC-0017 REQ-12).
+	promptFile string
 }
 
 // decisionRecord builds the record of a decision that starts no process.
@@ -330,6 +336,7 @@ func (s *Supervisor) beginRun(req RunRequest) RunRecord {
 			s.logEvent("run history not saved", "run_id", rec.RunID, "err", err.Error())
 		}
 		if path != "" {
+			run.promptFile = promptPathFor(path)
 			if f, err := openRunLog(path); err != nil {
 				s.logEvent("run log unavailable", "run_id", rec.RunID, "err", err.Error())
 			} else {
@@ -396,6 +403,20 @@ func eventPathFor(logPath string) string {
 	return strings.TrimSuffix(logPath, ".log") + ".event.json"
 }
 
+// promptPathFor turns a run's log path into its prompt file path, for the
+// same reason eventPathFor exists: the write in spawn and the prune in
+// manager_runs agree on the name by sharing it.
+// Governing: SPEC-0017 REQ-12 "Prompt Delivery".
+func promptPathFor(logPath string) string {
+	if logPath == "" {
+		return ""
+	}
+	return strings.TrimSuffix(logPath, ".log") + promptSuffix
+}
+
+// promptSuffix names a run's prompt file: "<run_id>.prompt".
+const promptSuffix = ".prompt"
+
 // writeEventFile writes env to path with mode 0600 and returns the absolute
 // path it can be named by.
 //
@@ -444,15 +465,33 @@ var writeEventFile = func(path string, env *trigger.Envelope) (string, error) {
 // Governing: SPEC-0014 REQ "Event Delivery To The Run".
 func (s *Supervisor) runEnv() RunEnv {
 	if s.run == nil {
-		return RunEnv{}
+		return RunEnv{PromptPath: s.unrecordedPromptPath()}
+	}
+	prompt := s.run.promptFile
+	if prompt == "" {
+		prompt = s.unrecordedPromptPath()
 	}
 	return RunEnv{
-		RunID:     s.run.rec.RunID,
-		Trigger:   s.run.rec.Trigger,
-		Source:    s.run.rec.Source,
-		EventFile: s.run.eventFile,
-		StartedAt: s.run.rec.StartedAt,
+		RunID:      s.run.rec.RunID,
+		Trigger:    s.run.rec.Trigger,
+		Source:     s.run.rec.Source,
+		EventFile:  s.run.eventFile,
+		StartedAt:  s.run.rec.StartedAt,
+		PromptPath: prompt,
 	}
+}
+
+// unrecordedPromptPath is where a file-delivery prompt goes for a start with
+// no per-run directory: $XDG_STATE_HOME/harness/prompts/<harness>.prompt,
+// rewritten on each spawn (SPEC-0017 REQ-12). The prompts directory sits
+// beside the logs directory, the way the jobs directory does (NewManager), so
+// a daemon pointed at another state root keeps its prompts there too.
+func (s *Supervisor) unrecordedPromptPath() string {
+	root := StateHome()
+	if s.logCfg.Dir != "" {
+		root = filepath.Dir(s.logCfg.Dir)
+	}
+	return filepath.Join(root, "prompts", s.harness.Name+promptSuffix)
 }
 
 // armRunTimeout schedules the run's timeout, delivered to the loop.

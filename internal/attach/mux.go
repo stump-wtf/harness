@@ -49,6 +49,11 @@ type Mux struct {
 	name     string
 	onResize func(cols, rows int)
 	onInput  func(p []byte)
+	// inputRefusal says why a read-write session's input is refused, or ""
+	// when it is accepted (SPEC-0017 REQ-12: a run whose stdin is its
+	// prompt). It may be nil (tests), and it is set once, before the Mux is
+	// shared.
+	inputRefusal func() string
 	// nudgeDelays is this Mux's copy of the SIGWINCH re-assert schedule, taken
 	// at construction so the goroutine never reads the package var (see
 	// newMux).
@@ -341,14 +346,42 @@ func (m *Mux) Detach(s *Session) {
 
 // Input forwards a read-write session's keystrokes to the PTY; a read-only
 // session discards them so the PTY never sees the input (ADR-0008).
+//
+// Input to a harness whose run refuses it (a stdin-delivery run, whose stdin
+// is its prompt) is dropped too, and the session is told why with a one-line
+// notice — once, until input is accepted again, rather than once per
+// keystroke. The notice goes to that session alone and never through the
+// emulator, so the harness's screen and every other client are untouched;
+// output keeps streaming as usual (SPEC-0017 REQ-12 "Attach during a stdin
+// run").
 func (m *Mux) Input(s *Session, p []byte) {
 	if s.mode == protocol.AttachRO {
 		return // dropped: the PTY never sees read-only input
+	}
+	if m.inputRefusal != nil {
+		why := m.inputRefusal()
+		m.mu.Lock()
+		notify := why != "" && !s.refusalShown
+		s.refusalShown = why != ""
+		if notify {
+			s.enqueueLocked(refusalNotice(why))
+		}
+		m.mu.Unlock()
+		if why != "" {
+			return
+		}
 	}
 	p = m.unwrapPasteIfUnsupported(p)
 	if m.onInput != nil {
 		m.onInput(p)
 	}
+}
+
+// refusalNotice renders an input refusal as a line of its own on the client's
+// screen: dim, prefixed with the product name, and bracketed by CRLFs so it
+// neither overwrites nor joins the program's output.
+func refusalNotice(why string) []byte {
+	return []byte("\r\n\x1b[2m[harness] " + why + "\x1b[22m\r\n")
 }
 
 // unwrapPasteIfUnsupported strips the ESC[200~/ESC[201~ brackets from a

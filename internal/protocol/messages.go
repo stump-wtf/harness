@@ -87,7 +87,12 @@ const (
 	// a skipped run says why, and a template_unresolved skip names the path
 	// it lacked) — additive only. A daemon older than 13 omits both, and a
 	// client older than 13 shows a bare "skipped".
-	ProtoMinor = 13
+	// ProtoMinor 14 added PromptDelivery on ProjectHarness and HarnessInfo
+	// (SPEC-0017 REQ-12, REQ-14, REQ-16), and accepts a prompt on a
+	// "command" harness — additive only. A daemon older than 14 refuses a
+	// command definition carrying a prompt, so the delivery is never silently
+	// dropped into a harness that runs without its instruction.
+	ProtoMinor = 14
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -259,7 +264,11 @@ type ProjectHarness struct {
 	// PromptFile mirrors the schema's `prompt_file`: the PATH to the file
 	// holding the instruction, never its contents (ADR-0018). Clients show
 	// and round-trip the path; the daemon reads the file at spawn.
-	PromptFile     string `json:"prompt_file,omitempty"`
+	PromptFile string `json:"prompt_file,omitempty"`
+	// PromptDelivery is a "command" harness's prompt_delivery ("argv",
+	// "stdin" or "file"; empty = the default), carried verbatim and
+	// re-validated by the daemon (SPEC-0017 REQ-12, REQ-14).
+	PromptDelivery string `json:"prompt_delivery,omitempty"`
 	Workdir        string `json:"workdir,omitempty"`
 	EnvFile        string `json:"env_file,omitempty"`
 	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
@@ -345,6 +354,9 @@ type HarnessInfo struct {
 	// daemon reads the file at spawn, so the contents never travel on the
 	// wire — a client shows and round-trips the path (ADR-0018).
 	PromptFile string `json:"prompt_file,omitempty"`
+	// PromptDelivery is a "command" harness's configured prompt_delivery,
+	// empty when unset: `describe` shows it (SPEC-0017 REQ-16).
+	PromptDelivery string `json:"prompt_delivery,omitempty"`
 	// Model is the agent model selection for a prompt harness, folded into the
 	// synthesized argv at spawn (issue #57). Empty for cmd harnesses.
 	Model string `json:"model,omitempty"`

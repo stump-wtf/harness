@@ -10,10 +10,12 @@ package core
 //
 // What argv may reference is a closed allow set over the operator and daemon
 // tiers of the context: harness.name, harness.workdir, model, and the run.*
-// paths. Event paths are refused for now (a later story wires the event
-// context), `prompt`/`prompt_file` wait for a prompt delivery (REQ-12), and
-// untrusted free text is refused in argv in every form, permanently: text an
-// outside party wrote never becomes an argument (REQ-10).
+// paths, plus `prompt` and `prompt_file`, which bind to the operator's own
+// prompt under the matching prompt_delivery (REQ-12; promptdelivery.go
+// decides which delivery a reference needs). Event paths are refused for now
+// (a later story wires the event context), and untrusted free text is refused
+// in argv in every form, permanently: text an outside party wrote never
+// becomes an argument (REQ-10).
 //
 // Governing: ADR-0023 (command one-shots and templating), SPEC-0017 REQ-6
 // "Template Grammar", REQ-7 "Template Context", REQ-10 "Untrusted Free Text",
@@ -40,15 +42,22 @@ const (
 	PathRunSource      = "run.source"
 	PathRunStartedAt   = "run.started_at"
 	PathRunDate        = "run.date"
+	// PathPrompt and PathPromptFile are the prompt bindings (REQ-12): the
+	// prompt text under "argv" delivery, and the prompt file's absolute path
+	// under "file" delivery.
+	PathPrompt     = "prompt"
+	PathPromptFile = "prompt_file"
 )
 
 // argvPaths is the argv allow set. Every path here is an identifier, a
 // timestamp or an operator-written value: none carries a byte an outside party
-// chose.
+// chose. `prompt` is the operator's own `prompt`/`prompt_file` text, taken
+// verbatim; nothing an event carries is ever part of it.
 var argvPaths = map[string]bool{
 	PathHarnessName: true, PathHarnessWorkdir: true, PathModel: true,
 	PathRunID: true, PathRunTrigger: true, PathRunSource: true,
 	PathRunStartedAt: true, PathRunDate: true,
+	PathPrompt: true, PathPromptFile: true,
 }
 
 // untrustedPaths are REQ-10's free-text fields. They are refused in argv in
@@ -101,10 +110,8 @@ func checkArgvRef(i int, r tmpl.Ref) error {
 		return nil
 	case eventPath(r.Path):
 		return fmt.Errorf("%s: {{%s}} is not available in argv yet (event context in templates is not implemented; read $HARNESS_EVENT_FILE from the environment)", at, r.Path)
-	case r.Path == "prompt" || r.Path == "prompt_file":
-		return fmt.Errorf("%s: {{%s}} needs a prompt delivery, which a command harness does not have yet", at, r.Path)
 	}
-	return fmt.Errorf("%s: unknown template path %q (argv may reference: harness.name, harness.workdir, model, run.id, run.trigger, run.source, run.started_at, run.date)", at, r.Path)
+	return fmt.Errorf("%s: unknown template path %q (argv may reference: harness.name, harness.workdir, model, run.id, run.trigger, run.source, run.started_at, run.date, prompt, prompt_file)", at, r.Path)
 }
 
 // CommandArgvRefs returns every placeholder reference in argv[1:], each paired

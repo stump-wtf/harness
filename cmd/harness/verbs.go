@@ -150,13 +150,18 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 		t.Row("prompt_file", t.faintPlain(h.PromptFile))
 	default:
 		t.Row("harness", t.faintPlain(h.Adapter))
-		// A command harness's argv is what runs, so it is the row an operator
-		// came for. Each element is quoted, TOML-style, because the element
-		// boundaries are the point: "a b" is one argument, not two, and no
-		// shell ever re-splits it. Governing: SPEC-0017 REQ-16 "Visibility".
-		if len(h.Argv) > 0 {
-			t.Row("argv", t.faintPlain(formatArgv(h.Argv)))
-		}
+	}
+	// A command harness's argv is what runs, so it is the row an operator
+	// came for — with or without a prompt. Each element is quoted, TOML-style,
+	// because the element boundaries are the point: "a b" is one argument, not
+	// two, and no shell ever re-splits it; a {{prompt}} placeholder shows as
+	// written, never rendered. prompt_delivery says how a prompt reaches it.
+	// Governing: SPEC-0017 REQ-16 "Visibility".
+	if len(h.Argv) > 0 {
+		t.Row("argv", t.faintPlain(formatArgv(h.Argv)))
+	}
+	if h.PromptDelivery != "" {
+		t.Row("delivery", t.faintPlain("prompt via "+h.PromptDelivery))
 	}
 	if h.Model != "" {
 		t.Row("model", t.faintPlain(h.Model))

@@ -197,6 +197,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		Argv:            ph.Argv,
 		Prompt:          ph.Prompt,
 		PromptFile:      ph.PromptFile,
+		PromptDelivery:  ph.PromptDelivery,
 		Model:           ph.Model,
 		AutoAccept:      ph.AutoAccept,
 		MaxTurns:        ph.MaxTurns,

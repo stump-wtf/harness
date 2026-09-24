@@ -774,6 +774,21 @@ func (m *Manager) WriteInput(name string, p []byte) bool {
 	return false
 }
 
+// StdinPromptNotice is what an attach client is told when its keystrokes are
+// refused because the run's stdin is its prompt (SPEC-0017 REQ-12).
+const StdinPromptNotice = `input ignored: this run's stdin is its prompt (prompt_delivery = "stdin"); output still streams`
+
+// InputRefusal reports why attach input to name is refused, or "" when it is
+// not: a live run whose fd 0 is its prompt pipe takes no keystrokes, and the
+// attach layer shows the client this line instead (SPEC-0017 REQ-12). The
+// supervisor drops such input regardless; this only explains it.
+func (m *Manager) InputRefusal(name string) string {
+	if snap, ok := m.Snapshot(name); ok && snap.StdinIsPrompt {
+		return StdinPromptNotice
+	}
+	return ""
+}
+
 // SignalGroup delivers a signal to a single harness's live process group
 // (stump.wtf/harness#182: the attach layer re-delivers SIGWINCH after a resize
 // that may have landed during the guest's boot), ok=false if unknown.

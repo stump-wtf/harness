@@ -78,7 +78,10 @@ type persistedProjectHarness struct {
 	Argv   []string `json:"argv,omitempty"`
 	Prompt string   `json:"prompt,omitempty"`
 	// PromptFile is the PATH, never the file's contents (ADR-0018).
-	PromptFile     string `json:"prompt_file,omitempty"`
+	PromptFile string `json:"prompt_file,omitempty"`
+	// PromptDelivery is a command harness's prompt_delivery (SPEC-0017
+	// REQ-12), kept verbatim like Argv.
+	PromptDelivery string `json:"prompt_delivery,omitempty"`
 	Model          string `json:"model,omitempty"`
 	AutoAccept     bool   `json:"auto_accept,omitempty"`
 	MaxTurns       int    `json:"max_turns,omitempty"`
@@ -113,6 +116,7 @@ func toPersistedProjectHarness(h core.Harness) persistedProjectHarness {
 		Argv:            h.Argv,
 		Prompt:          h.Prompt,
 		PromptFile:      h.PromptFile,
+		PromptDelivery:  h.PromptDelivery,
 		Model:           h.Model,
 		AutoAccept:      h.AutoAccept,
 		MaxTurns:        h.MaxTurns,
@@ -155,6 +159,7 @@ func (p persistedProjectHarness) toCore() core.Harness {
 		Argv:            p.Argv,
 		Prompt:          p.Prompt,
 		PromptFile:      p.PromptFile,
+		PromptDelivery:  p.PromptDelivery,
 		Model:           p.Model,
 		AutoAccept:      p.AutoAccept,
 		MaxTurns:        p.MaxTurns,

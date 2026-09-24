@@ -378,6 +378,7 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 			huh.NewInput().Title("keep_runs (run history kept; blank = 20; requires schedule or triggers)").Value(&fi.keepRuns),
 			huh.NewInput().Title("args (space-separated)").Value(&fi.args),
 			huh.NewInput().Title(`argv (command harness only; a TOML array, e.g. ["/usr/local/bin/report", "a b"]; exec'd, never via a shell)`).Value(&fi.argv),
+			huh.NewInput().Title(`prompt_delivery (command harness with a prompt: argv, stdin or file; blank = argv when argv has {{prompt}})`).Value(&fi.promptDelivery),
 			huh.NewInput().Title("workdir").Value(&fi.workdir),
 			huh.NewInput().Title("env_file").Value(&fi.envFile),
 			huh.NewInput().Title("restart_delay (seconds)").Value(&fi.delay),

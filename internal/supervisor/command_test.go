@@ -39,9 +39,16 @@ type argvProbe struct {
 	// the daemon exec'd the child itself; a shell in between would be the
 	// parent instead (or would fork the probe as its grandchild).
 	PPID int `json:"ppid"`
+
+	// The prompt delivery observations (promptdelivery_test.go), each made
+	// by the child about its own descriptors and environment.
+	probeDelivery
 }
 
 func TestMain(m *testing.M) {
+	if os.Getenv(stdinHolderEnv) != "" {
+		os.Exit(holdStdin())
+	}
 	if out := os.Getenv(argvProbeEnv); out != "" {
 		os.Exit(writeArgvProbe(out))
 	}
@@ -51,7 +58,11 @@ func TestMain(m *testing.M) {
 // writeArgvProbe records the probe and reports the exit code. It writes to a
 // temporary name and renames, so a reader never sees a half-written record.
 func writeArgvProbe(out string) int {
-	b, err := json.Marshal(argvProbe{Argv0: os.Args[0], Args: os.Args[1:], PPID: os.Getppid()})
+	p := argvProbe{Argv0: os.Args[0], Args: os.Args[1:], PPID: os.Getppid()}
+	if code := p.observeDelivery(); code != 0 {
+		return code
+	}
+	b, err := json.Marshal(p)
 	if err != nil {
 		return 2
 	}
@@ -61,7 +72,7 @@ func writeArgvProbe(out string) int {
 	if err := os.Rename(out+".tmp", out); err != nil {
 		return 2
 	}
-	return 0
+	return afterProbeRecord(out)
 }
 
 // probeHarness builds a command harness whose argv[0] is argv0 and which runs

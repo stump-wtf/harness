@@ -367,11 +367,16 @@ func runLogID(file string) (int, bool) {
 	return runIDWithSuffix(file, ".log")
 }
 
-// runArtifactID parses any of a run's on-disk artifacts — "<id>.log" or
-// "<id>.event.json" — into its run id. Pruning walks this, so a new artifact
-// kind is one line here rather than a second loop that can forget one.
+// runArtifactID parses any of a run's on-disk artifacts — "<id>.log",
+// "<id>.event.json" or "<id>.prompt" — into its run id. Pruning walks this,
+// so a new artifact kind is one line here rather than a second loop that can
+// forget one. The prompt file is SPEC-0017 REQ-12's: "A run's prompt file
+// SHALL be pruned with its record".
 func runArtifactID(file string) (int, bool) {
 	if id, ok := runIDWithSuffix(file, ".log"); ok {
+		return id, true
+	}
+	if id, ok := runIDWithSuffix(file, promptSuffix); ok {
 		return id, true
 	}
 	return runIDWithSuffix(file, ".event.json")

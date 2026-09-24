@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -184,6 +185,12 @@ type RunEnv struct {
 	// template context's run.started_at and run.date (SPEC-0017 REQ-7), so a
 	// respawn of the same run renders the same values.
 	StartedAt time.Time
+	// PromptPath is where a `command` harness with prompt_delivery = "file"
+	// has its prompt written: <jobs dir>/<harness>/<run_id>.prompt for a run
+	// with a record, $XDG_STATE_HOME/harness/prompts/<harness>.prompt
+	// otherwise. It is not itself an environment variable: spawn exports
+	// HARNESS_PROMPT_FILE only for a file delivery (SPEC-0017 REQ-12).
+	PromptPath string
 }
 
 // vars renders r as KEY=VALUE pairs, omitting the two that are meaningful only
@@ -244,8 +251,15 @@ func buildEnv(h core.Harness, run RunEnv) ([]string, error) {
 	return env, nil
 }
 
-// runVarNames are the reserved run-context variables RunEnv renders.
-var runVarNames = []string{"HARNESS_RUN_ID", "HARNESS_RUN_TRIGGER", "HARNESS_RUN_SOURCE", "HARNESS_EVENT_FILE"}
+// runVarNames are the reserved run-context variables the daemon sets:
+// RunEnv's four, and HARNESS_PROMPT_FILE, which spawn sets for a file prompt
+// delivery (SPEC-0017 REQ-12) and which, like the others, is never inherited
+// from the daemon's own environment.
+var runVarNames = []string{"HARNESS_RUN_ID", "HARNESS_RUN_TRIGGER", "HARNESS_RUN_SOURCE", "HARNESS_EVENT_FILE", promptFileVar}
+
+// promptFileVar names a file-delivery prompt's absolute path in the child's
+// environment (SPEC-0017 REQ-12).
+const promptFileVar = "HARNESS_PROMPT_FILE"
 
 // recorded reports whether r describes a run with a record, i.e. whether the
 // daemon has an authoritative value for every reserved name.
@@ -360,13 +374,25 @@ func resolvePrompt(h core.Harness) (core.Harness, error) {
 var ErrGenericPrompt = errors.New(`"generic" runs sh and has no prompt synthesis`)
 
 // ErrCommandPrompt is returned when a `command` harness reaches spawn carrying
-// a prompt. Nothing can deliver it yet (SPEC-0017 REQ-12's `{{prompt}}`,
-// stdin and file deliveries are still to come), and running the argv without
-// the instruction the operator wrote would be a silent no-op. Config
-// validation and the wire reject the combination first; this is the backstop.
+// a prompt that nothing delivers, or a prompt_delivery that contradicts its
+// argv (SPEC-0017 REQ-12's validation matrix, core.CheckCommandPrompt).
+// Running the argv without the instruction the operator wrote would be a
+// silent no-op. Config validation and the wire reject the combination first;
+// this is the backstop.
 // Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-12 "Prompt
 // Delivery".
-var ErrCommandPrompt = errors.New(`a "command" harness has no way to deliver a prompt yet`)
+var ErrCommandPrompt = errors.New(`a "command" harness has a prompt it cannot deliver`)
+
+// ErrPromptDelivery is returned when a `command` harness's prompt could not be
+// handed to the program the way prompt_delivery says: the prompt file could
+// not be written, the stdin pipe could not be made, or the rendered argv
+// exceeds the platform's argument limits. The start fails and a run with a
+// record is recorded `failed`: a one-shot launched without its instruction is
+// the silent no-op this is here to prevent. It is never swallowed; beginStart
+// logs it.
+// Governing: ADR-0023, SPEC-0017 REQ-12 "Prompt Delivery", REQ "Error
+// Handling Standards".
+var ErrPromptDelivery = errors.New("prompt delivery failed")
 
 // execArgv resolves the executable and argv spawn runs: the configured cmd
 // with {workdir}-expanded args, or — for a prompt harness (empty Cmd, ADR-0011
@@ -382,13 +408,23 @@ func execArgv(h core.Harness, workdir string, run RunEnv) (spawnPlan, error) {
 }
 
 // spawnPlan is what spawn execs: the executable and its arguments, already
-// rendered. It is built once per spawn and never stored, so a rendered value
-// lives only in the child's argv (SPEC-0017 REQ-11). Prompt delivery (REQ-12)
-// will add its stdin reader and prompt file here.
+// rendered, and — for a `command` harness with a prompt — how the prompt
+// reaches it. It is built once per spawn and never stored, so a rendered
+// value lives only in the child's argv, its stdin pipe or its 0600 prompt
+// file (SPEC-0017 REQ-11, REQ-12).
 // Governing: SPEC-0017 design.md § "Where rendering happens in spawn".
 type spawnPlan struct {
 	name string
 	args []string
+	// delivery is the effective prompt_delivery of a command harness that
+	// carries a prompt, and "" for everything else: a built-in adapter's
+	// prompt is already inside args.
+	delivery string
+	// prompt is the text to deliver when delivery is "stdin" or "file".
+	prompt string
+	// promptFile is the absolute path a "file" delivery writes, 0600, before
+	// exec, and exports as HARNESS_PROMPT_FILE.
+	promptFile string
 }
 
 // renderContext is the template context a command harness's argv renders
@@ -397,6 +433,9 @@ type spawnPlan struct {
 // not empty, when the run does not have it — no record means no run.id or
 // run.trigger, no source means no run.source — so a required reference fails
 // the render instead of passing an empty argument.
+//
+// The prompt bindings are added by the caller, per prompt_delivery: `prompt`
+// only for "argv", `prompt_file` only for "file" (REQ-12).
 //
 // It holds no untrusted values at all: argv may never reference free text
 // (REQ-10), and an empty untrusted namespace makes that true at render time
@@ -466,23 +505,52 @@ func scheduleZone(schedule string) *time.Location {
 // empty or placeholder executable. A required value the run does not have
 // returns an error wrapping *tmpl.UnresolvedError, and nothing is exec'd;
 // beginStart turns that into a recorded skip or a failed start.
+//
+// A command harness's prompt (already resolved from prompt_file) is bound per
+// prompt_delivery: as {{prompt}} for "argv", as {{prompt_file}} naming
+// run.PromptPath for "file", and not at all for "stdin", whose bytes the plan
+// carries for spawn to pipe in. The delivery matrix is re-checked too, so a
+// prompt that nothing delivers fails the start with ErrCommandPrompt.
 // Governing: issue #74 (adapter-aware prompt synthesis), SPEC-0017 REQ
 // "Generic Kind Rejects Prompts", REQ-2 "Command Harness Kind", REQ-11
-// "Rendering".
+// "Rendering", REQ-12 "Prompt Delivery".
 func execArgvWithRegistry(h core.Harness, workdir string, run RunEnv, reg *adapter.Registry) (spawnPlan, error) {
 	if owner, ok := reg.Resolve(h).(adapter.ArgvOwner); ok {
-		if h.Prompt != "" {
-			return spawnPlan{}, fmt.Errorf("supervisor: harness %q: %w", h.Name, ErrCommandPrompt)
-		}
 		if err := core.CheckCommandArgv(h.Argv); err != nil {
 			return spawnPlan{}, fmt.Errorf("supervisor: harness %q: %w", h.Name, err)
 		}
+		hasPrompt := h.Prompt != ""
+		if err := core.CheckCommandPrompt(h.Adapter, h.Argv, h.PromptDelivery, hasPrompt); err != nil {
+			return spawnPlan{}, fmt.Errorf("supervisor: harness %q: %w: %v", h.Name, ErrCommandPrompt, err)
+		}
+		plan := spawnPlan{}
+		ctx := renderContext(h, workdir, run, time.Now())
+		if hasPrompt {
+			plan.delivery = core.EffectivePromptDelivery(h.Argv, h.PromptDelivery)
+			switch plan.delivery {
+			case core.PromptDeliveryArgv:
+				ctx.Values[core.PathPrompt] = h.Prompt
+			case core.PromptDeliveryStdin:
+				plan.prompt = h.Prompt
+			case core.PromptDeliveryFile:
+				if run.PromptPath == "" {
+					return spawnPlan{}, fmt.Errorf("supervisor: harness %q: %w: no prompt file path", h.Name, ErrPromptDelivery)
+				}
+				abs, err := filepath.Abs(run.PromptPath)
+				if err != nil {
+					return spawnPlan{}, fmt.Errorf("supervisor: harness %q: %w: prompt file path: %v", h.Name, ErrPromptDelivery, err)
+				}
+				plan.prompt, plan.promptFile = h.Prompt, abs
+				ctx.Values[core.PathPromptFile] = abs
+			}
+		}
 		name, args := owner.Argv(h, workdir)
-		rendered, err := core.RenderCommandArgs(args, renderContext(h, workdir, run, time.Now()))
+		rendered, err := core.RenderCommandArgs(args, ctx)
 		if err != nil {
 			return spawnPlan{}, fmt.Errorf("supervisor: harness %q: %w", h.Name, err)
 		}
-		return spawnPlan{name: name, args: rendered}, nil
+		plan.name, plan.args = name, rendered
+		return plan, nil
 	}
 	if h.Prompt != "" {
 		opts := core.AgentOpts{
@@ -502,13 +570,117 @@ func execArgvWithRegistry(h core.Harness, workdir string, run RunEnv, reg *adapt
 	return spawnPlan{name: reg.Resolve(h).Executable(), args: expandArgs(h.Args, workdir)}, nil
 }
 
+// writePromptFile writes a file-delivery prompt to path, mode 0600, replacing
+// whatever was there. It writes a temporary file beside it and renames it
+// into place, so the program never reads a half-written prompt and a file an
+// operator loosened by hand cannot keep its old mode: the rename puts a fresh
+// 0600 inode at the path. The directory is made 0700, like the jobs directory
+// the event file lives in.
+//
+// 0600 is the requirement, not a default: the prompt is the operator's
+// instruction and may say more than the jobs directory's other readers
+// should see. A variable so a test can drive the failure path.
+// Governing: SPEC-0017 REQ-12 "Prompt Delivery"; ADR-0008.
+var writePromptFile = func(path, prompt string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".tmp*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.WriteString(prompt); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	// CreateTemp already makes the file 0600; say so rather than rely on it.
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 // process is a live spawned harness: its PTY, the command handle (for signals
 // and reaping), and its OS pid.
 type process struct {
 	pty xpty.Pty
 	cmd *exec.Cmd
 	pid int
+	// stdin is the prompt feed of a prompt_delivery = "stdin" run, nil for
+	// every other spawn. Its presence is what "this run's stdin is its
+	// prompt" means: attach input is refused while it is set (SPEC-0017
+	// REQ-12).
+	stdin *stdinFeed
 }
+
+// stdinIsPrompt reports whether the process's fd 0 is a prompt pipe rather
+// than the PTY, so nothing typed at an attach can reach the program.
+func (p *process) stdinIsPrompt() bool { return p != nil && p.stdin != nil }
+
+// stdinFeed writes a stdin-delivery prompt into the write end of the child's
+// fd 0 pipe on its own goroutine, then closes it so the child reads EOF. A
+// pipe is byte-exact at any size, where the PTY's line discipline would echo
+// the prompt, cap a line near 4 KiB (1 KiB on macOS) and turn ^C/^D/^Z bytes
+// into signals and EOF.
+//
+// The goroutine cannot outlive the run: finish, which the supervisor's wait
+// calls as soon as the process is reaped, closes the write end — waking a
+// Write still blocked on a pipe nobody drains, say one a surviving descendant
+// holds open — and waits for the goroutine to return.
+// Governing: ADR-0023, SPEC-0017 REQ-12; design.md § "`stdin` delivery moves
+// the controlling terminal to fd 1".
+type stdinFeed struct {
+	w    *os.File
+	done chan struct{}
+	// written and err are the goroutine's result, set before done closes and
+	// read only after it has: a short write means the child exited, or
+	// closed its stdin, before it read the whole prompt.
+	written int
+	err     error
+}
+
+// startStdinFeed starts writing prompt into w.
+func startStdinFeed(w *os.File, prompt string) *stdinFeed {
+	f := &stdinFeed{w: w, done: make(chan struct{})}
+	go func() {
+		defer close(f.done)
+		f.written, f.err = w.WriteString(prompt)
+		if cerr := w.Close(); f.err == nil && cerr != nil && !errors.Is(cerr, os.ErrClosed) {
+			f.err = cerr
+		}
+		if hook := stdinFeedExited.Load(); hook != nil {
+			(*hook)()
+		}
+	}()
+	return f
+}
+
+// finish closes the pipe's write end and waits for the feed goroutine.
+// Idempotent.
+func (f *stdinFeed) finish() {
+	if f == nil {
+		return
+	}
+	_ = f.w.Close()
+	<-f.done
+}
+
+// stdinFeedExited is a test seam, unset outside tests: it runs as a feed
+// goroutine returns, so a test can show that one cannot outlive its run.
+// Atomic because feeds read it from their own goroutines.
+var stdinFeedExited atomic.Pointer[func()]
 
 // Workdir is the process working directory the supervisor spawns h into: the
 // configured value with a leading ~ expanded. Exported so the control plane can
@@ -530,6 +702,14 @@ func Workdir(h core.Harness) string { return expandHome(h.Workdir) }
 // undersized: the mux's recorded size already equals the client viewport, so
 // its resize policy sees no change and never pushes a TIOCSWINSZ, and the app
 // inside renders into an 80×24 box in the corner of a full-size window.
+//
+// A `command` harness's prompt is delivered here, per its plan (SPEC-0017
+// REQ-12): a "file" delivery writes the 0600 prompt file before exec and
+// exports HARNESS_PROMPT_FILE last, so it wins over the daemon's environment
+// and env_file; a "stdin" delivery makes fd 0 a pipe the prompt is written
+// into, leaves fd 1 and fd 2 on the PTY, and makes the PTY the controlling
+// terminal through fd 1. Any failure there is ErrPromptDelivery, and nothing
+// is left running.
 func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
 	// Resolve prompt_file to its text BEFORE allocating anything: a missing
 	// instruction file must fail the start outright rather than leak a PTY and
@@ -542,9 +722,9 @@ func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
 	// Resolve the argv before the environment and the PTY, for the same
 	// reason: a harness spawn refuses (a `generic` carrying a prompt, SPEC-0017
 	// REQ "Generic Kind Rejects Prompts"; a `command` harness with a malformed
-	// argv or a prompt it cannot deliver, REQ-2; an argv template with a
-	// required value this run lacks, REQ-11) fails here, having allocated and
-	// exec'd nothing.
+	// argv or a prompt it cannot deliver, REQ-2, REQ-12; an argv template with
+	// a required value this run lacks, REQ-11) fails here, having allocated
+	// and exec'd nothing.
 	plan, err := execArgv(h, workdir, run)
 	if err != nil {
 		return nil, err
@@ -553,6 +733,16 @@ func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
 	env, err := buildEnv(h, run)
 	if err != nil {
 		return nil, err
+	}
+	if plan.promptFile != "" {
+		// Written after the render succeeded, so a skipped run leaves no
+		// prompt file behind, and before exec, so the program can read it.
+		if err := writePromptFile(plan.promptFile, plan.prompt); err != nil {
+			return nil, fmt.Errorf("supervisor: harness %q: %w: write prompt file: %v", h.Name, ErrPromptDelivery, err)
+		}
+		// Last, so exec.Cmd.Env's later-wins rule makes it authoritative
+		// over the daemon's environment and env_file alike.
+		env = append(env, promptFileVar+"="+plan.promptFile)
 	}
 
 	if cols < 1 {
@@ -583,8 +773,33 @@ func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
 	// attached client's ^C reach the foreground process group as SIGINT.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 
+	// A stdin delivery puts a pipe on fd 0 instead of the slave. xpty's Start
+	// only fills the std streams left nil, so setting Stdin first keeps fd 1
+	// and fd 2 on the slave, and Ctty names fd 1: Ctty is a descriptor in the
+	// child, and fd 0 is no longer a terminal (SPEC-0017 REQ-12).
+	var stdinR, stdinW *os.File
+	if plan.delivery == core.PromptDeliveryStdin {
+		stdinR, stdinW, err = os.Pipe()
+		if err != nil {
+			_ = pty.Close()
+			return nil, fmt.Errorf("supervisor: harness %q: %w: stdin pipe: %v", h.Name, ErrPromptDelivery, err)
+		}
+		cmd.Stdin = stdinR
+		cmd.SysProcAttr.Ctty = 1
+	}
+
 	if err := pty.Start(cmd); err != nil {
 		_ = pty.Close()
+		if stdinR != nil {
+			_ = stdinR.Close()
+			_ = stdinW.Close()
+		}
+		if errors.Is(err, syscall.E2BIG) {
+			// The kernel refused the argv as too long — a prompt passed
+			// through {{prompt}} is the usual way to get there. Name the
+			// remedy; the error carries the executable, never the argv.
+			return nil, fmt.Errorf("supervisor: harness %q: %w: the argv exceeds the platform's argument limits (%w); use prompt_delivery = \"file\" or \"stdin\" for a prompt this large", h.Name, ErrPromptDelivery, err)
+		}
 		return nil, fmt.Errorf("supervisor: start %q: %w", name, err)
 	}
 	// The child holds the slave now, so drop the daemon's copy. xpty keeps
@@ -599,7 +814,15 @@ func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
 	if sl, ok := pty.(interface{ Slave() *os.File }); ok {
 		_ = sl.Slave().Close()
 	}
-	return &process{pty: pty, cmd: cmd, pid: cmd.Process.Pid}, nil
+	proc := &process{pty: pty, cmd: cmd, pid: cmd.Process.Pid}
+	if stdinR != nil {
+		// Same reasoning as the slave: with the daemon's read end closed,
+		// the child is the only reader, so a child that exits early turns
+		// the feed's blocked write into EPIPE instead of a hang.
+		_ = stdinR.Close()
+		proc.stdin = startStdinFeed(stdinW, plan.prompt)
+	}
+	return proc, nil
 }
 
 // signalGroup sends sig to the child's process group, falling back to the

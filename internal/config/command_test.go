@@ -126,7 +126,7 @@ argv = ["x"]
 model = "x/y"`, []string{`"model" is unused`, "{{model}}"}},
 		{"prompt", `harness = "command"
 argv = ["x"]
-prompt = "triage"`, []string{`"prompt" is not supported on a command harness yet`}},
+prompt = "triage"`, []string{"the prompt would be dropped", `prompt_delivery = "stdin" or "file"`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// A valid harness first, so the refusal's line proves it is
@@ -139,10 +139,11 @@ prompt = "triage"`, []string{`"prompt" is not supported on a command harness yet
 }
 
 // TestCommandPromptFileRefusedBeforeItIsRead: a command harness naming a
-// prompt_file is refused for its kind, not reported as a missing file.
+// prompt_file that nothing delivers is refused for that, not reported as a
+// missing file: the delivery rule is checked before the file is read.
 func TestCommandPromptFileRefusedBeforeItIsRead(t *testing.T) {
 	_, err := Parse([]byte("[harness.x]\nharness = \"command\"\nargv = [\"x\"]\nprompt_file = \"missing.md\"\n"), "t.toml")
-	assertLocated(t, err, "t.toml", 1, `"prompt_file" is not supported on a command harness yet`)
+	assertLocated(t, err, "t.toml", 1, "the prompt would be dropped")
 }
 
 // TestGenericPromptErrorNamesCommand is REQ-1's "once REQ-2 has shipped": the

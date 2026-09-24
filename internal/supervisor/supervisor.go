@@ -11,6 +11,7 @@ package supervisor
 // concurrency is race-free by construction.
 
 import (
+	"errors"
 	"io"
 	"slices"
 	"sync"
@@ -159,6 +160,10 @@ type Snapshot struct {
 	// Governing: SPEC-0013 REQ-2 (harness_consecutive_failures mirrors the
 	// daemon's own give-up accounting); SPEC-0003 REQ "Backoff Give-Up".
 	ConsecutiveFailures int
+	// StdinIsPrompt marks a live process whose fd 0 is its prompt pipe
+	// (prompt_delivery = "stdin"): attach input for it is refused, and the
+	// attach layer reads this to tell the client why (SPEC-0017 REQ-12).
+	StdinIsPrompt bool
 }
 
 // Supervisor owns the lifecycle of exactly one harness. It runs a single actor
@@ -522,7 +527,14 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		// keystrokes to the PTY; read-only is filtered upstream in the attach
 		// layer so those bytes never reach here). Best-effort: input with no
 		// live process is dropped.
-		if s.hasProcess() {
+		//
+		// A run whose stdin is its prompt drops input too, and this is where
+		// that is enforced for every producer — an attach session's
+		// keystrokes and the emulator's synthesized query replies alike. The
+		// program is not reading the PTY, so bytes written to the master
+		// would only fill the slave's input queue until a write blocked this
+		// loop; the attach layer tells the client why (SPEC-0017 REQ-12).
+		if s.hasProcess() && !s.proc.stdinIsPrompt() {
 			_, _ = s.proc.pty.Write(c.input)
 		}
 	case cmdHold:
@@ -622,6 +634,14 @@ func (s *Supervisor) beginStart() {
 		// recorded skipped, nothing exec'd, not a crash (render.go).
 		return
 	}
+	if err != nil && (errors.Is(err, ErrPromptDelivery) || errors.Is(err, ErrCommandPrompt)) {
+		// A prompt that could not be delivered fails the start below like
+		// any spawn failure; this line is its durable account, naming the
+		// cause and never the prompt (SPEC-0017 REQ "Error Handling
+		// Standards": never swallowed).
+		s.ensureLog()
+		s.logEvent("start failed", "reason", "prompt_delivery", "err", err.Error())
+	}
 	if err != nil {
 		// Treat a spawn failure like an immediate crash. It is still the
 		// latest run, so it gets a start: onProcessGone stamps LastExitAt,
@@ -706,6 +726,9 @@ func (s *Supervisor) readOutput(src io.Reader, sink io.Writer, hist *ptyHistory,
 // exited kept none of it in its log (SPEC-0008 REQ "Per-Run Logs").
 func (s *Supervisor) wait(proc *process, gen uint64, readerDone <-chan struct{}) {
 	_ = proc.cmd.Wait()
+	// A stdin-delivery prompt's feed ends with the process it feeds, even
+	// when a surviving descendant still holds the pipe (SPEC-0017 REQ-12).
+	proc.stdin.finish()
 	code := -1
 	if proc.cmd.ProcessState != nil {
 		code = proc.cmd.ProcessState.ExitCode()
@@ -749,6 +772,13 @@ var (
 func (s *Supervisor) handleExit(ex exitResult) {
 	if ex.gen != s.gen || s.proc == nil {
 		return // stale exit from a run we already tore down (e.g. during stop)
+	}
+	if f := s.proc.stdin; f != nil && f.err != nil {
+		// The program exited (or closed its stdin) before reading the whole
+		// prompt. Its exit status decides the run; this is for whoever
+		// wonders why. Counts only, never the prompt (SPEC-0017 design.md §
+		// "`stdin` delivery moves the controlling terminal to fd 1").
+		s.logDebug("prompt stdin not fully read", "written", f.written, "err", f.err.Error())
 	}
 	s.reapProcess()
 	s.onProcessGone(ex.code, false)
@@ -1136,7 +1166,7 @@ func (s *Supervisor) applyConfig(h core.Harness) {
 // time, so a policy-only edit applies immediately — staging it would leave the
 // old policy governing the very next exit and demand a pointless restart.
 func runAffecting(a, b core.Harness) bool {
-	if a.Adapter != b.Adapter || a.Prompt != b.Prompt || a.PromptFile != b.PromptFile || a.Model != b.Model ||
+	if a.Adapter != b.Adapter || a.PromptDelivery != b.PromptDelivery || a.Prompt != b.Prompt || a.PromptFile != b.PromptFile || a.Model != b.Model ||
 		a.AutoAccept != b.AutoAccept || a.MaxTurns != b.MaxTurns || a.Quiet != b.Quiet ||
 		a.Workdir != b.Workdir || a.EnvFile != b.EnvFile ||
 		a.RestartDelay != b.RestartDelay || a.Backend != b.Backend || a.TmuxSocket != b.TmuxSocket {
@@ -1168,6 +1198,17 @@ func (s *Supervisor) logEvent(msg string, kv ...any) {
 	}
 	if s.run != nil && s.run.evlog != nil {
 		s.run.evlog.Info(msg, kv...)
+	}
+}
+
+// logDebug is logEvent at debug level, for lines an operator reads only when
+// chasing something down. Called only from the actor loop goroutine.
+func (s *Supervisor) logDebug(msg string, kv ...any) {
+	if s.evlog != nil {
+		s.evlog.Debug(msg, kv...)
+	}
+	if s.run != nil && s.run.evlog != nil {
+		s.run.evlog.Debug(msg, kv...)
 	}
 }
 
@@ -1221,8 +1262,10 @@ func (s *Supervisor) closeLog() {
 // notifies the persist hook.
 func (s *Supervisor) publishSnapshot() {
 	pid := 0
+	stdinIsPrompt := false
 	if s.proc != nil {
 		pid = s.proc.pid
+		stdinIsPrompt = s.proc.stdinIsPrompt()
 	}
 	s.mu.Lock()
 	s.snap = Snapshot{
@@ -1240,6 +1283,7 @@ func (s *Supervisor) publishSnapshot() {
 		Scheduled:     s.harness.Schedule != "",
 		Triggered:     s.harness.Triggered(),
 		PID:           pid,
+		StdinIsPrompt: stdinIsPrompt,
 		Gated:         s.gated(),
 		Held:          s.held,
 		Closing:       s.closing,

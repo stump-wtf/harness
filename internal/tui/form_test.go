@@ -709,7 +709,15 @@ func TestFormValidateCommand(t *testing.T) {
 		{"missing argv", func(f *HarnessForm) { f.Argv = nil }, `requires "argv"`},
 		{"placeholder argv0", func(f *HarnessForm) { f.Argv[0] = "{{event.repo}}" }, `"argv[0]"`},
 		{"args", func(f *HarnessForm) { f.Args = []string{"-c", "true"} }, "argv"},
-		{"prompt", func(f *HarnessForm) { f.Prompt = "hi" }, "no prompt"},
+		{"prompt nothing delivers", func(f *HarnessForm) { f.Prompt = "hi" }, "the prompt would be dropped"},
+		{"prompt_delivery without prompt", func(f *HarnessForm) { f.PromptDelivery = "stdin" }, `no "prompt" or "prompt_file"`},
+		{"{{prompt}} under stdin", func(f *HarnessForm) {
+			f.Prompt, f.PromptDelivery = "hi", "stdin"
+			f.Argv = append(f.Argv, "{{prompt}}")
+		}, `only available with prompt_delivery = "argv"`},
+		{"prompt_delivery on crush", func(f *HarnessForm) {
+			f.Harness, f.Argv, f.Prompt, f.PromptDelivery = "crush", nil, "hi", "stdin"
+		}, "only accepted on harness"},
 		{"model", func(f *HarnessForm) { f.Model = "x/y" }, `"model" is unused`},
 		{"auto_accept", func(f *HarnessForm) { f.AutoAccept = true }, "owns its argv"},
 		{"max_turns", func(f *HarnessForm) { f.MaxTurns = 2 }, "owns its argv"},
@@ -999,7 +1007,7 @@ func TestTOMLKeepsTmuxSocketOnNativeBackend(t *testing.T) {
 // issue #161's "audit the rest in the same pass". Name is the table name, and
 // is carried implicitly by the header the rewrite emits.
 var harnessFormFields = []string{
-	"Name", "Adapter", "Args", "Argv", "Prompt", "PromptFile", "Model", "AutoAccept",
+	"Name", "Adapter", "Args", "Argv", "PromptDelivery", "Prompt", "PromptFile", "Model", "AutoAccept",
 	"Quiet", "MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart",
 	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule", "CatchUp",
 	"Timeout", "OnOverlap", "KeepRuns", "HarvestTrajectory", "MCPAllow",
@@ -1176,6 +1184,37 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				`operating_hours = "Mon-Fri 09:00-17:00"`,
 				`description = "nightly report"`,
 			},
+		},
+		{
+			// A command harness with a prompt on stdin (SPEC-0017 REQ-12,
+			// REQ-15): prompt_delivery must survive the rewrite, or the
+			// reloaded harness would fail validation (a prompt nothing
+			// delivers) after an unrelated edit.
+			name: "command harness with a stdin prompt",
+			table: []string{
+				"[harness.digest]",
+				`harness = "command"`,
+				`prompt = "summarise {{run.id}} literally"`,
+				`argv = ["/usr/local/bin/digest", "--run={{run.id}}"]`,
+				`prompt_delivery = "stdin"`,
+				`schedule = "0 7 * * *"`,
+				`description = "morning digest"`,
+			},
+		},
+		{
+			// The file delivery, with {{prompt_file}} and {{prompt}}-free
+			// argv written back as placeholders, never renderings, and the
+			// prompt_file as its PATH.
+			name: "command harness with a file prompt",
+			table: []string{
+				"[harness.review]",
+				`harness = "command"`,
+				`prompt_file = "{{PROMPT_FILE}}"`,
+				`argv = ["/usr/local/bin/review", "--instructions", "{{prompt_file}}"]`,
+				`prompt_delivery = "file"`,
+				`schedule = "30 7 * * *"`,
+			},
+			promptFileBody: "Review the queue.\n",
 		},
 	}
 	for _, tc := range tests {

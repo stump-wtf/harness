@@ -39,7 +39,11 @@ type rawHarness struct {
 	Argv       []string `toml:"argv"`
 	Prompt     string   `toml:"prompt"`
 	PromptFile string   `toml:"prompt_file"`
-	Model      string   `toml:"model"`
+	// PromptDelivery is a `command` harness's prompt_delivery (SPEC-0017
+	// REQ-12). A pointer so the key is refused on presence on every other
+	// kind, and a blank value is an error rather than the default.
+	PromptDelivery *string `toml:"prompt_delivery"`
+	Model          string  `toml:"model"`
 	// AutoAccept is a pointer so a `command` harness can reject the key on
 	// presence (SPEC-0017 REQ-3): `auto_accept = false` there does nothing,
 	// which is still a mistake worth hearing about at load.
@@ -988,29 +992,30 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	}
 
 	h := core.Harness{
-		Name:         name,
-		Adapter:      adapter,
-		Args:         rh.Args,
-		Argv:         rh.Argv,
-		AutoAccept:   autoAccept,
-		MaxTurns:     maxTurns,
-		Model:        model,
-		Prompt:       prompt,
-		PromptFile:   promptFilePath,
-		Quiet:        quiet,
-		Workdir:      resolve(rh.Workdir),
-		EnvFile:      resolve(rh.EnvFile),
-		RestartDelay: time.Duration(rh.RestartDelay) * time.Second,
-		Restart:      restartPolicy,
-		Backend:      backend,
-		Description:  rh.Description,
-		Enabled:      enabled,
-		TmuxSocket:   rh.TmuxSocket,
-		Schedule:     schedule,
-		CatchUp:      catchUp,
-		Timeout:      timeout,
-		OnOverlap:    overlap,
-		KeepRuns:     keepRuns,
+		Name:           name,
+		Adapter:        adapter,
+		Args:           rh.Args,
+		Argv:           rh.Argv,
+		AutoAccept:     autoAccept,
+		PromptDelivery: promptDelivery(rh),
+		MaxTurns:       maxTurns,
+		Model:          model,
+		Prompt:         prompt,
+		PromptFile:     promptFilePath,
+		Quiet:          quiet,
+		Workdir:        resolve(rh.Workdir),
+		EnvFile:        resolve(rh.EnvFile),
+		RestartDelay:   time.Duration(rh.RestartDelay) * time.Second,
+		Restart:        restartPolicy,
+		Backend:        backend,
+		Description:    rh.Description,
+		Enabled:        enabled,
+		TmuxSocket:     rh.TmuxSocket,
+		Schedule:       schedule,
+		CatchUp:        catchUp,
+		Timeout:        timeout,
+		OnOverlap:      overlap,
+		KeepRuns:       keepRuns,
 
 		OperatingHours:       operatingHours,
 		HoursExpr:            hoursExpr,
@@ -1481,18 +1486,23 @@ func lineOf(headers []tableHeader, want string) int {
 // depend on schedule and triggers, are core.CheckCommandTemplateContext,
 // called here with the raw keys so the check sees what the file says.
 //
-// Prompts are still refused on `command`: a prompt needs a delivery path
-// (REQ-12), and until one exists loading such a harness would drop the
-// instruction. The refusal names the gap so the error reads as "not yet",
-// not as "wrong".
+// A prompt (`prompt` or `prompt_file`) is accepted when something delivers
+// it: {{prompt}} in argv, or prompt_delivery = "stdin" or "file". Which
+// combinations are coherent is core.CheckCommandPrompt, the matrix every
+// front door shares; `prompt_delivery` on any other kind is refused there too.
 // Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-3
-// "Command Harness Modes And Exclusions", REQ-7 "Template Context".
+// "Command Harness Modes And Exclusions", REQ-7 "Template Context", REQ-12
+// "Prompt Delivery".
 func checkCommandKeys(adapter string, rh rawHarness) error {
+	if rh.PromptDelivery != nil && strings.TrimSpace(*rh.PromptDelivery) == "" {
+		return errors.New("\"prompt_delivery\" must not be blank (want argv, stdin or file)")
+	}
+	hasPrompt := rh.Prompt != "" || rh.PromptFile != ""
 	if adapter != core.AdapterCommand {
 		if rh.Argv != nil {
 			return fmt.Errorf("\"argv\" is only accepted on harness = \"command\" (a %q harness runs its adapter's executable; use \"args\")", adapter)
 		}
-		return nil
+		return core.CheckCommandPrompt(adapter, nil, promptDelivery(rh), hasPrompt)
 	}
 	if rh.Args != nil {
 		return errors.New("\"args\" is not accepted on a command harness: put the whole command line in \"argv\" (argv[0] is the executable)")
@@ -1508,12 +1518,18 @@ func checkCommandKeys(adapter string, rh rawHarness) error {
 			return fmt.Errorf("%q is not accepted on a command harness: a command harness owns its argv, so put the tool's own flag there", k.key)
 		}
 	}
-	for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}} {
-		if k.val != "" {
-			return fmt.Errorf("%q is not supported on a command harness yet: nothing delivers a prompt to its argv; use harness = \"crush\"|\"claude-code\"|\"codex\" for a prompt one-shot", k.key)
-		}
+	if err := core.CheckCommandPrompt(adapter, rh.Argv, promptDelivery(rh), hasPrompt); err != nil {
+		return err
 	}
 	scheduled := strings.TrimSpace(rh.Schedule) != ""
 	triggered := scheduled || len(rh.Triggers) > 0
 	return core.CheckCommandTemplateContext(rh.Argv, strings.TrimSpace(rh.Model), scheduled, triggered)
+}
+
+// promptDelivery is the raw prompt_delivery value, trimmed; "" when unset.
+func promptDelivery(rh rawHarness) string {
+	if rh.PromptDelivery == nil {
+		return ""
+	}
+	return strings.TrimSpace(*rh.PromptDelivery)
 }

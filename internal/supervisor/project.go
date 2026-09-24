@@ -485,21 +485,26 @@ func validateHarnessDef(src string, h core.Harness) error {
 // Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-3, REQ-14
 // "Project And Wire Front Doors".
 func checkCommandDef(h core.Harness) error {
+	hasPrompt := h.Prompt != "" || h.PromptFile != ""
 	if h.Adapter != core.AdapterCommand {
 		if h.Argv != nil {
 			return fmt.Errorf("argv is only accepted on harness = %q (a %q harness runs its adapter's executable; use args)", core.AdapterCommand, h.Adapter)
 		}
-		return nil
+		return core.CheckCommandPrompt(h.Adapter, nil, h.PromptDelivery, hasPrompt)
 	}
 	switch {
 	case h.Args != nil:
 		return errors.New("args is not accepted on a command harness: put the whole command line in argv (argv[0] is the executable)")
-	case h.Prompt != "" || h.PromptFile != "":
-		return errors.New("a command harness takes no prompt yet: nothing delivers a prompt to its argv")
 	case h.AutoAccept || h.MaxTurns != 0:
 		return errors.New("auto_accept and max_turns are not accepted on a command harness: it owns its argv")
 	}
 	if err := core.CheckCommandArgv(h.Argv); err != nil {
+		return err
+	}
+	// The same prompt delivery matrix as the file (SPEC-0017 REQ-12, REQ-14):
+	// a prompt nothing delivers, or a delivery contradicting the argv, is
+	// refused before it is registered.
+	if err := core.CheckCommandPrompt(h.Adapter, h.Argv, h.PromptDelivery, hasPrompt); err != nil {
 		return err
 	}
 	// The same template-context rules as the file: `model` only with
@@ -518,6 +523,7 @@ func harnessDefEqual(a, b core.Harness) bool {
 		slices.Equal(a.Argv, b.Argv) &&
 		a.Prompt == b.Prompt &&
 		a.PromptFile == b.PromptFile &&
+		a.PromptDelivery == b.PromptDelivery &&
 		a.Model == b.Model &&
 		a.AutoAccept == b.AutoAccept &&
 		a.MaxTurns == b.MaxTurns &&

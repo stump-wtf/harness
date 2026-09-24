@@ -164,6 +164,15 @@ type Harness struct {
 	// "command"; CheckCommandArgv is the shape every front door enforces.
 	// Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind".
 	Argv []string
+	// PromptDelivery says how a "command" harness hands its prompt to the
+	// program: "argv" (the {{prompt}} placeholder), "stdin" (a pipe on fd 0)
+	// or "file" (a 0600 file named by HARNESS_PROMPT_FILE and
+	// {{prompt_file}}). Empty means the default, which is "argv" when an
+	// Argv element references {{prompt}} and nothing otherwise
+	// (EffectivePromptDelivery). Set only on a "command" harness with a
+	// prompt; CheckCommandPrompt is the rule every front door enforces.
+	// Governing: ADR-0023, SPEC-0017 REQ-12 "Prompt Delivery".
+	PromptDelivery string
 	// Prompt is an agent one-shot instruction, the declarative alternative
 	// to a long-running harness: when set, the supervisor synthesizes the
 	// entire agent argv at spawn time via the adapter's PromptCommand (Args
