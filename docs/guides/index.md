@@ -34,6 +34,7 @@ Read these in order the first time; each one assumes the previous.
 | 6 | [Observability](./observability) | post-mortems with `harness logs`, the chatroom, `doctor`, and the SSH cockpit |
 | 7 | [The stack: Harness, Switchboard and Cairn](./harness-switchboard-cairn) | the whole loop end to end: roles, what each tool is and is not, a worked team example |
 | — | [Troubleshooting](./troubleshooting) | answers for the usual "it's green but nothing happens" moments |
+| — | [Glossary](./glossary) | every Harness, Switchboard and Cairn term on one page, with an anchor to link |
 
 The [Usage](/usage) section is the reference behind these guides: every verb,
 every config key, every flag.
