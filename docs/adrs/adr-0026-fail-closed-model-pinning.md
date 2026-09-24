@@ -32,7 +32,7 @@ approved provider, or nothing":
   fail-closed spend cap" and is "the wrong one for an unattended cron job that
   nobody is watching". Harness offers no fail-closed alternative.
 * **Nothing verifies the served model.** The daemon's agent event observer
-  (`internal/observe`, merged in #416) reads agent-trace events for every
+  (`internal/observe`) reads agent-trace events for every
   harness. agent-trace exposes a session-level `SessionMeta.Model` only: no
   per-call model and no provider. SPEC-0013's reachability series count calls
   and errors, not *which* model answered. A silent substitution looks exactly
@@ -225,7 +225,7 @@ it.
 ### Where it surfaces
 
 * **`harness list`**: the STATE cell shows a held or mismatched harness without
-  adding a column (the table is already at its width budget, #343).
+  adding a column (the table is already at its width budget).
 * **`harness describe`**: shows the pin, the rendered target files, the last
   attestation, and the served model and provider of the first mismatch.
 * **`harness doctor`**: a fail row for every held harness or recent mismatch,
@@ -301,7 +301,7 @@ gateway that substitutes anyway.
   `harness_model_mismatch_total` routes through the operator's Alertmanager to
   Switchboard's notification sinks (Switchboard ADR-0034). Harness still never
   calls Switchboard (ADR-0019, ADR-0021).
-* **Cairn.** Telemetry export (ADR-0022, PR #408) carries each call's served
+* **Cairn.** Telemetry export (ADR-0022) carries each call's served
   model and provider on its spans once agent-trace#105 lands, so a Cairn trace
   or receipt (Cairn ADR-0027) can cite the attestation instead of restating it.
 
@@ -438,7 +438,7 @@ flowchart LR
     C["client (crush · omp · claude)"]
     RT["route (OpenRouter · Anthropic · gateway)"]
     T["transcript"]
-    O["observer (#416)<br/>+ agent-trace#105 usage items"]
+    O["observer<br/>+ agent-trace#105 usage items"]
     A{"pin checker:<br/>model · provider"}
     OUT["model_mismatch / model_unattested<br/>(run ledger, ADR-0028)<br/>hold · metrics · doctor"]
     DOC["harness doctor --models<br/>approved · unavailable · through-client"]
@@ -474,11 +474,11 @@ flowchart LR
   `model_mismatch` and the served model) and
   [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets, which
   share the observer's per-call usage items), which carry the edge to this
-  ADR. ADR-0022 (telemetry export, #408) is not on `main` yet, so it stays
+  ADR. ADR-0022 (telemetry export) is not on `main` yet, so it stays
   cited by number.
 * **Upstream:** stump.wtf/agent-trace#105, per-message usage items with model,
   provider and generation ID.
 * **Docs:** `docs/usage/configuration.md`, "Model routing and provider
   failover", gains the fail-closed alternative beside it (an implementation
-  story, sequenced after PR #408, which also edits that page).
+  story, sequenced after the telemetry-export PR, which also edits that page).
 * **Governing spec:** SPEC-0020 (`docs/openspec/specs/model-pinning/`).

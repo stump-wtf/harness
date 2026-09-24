@@ -26,8 +26,8 @@ REQ-3 defines.
 This spec amends, by reference and without editing them:
 
 * **SPEC-0012 REQ "Gate Enforcement"**: `held` becomes a set of hold reasons
-  (REQ-14). SPEC-0012 is not edited here. #412 has since merged, and story
-  #488 folds this amendment into SPEC-0012 when REQ-14 ships.
+  (REQ-14). SPEC-0012 is not edited here. SPEC-0012's catch-up revision has since merged, and a
+  follow-up story folds this amendment into SPEC-0012 when REQ-14 ships.
 * **SPEC-0012 REQ "Operating Hours Visibility"**: the projection's `held`
   boolean is removed and replaced by `hold_reasons` (REQ-16), with no
   transition period.

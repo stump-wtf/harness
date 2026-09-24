@@ -14,9 +14,9 @@ live and how they fit the machinery that already exists:
   `state.json` synchronously.
 - **Resident exits** (SPEC-0003): `supervisor.go` handles every exit on the actor
   loop and logs `exited code=N`; nothing records it structurally.
-* **The lifecycle bus** (`supervisor/event.go`): lossy fan-out. #407's metrics
+* **The lifecycle bus** (`supervisor/event.go`): lossy fan-out. The metrics
   collector counts `EventRunFinished` from it.
-* **The observer** (`internal/observe`, #416): agent activity attributed to a
+* **The observer** (`internal/observe`): agent activity attributed to a
   harness, non-blocking fan-out with per-subscriber drop counts.
 * **The protocol** (`internal/protocol/messages.go`): `OpRuns`, `RunInfo`,
   `RunsData`, `JobInfo`.
@@ -199,7 +199,7 @@ Consumers:
 | Consumer | Uses | Buffer |
 | --- | --- | --- |
 | metrics collector | `Subscribe("metrics", 8192)` | sized to the acceptance load |
-| telemetry export (after #408) | `Subscribe("telemetry", 1024)` | lossy by design |
+| telemetry export (once ADR-0022 lands) | `Subscribe("telemetry", 1024)` | lossy by design |
 | budget totals | synchronous, inside `RunJournal` under the Manager lock | none |
 | ADR-0025 lease completion | `Since(lastSeq)` on start, then `Subscribe` with a replay on any drop | lossless |
 
@@ -220,7 +220,7 @@ still folds tool events, error marks and sessions.
 
 ### Metrics wiring
 
-After #407 merges, `internal/metrics` gains a `runs` input fed by the ledger
+After the metrics implementation merges, `internal/metrics` gains a `runs` input fed by the ledger
 subscription, and its `lifecycle()` handler stops counting `EventRunFinished`.
 `harness_scheduled_runs_total` keeps its name, labels and values; only its source
 moves. The new series in REQ-11 are added in the same collector. The histogram
@@ -362,7 +362,7 @@ erDiagram
    `last_run_id` stays.
 2. `jobs`, `trigger --wait`, `logs --run` and the `runs` op read the ledger from
    the first release that writes it. Resident records appear immediately.
-3. After #407 merges, the metrics collector moves `harness_scheduled_runs_total`
+3. After the metrics implementation merges, the metrics collector moves `harness_scheduled_runs_total`
    to the feed and adds the REQ-11 series.
 4. Upgrade note (release notes of the version that ships it): run history now
    lives only in `ledger/`; `state.json` no longer carries it, and `keep_runs`
@@ -383,5 +383,5 @@ left open.
   parsing, which this ADR exists to retire.
 - **Trace push and `internal/cairnexport`.** Resolved (design review
   2026-09-22): delete the unused `internal/cairnexport` package once ADR-0022's
-  telemetry export (#408) lands on `main`; #499 tracks it. Runs link to
+  telemetry export lands on `main`. Runs link to
   traces through `trace_url`, not through that package.

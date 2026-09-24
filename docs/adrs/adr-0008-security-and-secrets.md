@@ -74,7 +74,7 @@ the agent**. That's inherent to the product, not a bug. Consequences:
   secrets to its terminal — that output lands in scrollback/logs like any other
   output. We document this; optionally offer per-harness "don't persist scrollback
   to disk" for sensitive ones — ADR-0007.)
-  *(Amended, issue #312: the parenthetical above scoped this decision to the
+  *(Amended: the parenthetical above scoped this decision to the
   smaller half of the problem. The secrets that actually reach our logs are
   exactly the ones a harnessed program prints — an agent runs `git remote
   set-url` with a token in the URL, or `curl -H "Authorization: …"`, and the
