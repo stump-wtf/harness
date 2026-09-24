@@ -232,9 +232,10 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 	}
 
 	cfg := &core.Config{
-		Harnesses: map[string]core.Harness{},
-		Profiles:  map[string]core.Profile{},
-		Telemetry: core.DefaultTelemetryConfig(),
+		Harnesses:  map[string]core.Harness{},
+		Profiles:   map[string]core.Profile{},
+		Telemetry:  core.DefaultTelemetryConfig(),
+		MergeTrain: core.DefaultMergeTrainConfig(),
 	}
 
 	// Defer profile member validation until every harness is known.
@@ -243,7 +244,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 		line    int
 	}
 	var pending []pendingProfile
-	var serverSeen, daemonSeen, telemetrySeen bool
+	var serverSeen, daemonSeen, telemetrySeen, mergeTrainSeen bool
 	var harnessDPath string
 
 	// Sources and the harnesses that bind them form one config view across
@@ -321,6 +322,22 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 
 		case len(h.parts) == 2 && h.parts[0] == "telemetry" && h.parts[1] == "headers":
 			return nil, telemetryHeadersErr(filename, h.line)
+
+		case len(h.parts) == 1 && h.parts[0] == "mergetrain":
+			// The global merge train table (ADR-0032, SPEC-0025 REQ-1).
+			if mergeTrainSeen {
+				return nil, newError(filename, h.line, "duplicate [mergetrain] table")
+			}
+			mergeTrainSeen = true
+			var rm rawMergeTrain
+			if err := md.PrimitiveDecode(top["mergetrain"], &rm); err != nil {
+				return nil, newError(filename, h.line, "[mergetrain]: %v", err)
+			}
+			mc, err := buildMergeTrain(filename, data, h.line, rm)
+			if err != nil {
+				return nil, err
+			}
+			cfg.MergeTrain = mc
 
 		case len(h.parts) == 1 && h.parts[0] == "server":
 			// The optional remote-access front door (ADR-0004/0008).

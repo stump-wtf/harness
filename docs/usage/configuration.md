@@ -566,6 +566,38 @@ requests retry with backoff (429/502/503/504 and network errors, honouring
 `Retry-After`) for up to five minutes per batch, queues drop their oldest units
 when full, and failures reach the daemon log at most once a minute per signal.
 
+## Merge train (`[mergetrain]`)
+
+The merge train lands approved pull requests one at a time. For each one it
+builds `train/<pr>` (`main` plus a squash of the PR), waits for CI on that exact
+commit, squash-merges, and then verifies that the tree that landed is the tree
+that was tested. It is off unless you turn it on, and even then it starts in
+`report` mode, which builds and tests trains but writes nothing to any pull
+request. See ADR-0032 and SPEC-0025.
+
+```toml
+[mergetrain]
+enabled = true                               # default false
+mode = "report"                              # or "merge"; default "report"
+repos = ["stump.wtf/harness"]                # required when enabled
+base_branch = "main"                         # default "main"
+poll_interval = "60s"                        # default 60s, minimum 5s
+ci_timeout = "30m"                           # default 30m
+forge_base_url = "https://gitea.stump.rocks" # required when enabled
+forge_token_env = "HARNESS_MERGETRAIN_TOKEN" # the variable's NAME, required when enabled
+```
+
+- **The token is never in this file.** `forge_token_env` names an environment
+  variable in the daemon's environment, and a `token` key is refused. The
+  daemon refuses to start if the train is enabled and that variable is empty.
+- **Global only.** A project `harness.toml` or a `harness_d` drop-in that
+  contains `[mergetrain]` is refused.
+- **One train per repo.** Each repo's driver holds a lock under
+  `$XDG_STATE_HOME/harness/mergetrain/`, so a second daemon on the same host
+  skips that repo rather than racing it.
+- **Restart to apply.** A change to `[mergetrain]` takes effect at the next
+  daemon restart.
+
 ## Restart policy
 
 The `restart` key mirrors Docker Compose's directive and controls whether a
