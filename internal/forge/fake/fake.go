@@ -93,11 +93,15 @@ func (f *Fake) repo(name string) *repoState {
 	return r
 }
 
-// begin records a call and returns the error forced for method, if any.
-// Callers hold f.mu.
-func (f *Fake) begin(method string, args ...any) error {
+// begin records a call and returns the error forced for method, if any, or
+// the context's error: like a real forge, the fake refuses work on a
+// cancelled context. Callers hold f.mu.
+func (f *Fake) begin(ctx context.Context, method string, args ...any) error {
 	f.calls = append(f.calls, Call{Method: method, Args: args})
-	return f.errs[method]
+	if err := f.errs[method]; err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 // nextSHA returns a unique 40-hex-character synthetic SHA. Callers hold f.mu.
@@ -228,10 +232,10 @@ func (f *Fake) Merged(repo string, pr int) bool {
 // --- forge.Forge ---------------------------------------------------------
 
 // ListOpenPRs returns the unmerged pull requests, by number.
-func (f *Fake) ListOpenPRs(_ context.Context, repo string) ([]forge.PullRequest, error) {
+func (f *Fake) ListOpenPRs(ctx context.Context, repo string) ([]forge.PullRequest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.begin("ListOpenPRs", repo); err != nil {
+	if err := f.begin(ctx, "ListOpenPRs", repo); err != nil {
 		return nil, err
 	}
 	out := []forge.PullRequest{}
@@ -245,10 +249,10 @@ func (f *Fake) ListOpenPRs(_ context.Context, repo string) ([]forge.PullRequest,
 }
 
 // BranchHead returns the SHA branch points at.
-func (f *Fake) BranchHead(_ context.Context, repo, branch string) (string, error) {
+func (f *Fake) BranchHead(ctx context.Context, repo, branch string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.begin("BranchHead", repo, branch); err != nil {
+	if err := f.begin(ctx, "BranchHead", repo, branch); err != nil {
 		return "", err
 	}
 	sha, ok := f.repo(repo).branches[branch]
@@ -260,10 +264,10 @@ func (f *Fake) BranchHead(_ context.Context, repo, branch string) (string, error
 
 // CreateTrainBranch checks the head, then builds the train OnTrain describes,
 // or a synthetic one, and points spec.Branch at it.
-func (f *Fake) CreateTrainBranch(_ context.Context, repo string, spec forge.TrainSpec) (forge.TrainBranch, error) {
+func (f *Fake) CreateTrainBranch(ctx context.Context, repo string, spec forge.TrainSpec) (forge.TrainBranch, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.begin("CreateTrainBranch", repo, spec); err != nil {
+	if err := f.begin(ctx, "CreateTrainBranch", repo, spec); err != nil {
 		return forge.TrainBranch{}, err
 	}
 	r := f.repo(repo)
@@ -294,10 +298,10 @@ func (f *Fake) CreateTrainBranch(_ context.Context, repo string, spec forge.Trai
 }
 
 // DeleteBranch deletes name; a missing branch is not an error.
-func (f *Fake) DeleteBranch(_ context.Context, repo, name string) error {
+func (f *Fake) DeleteBranch(ctx context.Context, repo, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.begin("DeleteBranch", repo, name); err != nil {
+	if err := f.begin(ctx, "DeleteBranch", repo, name); err != nil {
 		return err
 	}
 	delete(f.repo(repo).branches, name)
@@ -306,10 +310,10 @@ func (f *Fake) DeleteBranch(_ context.Context, repo, name string) error {
 
 // CombinedStatus returns OnStatus's answer, else the status set for sha, else
 // "pending".
-func (f *Fake) CombinedStatus(_ context.Context, repo, sha string) (string, error) {
+func (f *Fake) CombinedStatus(ctx context.Context, repo, sha string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.begin("CombinedStatus", repo, sha); err != nil {
+	if err := f.begin(ctx, "CombinedStatus", repo, sha); err != nil {
 		return "", err
 	}
 	f.polls[repo+"@"+sha]++
@@ -325,10 +329,10 @@ func (f *Fake) CombinedStatus(_ context.Context, repo, sha string) (string, erro
 // SquashMerge marks pr merged and moves the base branch to a new commit. The
 // commit's tree and files are the PR's last train's, unless OnMerge says
 // otherwise.
-func (f *Fake) SquashMerge(_ context.Context, repo string, pr int, headSHA, title, message string) (string, error) {
+func (f *Fake) SquashMerge(ctx context.Context, repo string, pr int, headSHA, title, message string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.begin("SquashMerge", repo, pr, headSHA, title, message); err != nil {
+	if err := f.begin(ctx, "SquashMerge", repo, pr, headSHA, title, message); err != nil {
 		return "", err
 	}
 	r := f.repo(repo)
@@ -359,10 +363,10 @@ func (f *Fake) SquashMerge(_ context.Context, repo string, pr int, headSHA, titl
 }
 
 // Comment appends body to pr's comments.
-func (f *Fake) Comment(_ context.Context, repo string, pr int, body string) error {
+func (f *Fake) Comment(ctx context.Context, repo string, pr int, body string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.begin("Comment", repo, pr, body); err != nil {
+	if err := f.begin(ctx, "Comment", repo, pr, body); err != nil {
 		return err
 	}
 	r := f.repo(repo)
@@ -371,10 +375,10 @@ func (f *Fake) Comment(_ context.Context, repo string, pr int, body string) erro
 }
 
 // ListComments returns pr's comments, oldest first.
-func (f *Fake) ListComments(_ context.Context, repo string, pr int) ([]string, error) {
+func (f *Fake) ListComments(ctx context.Context, repo string, pr int) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.begin("ListComments", repo, pr); err != nil {
+	if err := f.begin(ctx, "ListComments", repo, pr); err != nil {
 		return nil, err
 	}
 	return slices.Clone(f.repo(repo).comments[pr]), nil
@@ -382,10 +386,10 @@ func (f *Fake) ListComments(_ context.Context, repo string, pr int) ([]string, e
 
 // FileContentAtRef reads path at ref: files set on ref itself win, then files
 // at the SHA ref names as a branch.
-func (f *Fake) FileContentAtRef(_ context.Context, repo, path, ref string) ([]byte, error) {
+func (f *Fake) FileContentAtRef(ctx context.Context, repo, path, ref string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.begin("FileContentAtRef", repo, path, ref); err != nil {
+	if err := f.begin(ctx, "FileContentAtRef", repo, path, ref); err != nil {
 		return nil, err
 	}
 	r := f.repo(repo)
@@ -401,10 +405,10 @@ func (f *Fake) FileContentAtRef(_ context.Context, repo, path, ref string) ([]by
 }
 
 // TreeOf returns the tree set or built for sha.
-func (f *Fake) TreeOf(_ context.Context, repo, sha string) (string, error) {
+func (f *Fake) TreeOf(ctx context.Context, repo, sha string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.begin("TreeOf", repo, sha); err != nil {
+	if err := f.begin(ctx, "TreeOf", repo, sha); err != nil {
 		return "", err
 	}
 	tree, ok := f.repo(repo).trees[sha]
