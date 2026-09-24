@@ -136,6 +136,7 @@ type Ledger struct {
 	nextSeq uint64
 	queue   []*pending
 	idx     *index
+	feed    feed
 	stats   Stats
 	closed  bool
 	// files is every day file the ledger knows, oldest first, with the seq of
@@ -193,6 +194,7 @@ func Open(dir string, opts Options) (*Ledger, error) {
 		opts: opts,
 		log:  opts.Logger,
 		idx:  newIndex(),
+		feed: newFeed(),
 		wake: make(chan struct{}, 1),
 		quit: make(chan struct{}),
 		done: make(chan struct{}),
@@ -221,6 +223,7 @@ func OpenReader(dir string) (*Ledger, error) {
 		dir:    dir,
 		opts:   Options{}.normalize(),
 		idx:    newIndex(),
+		feed:   newFeed(),
 		closed: true,
 		done:   make(chan struct{}),
 	}
@@ -413,6 +416,7 @@ func (l *Ledger) Enqueue(ln Line, sync bool) (uint64, func() error, error) {
 func (l *Ledger) commitLocked(n int) {
 	for _, p := range l.queue[:n] {
 		l.idx.apply(p.line)
+		l.publishLocked(p.line)
 	}
 	l.queue = l.queue[n:]
 	if day := startOfDay(l.opts.Now()); !day.Equal(l.idx.trimmedDay) {
@@ -450,6 +454,11 @@ func (l *Ledger) Close(timeout time.Duration) error {
 	l.closed = true
 	l.mu.Unlock()
 	close(l.quit)
+	defer func() {
+		l.mu.Lock()
+		l.closeFeedLocked()
+		l.mu.Unlock()
+	}()
 	select {
 	case <-l.done:
 	case <-time.After(timeout):

@@ -64,7 +64,9 @@ func beginDaemonMetrics(mgr *supervisor.Manager, l metrics.Listener) *daemonMetr
 		log.Info("metrics listener off", "hint", "[server] metrics_listen = \"off\"")
 		return &daemonMetrics{}
 	}
-	m := metrics.New(mgr, metrics.Options{})
+	// Run counts come from the run ledger's feed, never the lifecycle bus
+	// (SPEC-0022 REQ-11).
+	m := metrics.New(mgr, metrics.Options{Runs: mgr.Ledger()})
 	m.Start()
 	return &daemonMetrics{m: m, l: l}
 }

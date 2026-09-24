@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/ledger"
 	"github.com/stump-wtf/harness/internal/observe"
 	"github.com/stump-wtf/harness/internal/supervisor"
 )
@@ -310,7 +311,8 @@ func TestTransitionsAndSchedules(t *testing.T) {
 	src.add(core.Harness{Name: "sweep", Adapter: "generic", Schedule: "*/5 * * * *"}, supervisor.Snapshot{State: core.StateStopped, Scheduled: true})
 	src.add(core.Harness{Name: "idle-job", Adapter: "generic", Schedule: "@daily"}, supervisor.Snapshot{State: core.StateStopped, Scheduled: true})
 	next := t0.Add(5 * time.Minute)
-	m := newTestMetrics(t, src, Options{NextRun: func(name string) (time.Time, bool) {
+	l := openLedger(t)
+	m := newTestMetrics(t, src, Options{Runs: l, NextRun: func(name string) (time.Time, bool) {
 		if name == "sweep" {
 			return next, true
 		}
@@ -338,11 +340,12 @@ func TestTransitionsAndSchedules(t *testing.T) {
 
 	src.bus.Publish(supervisor.Event{Kind: supervisor.EventStateChanged, Name: "svc", From: core.StateRunning, To: core.StateDegraded})
 	src.bus.Publish(supervisor.Event{Kind: supervisor.EventStateChanged, Name: "svc", From: core.StateDegraded, To: core.StateFailed})
-	for _, o := range []supervisor.RunOutcome{supervisor.OutcomeSuccess, supervisor.OutcomeFailed, supervisor.OutcomeTimedOut, supervisor.OutcomeSkipped, supervisor.OutcomeMissed, supervisor.OutcomeCancelled} {
-		src.bus.Publish(supervisor.Event{Kind: supervisor.EventRunFinished, Name: "sweep", Run: supervisor.RunRecord{Outcome: o}})
+	// Run outcomes come from the run ledger (SPEC-0022 REQ-11); see
+	// TestRunCountsComeFromTheLedgerNotTheBus for the bus's side.
+	for i, o := range []string{"success", "failed", "timed_out", "skipped", "missed", "cancelled", "success"} {
+		decide(t, l, "sweep", i+1, ledger.KindOneshot, o, t0, time.Minute)
 	}
-	src.bus.Publish(supervisor.Event{Kind: supervisor.EventRunFinished, Name: "sweep", Run: supervisor.RunRecord{Outcome: supervisor.OutcomeSuccess}})
-	eventually(t, "the bus events counted", func() bool {
+	eventually(t, "the ledger records counted", func() bool {
 		v, _ := scrape(t, m).get("harness_scheduled_runs_total", lbls("harness", "sweep", "outcome", "success"))
 		return v == 2
 	})

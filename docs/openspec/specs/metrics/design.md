@@ -25,6 +25,17 @@ wrong.
 **Event counters** (`harness_model_calls_total`, `harness_restarts_total`,
 `harness_state_transitions_total`) increment inline where the event happens.
 
+**Run counters** (`harness_scheduled_runs_total`, and SPEC-0022 REQ-11's
+`harness_runs_total`, `harness_run_duration_seconds`,
+`harness_run_tokens_total`, `harness_run_cost_usd_total`) are counted from the
+run ledger's feed (ADR-0028), which publishes a record only after its line is
+committed. Nothing counts a run outcome from the lifecycle bus: the bus is
+lossy, and a run counter fed by it could disagree with `harness runs`, which
+reads the same ledger. `harness_scheduled_runs_total` kept its name, labels
+and values when its source moved (harness#450); only one-shot records feed it,
+by SPEC-0022 REQ-5's success/failure mapping. The feed subscriber's own misses
+are `harness_run_feed_dropped_total{subscriber="metrics"}`.
+
 ## Classifying a model error
 
 The one piece of genuinely new logic. Adapters surface provider errors as text;
@@ -141,8 +152,8 @@ and `Manager.EventsCounted` returns that count to the collector. Each scrape
 adds whatever is new to `harness_metrics_collection_errors_total{collector="lifecycle"}`,
 and a lifecycle feed that closes early increments the same series. This uses
 the counter REQ-6 names rather than a dedicated one, because a lost event is a
-collection failure: `harness_state_transitions_total` and
-`harness_scheduled_runs_total` read low, and REQ-6 asks that a failure like
+collection failure: `harness_state_transitions_total` reads low, and REQ-6
+asks that a failure like
 that be visible under the collector it affects. The observer's per-subscriber
 `harness_observer_events_dropped_total` has no lifecycle equivalent, because
 metrics is the only bus subscriber that has a scrape to report through.

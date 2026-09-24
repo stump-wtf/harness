@@ -110,6 +110,8 @@ var allDescs = []*prometheus.Desc{
 	descObsParseErrors, descObsScanErrors, descObsSessions, descObsContested, descObsLastScan,
 }
 
+func init() { allDescs = append(allDescs, runDescs...) }
+
 // collector is Metrics' prometheus.Collector.
 type collector struct{ m *Metrics }
 
@@ -140,6 +142,9 @@ type agg struct {
 	errorsObservable bool
 	scheduled        bool
 	next             time.Time
+	// kinds are the run kinds its harnesses produce: oneshot for a
+	// triggered harness, resident otherwise (SPEC-0022 REQ-11's zeros).
+	kinds map[string]bool
 }
 
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
@@ -181,11 +186,16 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		}
 		a, ok := aggs[lbl]
 		if !ok {
-			a = &agg{states: make(map[string]float64, len(stateValues))}
+			a = &agg{states: make(map[string]float64, len(stateValues)), kinds: map[string]bool{}}
 			aggs[lbl] = a
 			order = append(order, lbl)
 		}
 		a.states[StateValue(rw.snap)]++
+		if rw.snap.Triggered {
+			a.kinds["oneshot"] = true
+		} else {
+			a.kinds["resident"] = true
+		}
 		a.restarts += float64(rw.snap.RestartCount)
 		if f := float64(rw.snap.ConsecutiveFailures); f > a.consec {
 			a.consec = f
@@ -201,7 +211,9 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		}
 	}
 	counted := make(map[string]series, len(order))
+	runsCounted := make(map[string]runSeries, len(order))
 	for _, lbl := range order {
+		runsCounted[lbl] = m.per[lbl].runsSnapshot()
 		if s, ok := m.per[lbl]; ok {
 			cp := *s
 			cp.errors = make(map[Class]uint64, len(s.errors))
@@ -284,17 +296,25 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			gauge(descSessionActive, active, lbl)
 		}
 
-		if a.scheduled {
+		if m.opts.Runs != nil {
+			collectRuns(ch, lbl, a.kinds, runsCounted[lbl])
+		}
+		// Counted from the run ledger (SPEC-0022 REQ-11), so omitted with
+		// no ledger to count from rather than reported as zero.
+		if a.scheduled && m.opts.Runs != nil {
 			counter(descScheduledRuns, float64(s.runs[0]), lbl, outcomeSuccess)
 			counter(descScheduledRuns, float64(s.runs[1]), lbl, outcomeFailure)
-			if !a.next.IsZero() {
-				gauge(descNextRun, unix(a.next), lbl)
-			}
+		}
+		if a.scheduled && !a.next.IsZero() {
+			gauge(descNextRun, unix(a.next), lbl)
 		}
 	}
 
 	for _, n := range collectorNames {
 		counter(descCollectionErrors, float64(collErrs[n]), n)
+	}
+	if m.opts.Runs != nil {
+		collectLedger(ch, m.opts.Runs)
 	}
 	if snapsOK {
 		gauge(descOverflowed, float64(overflowed))
