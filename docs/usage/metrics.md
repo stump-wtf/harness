@@ -108,7 +108,21 @@ increase(harness_metrics_collection_errors_total[15m]) > 0
 
 # The endpoint is unreachable: the daemon is down, or the port could not bind.
 up{job="harness"} == 0
+
+# A trigger source has been deaf for ten minutes: a channel out of `connected`,
+# or a webhook source that is not being served.
+max_over_time(harness_trigger_source_up[10m]) == 0
+
+# Someone is knocking with the wrong credential, or a sender's secret rotated.
+increase(harness_trigger_events_total{outcome="unauthorized"}[15m]) > 0
+
+# A channel link that keeps dropping.
+increase(harness_trigger_reconnects_total[1h]) > 5
 ```
+
+`harness_trigger_source_up` is 0 for a source that is `disabled` or `unbound`
+as well, so scope the first rule to the sources you expect to be live, for
+example with `{source=~"channel.sb|webhook.gitea-pr"}`.
 
 ## What is exported
 
@@ -126,7 +140,11 @@ up{job="harness"} == 0
 | `harness_session_active{harness}` | gauge | 1 when the process is up and the agent wrote to a session in the last 10 minutes. |
 | `harness_scheduled_runs_total{harness,outcome}` | counter | Scheduled harnesses only. `success`, or `failure` (a run that failed or timed out). Skipped, missed, cancelled and interrupted runs are not counted. |
 | `harness_scheduled_next_run_timestamp{harness}` | gauge | Scheduled harnesses only. Absent when there is no next window. |
-| `harness_metrics_collection_errors_total{collector}` | counter | `supervisor`, `schedule`, `observer`, `lifecycle`. `observer` and `lifecycle` also count events the collector lost because it fell behind, so the matching counters read low. |
+| `harness_trigger_source_up{source,kind}` | gauge | Every declared `[channel.*]` and `[webhook.*]` source. 1 while a channel is `connected` or a webhook source is `listening`; 0 in every other state (`connecting`, `backoff`, `error`, `no_listener`, `disabled`, `unbound`). |
+| `harness_trigger_events_total{source,outcome}` | counter | `fired`, `ignored`, `duplicate`, `unauthorized`, `too_large`, `rate_limited`, `invalid`. Every declared source reports all seven, starting at zero. See below. |
+| `harness_trigger_last_event_timestamp{source}` | gauge | Unix seconds of the source's latest firing. **Absent** until it first fires in this daemon's lifetime. |
+| `harness_trigger_reconnects_total{source}` | counter | Channel sources only. Times the stream came back to `connected` after the first connection. |
+| `harness_metrics_collection_errors_total{collector}` | counter | `supervisor`, `schedule`, `observer`, `lifecycle`, `triggers`. `observer` and `lifecycle` also count events the collector lost because it fell behind, so the matching counters read low. |
 | `harness_metrics_harnesses_overflowed` | gauge | How many harnesses were folded into `__other__`. |
 | `harness_observer_*` | mixed | Health of the transcript reader: delivered and dropped events, ambiguous and unattributed items, parse errors, scan errors, sessions tracked. |
 | `go_*`, `process_*` | | The daemon's own runtime. |
@@ -199,6 +217,27 @@ match provider wording:
 If the unclassified counter starts rising, a provider has probably changed its
 error wording.
 
+### Trigger outcomes
+
+Each webhook delivery to a served route, and each channel doorbell, is counted
+once, under how it ended:
+
+| `outcome` | Meaning |
+|---|---|
+| `fired` | Reached the bound harnesses. Each harness then starts, queues or skips the run, and that decision is in its run history, not here. |
+| `ignored` | A webhook event not in the source's `events` list, or an event for a source a reload had just unbound. Answered `202`, nothing runs. |
+| `duplicate` | A delivery ID that already fired on the route in the last 24 hours. |
+| `unauthorized` | Failed verification: `401`. |
+| `too_large` | Body over `max_body`: `413`. |
+| `rate_limited` | Over the route's `rate_limit`: `429`. |
+| `invalid` | A channel message that is not a well-formed doorbell, or a webhook body the sender stopped sending partway. |
+
+A request to a route that is not served (unknown, disabled or unbound) is a
+`404` and is not counted anywhere, so a stranger probing `/hooks/` cannot
+create series. A `405` and a `503` (the listener at its concurrency limit) are
+not counted either: they say something about the request or the listener, not
+about the source.
+
 ### Cardinality
 
 The `harness` label is capped at 50 distinct values. Harnesses beyond the cap
@@ -206,3 +245,8 @@ share `harness="__other__"`, where counters add up and `harness_harness_state`
 counts how many overflow harnesses are in each state. When a harness is
 removed, its slot is freed. Session IDs, prompts, model names, credentials and
 environment values never appear as labels.
+
+The `source` label takes only the names of sources your config declares, so it
+has no cap of its own. A source that a reload removes or renames disappears
+from the next scrape; the new name starts from zero. Delivery IDs, event names,
+payloads and doorbell text never appear as labels.
