@@ -572,6 +572,12 @@ type RunInfo struct {
 	Windows     int    `json:"windows,omitempty"`
 	// HasLog reports whether the run has a log to read with logs --run.
 	HasLog bool `json:"has_log,omitempty"`
+	// LogPruned reports a run whose log keep_runs has deleted; its record
+	// stays in the run ledger (SPEC-0022 REQ-4, REQ-12).
+	LogPruned bool `json:"log_pruned,omitempty"`
+	// Reason qualifies the outcome: why a skip started no process, why an
+	// interrupted run was (shutdown, daemon_crash). SPEC-0022 REQ-5.
+	Reason string `json:"reason,omitempty"`
 	// Source is the trigger source reference behind the run, e.g.
 	// "webhook.gitea-pr" (SPEC-0014 REQ "Run Record Fields").
 	Source string `json:"source,omitempty"`
