@@ -31,6 +31,7 @@ Read these in order the first time; each one assumes the previous.
 | 3 | [Your first supervised agent](./first-agent) | a Crush or Claude Code session you can attach to, restart, and read logs from |
 | 4 | [Scheduled sweeps](./scheduled-sweeps) | an unattended agent run on a cron, with outcomes you can trust |
 | 5 | [Push events with MCP channels](./push-events) | an always-on agent that wakes on a Switchboard todo |
+| — | [Claude Code under Harness](./claude-code) | exactly what Harness runs for Claude Code, one-shot limits, and the channels flag |
 | 6 | [Observability](./observability) | post-mortems with `harness logs`, the chatroom, `doctor`, and the SSH cockpit |
 | 7 | [How Harness, Switchboard and Cairn fit together](./harness-switchboard-cairn) | the whole loop, end to end |
 | 8 | [Run the merge train](./merge-train) | approved PRs landing one at a time, each tested as the exact tree that merges |

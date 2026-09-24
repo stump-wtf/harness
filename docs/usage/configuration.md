@@ -313,7 +313,7 @@ columns carry it.
 ## Agent adapters
 
 The `harness` key is a **required** enum selecting the adapter (ADR-0011,
-SPEC-0006): `crush`, `claude-code`, `codex`, `generic`. It has no default —
+SPEC-0006): `crush`, `claude-code` ([what it runs](/guides/claude-code)), `codex`, `generic`. It has no default —
 what a harness runs is the most consequential thing it declares, so a table
 that omits the key is a config error rather than an agent nobody asked for:
 

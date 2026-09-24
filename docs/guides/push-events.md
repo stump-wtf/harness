@@ -284,7 +284,9 @@ and [Routing rules](https://switchboard.stump.wtf/docs/guides/routing-rules).
 ## Claude Code: verified, with one obstacle
 
 Claude Code defines the Channels protocol Switchboard speaks, and it wakes on a
-Switchboard doorbell. Measured against Claude Code 2.1.270 over Switchboard's
+Switchboard doorbell. This section is the evidence; the rules, including the
+trigger-fired one-shot that avoids the confirmation prompt, are collected on
+[Claude Code under Harness](./claude-code#waking-on-switchboard-doorbells). Measured against Claude Code 2.1.270 over Switchboard's
 HTTP endpoint, with a real webhook delivery each time:
 
 | Session | What happened |
