@@ -1,20 +1,22 @@
 package webhook
 
-// Delivery verification: the scheme interface, and `bearer`, its first
-// implementation.
+// Delivery verification: the scheme interface, the registry, and `bearer`.
+// The HMAC schemes live in verify_hmac.go and the forge presets in
+// verify_presets.go.
 //
 // Every scheme answers one question — did whoever holds the route's secret
 // send this exact request? — and answers it before anything else looks at the
 // body. A scheme is a constructor in the `schemes` registry keyed by
-// core.VerifyScheme, so the HMAC presets (#462) plug in by adding entries and
-// nothing in the pipeline changes.
+// core.VerifyScheme, so a new scheme plugs in by adding an entry and nothing
+// in the pipeline changes.
 //
 // Fail closed, in three places:
 //
-//   - A route whose scheme has no constructor here is built with a verifier
-//     that refuses every delivery. The config parser accepts all six schemes
-//     already (#454), and "accepted but not implemented" must never mean
-//     "accepted and unauthenticated".
+//   - A route whose scheme has no constructor here — today only
+//     `standard-webhooks` (#466) — is built with a verifier that refuses every
+//     delivery. The config parser accepts all six schemes already (#454), and
+//     "accepted but not implemented" must never mean "accepted and
+//     unauthenticated".
 //   - A route with an empty secret gets the same refusing verifier. The parser
 //     rejects an empty secret already; this is the second lock on the door.
 //   - A verifier returns an error for anything short of a match — missing,
@@ -25,6 +27,7 @@ package webhook
 // Requirements "Authentication".
 //
 // @joestump 09/23/2026 - Introduced with the SPEC-0014 webhook listener (#458).
+// @joestump 09/24/2026 - Registered hmac-sha256, github, gitea and gitlab (#462).
 
 import (
 	"crypto/sha256"
@@ -60,10 +63,14 @@ type Verifier interface {
 // the source cannot be verified at all, and the route is then built refusing.
 type NewVerifierFunc func(src core.WebhookSource) (Verifier, error)
 
-// schemes is the scheme registry. #462 adds hmac-sha256, github, gitea and
-// gitlab here; standard-webhooks follows.
+// schemes is the scheme registry. standard-webhooks (#466) is the one scheme
+// the parser accepts that is not here yet, so its routes refuse everything.
 var schemes = map[core.VerifyScheme]NewVerifierFunc{
-	core.VerifyBearer: newBearerVerifier,
+	core.VerifyBearer:     newBearerVerifier,
+	core.VerifyHMACSHA256: newHMACVerifier,
+	core.VerifyGitHub:     newHMACPresetVerifier,
+	core.VerifyGitea:      newHMACPresetVerifier,
+	core.VerifyGitLab:     newGitLabVerifier,
 }
 
 // NewVerifier returns the verifier for src, or an error naming why none can be
