@@ -12,6 +12,7 @@ package supervisor
 
 import (
 	"io"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -1142,15 +1143,7 @@ func runAffecting(a, b core.Harness) bool {
 		a.RestartDelay != b.RestartDelay || a.Backend != b.Backend || a.TmuxSocket != b.TmuxSocket {
 		return true
 	}
-	if len(a.Args) != len(b.Args) {
-		return true
-	}
-	for i := range a.Args {
-		if a.Args[i] != b.Args[i] {
-			return true
-		}
-	}
-	return false
+	return !slices.Equal(a.Args, b.Args) || !slices.Equal(a.Argv, b.Argv)
 }
 
 // ensureLog lazily opens the rotating log for this harness.

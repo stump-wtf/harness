@@ -251,6 +251,7 @@ func wireHarnesses(proj *config.Project) []protocol.ProjectHarness {
 			Name:           name,
 			Harness:        h.Adapter,
 			Args:           h.Args,
+			Argv:           h.Argv,
 			Prompt:         h.Prompt,
 			PromptFile:     h.PromptFile,
 			Model:          h.Model,

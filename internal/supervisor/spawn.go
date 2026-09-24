@@ -351,6 +351,15 @@ func resolvePrompt(h core.Harness) (core.Harness, error) {
 // Governing: ADR-0023, SPEC-0017 REQ "Generic Kind Rejects Prompts".
 var ErrGenericPrompt = errors.New(`"generic" runs sh and has no prompt synthesis`)
 
+// ErrCommandPrompt is returned when a `command` harness reaches spawn carrying
+// a prompt. Nothing can deliver it yet (SPEC-0017 REQ-12's `{{prompt}}`,
+// stdin and file deliveries are still to come), and running the argv without
+// the instruction the operator wrote would be a silent no-op. Config
+// validation and the wire reject the combination first; this is the backstop.
+// Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-12 "Prompt
+// Delivery".
+var ErrCommandPrompt = errors.New(`a "command" harness has no way to deliver a prompt yet`)
+
 // execArgv resolves the executable and argv spawn runs: the configured cmd
 // with {workdir}-expanded args, or — for a prompt harness (empty Cmd, ADR-0011
 // spawn-time synthesis) — the argv the adapter registry resolves from the
@@ -373,9 +382,26 @@ func execArgv(h core.Harness, workdir string) (string, []string, error) {
 // Generic that went back to borrowing another agent's argv would fail the
 // spawn tests instead of passing them. For a long-running harness it returns
 // the adapter's executable with the configured args, {workdir}-expanded.
+//
+// A `command` harness (an adapter.ArgvOwner) is answered first and from its
+// own Argv alone: argv[0] and argv[1:] exactly as configured, no shell, no
+// {workdir} expansion, and neither Executable nor PromptCommand consulted.
+// The argv is re-checked here with the same rule every front door applies, so
+// a definition that bypassed them fails the start instead of exec'ing an
+// empty or placeholder executable.
 // Governing: issue #74 (adapter-aware prompt synthesis), SPEC-0017 REQ
-// "Generic Kind Rejects Prompts".
+// "Generic Kind Rejects Prompts", REQ-2 "Command Harness Kind".
 func execArgvWithRegistry(h core.Harness, workdir string, reg *adapter.Registry) (string, []string, error) {
+	if owner, ok := reg.Resolve(h).(adapter.ArgvOwner); ok {
+		if h.Prompt != "" {
+			return "", nil, fmt.Errorf("supervisor: harness %q: %w", h.Name, ErrCommandPrompt)
+		}
+		if err := core.CheckCommandArgv(h.Argv); err != nil {
+			return "", nil, fmt.Errorf("supervisor: harness %q: %w", h.Name, err)
+		}
+		name, args := owner.Argv(h, workdir)
+		return name, args, nil
+	}
 	if h.Prompt != "" {
 		opts := core.AgentOpts{
 			Model:      h.Model,
@@ -433,8 +459,9 @@ func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
 	workdir := Workdir(h)
 	// Resolve the argv before the environment and the PTY, for the same
 	// reason: a harness spawn refuses (a `generic` carrying a prompt, SPEC-0017
-	// REQ "Generic Kind Rejects Prompts") fails here, having allocated and
-	// exec'd nothing.
+	// REQ "Generic Kind Rejects Prompts"; a `command` harness with a malformed
+	// argv or a prompt it cannot deliver, REQ-2) fails here, having allocated
+	// and exec'd nothing.
 	name, args, err := execArgv(h, workdir)
 	if err != nil {
 		return nil, err

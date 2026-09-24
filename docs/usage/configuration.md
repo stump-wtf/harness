@@ -27,8 +27,9 @@ enabled = false
 
 | Field | Meaning |
 |-------|---------|
-| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `generic`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args: use `args = ["-c", "<command line>"]` to run an arbitrary command. `generic` takes no `prompt` or `prompt_file` — see [Agent adapters](#agent-adapters) |
-| `args` | argument list appended after the adapter's executable |
+| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `generic`, `command`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args. To run any other program, use `command` with an `argv` — see [The `command` kind](#the-command-kind). `generic` takes no `prompt` or `prompt_file` — see [Agent adapters](#agent-adapters) |
+| `args` | argument list appended after the adapter's executable. Not accepted on `command`, which takes `argv` instead |
+| `argv` | `command` only: the whole process, `argv[0]` first, exec'd **without a shell**. See [The `command` kind](#the-command-kind) |
 | `workdir` | working directory (**required** for most commands) |
 | `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config) |
 | `description` | free-text shown in the dashboard |
@@ -305,7 +306,7 @@ current turn before stopping it, capped by `hours_shutdown_timeout` (default
 stop is not a crash: no restart, no restart-count increment, no flap, and
 `enabled` survives. Graceful shutdown depends on the daemon reading turn-end
 markers from the harness's own agent-trace; a harness with nothing
-attributable to it (a `generic` adapter, or no `workdir`) always closes
+attributable to it (a `generic` or `command` adapter, or no `workdir`) always closes
 immediately, and `harness doctor` warns when `hours_shutdown = "graceful"` is
 set on one anyway.
 
@@ -324,13 +325,13 @@ columns carry it.
 ## Agent adapters
 
 The `harness` key is a **required** enum selecting the adapter (ADR-0011,
-SPEC-0006): `crush`, `claude-code`, `codex`, `generic`. It has no default —
+SPEC-0006): `crush`, `claude-code`, `codex`, `generic`, `command`. It has no default —
 what a harness runs is the most consequential thing it declares, so a table
 that omits the key is a config error rather than an agent nobody asked for:
 
 ```
 harness "web": missing required key "harness" (want one of: crush, claude-code,
-codex, generic — use "generic" with args = ["-c", "…"] for an arbitrary command)
+codex, generic, command — use "command" with argv = ["…"] for an arbitrary program)
 ```
  The
 adapter owns both the tool-specific behaviour (trajectory discovery) and the
@@ -348,17 +349,56 @@ scratchpad and the edit form refuse it too:
 
 ```
 harness "triage": "generic" runs sh and has no prompt synthesis, so it takes no
-"prompt"; use harness = "crush"|"claude-code"|"codex" for a prompt one-shot
+"prompt"; use harness = "crush"|"claude-code"|"codex" for a prompt one-shot, or
+harness = "command" with argv to run another program without a shell
 ```
 
 (It used to run `crush run <prompt>` instead, whether or not you had Crush.)
 
-Until the `command` kind and the `pi`/`omp` adapters ship
-([ADR-0023](/decisions/adr-0023-command-one-shots-and-templating), issue #500),
-the only way to run Pi, OMP or any other agent CLI not listed above is
-`harness = "generic"` with `args = ["-c", "omp …"]`, and **only as a
-long-running harness**. It cannot be scheduled or triggered: `schedule` and
-`triggers` need a `prompt`, which `generic` rejects.
+### The `command` kind
+
+`harness = "command"` runs a program you name, directly. Its `argv` is the
+whole process: `argv[0]` is the executable and every later element is one
+argument, handed to it **byte for byte**. Nothing runs a shell and nothing
+builds a command string, so an element holding spaces, `$(…)`, `;` or quotes
+is exactly one argument with exactly that text
+([ADR-0023](/decisions/adr-0023-command-one-shots-and-templating),
+SPEC-0017 REQ-2).
+
+```toml
+[harness.report-server]
+harness = "command"
+argv = ["/usr/local/bin/report", "--listen", ":8080", "--title", "Nightly report"]
+workdir = "~/src/report"
+enabled = true
+```
+
+- `argv` is required and must be non-empty. `argv[0]` must not be blank.
+- A bare `argv[0]` (`"report"`) is looked up on `PATH`, like every other
+  harness's executable. An absolute one is used as is. A relative one with a
+  `/` (`"./bin/report"`) resolves against the harness's `workdir`, not
+  against wherever the daemon was started.
+- Elements are not expanded: `{workdir}` and `~` in `argv` stay literal.
+  `argv[0]` can never be a `{{…}}` placeholder, so nothing substituted at run
+  time can choose what runs. Templates in the other elements are not
+  supported yet, so any `{{` in `argv` is a config error for now.
+- `args` is rejected on a `command` harness (put everything in `argv`), and
+  `argv` is rejected on every other kind.
+- `auto_accept`, `max_turns` and `quiet` are rejected: the harness owns its
+  argv, so put the program's own flags there. `model` is rejected too,
+  because no element references `{{model}}`.
+- It is a **resident** harness. It takes `enabled`, `restart`,
+  `restart_delay` and `operating_hours` with the same defaults as `generic`
+  (`restart = "always"`). `prompt`, `prompt_file`, `schedule` and `triggers`
+  are refused for now; command one-shots are still to come (issue #500).
+- Like `generic`, it reports no native trajectory (scrollback only).
+- It works in a project `harness.toml`, through `harness up`, and in the TUI
+  edit form, where `argv` is edited as the same TOML array. `harness describe`
+  shows the kind and the argv exactly as written.
+
+Pi, OMP or any other agent CLI not listed above runs this way, as a resident
+harness: `harness = "command"`, `argv = ["omp", …]`. Until command one-shots
+and the `pi`/`omp` adapters ship, it cannot be scheduled or triggered.
 
 ```toml
 [harness.my-agent]
