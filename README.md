@@ -106,9 +106,10 @@ read-only mirror of it, so issues and pull requests opened on GitHub are not
 seen.
 
 ```sh
-make check       # fmt + vet + test + race (the CI gate)
+make check       # fmt + vet + test + race + fuzz (the CI gate)
 make test        # go test ./...
 make lint        # fmt + vet
+make fuzz        # fuzz targets for FUZZTIME each (default 30s)
 ```
 
 ## License
