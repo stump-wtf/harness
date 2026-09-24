@@ -35,6 +35,8 @@
 //
 // @joestump 09/23/2026 - Introduced with the SPEC-0014 webhook listener (#458).
 // @joestump 09/24/2026 - Filled steps 7 and 8: de-duplication and rate limit (#460).
+// @joestump 09/24/2026 - Every refusal on a served route is counted by
+// outcome, for harness_trigger_events_total (#480).
 package webhook
 
 import (
@@ -128,9 +130,11 @@ type Options struct {
 	MaxHeaderBytes    int
 	MaxConcurrent     int
 
-	// Outcomes counts deliveries ignored, de-duplicated or rate-limited, per
-	// source. Nil gets the server its own; the daemon can pass one it shares
-	// with whatever surfaces them.
+	// Outcomes counts how each delivery to a served route ended, per source:
+	// unauthorized, too_large, invalid, ignored, duplicate, rate_limited.
+	// (`fired` is counted by the Firer, which sees channel doorbells too.)
+	// Nil gets the server its own; the daemon passes the source manager's,
+	// so the listener, the manager and /metrics count into one place.
 	Outcomes *trigger.OutcomeCounters
 
 	// newVerifier is the scheme registry; nil means NewVerifier. Unexported:
@@ -276,8 +280,7 @@ func (s *Server) Settings() Settings { return s.settings }
 // InFlight is how many deliveries hold a concurrency slot right now.
 func (s *Server) InFlight() int { return int(s.inFlight.Load()) }
 
-// Outcomes are the per-source counts of deliveries that verified but did not
-// fire.
+// Outcomes are the per-source counts of how deliveries ended.
 func (s *Server) Outcomes() *trigger.OutcomeCounters { return s.outcomes }
 
 // Reload swaps in the route table cfg describes, and reports whether want —
@@ -372,6 +375,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 4. Bounded body, before verification: every scheme signs over the
 	// whole body, so the cap is what bounds the verifier's work.
 	if r.ContentLength > rt.src.MaxBody {
+		s.outcomes.Inc(rt.ref, trigger.OutcomeTooLarge)
 		s.log.Warn("webhook delivery refused: body over max_body", "source", rt.ref, "peer", r.RemoteAddr, "max_body", rt.src.MaxBody)
 		writeError(w, tlsOn, http.StatusRequestEntityTooLarge, errPayloadTooLarge)
 		return
@@ -380,10 +384,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
+			s.outcomes.Inc(rt.ref, trigger.OutcomeTooLarge)
 			s.log.Warn("webhook delivery refused: body over max_body", "source", rt.ref, "peer", r.RemoteAddr, "max_body", rt.src.MaxBody)
 			writeError(w, tlsOn, http.StatusRequestEntityTooLarge, errPayloadTooLarge)
 			return
 		}
+		s.outcomes.Inc(rt.ref, trigger.OutcomeInvalid)
 		s.log.Warn("webhook delivery dropped: body read failed", "source", rt.ref, "peer", r.RemoteAddr, "err", err.Error())
 		writeError(w, tlsOn, http.StatusBadRequest, errBadRequest)
 		return
@@ -392,6 +398,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 5. Verify. The error names the failed rule, never the value presented,
 	// so it is safe to log; the response is the same bytes for every cause.
 	if err := rt.verifier.Verify(r.Header, body); err != nil {
+		s.outcomes.Inc(rt.ref, trigger.OutcomeUnauthorized)
 		s.log.Warn("webhook delivery refused: verification failed", "source", rt.ref, "peer", r.RemoteAddr, "reason", err.Error())
 		writeError(w, tlsOn, http.StatusUnauthorized, errUnauthorized)
 		return

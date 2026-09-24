@@ -23,13 +23,17 @@ package main
 // These are functions, like daemonManagerOptions, so the tests drive what the
 // daemon itself builds (#315).
 //
-// Governing: ADR-0020, SPEC-0013 REQ-1, REQ-2; design.md "Listener".
+// Governing: ADR-0020, SPEC-0013 REQ-1, REQ-2; design.md "Listener";
+// SPEC-0014 REQ "Trigger Metrics".
 //
 // @joestump-agent 09/21/2026 - Added for harness#356.
 //
 // @joestump-agent 09/21/2026 - Review: split into beginDaemonMetrics (before
 // Autostart) and serve (after the observer and scheduler exist), so boot
 // transitions are no longer missed.
+//
+// @joestump 09/24/2026 - attachTriggers: the trigger source manager feeds the
+// harness_trigger_* families (#480).
 
 import (
 	"context"
@@ -41,6 +45,7 @@ import (
 	"github.com/stump-wtf/harness/internal/metrics"
 	"github.com/stump-wtf/harness/internal/observe"
 	"github.com/stump-wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/trigger/source"
 )
 
 // daemonMetricsListener resolves [server] metrics_listen/metrics_token_file.
@@ -67,6 +72,17 @@ func beginDaemonMetrics(mgr *supervisor.Manager, l metrics.Listener) *daemonMetr
 	m := metrics.New(mgr, metrics.Options{})
 	m.Start()
 	return &daemonMetrics{m: m, l: l}
+}
+
+// attachTriggers hands the collector the daemon's trigger source manager, so
+// the harness_trigger_* families (SPEC-0014 REQ "Trigger Metrics") read the
+// same states and counters `harness triggers` does. runDaemon calls it once
+// the manager exists, which is after beginDaemonMetrics.
+func (d *daemonMetrics) attachTriggers(sources *source.Manager) {
+	if d == nil || d.m == nil || sources == nil {
+		return
+	}
+	d.m.AttachTriggers(sources)
 }
 
 // serve attaches the observer and the schedule reader and binds the

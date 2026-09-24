@@ -431,6 +431,11 @@ harness = "crush"
 workdir = %q
 schedule = "*/5 * * * *"
 prompt = "sweep"
+
+# Declared and bound by nothing: no session is opened, so nothing dials the
+# unroutable port, and it still reports (SPEC-0014 REQ "Trigger Metrics").
+[channel.idle]
+url = "http://127.0.0.1:9/mcp"
 `, addr, tokenFile, work, work)
 	_, out, _ := runDaemonBinary(t, bin, cfg,
 		"HOME="+home,
@@ -537,7 +542,21 @@ prompt = "sweep"
 			t.Errorf("harness_scheduled_runs_total has %d series, want 2 (job only)", got)
 		}
 	}
-	for _, c := range []string{"supervisor", "schedule", "observer", "lifecycle"} {
+	// runDaemon hands the collector its trigger source manager (#480): the
+	// unbound channel source reports down, every outcome at zero, and its
+	// reconnects.
+	if v, ok := sample(fams, "harness_trigger_source_up", "source", "channel.idle", "kind", "channel"); !ok || v != 0 {
+		t.Errorf("channel.idle source_up = %v (present %v), want 0 — the daemon did not wire its source manager", v, ok)
+	}
+	for _, o := range []string{"fired", "ignored", "duplicate", "unauthorized", "too_large", "rate_limited", "invalid"} {
+		if v, ok := sample(fams, "harness_trigger_events_total", "source", "channel.idle", "outcome", o); !ok || v != 0 {
+			t.Errorf("channel.idle events_total{outcome=%q} = %v (present %v), want 0", o, v, ok)
+		}
+	}
+	if _, ok := sample(fams, "harness_trigger_reconnects_total", "source", "channel.idle"); !ok {
+		t.Error("channel.idle: no harness_trigger_reconnects_total")
+	}
+	for _, c := range []string{"supervisor", "schedule", "observer", "lifecycle", "triggers"} {
 		if v, ok := sample(fams, "harness_metrics_collection_errors_total", "collector", c); !ok || v != 0 {
 			t.Errorf("collection errors{collector=%q} = %v (present %v), want 0", c, v, ok)
 		}

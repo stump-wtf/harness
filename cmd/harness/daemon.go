@@ -308,6 +308,10 @@ func runDaemon(o daemonOpts) {
 	// live config per firing, so a reload's change to a harness's `triggers`
 	// applies from the next event (REQ "Source Reconciliation On Reload").
 	sources := startDaemonSources(mgr)
+	// Issue #480: the harness_trigger_* families read this manager's states
+	// and the counters it shares with the webhook listener (SPEC-0014 REQ
+	// "Trigger Metrics").
+	daemonMet.attachTriggers(sources)
 	// After startDaemonScheduler, which registered its own hook: this
 	// composes onto it rather than replacing it (see wireSourceReload).
 	wireSourceReload(mgr, sources)

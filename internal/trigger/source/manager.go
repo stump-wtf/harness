@@ -18,6 +18,8 @@
 // REQ "Concurrency Safety".
 //
 // @joestump 09/22/2026 - Introduced with SPEC-0014 firing fan-out (#457).
+// @joestump 09/24/2026 - Counts fired and unbound events into the shared
+// trigger.OutcomeCounters (#480).
 package source
 
 import (
@@ -78,6 +80,11 @@ type Options struct {
 	//
 	// It is called without m.mu held, so a handler may call back in.
 	OnState func(Status)
+	// Counters is where every source's outcomes, last firing and channel
+	// reconnects are counted. Nil gets the manager its own. The daemon hands
+	// the same instance to the webhook listener, so a delivery's refusal and
+	// its firing land in one place for `harness triggers` and /metrics.
+	Counters *trigger.OutcomeCounters
 }
 
 // Decision is what happened to one harness in a fan-out. It is the shape a
@@ -109,6 +116,9 @@ type Manager struct {
 	dial dialer
 	// onState is notified of every source state change.
 	onState func(Status)
+	// counters is shared with whatever else counts or reads outcomes; see
+	// Options.Counters. Never nil.
+	counters *trigger.OutcomeCounters
 	// now, sleep and rand are the clock, the timer and the jitter source.
 	now   func() time.Time
 	sleep func(context.Context, time.Duration) bool
@@ -163,18 +173,27 @@ func New(opts Options) *Manager {
 	if sleep == nil {
 		sleep = realSleep
 	}
+	counters := opts.Counters
+	if counters == nil {
+		counters = &trigger.OutcomeCounters{}
+	}
 	return &Manager{
-		runner:  opts.Runner,
-		config:  cfg,
-		log:     logger,
-		dial:    dial,
-		onState: opts.OnState,
-		now:     now,
-		sleep:   sleep,
-		rand:    opts.Rand,
-		sources: map[string]*sourceState{},
+		runner:   opts.Runner,
+		config:   cfg,
+		log:      logger,
+		dial:     dial,
+		onState:  opts.OnState,
+		counters: counters,
+		now:      now,
+		sleep:    sleep,
+		rand:     opts.Rand,
+		sources:  map[string]*sourceState{},
 	}
 }
+
+// Counters are the per-source counts this manager keeps, and shares with the
+// webhook listener when the daemon wires one.
+func (m *Manager) Counters() *trigger.OutcomeCounters { return m.counters }
 
 // realSleep waits for d, returning false when ctx ends first.
 func realSleep(ctx context.Context, d time.Duration) bool {
@@ -280,11 +299,18 @@ func (m *Manager) Fire(ev *trigger.Envelope) []Decision {
 
 	bound := m.config().BoundHarnesses(ev.Source)
 	if len(bound) == 0 {
-		// Not an error: a source may be declared, connected and simply not
-		// bound yet. Counting it is #480's job; saying so is this one's.
+		// Not an error: a reload can unbind a source between a doorbell
+		// arriving and this read. Counted as ignored — heard and dropped —
+		// rather than fired, so `fired` never counts an event nothing ran for.
+		m.counters.Inc(ev.Source, trigger.OutcomeIgnored)
 		m.log.Debug("trigger event fired nothing: no harness binds the source", "source", ev.Source)
 		return nil
 	}
+	// Counted here, the one place both kinds pass through, before the
+	// fan-out: `fired` is "reached the harnesses", whatever each one then
+	// decides (a skip on overlap is a run record, not a lost event).
+	// Governing: SPEC-0014 REQ "Trigger Metrics".
+	m.counters.Fired(ev.Source, ev.ReceivedAt)
 
 	runTrigger := supervisor.TriggerWebhook
 	if ev.Kind == trigger.KindChannel {

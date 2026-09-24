@@ -316,6 +316,13 @@ func (m *Manager) attempt(
 		// The one place `connected` is set: the stream is open and about to
 		// be read.
 		openedAt = m.now()
+		if *firstDone {
+			// A return to `connected`, not the first arrival: what
+			// harness_trigger_reconnects_total counts. A reload-replaced
+			// session inherits firstDone, so its reconnect counts too — the
+			// stream did drop and come back.
+			m.counters.Reconnected(ref)
+		}
 		m.setState(ref, trigger.StateConnected, "")
 		m.log.Info("channel connected", "source", ref, "attempts", bo.Attempts())
 		m.onConnected(ref, src, firstDone, *downSince)
@@ -522,6 +529,7 @@ func (m *Manager) noteEvent(ref string) {
 }
 
 func (m *Manager) noteInvalid(ref string) {
+	m.counters.Inc(ref, trigger.OutcomeInvalid)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if st := m.sources[ref]; st != nil {
