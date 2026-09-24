@@ -104,6 +104,14 @@ func (f *Fake) begin(ctx context.Context, method string, args ...any) error {
 	return ctx.Err()
 }
 
+// unlocked runs a test hook without f.mu held, so the hook may call the
+// fake's setters. Callers hold f.mu, and hold it again when it returns.
+func (f *Fake) unlocked(fn func()) {
+	f.mu.Unlock()
+	defer f.mu.Lock()
+	fn()
+}
+
 // nextSHA returns a unique 40-hex-character synthetic SHA. Callers hold f.mu.
 func (f *Fake) nextSHA() string {
 	f.seq++
@@ -284,7 +292,9 @@ func (f *Fake) CreateTrainBranch(ctx context.Context, repo string, spec forge.Tr
 	var tb forge.TrainBranch
 	if f.onTrain != nil {
 		var err error
-		if tb, err = f.onTrain(spec); err != nil {
+		fn := f.onTrain
+		f.unlocked(func() { tb, err = fn(spec) })
+		if err != nil {
 			return forge.TrainBranch{}, err
 		}
 	} else {
@@ -317,8 +327,11 @@ func (f *Fake) CombinedStatus(ctx context.Context, repo, sha string) (string, er
 		return "", err
 	}
 	f.polls[repo+"@"+sha]++
-	if f.onStatus != nil {
-		return f.onStatus(sha, f.polls[repo+"@"+sha]), nil
+	if fn := f.onStatus; fn != nil {
+		n := f.polls[repo+"@"+sha]
+		var st string
+		f.unlocked(func() { st = fn(sha, n) })
+		return st, nil
 	}
 	if st, ok := f.repo(repo).statuses[sha]; ok {
 		return st, nil
@@ -350,8 +363,8 @@ func (f *Fake) SquashMerge(ctx context.Context, repo string, pr int, headSHA, ti
 	sha := f.nextSHA()
 	train := r.lastTrain[pr]
 	tree := train.Tree
-	if f.onMerge != nil {
-		tree = f.onMerge(pr, train)
+	if fn := f.onMerge; fn != nil {
+		f.unlocked(func() { tree = fn(pr, train) })
 	}
 	r.trees[sha] = tree
 	files := map[string][]byte{}
