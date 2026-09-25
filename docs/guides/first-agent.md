@@ -206,13 +206,26 @@ For a metered agent — anything that bills per token or draws on a plan's quota
   fails, and starts again. `restart_delay = 30` or more caps that at about two
   attempts a minute even before crash-loop backoff kicks in.
 
-:::caution Watch for harnesses that never settle
+:::note A harness that never settles ends up `failed`
 
-The supervisor is designed to give up and park a harness in `failed` after
-repeated consecutive failures. Current builds do not apply that limit, so a
-harness that fails every time keeps retrying at its backoff interval
-indefinitely. Check `harness doctor` for `degraded` harnesses, and `harness stop`
-anything that is looping.
+A failing harness does not retry forever. Every non-zero exit from a run that
+lasted less than **5 minutes** counts as a consecutive failure; a clean exit, or
+a run that lasts 5 minutes, resets the count. After **more than 5** consecutive
+failures the daemon gives up and parks the harness in **`failed`**
+(`✖ failed` in `harness list`), however long its `restart_delay` is, so a slow
+failure loop stops too, not just a fast one.
+
+A `failed` harness stays down until you fix the cause and run:
+
+```sh
+harness restart NAME
+```
+
+`harness doctor` reports it as an error with that same hint, and
+`harness describe NAME` shows its last exit code and whether it was flapping.
+The latch lives in the running daemon: a daemon restart starts an `enabled`
+harness again, and a harness that is still broken works its way back to
+`failed`. To keep it down across restarts, `harness stop NAME`.
 
 :::
 
