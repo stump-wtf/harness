@@ -60,11 +60,10 @@ show where agents actually struggle. A static code miner has no idea which of
 its million records matter. The maturity window exists because a pull request
 merged an hour ago cannot yet be known to be unreverted.
 
-**Alternatives considered**: *Trajectories alone* (ADR-0012 as written): capped
-by the agent's competence, and the literal error text it clusters on is not in
-agent-trace's output. *Code mining* (Code2Skill): it does not know which tasks
-come up, and in the agent's own repositories it restates code the agent can
-already read.
+**Alternatives considered**: *Trajectories alone*: capped by the agent's
+competence, and literal error text is not in agent-trace's output to cluster
+on. *Code mining* (Code2Skill): it does not know which tasks come up, and in the
+agent's own repositories it restates code the agent can already read.
 
 ### Git provenance is recorded at harvest, not reconstructed at link time
 
@@ -80,8 +79,8 @@ list means a session that merely started on someone else's branch cannot claim
 their pull request.
 
 **Alternatives considered**: *Linking by the transcript's branch and a commit time
-window*, as the first draft did: it links to the wrong pull request when a
-session starts on another branch, and fails outright once the directory is gone.
+window*: it links to the wrong pull request when a session starts on another
+branch, and fails outright once the directory is gone.
 
 ### Skill repos and distillers are configuration
 
@@ -98,10 +97,9 @@ and feeding its own pull requests in as evidence. Requiring the `command` kind
 keeps the forge token and the webhook payload out of any agent.
 
 **Alternatives considered**: *One learned store with a single global
-distillation table* (the first draft of ADR-0030): one threshold for every
-fleet, and single-repository skills written into each adapter's native
-directory. *A prompt harness that runs the command*: an agent holding the forge
-token is exactly option 4B.
+distillation table*: one threshold for every fleet, and single-repository
+skills written into each adapter's native directory. *A prompt harness that runs the command*: an agent holding the forge
+token is the distiller-agent design ADR-0030 rejects.
 
 ### Every change to a skill is a pull request
 
@@ -114,7 +112,7 @@ record of rejections and rate control, all from machinery the fleet already
 runs. Promotion becomes a merge. Who may merge is branch protection's job,
 because a token scope cannot stop a merge on most forges.
 
-**Alternatives considered**: *A local `status` field* (ADR-0012 as written): no
+**Alternatives considered**: *A local `status` field, flipped by hand*: no
 reviewer, and an unreviewed proposal is one edit away from promotion. *A Cairn
 artifact or Switchboard todo*: reaches the operator, but approval would still
 need a second mechanism to change the store.
@@ -136,9 +134,8 @@ which return the original session and its answer. A scratchpad harness has no
 prompt, wait or result contract. A child process gets all three for free, and
 every input is placed there by code.
 
-**Alternatives considered**: *Scratchpad harnesses (ADR-0017)*, as the first
-draft proposed: they inherit the daemon's environment, reach the facade, and
-have no result contract. *One agent doing every step*: once it has seen the
+**Alternatives considered**: *Scratchpad harnesses (ADR-0017)*: they inherit
+the daemon's environment, reach the facade, and have no result contract. *One agent doing every step*: once it has seen the
 diff, it cannot be blind.
 
 ### Verify by rebuilding without seeing the answer, and test only in a sandbox
@@ -182,7 +179,7 @@ gain, and review after a draft exists was the most consistent placement (38% vs
 dependency at v1.59.0), with columns for `name`, `description`, `symptoms`,
 `tags` and `applies_to`.
 
-**Rationale**: Unchanged from ADR-0012. Embeddings would add a runtime library
+**Rationale**: As in ADR-0012. Embeddings would add a runtime library
 or grow the binary several-fold, and vocabulary mismatch is closed more cheaply
 here. The `symptoms` are observed literal strings, callers are frontier models
 that can supply several phrasings, and the porter tokenizer stems for free.
@@ -198,6 +195,18 @@ Re-verify when a cited file's blob changes on the default branch, at most
 **Rationale**: Retrieval counts only see disuse, while blob staleness catches rot
 while the skill is still being used. The per-pass cap stops a hot file from
 triggering a storm of model runs.
+
+### Settled details
+
+- **Task statement for replay**: the linked issue's body, otherwise the
+  session's first user message, with a verbatim-leak flag that also skips the
+  control.
+- **A repository worked by both Crush and Claude Code harnesses**: its skills
+  live in a skill repo, served by search to both. No adapter-native path is
+  written.
+- **The cross-project threshold**: per distiller, as `min_repos`, default 1.
+- **A session whose worktree is gone**: it is still linked, through the
+  provenance recorded at harvest.
 
 ## Configuration
 
@@ -366,15 +375,3 @@ come from check names and review text.
   placeholder. That should reuse ADR-0023's placeholder grammar once it lands,
   rather than invent a second one.
 
-### Resolved
-
-- *Task statement for replay* (2026-09-22): the linked issue's body, otherwise
-  the session's first user message, with a verbatim-leak flag that also skips
-  the control.
-- *Where a single-repository skill lands when Crush and Claude Code share a
-  repository* (2026-09-22): in a skill repo, served by search to both. No
-  adapter-native path is written.
-- *The cross-project threshold* (2026-09-22): per distiller, as `min_repos`,
-  default 1.
-- *How a session is linked when its worktree is gone* (2026-09-22, in review of
-  the ADR-0030 pull request): git provenance recorded at harvest.
