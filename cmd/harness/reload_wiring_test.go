@@ -84,7 +84,7 @@ func TestDaemonWiringReloadHoldsAndRotatesAChannelSession(t *testing.T) {
 		t.Fatalf("Restore: %v", err)
 	}
 
-	sources := startDaemonSources(mgr)
+	sources := startDaemonSources(mgr, nil)
 	t.Cleanup(sources.Close)
 
 	// A hook registered the way startDaemonScheduler registers its own, so

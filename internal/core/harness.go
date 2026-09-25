@@ -153,8 +153,17 @@ type Harness struct {
 	Name string
 	// Args are the command arguments, appended after the adapter's
 	// executable; {workdir} placeholders are expanded at spawn time by the
-	// supervisor, not here.
+	// supervisor, not here. Never set on a "command" harness, whose Argv
+	// replaces it.
 	Args []string
+	// Argv is a "command" harness's whole process: argv[0] is the executable
+	// (resolved with spawn's PATH lookup, or against the workdir when it is a
+	// relative path with a separator) and argv[1:] its arguments, exec'd
+	// directly and passed through byte for byte. No shell, no command string
+	// and no {workdir} expansion ever touch it. Set only when Adapter is
+	// "command"; CheckCommandArgv is the shape every front door enforces.
+	// Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind".
+	Argv []string
 	// Prompt is an agent one-shot instruction, the declarative alternative
 	// to a long-running harness: when set, the supervisor synthesizes the
 	// entire agent argv at spawn time via the adapter's PromptCommand (Args
@@ -285,14 +294,16 @@ type Harness struct {
 	// History"; issue #119.
 	KeepRuns int
 	// Adapter is the harness kind — the config `harness` key, an enum:
-	// "crush" (the default when omitted), "claude-code", "codex",
-	// "generic". It selects the adapter, which supplies BOTH the
-	// tool-specific behaviour (trajectory discovery, prompt flag mapping)
-	// and the executable a long-running (non-prompt) harness runs; `args`
-	// are appended after it. Naming an unknown value is a
-	// config-validation error. "generic" has no executable of its own, so
-	// it is only valid for a prompt harness. Governing: ADR-0011, SPEC-0006
-	// REQ "Adapter Selection".
+	// "crush", "claude-code", "codex", "generic", "command". It selects the
+	// adapter, which supplies BOTH the tool-specific behaviour (trajectory
+	// discovery, prompt flag mapping) and the executable a long-running
+	// (non-prompt) harness runs; `args` are appended after it. Naming an
+	// unknown value is a config-validation error. "generic" runs sh and has
+	// no prompt synthesis, so it is only valid for a long-running harness: a
+	// prompt on it is a config-validation error. "command" has no executable
+	// of its own either: its Argv is the whole process. Governing: ADR-0011,
+	// SPEC-0006 REQ "Adapter Selection", SPEC-0017 REQ "Generic Kind Rejects
+	// Prompts", REQ-2 "Command Harness Kind".
 	Adapter string
 	// HarvestTrajectory controls whether the harness's trajectory is exposed
 	// read-only through the facade (list_trajectories / get_trajectory).
@@ -410,6 +421,41 @@ func ReadPromptFile(path string) (string, error) {
 		return "", fmt.Errorf("%q is empty", path)
 	}
 	return prompt, nil
+}
+
+// AdapterCommand is the `harness` kind whose process is its own Argv, exec'd
+// without a shell (SPEC-0017 REQ-2).
+const AdapterCommand = "command"
+
+// CheckCommandArgv enforces the shape of a "command" harness's argv, shared by
+// every front door (config files, the project-up and scratchpad wire, the TUI
+// form) so they cannot drift apart. The error names the offending element and
+// is meant to follow "harness %q: ".
+//
+// argv[0] is what gets exec'd, so it must be a non-blank literal: a
+// placeholder there would let a rendered value choose the executable.
+// Placeholders in argv[1:] are SPEC-0017 REQ-6 templates, which do not exist
+// yet, so any "{{" there is refused outright rather than passed to the child
+// as literal text an operator meant to be substituted; the template grammar
+// replaces this refusal with a parse and a reference check.
+// Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-6
+// "Template Grammar".
+func CheckCommandArgv(argv []string) error {
+	if len(argv) == 0 {
+		return errors.New(`harness = "command" requires "argv", a non-empty array (argv[0] is the executable, exec'd without a shell)`)
+	}
+	switch {
+	case strings.TrimSpace(argv[0]) == "":
+		return errors.New(`"argv[0]" must not be blank (it is the executable)`)
+	case strings.Contains(argv[0], "{{"):
+		return fmt.Errorf(`"argv[0]" %q must be a literal executable: a placeholder cannot choose what runs`, argv[0])
+	}
+	for i, a := range argv[1:] {
+		if strings.Contains(a, "{{") {
+			return fmt.Errorf(`"argv[%d]" %q contains "{{", but argv templates are not supported yet`, i+1, a)
+		}
+	}
+	return nil
 }
 
 // IsAgent reports whether h is an agent one-shot — a harness whose argv is
