@@ -144,7 +144,7 @@ func TestDaemonTriggerMetricsCountRealDeliveries(t *testing.T) {
 	}
 	dm := beginDaemonMetrics(mgr, l)
 	t.Cleanup(dm.Stop)
-	sources := startDaemonSources(mgr)
+	sources := startDaemonSources(mgr, nil)
 	t.Cleanup(sources.Close)
 	dm.attachTriggers(sources)
 	wireSourceReload(mgr, sources)
