@@ -147,7 +147,7 @@ harness's `env_file`:
 ```sh
 # ~/.config/harness/env/sb-worker.env   (chmod 600)
 SWITCHBOARD_TOKEN=sbk_...
-ANTHROPIC_API_KEY=sk-ant-...
+CLAUDE_CODE_OAUTH_TOKEN=...   # from `claude setup-token`; bills your subscription
 ```
 
 ### 3. Supervise it

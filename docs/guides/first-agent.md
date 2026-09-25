@@ -77,11 +77,24 @@ get it fully logged in:
   LaunchAgent in [Run the daemon as a service](/guides/run-as-a-service) does
   (`launchctl bootstrap gui/$(id -u)`), so the normal setup is fine. A
   *system* LaunchDaemon, a different user, or an SSH session with no login
-  keychain unlocked cannot reach it — use `ANTHROPIC_API_KEY` in the
-  `env_file` there.
+  keychain unlocked cannot reach it — use one of the file-based modes below.
 
-  On Linux and on headless boxes there is no Keychain: log in interactively,
-  or put `ANTHROPIC_API_KEY` in the harness's `env_file`.
+  On Linux and on headless boxes there is no Keychain. Claude Code then
+  authenticates one of three ways:
+
+  1. **Subscription token (the headless and Linux default).** Run
+     `claude setup-token` once, interactively, then put the token it prints
+     in the harness's `env_file`:
+
+     ```sh
+     # ~/.config/harness/env/claude.env   (chmod 600)
+     CLAUDE_CODE_OAUTH_TOKEN=<token from claude setup-token>
+     ```
+
+     This bills your Claude subscription, not the API.
+  2. **API key.** Put `ANTHROPIC_API_KEY=sk-ant-...` in the `env_file`
+     instead. This bills the **Anthropic API**, not your Claude subscription.
+  3. **Keychain** (macOS only, described above). Nothing is written to disk.
 - **Crush:** configure a provider in `crush.json` or its environment, and put
   the API key in the `env_file`.
 

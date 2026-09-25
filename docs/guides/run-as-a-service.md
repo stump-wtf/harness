@@ -236,9 +236,14 @@ enabled = true
 
 ```sh
 # ~/.config/harness/env/reviewer.env   (chmod 600)
-ANTHROPIC_API_KEY=sk-ant-...
+CLAUDE_CODE_OAUTH_TOKEN=...   # from `claude setup-token`; bills your subscription
 GITHUB_TOKEN=ghp_...
 ```
+
+For Claude Code, `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) bills
+your Claude subscription; `ANTHROPIC_API_KEY` bills the API instead. See
+[the first agent guide](./first-agent#before-the-first-start) for all three
+auth modes.
 
 Things worth knowing about `env_file`:
 

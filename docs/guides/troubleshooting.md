@@ -68,6 +68,27 @@ Usual causes, most likely first:
   confirmation at every startup until someone attaches and answers. See
   [the Claude Code status](./push-events#claude-code-verified-with-one-obstacle).
 
+## The harness bills my API account, or sits at a login prompt
+
+Claude Code authenticates one of three ways, and a headless host has no
+Keychain to fall back on:
+
+- **Subscription token** — run `claude setup-token` once, then put
+  `CLAUDE_CODE_OAUTH_TOKEN=...` in the harness's `env_file` (mode `0600`).
+  This bills your Claude subscription and is the default for headless and
+  Linux hosts.
+- **API key** — `ANTHROPIC_API_KEY` in the `env_file` bills the **Anthropic
+  API**, not your subscription. If your usage shows up as API spend, an
+  `ANTHROPIC_API_KEY` is what the agent is reading.
+- **Keychain** (macOS only) — used when the daemon runs in your GUI login
+  session and no credential appears in any `env_file`. An SSH session, a
+  system LaunchDaemon, or a different user cannot reach it, and the agent
+  then sits at a login prompt nobody sees — attach with `harness attach NAME`
+  to finish it.
+
+A token belongs only in an `env_file`, never in `harness.toml`. See
+[the first agent guide](./first-agent#before-the-first-start).
+
 ## It keeps restarting
 
 `harness list` shows `◐ degraded` or `◌ restarting`, and the restart count
