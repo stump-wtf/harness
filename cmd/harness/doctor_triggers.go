@@ -46,7 +46,7 @@ type triggerInputs struct {
 	// WebhookAddr/WebhookTLS are the listener that actually bound.
 	daemon *protocol.DaemonInfo
 	// sources is the triggers op's reply, nil when it could not be fetched
-	// (daemon down, or older than ProtoMinor 12).
+	// (daemon down, or older than ProtoMinor 13).
 	sources []protocol.TriggerSourceInfo
 	// stat reads a file's mode; os.Stat in production.
 	stat func(string) (os.FileInfo, error)

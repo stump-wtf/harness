@@ -116,7 +116,7 @@ func TestPreviousMinorClientStillLists(t *testing.T) {
 	defer raw.Close()
 	_ = raw.SetDeadline(time.Now().Add(5 * time.Second))
 	pc := protocol.NewConn(raw)
-	previous := "1.11"
+	previous := "1.12"
 	if protocol.ProtoVersion == previous {
 		t.Fatalf("ProtoVersion is still %s: this test pins the bump", previous)
 	}

@@ -89,7 +89,7 @@ func (c *Client) RunLogs(name string, run, lines int) (protocol.LogsData, error)
 // and error, its counters and the harnesses it fires (SPEC-0014 REQ "Trigger
 // Visibility").
 //
-// A daemon older than ProtoMinor 12 does not know the op. It answers
+// A daemon older than ProtoMinor 13 does not know the op. It answers
 // unknown_op, which on its own reads like a typo in the client; the error
 // says what it actually means.
 func (c *Client) Triggers() ([]protocol.TriggerSourceInfo, error) {
@@ -107,7 +107,7 @@ func (c *Client) Triggers() ([]protocol.TriggerSourceInfo, error) {
 }
 
 // triggersMinor is the ProtoMinor that added the triggers op.
-const triggersMinor = 12
+const triggersMinor = 13
 
 // eventTriggerMinor is the ProtoMinor that added ControlReq.Event.
 const eventTriggerMinor = 11
