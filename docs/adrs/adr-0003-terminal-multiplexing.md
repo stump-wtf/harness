@@ -1,7 +1,11 @@
+---
+status: accepted
+date: 2026-07-18
+decision-makers: [joestump]
+---
+
 # ADR-0003 — Terminal multiplexing: bake it in (keep tmux optional)
 
-- **Status:** Proposed
-- **Date:** 2026-07-18
 - **This is the load-bearing decision.** Everything about the UX ceiling and the
   dependency footprint hangs off it.
 

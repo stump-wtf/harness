@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded
 date: 2026-07-18
 decision-makers: [joestump]
 extends: [ADR-0003]
