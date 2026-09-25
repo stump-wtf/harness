@@ -24,7 +24,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -109,7 +108,7 @@ func TestDaemonWiringFiresAHarnessFromABearerWebhook(t *testing.T) {
 	cfg := webhookWiringConfig(fields, true)
 	mgr := newWiringManager(t, cfg)
 
-	sources := startDaemonSources(mgr)
+	sources := startDaemonSources(mgr, nil)
 	t.Cleanup(sources.Close)
 	wireSourceReload(mgr, sources)
 	webhooks := beginDaemonWebhooks(mgr, sources, "127.0.0.1:0")
@@ -232,7 +231,7 @@ func TestDaemonWiringFiresAHarnessFromABearerWebhook(t *testing.T) {
 func TestDaemonWebhookListenerOffWithoutAnAddress(t *testing.T) {
 	cfg := webhookWiringConfig(filepath.Join(t.TempDir(), "f"), true)
 	mgr := newWiringManager(t, cfg)
-	sources := startDaemonSources(mgr)
+	sources := startDaemonSources(mgr, nil)
 	t.Cleanup(sources.Close)
 
 	off := beginDaemonWebhooks(mgr, sources, "")
@@ -293,15 +292,9 @@ triggers = ["webhook.ci"]
 
 	start := func(extra ...string) (socket string) {
 		socket = filepath.Join(shortSockDir(t), "h.sock")
-		cmd := exec.Command(bin, "daemon", "run", "--socket", socket, "--config", cfgPath)
-		cmd.Env = append(append([]string{}, env...), extra...)
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
-		if !waitForSocket(t, bin, env, socket) {
-			t.Fatal("daemon never came up")
-		}
+		d := startDaemonProc(t, bin, append(append([]string{}, env...), extra...),
+			"daemon", "run", "--socket", socket, "--config", cfgPath)
+		d.waitReady(t, bin, env, socket)
 		return socket
 	}
 

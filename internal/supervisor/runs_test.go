@@ -419,9 +419,10 @@ func TestRunIDFloorsAtLogsOnDisk(t *testing.T) {
 	}
 }
 
-// TestKeepRunsPrunesRecordsAndLogs: history is bounded, and a record falling
-// out takes its log with it — as does a log no record refers to.
-func TestKeepRunsPrunesRecordsAndLogs(t *testing.T) {
+// TestKeepRunsPrunesLogsNotRecords: keep_runs bounds per-run logs only. Every
+// record stays in the ledger, and one whose log was pruned says so
+// (SPEC-0022 REQ-12, REQ-13).
+func TestKeepRunsPrunesLogsNotRecords(t *testing.T) {
 	e := newRunsEnv(t)
 	h := sweep("sweep", "echo out; exit 0")
 	h.KeepRuns = 2
@@ -438,8 +439,13 @@ func TestKeepRunsPrunesRecordsAndLogs(t *testing.T) {
 		})
 	}
 	rs := m.Runs("sweep")
-	if len(rs) != 2 || rs[0].RunID != 3 || rs[1].RunID != 4 {
-		t.Fatalf("history = %+v, want runs 3 and 4", rs)
+	if len(rs) != 4 {
+		t.Fatalf("history = %+v, want all 4 runs", rs)
+	}
+	for _, r := range rs {
+		if want := r.RunID <= 2; r.LogPruned != want {
+			t.Errorf("run %d log_pruned = %v, want %v", r.RunID, r.LogPruned, want)
+		}
 	}
 	entries, err := os.ReadDir(filepath.Join(e.jobs, "sweep"))
 	if err != nil {

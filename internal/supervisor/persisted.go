@@ -41,11 +41,12 @@ type persistedState struct {
 	// older daemon ignores the key, and a newer one reading an older file just
 	// arms every schedule from now.
 	Schedules map[string]persistedSchedule `json:"schedules,omitempty"`
-	// Runs holds each scheduled harness's bounded run history (SPEC-0008 REQ
-	// "Run History"), keyed by harness name. Kept raw and decoded per harness
-	// (Manager.restoreRunsLocked), so a malformed history costs that one
-	// harness its records instead of failing the whole document. Additive: an
-	// older daemon ignores the key.
+	// Runs holds each harness's run id allocator, {"last_run_id": N}, keyed by
+	// harness name. The records themselves live in the run ledger (SPEC-0022
+	// REQ-13); a pre-ledger file's record lists are read once, for the
+	// first-boot import, and dropped by the next save. Kept raw and decoded
+	// per harness (Manager.restoreRunsLocked), so a malformed entry costs that
+	// one harness instead of failing the whole document.
 	Runs json.RawMessage `json:"runs,omitempty"`
 }
 
@@ -73,7 +74,10 @@ type persistedProjectHarness struct {
 	Name    string   `json:"name"`
 	Harness string   `json:"harness,omitempty"`
 	Args    []string `json:"args,omitempty"`
-	Prompt  string   `json:"prompt,omitempty"`
+	// Argv is a command harness's whole process (SPEC-0017 REQ-2), kept
+	// verbatim so a restored project harness execs exactly what was upped.
+	Argv   []string `json:"argv,omitempty"`
+	Prompt string   `json:"prompt,omitempty"`
 	// PromptFile is the PATH, never the file's contents (ADR-0018).
 	PromptFile     string `json:"prompt_file,omitempty"`
 	Model          string `json:"model,omitempty"`
@@ -107,6 +111,7 @@ func toPersistedProjectHarness(h core.Harness) persistedProjectHarness {
 		Name:            h.Name,
 		Harness:         h.Adapter,
 		Args:            h.Args,
+		Argv:            h.Argv,
 		Prompt:          h.Prompt,
 		PromptFile:      h.PromptFile,
 		Model:           h.Model,
@@ -148,6 +153,7 @@ func (p persistedProjectHarness) toCore() core.Harness {
 		Name:            p.Name,
 		Adapter:         p.Harness,
 		Args:            p.Args,
+		Argv:            p.Argv,
 		Prompt:          p.Prompt,
 		PromptFile:      p.PromptFile,
 		Model:           p.Model,

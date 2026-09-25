@@ -27,8 +27,9 @@ enabled = false
 
 | Field | Meaning |
 |-------|---------|
-| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `generic`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args: use `args = ["-c", "<command line>"]` to run an arbitrary command |
-| `args` | argument list appended after the adapter's executable |
+| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `generic`, `command`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args. To run any other program, use `command` with an `argv` — see [The `command` kind](#the-command-kind). `generic` takes no `prompt` or `prompt_file` — see [Agent adapters](#agent-adapters) |
+| `args` | argument list appended after the adapter's executable. Not accepted on `command`, which takes `argv` instead |
+| `argv` | `command` only: the whole process, `argv[0]` first, exec'd **without a shell**. See [The `command` kind](#the-command-kind) |
 | `workdir` | working directory (**required** for most commands) |
 | `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config) |
 | `description` | free-text shown in the dashboard |
@@ -67,7 +68,7 @@ workdir = "~/src/my-project"
 
 | Field | Meaning |
 |-------|---------|
-| `prompt` | the agent instruction. Mutually exclusive with `args` and with `prompt_file`; stored verbatim (never placeholder-expanded) and synthesized into the agent argv at spawn from the same `harness` adapter |
+| `prompt` | the agent instruction. Mutually exclusive with `args` and with `prompt_file`, and not accepted on `harness = "generic"`; stored verbatim (never placeholder-expanded) and synthesized into the agent argv at spawn from the same `harness` adapter |
 | `prompt_file` | path to a file whose contents are the instruction — the alternative to an inline `prompt` for anything too long for one TOML line. See below |
 | `model` | which model the agent runs, e.g. `claude-opus-5`. Requires `prompt`; folded into the synthesized argv |
 | `auto_accept` | run unattended, bypassing the agent's permission prompts (the vendor's yolo flag). Requires `prompt`; fold into the synthesized argv |
@@ -88,7 +89,7 @@ is dropped, not emulated:
 | `crush` | `crush [--yolo] run [--quiet] [--model M] <prompt>` | `max_turns` (Crush has no turn cap) |
 | `claude-code` | `claude -p [--dangerously-skip-permissions] [--model M] [--max-turns N] --verbose --output-format stream-json <prompt>` | `quiet` (`-p` is already headless) |
 | `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
-| `generic` | same as `crush` | same as `crush` |
+| `generic` | none — a `prompt` or `prompt_file` on `generic` is a config error | — |
 
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
 it on trusted, headless runs.
@@ -207,15 +208,26 @@ on_overlap = "queue"   # default "skip"; or "replace"
 keep_runs = 30         # default 20
 ```
 
-- **History** lives in `state.json`: run id, trigger (`schedule`, `manual`,
-  `catch_up`), start, end, exit code, and an outcome — `success`, `failed`,
+- **History** lives in the run ledger, `$XDG_STATE_HOME/harness/ledger/`: one
+  append-only JSONL file per UTC day, private to your user (ADR-0028). Each run
+  records its id, trigger (`schedule`, `manual`, `catch_up`, `channel`,
+  `webhook`), start, end, exit code, and an outcome: `success`, `failed`,
   `timed_out`, `skipped`, `replaced`, `missed`, `cancelled`, or `interrupted`.
   Firings that start nothing (skipped, missed) are recorded too. Run ids never
-  repeat, and a run the daemon crashed under reads `interrupted` on the next
-  boot.
+  repeat. A run the daemon crashed under reads `interrupted` (reason
+  `daemon_crash`) on the next boot; one a clean shutdown stopped reads
+  `interrupted` (reason `shutdown`).
 - **Logs** are at `$XDG_STATE_HOME/harness/jobs/<name>/<run_id>.log` — the run's
-  output history and lifecycle lines, alongside the usual harness log. The oldest
-  records beyond `keep_runs`, and their logs, are pruned together.
+  output history and lifecycle lines, alongside the usual harness log.
+  `keep_runs` bounds these log files only: the oldest logs are deleted, and
+  their records stay in the ledger, marked `log_pruned`.
+
+:::note Upgrading from a release before the ledger
+The first daemon that has the ledger copies each harness's run history out of
+`state.json` into `ledger/` once, then drops it from `state.json`, which keeps
+only each harness's last run id. Downgrading past that release loses the view
+of run history.
+:::
 - **`timeout`** stops a run that goes on too long: SIGTERM, then SIGKILL after
   the stop grace. The run is `timed_out` and the harness shows `failed`.
 - **`on_overlap`** decides a firing that lands while a run is still going:
@@ -267,6 +279,37 @@ Rules:
   `harness stop` always stops the harness and clears `enabled`, whatever
   state it is in.
 
+### On a triggered harness: hours gate firings
+
+On a harness that sets `triggers` (and no `schedule`), `operating_hours` gates
+**firings**, not the process:
+
+```toml
+[harness.pr-review]
+harness = "claude-code"
+prompt_file = "~/.config/harness/prompts/pr-review.md"
+triggers = ["webhook.gitea-pr", "channel.switchboard"]
+operating_hours = "TZ=America/Los_Angeles Mon-Fri 09:00-18:00"
+catch_up = true   # one run when hours open, if anything was skipped
+```
+
+- A doorbell or webhook delivery that arrives outside the window starts
+  nothing. The run history gains a `skipped` record with reason
+  `outside_hours`, and a burst of them coalesces into one record with a
+  `coalesced` count. The webhook's `202` reports that harness as `skipped`.
+- The window is judged at the moment the daemon received the event, and it
+  is end-exclusive: a delivery at exactly 18:00:00 is out of hours.
+- A run already going when the window closes keeps going. Its `timeout`
+  bounds it, not the hours.
+- With `catch_up = true`, the first check after the window opens starts
+  **one** run with trigger `catch_up` if anything was skipped while it was
+  closed, however many deliveries that was. The run carries no event file; it
+  is the agent's cue to go and look. The daemon remembers the owed catch-up
+  across a restart.
+- `harness trigger <name>` is never gated.
+- `hours_shutdown` and `hours_shutdown_timeout` do not apply here and are
+  rejected: there is no resident session to close.
+
 ### Grammar and time zones
 
 `operating_hours` is one string: an optional `TZ=<zone>` or `CRON_TZ=<zone>`
@@ -294,7 +337,7 @@ current turn before stopping it, capped by `hours_shutdown_timeout` (default
 stop is not a crash: no restart, no restart-count increment, no flap, and
 `enabled` survives. Graceful shutdown depends on the daemon reading turn-end
 markers from the harness's own agent-trace; a harness with nothing
-attributable to it (a `generic` adapter, or no `workdir`) always closes
+attributable to it (a `generic` or `command` adapter, or no `workdir`) always closes
 immediately, and `harness doctor` warns when `hours_shutdown = "graceful"` is
 set on one anyway.
 
@@ -313,13 +356,13 @@ columns carry it.
 ## Agent adapters
 
 The `harness` key is a **required** enum selecting the adapter (ADR-0011,
-SPEC-0006): `crush`, `claude-code`, `codex`, `generic`. It has no default —
+SPEC-0006): `crush`, `claude-code`, `codex`, `generic`, `command`. It has no default —
 what a harness runs is the most consequential thing it declares, so a table
 that omits the key is a config error rather than an agent nobody asked for:
 
 ```
 harness "web": missing required key "harness" (want one of: crush, claude-code,
-codex, generic — use "generic" with args = ["-c", "…"] for an arbitrary command)
+codex, generic, command — use "command" with argv = ["…"] for an arbitrary program)
 ```
  The
 adapter owns both the tool-specific behaviour (trajectory discovery) and the
@@ -329,6 +372,64 @@ arbitrary command is expressed as `args = ["-c", "<command line>"]`, and it
 reports no native trajectory (scrollback-only). Note that `args` are handed to
 `sh` itself: a bare `args = ["/usr/local/bin/thing"]` asks sh to *interpret*
 that file as a shell script, which fails on a compiled binary.
+
+`generic` takes **no prompt**. It runs `sh` and has no prompt synthesis, so a
+`generic` harness that sets `prompt` or `prompt_file` fails to load, in the
+global config, a `harness_d` drop-in or a project file, and `project up`, a
+scratchpad and the edit form refuse it too:
+
+```
+harness "triage": "generic" runs sh and has no prompt synthesis, so it takes no
+"prompt"; use harness = "crush"|"claude-code"|"codex" for a prompt one-shot, or
+harness = "command" with argv to run another program without a shell
+```
+
+(It used to run `crush run <prompt>` instead, whether or not you had Crush.)
+
+### The `command` kind
+
+`harness = "command"` runs a program you name, directly. Its `argv` is the
+whole process: `argv[0]` is the executable and every later element is one
+argument, handed to it **byte for byte**. Nothing runs a shell and nothing
+builds a command string, so an element holding spaces, `$(…)`, `;` or quotes
+is exactly one argument with exactly that text
+([ADR-0023](/decisions/adr-0023-command-one-shots-and-templating),
+SPEC-0017 REQ-2).
+
+```toml
+[harness.report-server]
+harness = "command"
+argv = ["/usr/local/bin/report", "--listen", ":8080", "--title", "Nightly report"]
+workdir = "~/src/report"
+enabled = true
+```
+
+- `argv` is required and must be non-empty. `argv[0]` must not be blank.
+- A bare `argv[0]` (`"report"`) is looked up on `PATH`, like every other
+  harness's executable. An absolute one is used as is. A relative one with a
+  `/` (`"./bin/report"`) resolves against the harness's `workdir`, not
+  against wherever the daemon was started.
+- Elements are not expanded: `{workdir}` and `~` in `argv` stay literal.
+  `argv[0]` can never be a `{{…}}` placeholder, so nothing substituted at run
+  time can choose what runs. Templates in the other elements are not
+  supported yet, so any `{{` in `argv` is a config error for now.
+- `args` is rejected on a `command` harness (put everything in `argv`), and
+  `argv` is rejected on every other kind.
+- `auto_accept`, `max_turns` and `quiet` are rejected: the harness owns its
+  argv, so put the program's own flags there. `model` is rejected too,
+  because no element references `{{model}}`.
+- It is a **resident** harness. It takes `enabled`, `restart`,
+  `restart_delay` and `operating_hours` with the same defaults as `generic`
+  (`restart = "always"`). `prompt`, `prompt_file`, `schedule` and `triggers`
+  are refused for now; command one-shots are still to come (issue #500).
+- Like `generic`, it reports no native trajectory (scrollback only).
+- It works in a project `harness.toml`, through `harness up`, and in the TUI
+  edit form, where `argv` is edited as the same TOML array. `harness describe`
+  shows the kind and the argv exactly as written.
+
+Pi, OMP or any other agent CLI not listed above runs this way, as a resident
+harness: `harness = "command"`, `argv = ["omp", …]`. Until command one-shots
+and the `pi`/`omp` adapters ship, it cannot be scheduled or triggered.
 
 ```toml
 [harness.my-agent]
