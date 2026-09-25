@@ -339,26 +339,31 @@ function renderNeighborMermaid(targetId, { nodes, edges }) {
   return lines.join('\n');
 }
 
-// ADR-0023 and SPEC-0018 are the SDD plugin's *own* artifacts describing the
-// frontmatter DAG. They exist in the repo this plugin was extracted from, and
-// in almost no repo that consumes it — harness has ADR-0001..0014 and no
-// artifact-graph spec, so linking them unconditionally put two dead links on
-// every ADR page (28 here). onBrokenLinks is 'warn', so the build stayed green
-// and nobody noticed.
+// The SDD plugin's *own* artifacts describing the frontmatter DAG (ADR-0023
+// and SPEC-0018 in the repo it was extracted from). Almost no repo that
+// consumes the plugin has them, and in one that does not, those numbers belong
+// to unrelated artifacts: in harness, SPEC-0018 is the stack installer, so
+// citing the ID sent every "Related Artifacts" section to the wrong spec, and
+// naming ADR-0023 in plain text named the wrong ADR.
 //
-// Cite them only when this repo actually has them; otherwise name them as
-// plain text. The load-bearing half of the sentence is the /sdd:graph hint,
-// which is true everywhere.
-function citeGraphArtifacts(graph) {
-  const adr = Object.values(graph.nodes || {}).find(
-    (n) => n.kind === 'adr' && /frontmatter-dag/i.test(path.basename(n.path || ''))
-  );
-  const spec = (graph.nodes || {})['SPEC-0018'];
+// So both are found by what they are, not by number: the ADR by its
+// `frontmatter-dag` file name, the spec by its domain directory. When neither
+// exists, the sentence cites the convention by name. The load-bearing half of
+// the sentence is the /sdd:graph hint, which is true everywhere.
+const GRAPH_ARTIFACT_PATTERN = /frontmatter-dag|artifact-graph/i;
 
-  const adrRef = adr ? `[${adr.id}](/decisions/${path.basename(adr.path, '.md')})` : 'ADR-0023';
+function citeGraphArtifacts(graph) {
+  const nodes = Object.values(graph.nodes || {});
+  const adr = nodes.find(
+    (n) => n.kind === 'adr' && GRAPH_ARTIFACT_PATTERN.test(path.basename(n.path || ''))
+  );
+  const spec = nodes.find((n) => n.kind === 'spec' && GRAPH_ARTIFACT_PATTERN.test(n.dir || ''));
+
+  const refs = [];
+  if (adr) refs.push(`[${adr.id}](/decisions/${path.basename(adr.path, '.md')})`);
   const specRoute = specNodeRoute(spec);
-  const specRef = specRoute ? `[SPEC-0018](${specRoute})` : 'SPEC-0018';
-  return `${adrRef} / ${specRef}`;
+  if (specRoute) refs.push(`[${spec.id}](${specRoute})`);
+  return refs.length ? refs.join(' / ') : "the SDD plugin's artifact-graph convention";
 }
 
 function buildMiniDagSection(artifactId, graph) {
@@ -599,7 +604,7 @@ function transformSpecReferences(content, { specMapping, specEmojis, baseUrl }) 
   return lines.map(line => {
     if (isCodeFence(line)) { inCodeBlock = !inCodeBlock; return line; }
     if (inCodeBlock || line.startsWith('#')) return line;
-    if (line.trim().startsWith('<') && !line.includes('className="rfc-keyword')) return line;
+    if (line.trim().startsWith('<') && !line.includes('className="rfc-keyword') && !line.includes('className="rfc-ref')) return line;
 
     const ranges = protectedRanges(line);
     return line.replace(specPattern, (match, prefix, number, ...rest) => {
@@ -639,6 +644,52 @@ function transformAdrReferences(content, { adrMapping, adrEmoji, baseUrl }) {
       if (!adrPath) return match;
       const displayText = `${adrEmoji} ${match}`;
       return `<a href="${baseUrl}${adrPath}" className="rfc-ref">${displayText}</a>`;
+    });
+  }).join('\n');
+}
+
+// A Markdown link whose text is exactly an artifact ID —
+// `[ADR-0006](adr-0006-configuration-and-profiles.md)`, optionally bold inside
+// the brackets — becomes the same chip a bare `ADR-0006` gets. The ID, not the
+// author's target, picks the page: the target is a repo-relative .md path that
+// only resolves because fixMarkdownLinks rewrote it, and it is the same page
+// either way. A `#fragment` on the target is kept.
+//
+// Left alone: links to external URLs (a deliberate pointer somewhere else),
+// IDs the mappings do not know (the author's link is the only way there),
+// links with any other text ("[the profiles ADR](…)"), and inline code.
+//
+// Runs before the bare-ID transforms, whose protectedRanges() skip both
+// Markdown links and the <a> elements emitted here — so every ID becomes
+// exactly one anchor.
+const LINKED_ID_PATTERN = /\[(\*\*|__)?((ADR|SPEC)-(\d{4}))\1\]\(([^()\s]*)\)/g;
+
+function transformLinkedArtifactIds(content, { specMapping, specEmojis, adrMapping, adrEmoji, baseUrl }) {
+  const lines = content.split('\n');
+  let inCodeBlock = false;
+
+  return lines.map(line => {
+    if (isCodeFence(line)) { inCodeBlock = !inCodeBlock; return line; }
+    if (inCodeBlock || line.startsWith('#')) return line;
+
+    const codeRanges = [];
+    const codeRe = /`[^`]*`/g;
+    let m;
+    while ((m = codeRe.exec(line)) !== null) codeRanges.push([m.index, m.index + m[0].length]);
+
+    return line.replace(LINKED_ID_PATTERN, (match, bold, id, kind, number, target, offset) => {
+      if (isProtected(codeRanges, offset, offset + match.length)) return match;
+      if (/^[a-z][a-z0-9+.-]*:/i.test(target)) return match;
+
+      const hashAt = target.indexOf('#');
+      const fragment = hashAt === -1 ? '' : target.slice(hashAt);
+      const pagePath = kind === 'ADR' ? adrMapping[number] : specMapping[id];
+      if (!pagePath) return match;
+
+      const emoji = kind === 'ADR' ? adrEmoji : specEmojis[kind];
+      const displayText = emoji ? `${emoji} ${id}` : id;
+      const chip = `<a href="${baseUrl}${pagePath}${fragment}" className="rfc-ref">${displayText}</a>`;
+      return bold ? `${bold}${chip}${bold}` : chip;
     });
   }).join('\n');
 }
@@ -740,6 +791,7 @@ function transformAdr(srcPath, destPath, fileName, { specMapping, specEmojis, ba
   escapedContent = fixCrossSectionPaths(escapedContent);
   escapedContent = escapeBidirectionalArrows(escapedContent);
   escapedContent = transformRfc2119Keywords(escapedContent);
+  escapedContent = transformLinkedArtifactIds(escapedContent, { specMapping, specEmojis, adrMapping, adrEmoji: '📝', baseUrl });
   escapedContent = transformSpecReferences(escapedContent, { specMapping, specEmojis, baseUrl });
   escapedContent = transformAdrReferences(escapedContent, { adrMapping, adrEmoji: '📝', baseUrl });
   escapedContent = transformConsequenceKeywords(escapedContent);
@@ -878,6 +930,7 @@ function transformSpec(srcPath, destPath, domain, fileType, domainConfig, flat, 
   }
 
   content = transformRfc2119Keywords(content);
+  content = transformLinkedArtifactIds(content, { specMapping, specEmojis, adrMapping, adrEmoji: '📝', baseUrl });
   content = transformSpecReferences(content, { specMapping, specEmojis, baseUrl });
   content = transformAdrReferences(content, { adrMapping, adrEmoji: '📝', baseUrl });
 
