@@ -82,7 +82,7 @@ harness logs <name> --run 3     # what run 3 did (--raw for its own log)
 `trigger --wait` exits with the run's own exit code, `124` when the run timed
 out, and `75` when it was skipped because a run was already in flight — so a job
 scripts like the command it wraps. The verb is `trigger` because `harness run`
-starts a throwaway scratchpad.
+starts a throwaway [scratchpad](#scratchpads-harness-run).
 
 `--wait` polls the run history rather than consuming events, because history is
 authoritative even when an event is dropped. When the trigger was queued behind
@@ -180,6 +180,50 @@ harness attach <name> --ro    # read-only: attach but ignore keystrokes
 
 `attach` reuses the same full-window terminal the dashboard uses, with the
 1-line status bar and tmux-style detach chords. See [Cockpit TUI](./tui).
+
+## Scratchpads (`harness run`)
+
+```sh
+harness run claude                     # Claude Code in the current directory, then attach
+harness run crush --yolo               # the words after the kind are the agent's args
+harness run htop                       # not a kind: runs `sh -c "htop"`
+harness run --detach codex             # print the name and leave it running
+harness run --name spike --workdir ../api claude
+```
+
+`harness run` starts a **scratchpad**: a throwaway harness that exists only
+until the daemon exits. It is the `tmux new-session` gesture. A scratchpad:
+
+- is **not** in any `harness.toml`, so it is never reloaded, rescheduled or
+  autostarted;
+- gets a **random name**: a slug of the kind and words plus four random
+  characters, such as `claude-code-x4yx` or `generic-htop-9k2p`, printed when it
+  starts;
+- starts, then **attaches** you to it, unless you pass `--detach` or either
+  stdin or stdout is not a terminal;
+- is **not restarted** when its process exits. It stays in `harness list` with
+  its exit state until you remove it with `harness rm NAME`;
+- is **gone when the daemon exits**, and never written to the daemon's state.
+
+The first word picks what runs. If it names a harness kind (`claude` or
+`claude-code`, `crush`, `codex`, `generic`), that adapter runs and every
+following word becomes its `args`. Anything else falls back to `generic`, and
+the **whole invocation** runs as one `sh -c` command. `run`'s own flags must come
+before that first word; everything after it belongs to the command, so
+`harness run htop -t` reaches the shell as `htop -t`.
+
+| Flag | What it does |
+|------|--------------|
+| `--kind KIND` | Use this adapter (`crush`, `claude-code`, `codex`, `generic`) instead of guessing from the first word, and pass **every** word as its args. For the rare command whose name collides with a kind. |
+| `--name SLUG` | Use this slug instead of the kind or command. A random suffix is still appended. |
+| `--workdir DIR` | Start in `DIR` instead of your current directory. A relative path resolves against your shell's directory, not the daemon's. |
+| `--model MODEL` | Prepend `--model MODEL` to the agent's args. Same as writing `harness run claude --model MODEL`. |
+| `--detach` | Don't attach: print the name and leave it running. `--json` implies it. |
+
+Use a scratchpad for a one-off session you want to detach from and come back to.
+Anything that should survive a daemon restart, run on a clock, or fire on an
+event belongs in `harness.toml` instead: a resident harness, or a prompt harness
+you fire with `schedule`, `triggers` or [`harness trigger`](#scheduled-jobs).
 
 ## Project verbs
 

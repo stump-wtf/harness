@@ -5,7 +5,7 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "node scripts/copy-usage.mjs && docusaurus start",
-    "test": "node --test plugins/sdd-content/index.test.js",
+    "test": "node --test plugins/sdd-content/index.test.js plugins/llms-txt/index.test.js",
     "prebuild": "npm test",
     "build": "node scripts/copy-usage.mjs && docusaurus build",
     "swizzle": "docusaurus swizzle",
