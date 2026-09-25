@@ -60,6 +60,26 @@ const config: Config = {
       specsDir: '../docs/openspec/specs',
       outputDir: '../docs-generated',
     }],
+    // build/llms.txt and build/llms-full.txt for agents. Always the public
+    // GitHub Pages URL, never SITE_URL: the Gitea Pages twin of this build is
+    // LAN-only, and the plugin fails the build on a private host.
+    ['./plugins/llms-txt', {
+      publicUrl: 'https://stump-wtf.github.io/harness/',
+      summary:
+        'Harness is systemctl for your agents: a daemon that supervises agent CLIs ' +
+        '(Claude Code, Crush, Codex) and other long-running processes, restarts them, ' +
+        'runs them on a schedule or on an event, and lets you attach to any of them. ' +
+        'It is the supervision layer of a three-tool stack with Switchboard (dispatch) ' +
+        'and Cairn (evidence).',
+      startHere: [
+        'guides/harness-switchboard-cairn',
+        'guides/onboarding',
+        'guides/glossary',
+        'guides/install',
+        'guides/first-agent',
+        'guides/push-events',
+      ],
+    }],
   ],
 
   i18n: {
