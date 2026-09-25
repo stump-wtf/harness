@@ -248,7 +248,10 @@ secret = "${GITEA_HOOK_SECRET}"
 # accepted, counted and dropped.
 events = ["pull_request"]
 # Optional: the largest body accepted (default "1MiB", ceiling "25MiB") and
-# the delivery rate this route allows (default "60/m", "0" for no limit).
+# the delivery rate this route allows (default "60/m", "0" for no limit). Only
+# verified, filtered, non-duplicate deliveries count against the rate; one over
+# it gets 429 + Retry-After. A redelivered ID (X-Gitea-Delivery here) that
+# already fired in the last 24 hours is answered "duplicate" and fires nothing.
 max_body = "2MiB"
 rate_limit = "120/m"
 description = "gitea pull-request events"
