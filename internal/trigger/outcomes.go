@@ -13,24 +13,11 @@ package trigger
 // Limit", REQ "Trigger Visibility".
 //
 // @joestump 09/24/2026 - Introduced with de-duplication and rate limits (#460).
+// @joestump 09/25/2026 - Outcome and its values now live in state.go, the
+//   one vocabulary `harness triggers` also reports (#476); only the
+//   counters stay here.
 
 import "sync"
-
-// Outcome is how a verified delivery ended without firing.
-type Outcome string
-
-const (
-	// OutcomeIgnored: the `events` allowlist did not list the event.
-	OutcomeIgnored Outcome = "ignored"
-	// OutcomeDuplicate: the delivery ID fired on this route already.
-	OutcomeDuplicate Outcome = "duplicate"
-	// OutcomeRateLimited: the route's rate_limit had no token left.
-	OutcomeRateLimited Outcome = "rate_limited"
-)
-
-// Outcomes are a delivery's non-firing outcomes in a fixed order, for
-// renderers that want a stable column order.
-var Outcomes = []Outcome{OutcomeIgnored, OutcomeDuplicate, OutcomeRateLimited}
 
 // OutcomeCounters counts non-firing outcomes per source reference. The zero
 // value is ready to use and safe for concurrent use.

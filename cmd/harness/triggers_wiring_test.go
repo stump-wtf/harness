@@ -58,7 +58,7 @@ type visibilityDaemon struct {
 func startVisibilityDaemon(t *testing.T, cfg *core.Config) *visibilityDaemon {
 	t.Helper()
 	mgr := newWiringManager(t, cfg)
-	sources := startDaemonSources(mgr)
+	sources := startDaemonSources(mgr, nil)
 	t.Cleanup(sources.Close)
 	wireSourceReload(mgr, sources)
 	webhooks := beginDaemonWebhooks(mgr, sources, "127.0.0.1:0")
