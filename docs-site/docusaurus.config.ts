@@ -130,6 +130,12 @@ const config: Config = {
         },
         {
           type: 'docSidebar',
+          sidebarId: 'patternsSidebar',
+          position: 'left',
+          label: 'Patterns',
+        },
+        {
+          type: 'docSidebar',
           sidebarId: 'decisionsSidebar',
           position: 'left',
           label: 'ADRs',
@@ -160,6 +166,10 @@ const config: Config = {
             {
               label: 'Usage',
               to: '/usage',
+            },
+            {
+              label: 'Patterns',
+              to: '/patterns',
             },
             {
               label: 'Architecture Decisions',
