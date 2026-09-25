@@ -30,6 +30,13 @@ package scheduler
 // a lease's end), still asked once per harness per tick for the lease-end
 // tracking; a graceful hold steps its close on the same tick. Fixes
 // stump.wtf/harness#404.
+//
+// @joestump 09/23/2026 - A harness with `triggers` is gated on its firings,
+// not its process: the pass never holds it (a run in flight at the close
+// continues, bounded by its timeout), and on the first in-hours evaluation
+// after an outside_hours skip it asks the Gate to settle them, which starts
+// one catch_up run under catch_up = true. SPEC-0014 REQ "Operating Hours On
+// Triggered Harnesses"; stump.wtf/harness#484.
 
 import (
 	"time"
@@ -69,6 +76,15 @@ type Gate interface {
 	Arm(name string, closeAt time.Time)
 	// Release starts a held harness without touching enabled intent.
 	Release(name string)
+	// HoursSkipped reports whether name — a harness whose operating_hours
+	// gate its firings, not its process — has had a firing skipped as
+	// outside_hours since its hours last opened. Read every in-hours tick,
+	// so it must be cheap (the daemon's reads a snapshot).
+	HoursSkipped(name string) bool
+	// OpenFirings settles name's outside_hours skips on the first in-hours
+	// evaluation after them, starting one catch_up run when the harness
+	// sets `catch_up = true`.
+	OpenFirings(name string)
 }
 
 // gateEntry is one gated harness.
@@ -76,6 +92,14 @@ type gateEntry struct {
 	raw  string
 	expr hours.Expr
 	mode core.HoursShutdownMode
+	// firings marks a harness that sets `triggers`: its hours gate firings
+	// (the source manager records an out-of-hours one skipped), never its
+	// process, so the pass neither holds nor releases it — a run in flight
+	// at the close ends on its own or at its `timeout`. What the pass does
+	// for it is the catch-up: on the first in-hours evaluation after one or
+	// more outside_hours skips, OpenFirings. Governing: SPEC-0014 REQ
+	// "Operating Hours On Triggered Harnesses".
+	firings bool
 }
 
 // armLead is how close a close has to be before the pass warms the
@@ -94,6 +118,9 @@ type gateAction struct {
 	closeStep bool      // advance a graceful close in flight
 	arm       bool      // warm the turn-state watch for a close within armLead
 	ungated   bool      // a release for a harness whose hours a reload removed
+	// openFirings settles a firing-gated harness's outside_hours skips (and
+	// starts its one catch_up run under catch_up = true).
+	openFirings bool
 }
 
 // hoursChange is one gated harness's in_hours flip, detected during gatePass
@@ -156,7 +183,7 @@ func (s *Scheduler) applyGates(cfg *core.Config) {
 		if old, ok := s.gates[name]; !ok || old.raw != h.OperatingHours {
 			log.Info("operating hours", "harness", name, "operating_hours", h.OperatingHours)
 		}
-		next[name] = gateEntry{raw: h.OperatingHours, expr: expr, mode: h.HoursShutdown}
+		next[name] = gateEntry{raw: h.OperatingHours, expr: expr, mode: h.HoursShutdown, firings: len(h.Triggers) > 0}
 		order = append(order, name)
 	}
 	for name := range s.gates {
@@ -243,6 +270,18 @@ func (s *Scheduler) gatePass(now time.Time) (acts []gateAction, hoursChanges []h
 				s.wasLeased[name] = true
 			}
 		}
+		if g.firings {
+			// Hours gate this harness's firings, not its process: nothing
+			// here holds or releases it. The one decision left is the
+			// catch-up, asked on the first in-hours evaluation after a
+			// skip; the Gate settles it on the harness's actor loop, so a
+			// second pass finding the flag still set before the first
+			// landed is kept out by the gating guard below, not by luck.
+			if in && s.gate.HoursSkipped(name) {
+				acts = append(acts, gateAction{name: name, openFirings: true})
+			}
+			continue
+		}
 		switch {
 		case !in && leased:
 			// Covered by an after-hours lease: nothing to enforce — but if
@@ -313,6 +352,11 @@ func (s *Scheduler) dispatchGate(a gateAction) {
 			s.mu.Unlock()
 		}()
 		switch {
+		case a.openFirings:
+			s.safely("operating-hours catch-up", a.name, func() {
+				log.Info("operating hours opened after skipped firings", "harness", a.name)
+				s.gate.OpenFirings(a.name)
+			})
 		case a.closeStep:
 			s.safely("operating-hours close step", a.name, func() {
 				s.gate.CloseStep(a.name, a.stepAt)

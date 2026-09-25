@@ -444,9 +444,11 @@ sequenceDiagram
   now yields one record with a count. → Recorded as an amendment. No consumer
   depended on one-record-per-skip, and the `coalesced` field makes the count
   explicit.
-- **The hours integration depends on unbuilt code.** SPEC-0012's gate runtime
-  does not exist yet. → Until it lands, `operating_hours` on a triggered harness
-  parses and is not enforced, and `describe` says so.
+- **Two clocks could disagree about a boundary.** The firing gate runs in the
+  source manager and the catch-up in the scheduler's gate pass. → Both read the
+  scheduler's clock seam: the daemon hands it to the source manager, which
+  stamps `received_at` from it and judges the firing at that instant, so an
+  event at the window's end-exclusive close is out of hours to both.
 
 ## Migration Plan
 

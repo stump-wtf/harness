@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stump-wtf/harness/internal/cliui"
+	"github.com/stump-wtf/harness/internal/config"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/hours"
 	"github.com/stump-wtf/harness/internal/protocol"
@@ -392,6 +393,42 @@ func TestOperatingHoursWarningImmediateShutdownNeverFlags(t *testing.T) {
 
 	if warns := operatingHoursWarnings(cfg); len(warns) != 0 {
 		t.Errorf("immediate shutdown on a generic adapter produced warnings: %v", warns)
+	}
+}
+
+// TestOperatingHoursWarningsTriggeredHarness loads a triggered harness through
+// the real config loader, not a hand-built core.Harness: the loader is what
+// forces enabled = false and defaults hours_shutdown to graceful, and a
+// fixture that skips it is how both false warnings shipped (#634). Hours gate
+// firings there, so the only warning that still applies is the whole-week one,
+// and the second harness proves that one can still fire.
+func TestOperatingHoursWarningsTriggeredHarness(t *testing.T) {
+	cfg, err := config.Parse([]byte(`
+[channel.sb]
+url = "https://sb.example.com/mcp/x"
+
+[harness.pr-review]
+harness = "claude-code"
+prompt = "review it"
+triggers = ["channel.sb"]
+operating_hours = "Mon-Fri 09:00-18:00"
+
+[harness.always-review]
+harness = "claude-code"
+prompt = "review it"
+triggers = ["channel.sb"]
+operating_hours = "Mon-Sun 00:00-24:00"
+`), "harness.toml")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if h := cfg.Harnesses["pr-review"]; h.Enabled || h.HoursShutdown != core.HoursShutdownGraceful || h.Workdir != "" {
+		t.Fatalf("loader no longer yields the shape this test guards (enabled=%v hours_shutdown=%q workdir=%q)", h.Enabled, h.HoursShutdown, h.Workdir)
+	}
+
+	warns := operatingHoursWarnings(cfg)
+	if len(warns) != 1 || !strings.Contains(warns[0], "always-review") || !strings.Contains(warns[0], "entire week") {
+		t.Errorf("operatingHoursWarnings = %v, want only always-review's whole-week warning", warns)
 	}
 }
 

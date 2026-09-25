@@ -12,6 +12,7 @@ package supervisor
 
 import (
 	"io"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -48,6 +49,12 @@ const (
 	cmdRelease   // operating hours opened: start a held harness (hours.go)
 	cmdCloseStep // operating hours graceful close: advance one step (hours.go)
 	cmdLogEvent  // a durable-log line decided outside the loop (Manager.LogLifecycle)
+	// Operating hours on a triggered harness gate FIRINGS, not the process
+	// (firing_hours.go; SPEC-0014 REQ "Operating Hours On Triggered
+	// Harnesses").
+	cmdSkipRun          // record a firing skipped before it reached the overlap decision
+	cmdOpenFirings      // hours opened: settle the outside_hours skips, catching up once
+	cmdSeedHoursSkipped // boot: a persisted outside_hours skip is still owed its catch-up
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -81,8 +88,9 @@ type command struct {
 	cols    int            // cmdResize
 	rows    int            // cmdResize
 	sig     syscall.Signal // cmdSignal payload (delivered to the process group)
-	run     *RunRequest    // cmdStartRun payload
-	decided *RunDecision   // cmdStartRun result, written before done closes
+	run     *RunRequest    // cmdStartRun / cmdSkipRun payload
+	decided *RunDecision   // cmdStartRun / cmdSkipRun / cmdOpenFirings result, written before done closes
+	reason  RunReason      // cmdSkipRun: why the firing was skipped
 	enable  bool           // cmdHold: also record enabled intent (a held autostart)
 	// cmdHold: the close the gate decided. mode selects graceful vs
 	// immediate; closeAt is the instant the harness went out of hours, from
@@ -158,6 +166,12 @@ type Snapshot struct {
 	// Governing: SPEC-0013 REQ-2 (harness_consecutive_failures mirrors the
 	// daemon's own give-up accounting); SPEC-0003 REQ "Backoff Give-Up".
 	ConsecutiveFailures int
+	// HoursSkipped reports that a triggered harness has skipped one or more
+	// firings as outside_hours since its hours last opened — the flag the
+	// scheduler's gate pass reads to decide a catch_up (SPEC-0014 REQ
+	// "Operating Hours On Triggered Harnesses"). Derived; not persisted, and
+	// re-seeded on boot from the run history (Manager.Restore).
+	HoursSkipped bool
 }
 
 // Supervisor owns the lifecycle of exactly one harness. It runs a single actor
@@ -237,6 +251,12 @@ type Supervisor struct {
 	// Cleared by finishRun. Governing: SPEC-0014 REQ "Overlap Skip
 	// Coalescing".
 	openSkips map[skipKey]int
+	// hoursSkipped is set when a firing is skipped as outside_hours and
+	// cleared when the gate pass next finds the harness in hours
+	// (firing_hours.go): it is what makes "the first in-hours evaluation
+	// after one or more outside_hours skips" a question the pass can ask.
+	// Governing: SPEC-0014 REQ "Operating Hours On Triggered Harnesses".
+	hoursSkipped bool
 
 	// ---- snapshot (guarded) ----
 	mu   sync.Mutex
@@ -474,7 +494,7 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.held = false    // stopped by the operator now, not by its hours (SPEC-0012)
 		s.closing = false // a stop never waits on turn state (SPEC-0012)
 		s.cancelRestartTimer()
-		s.dropQueued(OutcomeCancelled)
+		s.dropQueued(OutcomeCancelled, "")
 		if s.hasProcess() {
 			s.gracefulStop()
 			s.finishRun(OutcomeCancelled, &s.lastExitCode)
@@ -538,6 +558,23 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.closeStep(c.step)
 	case cmdLogEvent:
 		s.logEvent(c.logMsg, c.logKV...)
+	case cmdSkipRun:
+		d := s.skipRun(*c.run, c.reason)
+		if c.decided != nil {
+			*c.decided = d
+		}
+	case cmdOpenFirings:
+		// A catch-up it starts is a firing, so it gets StartRun's intent
+		// handling (#159): the run must not persist enabled intent.
+		s.suppressPersist = true
+		d := s.openFirings()
+		s.suppressPersist = false
+		if c.decided != nil {
+			*c.decided = d
+		}
+	case cmdSeedHoursSkipped:
+		s.hoursSkipped = true
+		s.publishSnapshot()
 	case cmdSignal:
 		// Governing: stump.wtf/harness#182 — the kernel only raises SIGWINCH on
 		// an actual dimension change, so a resize applied while the guest was
@@ -568,10 +605,10 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.cancelRestartTimer()
 		// A run the daemon goes down under is interrupted, not failed: it did
 		// not end on its own terms (SPEC-0008 REQ "Run History").
-		s.dropQueued(OutcomeInterrupted)
+		s.dropQueued(OutcomeInterrupted, ReasonShutdown)
 		if s.hasProcess() {
 			s.gracefulStop()
-			s.finishRun(OutcomeInterrupted, &s.lastExitCode)
+			s.finishRunWith(OutcomeInterrupted, &s.lastExitCode, ReasonShutdown)
 		}
 		s.closeLog()
 		return true
@@ -844,7 +881,7 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		if spawnFailed || code != 0 {
 			outcome = OutcomeFailed
 		}
-		s.dropQueued(OutcomeSkipped)
+		s.dropQueued(OutcomeSkipped, "")
 		s.finishRun(outcome, exit)
 	}
 
@@ -1142,15 +1179,7 @@ func runAffecting(a, b core.Harness) bool {
 		a.RestartDelay != b.RestartDelay || a.Backend != b.Backend || a.TmuxSocket != b.TmuxSocket {
 		return true
 	}
-	if len(a.Args) != len(b.Args) {
-		return true
-	}
-	for i := range a.Args {
-		if a.Args[i] != b.Args[i] {
-			return true
-		}
-	}
-	return false
+	return !slices.Equal(a.Args, b.Args) || !slices.Equal(a.Argv, b.Argv)
 }
 
 // ensureLog lazily opens the rotating log for this harness.
@@ -1254,6 +1283,7 @@ func (s *Supervisor) publishSnapshot() {
 		CloseAt:       s.closeAt,
 
 		ConsecutiveFailures: s.consecFailures,
+		HoursSkipped:        s.hoursSkipped,
 	}
 	s.mu.Unlock()
 	if s.onChange != nil && !s.suppressPersist {

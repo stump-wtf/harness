@@ -475,3 +475,64 @@ func TestNewDriverValidates(t *testing.T) {
 		}
 	}
 }
+
+// cancelOnVerify wraps a forge and cancels ctx the first time verify reads a
+// file — the window between a successful merge and its verification, where a
+// daemon shutdown lands. Deterministic: no sleeping, no racing the scheduler.
+type cancelOnVerify struct {
+	*fake.Fake
+	cancel   context.CancelFunc
+	armed    bool
+	verifies int
+}
+
+func (c *cancelOnVerify) FileContentAtRef(ctx context.Context, repo, path, ref string) ([]byte, error) {
+	if c.armed && ref == "main" {
+		c.armed = false
+		c.verifies++
+		c.cancel()
+	}
+	return c.Fake.FileContentAtRef(ctx, repo, path, ref)
+}
+
+// TestDriverCancelDuringVerifyDoesNotHalt is the regression for a shutdown
+// arriving between the merge and its verification. verify's reads then fail
+// with context.Canceled, and treating any verify error as a halt stopped the
+// driver permanently for a clean stop — and told the author their merge was
+// unverified when the daemon had simply gone away.
+//
+// The merge itself stands: it already returned. Run must report the
+// cancellation, not ErrHalted, and must not comment.
+func TestDriverCancelDuringVerifyDoesNotHalt(t *testing.T) {
+	w := newWorld(t, prAt(1, 0))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := &cancelOnVerify{Fake: w.Fake, cancel: cancel}
+	log := &logRec{}
+	d := newDriver(t, c, driverCfg(t, ModeMerge, log))
+
+	c.armed = true
+	err := d.Tick(ctx)
+	if errors.Is(err, ErrHalted) {
+		t.Fatalf("a cancelled shutdown halted the driver: %v", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Tick = %v, want context.Canceled", err)
+	}
+	if c.verifies == 0 {
+		t.Fatal("the cancel never fired; the test proved nothing")
+	}
+	if !w.Merged(repo, 1) {
+		t.Fatal("the merge did not happen, so this is not the cancel-after-merge window")
+	}
+	if n := len(w.Comments(repo, 1)); n != 0 {
+		t.Fatalf("a cancellation commented on the PR (%d comments)", n)
+	}
+	if log.has("ERROR mergetrain halted") {
+		t.Fatal("a cancellation was logged as a halt")
+	}
+	// A later tick with a live context is not blocked: the driver is not halted.
+	if err := d.Tick(context.Background()); errors.Is(err, ErrHalted) {
+		t.Fatalf("the driver halted anyway: %v", err)
+	}
+}
