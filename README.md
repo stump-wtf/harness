@@ -3,10 +3,15 @@
 > `systemctl` for your agents.
 
 **Harness** is a client-server TUI for supervising, attaching to, and *hopping
-between* long-running terminal processes — agent CLIs (Claude Code, Crush),
-REPLs, watchers — built in Go on the
-[Charmbracelet](https://github.com/charmbracelet) ecosystem. The successor to
-[`zsh-harnessd`](https://github.com/stump-wtf/zsh-harnessd).
+between* long-running coding agents — Claude Code, Crush, Codex, and the other
+agents [agent-trace](https://github.com/stump-wtf/agent-trace) can read — built
+in Go on the [Charmbracelet](https://github.com/charmbracelet) ecosystem. The
+successor to [`zsh-harnessd`](https://github.com/stump-wtf/zsh-harnessd).
+
+Harness is bound to agent-trace: every run is recorded as the agent's
+normalized trace, so it supervises only agents agent-trace supports. It is not
+a general process manager. Run arbitrary processes under your init system
+(systemd, launchd).
 
 A single `harness` binary has two faces:
 
@@ -79,22 +84,29 @@ harness attach foo          # attach to harness "foo" as a live terminal
 Define what to supervise in `~/.config/harness/harness.toml`:
 
 ```toml
-[harness.heartbeat]
-harness = "generic"
-args = ["-c", "while true; do echo $(date); sleep 60; done"]
+[harness.crush]
+harness = "crush"
+workdir = "~/src/my-project"
 enabled = true
 ```
 
-`harness` is required and names the kind: `crush`, `claude-code`, or `codex`
-for an agent CLI, `generic` for anything else (it runs `sh`, so an arbitrary
-command goes in `args` as `["-c", "…"]`).
+`harness` is required and names the kind. `crush`, `claude-code` and `codex`
+are the agents agent-trace can read. `command` runs any other program, with no
+shell: its `argv` array is the whole process, so each element reaches the
+program as one byte-identical argument.
+
+The `generic` kind, which ran an arbitrary `sh` command, is deprecated and is
+being removed (ADR-0033); a harness must be an agent agent-trace can read.
+`command` is what replaces it for a program that is not an agent —
+`harness.toml.example` has the details, including why a `command` harness has
+no `args` and is resident-only for now.
 
 Then `harness doctor` verifies config, daemon, and state. The full config
 reference and every verb are in the docs above.
 
 ## Status
 
-**Alpha — and self-hosting.** `v0.5.0` is the latest tag, and Harness supervises
+**Alpha — and self-hosting.** `v0.6.0` is the latest tag, and Harness supervises
 real work daily. Everything in the docs is implemented and exercised on `main`,
 but the TOML schema and daemon protocol can still change before v1.
 
