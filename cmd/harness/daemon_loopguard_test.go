@@ -92,10 +92,16 @@ func TestDaemonLoopGuardStopsTheRealHarness(t *testing.T) {
 	for i := 1; i < loopguard.DefaultThreshold; i++ {
 		comment(i)
 	}
-	waitFor(t, "the guard to read the first calls", func() bool {
-		d := obs.Stats().Delivered
-		return d >= loopguard.DefaultThreshold-1 && guard.Seen() == d
-	})
+	// Not waitFor(): on a timeout the observer's stats say whether the calls
+	// were never read, read but attributed to no harness (Unattributed), or
+	// delivered and dropped by the guard's subscription (Dropped).
+	deadline := time.Now().Add(10 * time.Second)
+	for d := obs.Stats().Delivered; d < loopguard.DefaultThreshold-1 || guard.Seen() != d; d = obs.Stats().Delivered {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the guard to read the first calls: seen=%d observer=%+v", guard.Seen(), obs.Stats())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if snap, _ := mgr.Snapshot(h.Name); snap.State != core.StateRunning || len(guard.Trips()) != 0 {
 		t.Fatalf("harness %s (trips %+v) after %d identical calls, want running until %d", snap.State, guard.Trips(), loopguard.DefaultThreshold-1, loopguard.DefaultThreshold)
 	}
