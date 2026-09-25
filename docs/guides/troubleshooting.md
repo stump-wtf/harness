@@ -196,6 +196,28 @@ when `XDG_RUNTIME_DIR` or `XDG_STATE_HOME` points somewhere deeply nested. Set
 `HARNESS_SOCKET` (or `--socket`) to a short path, such as
 `~/.local/state/harness/harness.sock`.
 
+## The harness bills my API account, not my Claude subscription
+
+`ANTHROPIC_API_KEY` in the harness's `env_file` bills the API per token — it
+never touches a Claude subscription. If the agent is Claude Code and you want
+subscription billing, run `claude setup-token` once and put
+`CLAUDE_CODE_OAUTH_TOKEN=<token>` in the `env_file` instead, then
+`harness restart NAME` (env files are read at start). The three auth modes and
+when each applies: [Before the first start](./first-agent#before-the-first-start).
+
+## A Claude Code harness starts and sits at a login prompt
+
+The daemon spawned Claude Code without a usable session. On macOS this means
+the daemon cannot reach your login Keychain: it is running as a different
+user, as a *system* LaunchDaemon, or in an SSH session with no keychain
+unlocked. Either run the daemon in your GUI login session (the LaunchAgent in
+[Run the daemon as a service](./run-as-a-service) does), or switch the harness
+to the subscription token: `claude setup-token`, then
+`CLAUDE_CODE_OAUTH_TOKEN=<token>` in the harness's `env_file` (`chmod 600`).
+On Linux or a headless box there is no Keychain at all — the subscription
+token is the default path. See
+[Before the first start](./first-agent#before-the-first-start).
+
 ## Still stuck?
 
 Collect `harness doctor`, `harness describe NAME`, `harness logs NAME`, and the

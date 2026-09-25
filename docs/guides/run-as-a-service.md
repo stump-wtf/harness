@@ -240,6 +240,17 @@ ANTHROPIC_API_KEY=sk-ant-...
 GITHUB_TOKEN=ghp_...
 ```
 
+:::note Claude Code on a headless box
+
+If the agent is Claude Code, do not reach for `ANTHROPIC_API_KEY` first — it
+bills the API, not your Claude subscription. The default for a headless or
+Linux daemon is a subscription token: run `claude setup-token` once, then put
+`CLAUDE_CODE_OAUTH_TOKEN=<token>` in the `env_file` instead. The three Claude
+Code auth modes, and when each applies, are in
+[Before the first start](./first-agent#before-the-first-start).
+
+:::
+
 Things worth knowing about `env_file`:
 
 - It is plain `KEY=VALUE`. Blank lines, `#` comments, a leading `export`, and

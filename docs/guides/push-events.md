@@ -150,6 +150,17 @@ SWITCHBOARD_TOKEN=sbk_...
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
+:::note Claude Code workers bill differently
+
+`ANTHROPIC_API_KEY` bills the API, not a Claude subscription. If the agent is
+Claude Code, the headless default is a subscription token instead: run
+`claude setup-token` once and put `CLAUDE_CODE_OAUTH_TOKEN=<token>` in this
+`env_file` rather than the API key. See
+[Before the first start](./first-agent#before-the-first-start) for all three
+Claude Code auth modes.
+
+:::
+
 ### 3. Supervise it
 
 ```toml

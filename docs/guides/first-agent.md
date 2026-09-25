@@ -64,24 +64,47 @@ Run each agent once by hand, in the same `workdir` and as the same user, and
 get it fully logged in:
 
 - **Claude Code:** `claude` opens a login flow and a "trust this folder"
-  prompt. Harness can't click through either for you.
+  prompt. Harness can't click through either for you. Then pick one of three
+  auth modes:
 
-  **On macOS you are then done — no `env_file`, no API key.** Claude Code
-  keeps the session it just created in your login Keychain (as the
-  generic-password item `Claude Code-credentials`), not in a file, and a
-  harness inherits it because the daemon spawns the agent as the same user.
-  Copying `ANTHROPIC_API_KEY` into an `env_file` here would move a credential
-  *out* of the Keychain and onto disk in plaintext, which is strictly worse.
+  **1. Keychain (macOS, recommended).** On macOS you may be done already — no
+  `env_file`, no token. Claude Code keeps the session it just created in your
+  login Keychain (as the generic-password item `Claude Code-credentials`), not
+  in a file, and a harness inherits it because the daemon spawns the agent as
+  the same user. Copying an `ANTHROPIC_API_KEY` into an `env_file` here would
+  move a credential *out* of the Keychain and onto disk in plaintext, which is
+  strictly worse.
 
   The one condition is that the daemon runs in your GUI login session. The
   LaunchAgent in [Run the daemon as a service](/guides/run-as-a-service) does
   (`launchctl bootstrap gui/$(id -u)`), so the normal setup is fine. A
   *system* LaunchDaemon, a different user, or an SSH session with no login
-  keychain unlocked cannot reach it — use `ANTHROPIC_API_KEY` in the
-  `env_file` there.
+  keychain unlocked cannot reach it — use the subscription token below.
 
-  On Linux and on headless boxes there is no Keychain: log in interactively,
-  or put `ANTHROPIC_API_KEY` in the harness's `env_file`.
+  **2. Subscription token (headless and Linux — the default there).** Run
+  `claude setup-token` once, interactively, then put the token it prints in
+  the harness's `env_file`:
+
+  ```sh
+  # ~/.config/harness/env/claude.env   (chmod 600)
+  CLAUDE_CODE_OAUTH_TOKEN=<paste what claude setup-token printed>
+  ```
+
+  ```toml
+  [harness.claude-main]
+  harness = "claude-code"
+  workdir = "~/agents/claude-main"
+  env_file = "~/.config/harness/env/claude.env"
+  ```
+
+  This bills your Claude subscription, not the API, and survives reboots with
+  no Keychain. The token lives only in the `env_file`, never in
+  `harness.toml`, and the file should be `0600`.
+
+  **3. API key.** Put `ANTHROPIC_API_KEY=sk-ant-...` in the `env_file`
+  instead. This bills the API per token, **not** your Claude subscription —
+  use it when you have no subscription, or when billing the API is what you
+  want. Everything else (mode `0600`, never in `harness.toml`) is the same.
 - **Crush:** configure a provider in `crush.json` or its environment, and put
   the API key in the `env_file`.
 
