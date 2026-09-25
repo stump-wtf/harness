@@ -323,9 +323,28 @@ func TestDaemonGatesFiringsOnOperatingHours(t *testing.T) {
 	// count arrives on BUFFERED `updated` lines (CoalesceRun appends with
 	// sync=false so a burst of firings does not cost one fsync each), so the
 	// file lags the queue — this read saw 46 of 50 before the drain.
+	//
+	// Stop the scheduler and the sources first, in the daemon's own shutdown
+	// order (cmd/harness/daemon.go): both hold mgr, and closing it under them
+	// leaves a live firing path aimed at a closed manager. Both Close calls are
+	// idempotent, so their t.Cleanups stay safe.
+	sched.Close()
+	sources.Close()
 	runs := persistedRuns(t, statePath, quick.Name, mgr)
 	if len(runs) < 1 {
 		t.Fatalf("the ledger holds no records for the 50 out-of-hours firings: %+v", runs)
+	}
+	// Coalescing is the property: 50 firings, ONE skip record. Counting the
+	// skips keeps that half of the old len(runs) == 1 check, which the
+	// manual and catch_up runs below would otherwise break.
+	var skips int
+	for _, r := range runs {
+		if r.Outcome == supervisor.OutcomeSkipped && r.Reason == supervisor.ReasonOutsideHours {
+			skips++
+		}
+	}
+	if skips != 1 {
+		t.Errorf("the ledger holds %d outside_hours skip records for 50 firings, want 1 (coalesced): %+v", skips, runs)
 	}
 	// Run 1 is the weekend's coalesced skip; the manual and catch_up runs the
 	// rest of this test added follow it.
