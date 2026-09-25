@@ -279,6 +279,37 @@ Rules:
   `harness stop` always stops the harness and clears `enabled`, whatever
   state it is in.
 
+### On a triggered harness: hours gate firings
+
+On a harness that sets `triggers` (and no `schedule`), `operating_hours` gates
+**firings**, not the process:
+
+```toml
+[harness.pr-review]
+harness = "claude-code"
+prompt_file = "~/.config/harness/prompts/pr-review.md"
+triggers = ["webhook.gitea-pr", "channel.switchboard"]
+operating_hours = "TZ=America/Los_Angeles Mon-Fri 09:00-18:00"
+catch_up = true   # one run when hours open, if anything was skipped
+```
+
+- A doorbell or webhook delivery that arrives outside the window starts
+  nothing. The run history gains a `skipped` record with reason
+  `outside_hours`, and a burst of them coalesces into one record with a
+  `coalesced` count. The webhook's `202` reports that harness as `skipped`.
+- The window is judged at the moment the daemon received the event, and it
+  is end-exclusive: a delivery at exactly 18:00:00 is out of hours.
+- A run already going when the window closes keeps going. Its `timeout`
+  bounds it, not the hours.
+- With `catch_up = true`, the first check after the window opens starts
+  **one** run with trigger `catch_up` if anything was skipped while it was
+  closed, however many deliveries that was. The run carries no event file; it
+  is the agent's cue to go and look. The daemon remembers the owed catch-up
+  across a restart.
+- `harness trigger <name>` is never gated.
+- `hours_shutdown` and `hours_shutdown_timeout` do not apply here and are
+  rejected: there is no resident session to close.
+
 ### Grammar and time zones
 
 `operating_hours` is one string: an optional `TZ=<zone>` or `CRON_TZ=<zone>`

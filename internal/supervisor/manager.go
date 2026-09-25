@@ -414,6 +414,10 @@ func (m *Manager) Restore() error {
 			// Counters are observability, not intent — preserve them, the
 			// same contract the #99 fallback below keeps.
 			s.Restore(false, pr.RestartCount, pr.LastExitCode, last, started)
+			// A weekend's outside_hours skips are still owed their
+			// catch-up after a restart (SPEC-0014 REQ "Operating Hours
+			// On Triggered Harnesses"; firing_hours.go).
+			m.seedHoursSkipped(name, s)
 		case unresolved && hasAutostartProfile && autostart[name]:
 			// The persisted profile is gone, so the persisted per-harness
 			// intent it produced cannot be trusted either — a member recorded

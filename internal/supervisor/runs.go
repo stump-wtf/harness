@@ -76,9 +76,10 @@ const (
 	// go.
 	ReasonStopping RunReason = "stopping"
 	// ReasonOutsideHours: the firing arrived outside the harness's
-	// operating_hours window. Defined here with its siblings so the
-	// vocabulary is in one place; the gate that produces it is SPEC-0014 REQ
-	// "Operating Hours On Triggered Harnesses", not yet implemented.
+	// operating_hours window, so it never reached the overlap decision. The
+	// source manager decides it (internal/trigger/source) and the loop
+	// records it (firing_hours.go). Governing: SPEC-0014 REQ "Operating Hours
+	// On Triggered Harnesses".
 	ReasonOutsideHours RunReason = "outside_hours"
 	// ReasonShutdown: an interrupted run a clean daemon shutdown ended
 	// (SPEC-0022 REQ-5, REQ-7).

@@ -108,7 +108,7 @@ func TestDaemonWiringFiresAHarnessFromABearerWebhook(t *testing.T) {
 	cfg := webhookWiringConfig(fields, true)
 	mgr := newWiringManager(t, cfg)
 
-	sources := startDaemonSources(mgr)
+	sources := startDaemonSources(mgr, nil)
 	t.Cleanup(sources.Close)
 	wireSourceReload(mgr, sources)
 	webhooks := beginDaemonWebhooks(mgr, sources, "127.0.0.1:0")
@@ -231,7 +231,7 @@ func TestDaemonWiringFiresAHarnessFromABearerWebhook(t *testing.T) {
 func TestDaemonWebhookListenerOffWithoutAnAddress(t *testing.T) {
 	cfg := webhookWiringConfig(filepath.Join(t.TempDir(), "f"), true)
 	mgr := newWiringManager(t, cfg)
-	sources := startDaemonSources(mgr)
+	sources := startDaemonSources(mgr, nil)
 	t.Cleanup(sources.Close)
 
 	off := beginDaemonWebhooks(mgr, sources, "")

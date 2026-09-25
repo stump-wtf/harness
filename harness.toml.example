@@ -266,6 +266,12 @@ description = "gitea pull-request events"
 # deliberate: a cron firing that lands during a run is the same work coming
 # round again, so skipping it loses nothing, while an event firing is a
 # DIFFERENT event and dropping it loses work nothing will re-deliver.
+#
+# operating_hours on a triggered harness gates FIRINGS, not the process: an
+# event out of hours starts nothing and is recorded `skipped` (reason
+# `outside_hours`, a burst coalesced into one record), a run in flight at the
+# close finishes under its `timeout`, and `catch_up = true` starts ONE run when
+# hours next open if anything was skipped. `harness trigger` is never gated.
 [harness.pr-review]
 harness = "claude-code"
 prompt_file = "~/.config/harness/prompts/pr-review.md"
@@ -273,6 +279,8 @@ triggers = ["webhook.gitea-pr", "channel.switchboard"]
 timeout = "20m"
 keep_runs = 50
 description = "review a pull request when one arrives"
+# operating_hours = "TZ=America/Los_Angeles Mon-Fri 09:00-18:00"
+# catch_up = true
 
 # Profiles (ADR-0006): named groups of harnesses that switch together via
 # `harness use-profile <name>`. Only one profile is active at a time; the
