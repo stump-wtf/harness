@@ -51,8 +51,15 @@ import (
 // checkpoints and a `closed` (or a `decided` for a run that started nothing),
 // so the last line for a (harness, run_id) is the record. Fold by id rather
 // than assuming one line each.
-func persistedRuns(t *testing.T, statePath, name string) []supervisor.RunRecord {
+//
+// It DRAINS FIRST, by closing mgr: a coalesced skip's growing count rides on
+// `updated` lines the ledger buffers on purpose (CoalesceRun appends with
+// sync=false so a burst of firings does not cost one fsync each), so the file
+// is behind by whatever is still queued. Without the drain this read saw 46 of
+// 50. Manager.Close is idempotent, so the test's own t.Cleanup is still safe.
+func persistedRuns(t *testing.T, statePath, name string, mgr *supervisor.Manager) []supervisor.RunRecord {
 	t.Helper()
+	mgr.Close() // drain the ledger's queue; the tail is not on disk until it does
 	dir := filepath.Join(filepath.Dir(statePath), "ledger")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -243,13 +250,6 @@ func TestDaemonGatesFiringsOnOperatingHours(t *testing.T) {
 			t.Fatalf("saturday firing %d: decisions = %+v, want skipped / outside_hours", i, d)
 		}
 	}
-	runs := persistedRuns(t, statePath, quick.Name)
-	if len(runs) != 1 {
-		t.Fatalf("state.json holds %d records for 50 out-of-hours firings, want 1: %+v", len(runs), runs)
-	}
-	if r := runs[0]; r.Outcome != supervisor.OutcomeSkipped || r.Reason != supervisor.ReasonOutsideHours || r.Coalesced != 50 || r.Trigger != supervisor.TriggerWebhook || r.Source != "webhook.gh" {
-		t.Errorf("persisted record = %+v, want skipped / outside_hours / coalesced 50 / webhook.gh", r)
-	}
 	if got := markerLines(t, marker); len(got) != 0 {
 		t.Fatalf("processes ran out of hours: %q", got)
 	}
@@ -317,6 +317,20 @@ func TestDaemonGatesFiringsOnOperatingHours(t *testing.T) {
 	})
 	if rs := mgr.Runs(long.Name); rs[0].Outcome != supervisor.OutcomeTimedOut {
 		t.Errorf("long run = %+v, want timed_out: its timeout bounds it, not the gate", rs[0])
+	}
+	// Read the record back off disk, LAST: this closes mgr to drain the
+	// ledger, and the assertions above need it running. A coalesced skip's
+	// count arrives on BUFFERED `updated` lines (CoalesceRun appends with
+	// sync=false so a burst of firings does not cost one fsync each), so the
+	// file lags the queue — this read saw 46 of 50 before the drain.
+	runs := persistedRuns(t, statePath, quick.Name, mgr)
+	if len(runs) < 1 {
+		t.Fatalf("the ledger holds no records for the 50 out-of-hours firings: %+v", runs)
+	}
+	// Run 1 is the weekend's coalesced skip; the manual and catch_up runs the
+	// rest of this test added follow it.
+	if r := runs[0]; r.RunID != 1 || r.Outcome != supervisor.OutcomeSkipped || r.Reason != supervisor.ReasonOutsideHours || r.Coalesced != 50 || r.Trigger != supervisor.TriggerWebhook || r.Source != "webhook.gh" {
+		t.Errorf("run 1 = %+v, want skipped / outside_hours / coalesced 50 / webhook.gh", r)
 	}
 }
 

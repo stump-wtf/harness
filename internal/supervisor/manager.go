@@ -168,7 +168,12 @@ type Manager struct {
 
 	dirty  chan struct{}
 	closed chan struct{}
-	wg     sync.WaitGroup
+	// closeOnce guards closed, so Close is idempotent. It has to be: Close
+	// drains the ledger, and a caller that wants a drained ledger (a test
+	// reading the files, a shutdown path that also runs a t.Cleanup) would
+	// otherwise panic on the second call with "close of closed channel".
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 // NewManager builds a Manager for cfg. Supervisors are created (stopped) but not
@@ -1077,17 +1082,24 @@ func (m *Manager) addEphemeralSupervisorLocked(h core.Harness) {
 }
 
 // Close stops every harness, flushes final state, and tears down the manager.
+//
+// It is idempotent. The first call drains the run ledger (Ledger.Close), which
+// is what puts a coalesced skip's buffered count on disk; a second call is a
+// no-op rather than a panic, so a caller may close to read a drained ledger
+// and still have a t.Cleanup close it again.
 func (m *Manager) Close() {
-	for _, s := range m.snapshotSupervisors() {
-		s.Shutdown()
-	}
-	close(m.closed)
-	m.wg.Wait()
-	_ = m.Save() // final durable flush
-	m.closeOpenRuns()
-	if err := m.ledger.Close(ledgerCloseTimeout); err != nil {
-		log.Error("run ledger did not drain at shutdown", "err", err)
-	}
+	m.closeOnce.Do(func() {
+		for _, s := range m.snapshotSupervisors() {
+			s.Shutdown()
+		}
+		close(m.closed)
+		m.wg.Wait()
+		_ = m.Save() // final durable flush
+		m.closeOpenRuns()
+		if err := m.ledger.Close(ledgerCloseTimeout); err != nil {
+			log.Error("run ledger did not drain at shutdown", "err", err)
+		}
+	})
 }
 
 // ledgerCloseTimeout bounds the run ledger's drain at shutdown (SPEC-0022
