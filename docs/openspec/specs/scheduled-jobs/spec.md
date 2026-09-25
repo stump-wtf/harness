@@ -17,11 +17,11 @@ carrying a `schedule` cron expression: the daemon fires it on a cadence, and the
 run exiting is terminal for that firing.
 
 Scheduling is expressed as a key on the existing `[harness.*]` table rather
-than as a distinct table kind. See ADR-0013 for that decision and for the list
-of capability still deferred. Suspend-safe evaluation, missed-window handling,
-`catch_up`, and time zones were added later; then run history, per-run logs, run
-timeouts, and the overlap policy; then the protocol and CLI surface that
-reads and triggers them.
+than as a distinct table kind. See ADR-0013 for that decision and for what it
+leaves undecided. The spec covers the key and its exclusions, suspend-safe
+evaluation, missed windows and `catch_up`, time zones, run history, per-run
+logs, run timeouts, the overlap policy, and the protocol and CLI surface that
+reads and triggers runs.
 
 SPEC-0014 extends this machinery to *triggered* harnesses, which fire on MCP
 channel notifications and webhooks as well as on a schedule. Where this spec
@@ -29,9 +29,9 @@ says "scheduled harness" of run keys, run history, overlap or `trigger`, SPEC-00
 REQ "Triggered Harness Exclusions" and REQ "Manual Trigger With Event" widen it
 to any triggered harness.
 
-This spec does **not** amend SPEC-0003. The restart-policy axis ADR-0013
-originally called for shipped independently as the `restart` key, and SPEC-0003
-REQ "Restart On Exit" is already conditional on it.
+This spec does **not** amend SPEC-0003: SPEC-0003 REQ "Restart On Exit" is
+conditional on the `restart` key, and `restart = "no"` is what makes a
+scheduled run terminal.
 
 ## Requirements
 
@@ -82,7 +82,7 @@ which a key on `[harness.*]` remains unambiguous (ADR-0013).
 
 | Rejected combination | Rationale |
 | --- | --- |
-| `schedule` without `prompt` or `prompt_file` | A scheduled unit is a one-shot agent run, not an always-on `cmd` |
+| `schedule` without `prompt` or `prompt_file` | A scheduled unit is a one-shot agent run, not a resident process |
 | `schedule` with `enabled = true` | Autostart intent and schedule are distinct concerns |
 | `schedule` on a harness that is a `[profile.*]` member | Profile autostart would fire the one-shot off-schedule |
 | `schedule` with `restart = "always"` or `"unless-stopped"` | A respawning policy restarts the one-shot after a clean exit |
@@ -100,8 +100,8 @@ SHALL NOT redefine it to mean *armed*.
 
 #### Scenario: Schedule without prompt
 
-- **WHEN** a `[harness.*]` table sets `schedule` alongside `cmd` rather than
-  `prompt` or `prompt_file`
+- **WHEN** a `[harness.*]` table sets `schedule` and neither `prompt` nor
+  `prompt_file`
 - **THEN** config parsing fails with an error naming the harness and the missing
   prompt source
 
@@ -852,13 +852,12 @@ skipped without aborting reconciliation of the remaining harnesses.
 
 ## Out Of Scope
 
-The following were specified in this spec's 2026-07-26 draft against the
-`[job.*]` design and are **not** part of this revision. ADR-0013's *Deferred*
-section tracks them:
+The following are not specified here. ADR-0013 lists them as not decided:
 
 * Arming and disarming a schedule from a client. `start` and `stop` keep their
   SPEC-0003 meaning on a scheduled harness (REQ "Manual Trigger").
-* Job rows in the TUI cockpit.
+* A dedicated jobs view in the TUI; scheduled harnesses appear in the ordinary
+  harness list.
 * A per-harness `timezone` key. Zones are expressed with a `CRON_TZ=` prefix
   instead (REQ "Schedule Time Zone").
 * `scheduled` and `completed` states.

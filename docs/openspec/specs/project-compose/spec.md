@@ -57,7 +57,7 @@ error. The discovery walk MUST NOT adopt the daemon's own global config file
 ### Requirement: Project File Schema
 
 A project `harness.toml` SHALL reuse the ADR-0006 `[harness.*]` table schema
-verbatim (`cmd`, `args`, `workdir`, `env_file`, `restart_delay`, `backend`,
+verbatim (`harness`, `args`, `workdir`, `env_file`, `restart_delay`, `backend`,
 `description`, `enabled`) and MAY include an optional `[project]` table whose
 `name` key sets the project name. Relative `workdir` values SHALL resolve
 against the project root, not against the daemon's working directory. A project
@@ -67,7 +67,7 @@ those are global-only concerns.
 
 #### Scenario: Reuses the harness schema
 
-- **WHEN** a project file defines `[harness.agent]` with `cmd` and `args`
+- **WHEN** a project file defines `[harness.agent]` with `harness` and `args`
 - **THEN** it parses into the same `core` harness type a global `[harness.*]`
   table produces, with identical field meanings
 
@@ -154,7 +154,8 @@ flagged to apply on next restart per SPEC-0003 (never silently bounced).
 ### Requirement: Tear Down (`harness down`)
 
 `harness down` SHALL send a `project_down` control request for the discovered
-project. The daemon SHALL stop every harness registered under that project's
+project, or, when given a `PROJECT` argument, for that project without running
+discovery. The daemon SHALL stop every harness registered under that project's
 namespace and then **deregister** them, so the daemon retains no record of the
 project afterward — including its persisted registration (see Registration
 Persistence). `down` SHALL be destructive by design — distinct from
