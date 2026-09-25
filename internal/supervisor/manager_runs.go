@@ -3,31 +3,40 @@ package supervisor
 // Run History Store
 //
 // The Manager's half of run history (runs.go is the supervisor's). It hands out
-// run ids, bounds each scheduled harness's history to keep_runs, deletes the
-// log files of records that fall out of it, and keeps all of it in state.json
-// next to the rest of ADR-0007's runtime state.
+// run ids, and is the single writer of the run ledger (internal/ledger): every
+// record opens, closes or is decided through the RunJournal methods here, and
+// each of those lines is synced before the method returns. keep_runs bounds the
+// per-run log files only; records stay in the ledger, and read log_pruned once
+// their log is gone. state.json keeps nothing of run history but each harness's
+// last run id.
 //
-// Run ids never repeat. The history persists the last id handed out, and the
-// first allocation of each process also floors it at the highest log file on
-// disk, so a history lost to a malformed state file, or dropped because its
-// harness briefly left the config, cannot reissue an id whose log still exists.
+// Run ids never repeat. The first allocation of each process floors the last id
+// at the highest log file on disk and at the highest run id the ledger holds,
+// so neither a lost state file nor a harness that briefly left the config can
+// reissue an id.
 //
-// A record still "running" when the daemon boots belonged to a daemon that died
-// under it. Restore marks it interrupted — leaving ended_at unset, because the
-// real end is unknown — and appends a line saying so to its log.
+// At boot (bootLedger) a pre-ledger state.json's history is imported once, and
+// a record still open belonged to a daemon that died under it: it is closed
+// interrupted, reason daemon_crash, with ended_at unset because the real end is
+// unknown, and a line saying so is appended to its log.
 //
-// Governing: ADR-0007, ADR-0008, ADR-0013; SPEC-0008 REQ "Run History", REQ
-// "Per-Run Logs".
+// Governing: ADR-0007, ADR-0008, ADR-0013, ADR-0028; SPEC-0008 REQ "Run
+// History", REQ "Per-Run Logs"; SPEC-0022 REQ-3, REQ-6, REQ-7, REQ-13.
 //
 // @joestump-agent 09/11/2026 - Added for issue #119.
 //
 // @joestump-agent 09/11/2026 - Review of PR #310: run log paths go through
 // runLogDir, so a name that is not a single path element (a project harness,
 // or a name from the protocol in #120) never writes or prunes outside jobs/.
+//
+// @joestump 09/24/2026 - Records moved from state.json to the run ledger
+// (harness#444); keep_runs now bounds logs only.
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -35,53 +44,82 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/log/v2"
+
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/ledger"
 )
 
-// runHistory is one scheduled harness's run history, in memory and on disk.
+// runHistory is one harness's run id allocator: the only part of run history
+// state.json still carries (SPEC-0022 REQ-13). The records live in the ledger.
 type runHistory struct {
-	LastRunID int         `json:"last_run_id"`
-	Runs      []RunRecord `json:"runs"`
+	LastRunID int `json:"last_run_id"`
 	// floored is set once LastRunID has been checked against the log files on
-	// disk in this process. Not persisted.
+	// disk and the ledger in this process. Not persisted.
 	floored bool
+}
+
+// legacyHistory is a history as a daemon before the ledger wrote it: the id
+// allocator and the record list. It is read once, for the first-boot import,
+// and never written.
+type legacyHistory struct {
+	LastRunID int         `json:"last_run_id"`
+	Runs      []RunRecord `json:"runs,omitempty"`
 }
 
 // runRef names one run.
 type runRef struct {
 	name string
 	id   int
+	log  string
 }
 
-// OpenRun implements RunJournal.
+// OpenRun implements RunJournal: it allocates the next run id and appends the
+// record's `opened` line, synced, before returning, so the line is on disk
+// before the process the caller is about to spawn (SPEC-0022 REQ-6).
 func (m *Manager) OpenRun(name string, rec RunRecord) (RunRecord, string, error) {
-	rec, err := m.AppendRun(name, rec)
-	return rec, m.RunLogPath(name, rec.RunID), err
+	rec, err := m.appendNew(name, ledger.TypeOpened, rec)
+	m.pruneRunLogs(name, rec.RunID)
+	return rec, rec.Log, err
 }
 
-// AppendRun implements RunJournal: it assigns the next run id, bounds the
-// history, prunes the logs of dropped records, and saves synchronously — the
-// id must be on disk before a run that uses it writes a log.
+// AppendRun implements RunJournal: it allocates the next run id and appends a
+// `decided` line carrying the whole record, synced.
 func (m *Manager) AppendRun(name string, rec RunRecord) (RunRecord, error) {
+	return m.appendNew(name, ledger.TypeDecided, rec)
+}
+
+// appendNew allocates name's next run id and appends rec's first line under
+// it. The allocation and the enqueue happen under one lock, so a harness's
+// ids and its lines' seqs increase together; the sync is waited for outside
+// it, so one harness's fsync never delays another's allocation.
+//
+// The allocator is saved by the debounced persist loop. That is enough: the id
+// is durable in this line, and boot floors the allocator at the ledger.
+func (m *Manager) appendNew(name string, typ ledger.Type, rec RunRecord) (RunRecord, error) {
+	m.journalMu.Lock()
 	m.mu.Lock()
 	h := m.historyLocked(name)
 	h.LastRunID++
 	rec.RunID = h.LastRunID
-	h.Runs = append(h.Runs, rec)
-	h.prune(m.keepRunsLocked(name))
-	kept := make(map[int]bool, len(h.Runs))
-	for _, r := range h.Runs {
-		kept[r.RunID] = true
-	}
-	upTo := h.LastRunID
 	m.mu.Unlock()
-
-	m.pruneRunLogs(name, kept, upTo)
-	return rec, m.Save()
+	if typ == ledger.TypeOpened {
+		rec.Log = m.RunLogPath(name, rec.RunID)
+	}
+	_, wait, err := m.ledger.Enqueue(ledger.Line{
+		Type: typ, At: rec.StartedAt, Harness: name, RunID: rec.RunID, Record: toLedger(rec),
+	}, true)
+	m.journalMu.Unlock()
+	m.markDirty()
+	if err != nil {
+		return rec, err
+	}
+	return rec, wait()
 }
 
-// CoalesceRun implements RunJournal: it increments Coalesced on name's stored
-// record with this id and persists, returning the updated record.
+// CoalesceRun implements RunJournal: it counts one more firing on name's
+// skipped record with this id, with an `updated` line, and returns the record
+// as it now reads.
 //
 // It emits NO lifecycle event, by design (SPEC-0014 REQ "Overlap Skip
 // Coalescing"): the first skip already announced itself, and 199 more
@@ -90,47 +128,43 @@ func (m *Manager) AppendRun(name string, rec RunRecord) (RunRecord, error) {
 // A missing record is errNoRunToCoalesce rather than a silent no-op, because
 // the caller uses that answer to decide whether to open a fresh record —
 // swallowing it would lose the skip entirely. Any other error is a failed
-// Save: the increment HAS landed, and the returned record carries it.
+// append: the increment HAS been queued, and the returned record carries it.
 func (m *Manager) CoalesceRun(name string, id int) (RunRecord, error) {
-	m.mu.Lock()
-	var rec RunRecord
-	found := false
-	if h := m.runs[name]; h != nil {
-		for i := range h.Runs {
-			if h.Runs[i].RunID != id {
-				continue
-			}
-			if h.Runs[i].Coalesced < 1 {
-				// A record written before this field existed, or restored
-				// from an older state.json: the record itself stands for the
-				// first firing, so counting from 1 keeps the total honest.
-				h.Runs[i].Coalesced = 1
-			}
-			h.Runs[i].Coalesced++
-			rec, found = h.Runs[i], true
-			break
-		}
+	// Pending, not Get: the previous increment may still be queued, and
+	// counting from the committed value would drop it.
+	f, ok, err := m.ledger.Pending(name, id)
+	if err != nil || !ok {
+		return RunRecord{}, fmt.Errorf("%w: run %d of %q", errors.Join(errNoRunToCoalesce, err), id, name)
 	}
-	m.mu.Unlock()
-	if !found {
-		return RunRecord{}, fmt.Errorf("%w: run %d of %q", errNoRunToCoalesce, id, name)
-	}
-	return rec, m.Save()
+	n := max(f.Coalesced, 1) + 1
+	f.Coalesced = n
+	// Buffered: a count is a checkpoint, not a fact a crash must not lose,
+	// and a burst of 200 firings should not cost 200 fsyncs.
+	_, err = m.ledger.Append(ledger.Line{
+		Type: ledger.TypeUpdated, Harness: name, RunID: id, Record: ledger.Record{Coalesced: n},
+	}, false)
+	return fromLedger(f), err
 }
 
-// CloseRun implements RunJournal.
+// CloseRun implements RunJournal: it appends the record's `closed` line,
+// synced, before returning, so nothing publishes an outcome the ledger does not
+// hold (SPEC-0022 REQ-6).
 func (m *Manager) CloseRun(name string, rec RunRecord) error {
-	m.mu.Lock()
-	if h := m.runs[name]; h != nil {
-		for i := range h.Runs {
-			if h.Runs[i].RunID == rec.RunID {
-				h.Runs[i] = rec
-				break
-			}
-		}
+	fields := ledger.Record{
+		Outcome:  string(rec.Outcome),
+		Reason:   string(rec.Reason),
+		EndedAt:  rec.EndedAt,
+		ExitCode: rec.ExitCode,
 	}
-	m.mu.Unlock()
-	return m.Save()
+	at := time.Now()
+	if rec.EndedAt != nil {
+		at = *rec.EndedAt
+		fields.DurationMs = rec.EndedAt.Sub(rec.StartedAt).Milliseconds()
+	}
+	_, err := m.ledger.Append(ledger.Line{
+		Type: ledger.TypeClosed, At: at, Harness: name, RunID: rec.RunID, Record: fields,
+	}, true)
+	return err
 }
 
 // StartRun is a scheduled firing for name (SPEC-0008 REQ "Overlap Policy").
@@ -244,18 +278,47 @@ func (m *Manager) RecordMissed(name string, first, last time.Time, windows int, 
 	return err
 }
 
-// Runs returns name's run history, oldest first. Each record's StartedAt and
-// EndedAt bound one run exactly, which is what run correlation needs to scope
-// an agent transcript to a single run.
+// Runs returns name's run records from the ledger's memory, oldest first: the
+// last seven days of them, and at least the newest twenty. Each record's
+// StartedAt and EndedAt bound one run exactly, which is what run correlation
+// needs to scope an agent transcript to a single run.
 func (m *Manager) Runs(name string) []RunRecord {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	h := m.runs[name]
-	if h == nil {
-		return nil
+	recs := m.ledger.Records(name)
+	out := make([]RunRecord, len(recs))
+	for i, f := range recs {
+		out[i] = fromLedger(f)
 	}
-	return slices.Clone(h.Runs)
+	return out
 }
+
+// LatestRuns returns name's newest limit records, newest first, reading the
+// ledger's day files when memory does not reach back far enough (SPEC-0022
+// REQ-15).
+func (m *Manager) LatestRuns(name string, limit int) ([]RunRecord, error) {
+	recs, _, err := m.ledger.Query(ledger.Query{Names: []string{name}, Limit: limit})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RunRecord, len(recs))
+	for i, f := range recs {
+		out[i] = fromLedger(f)
+	}
+	return out, nil
+}
+
+// Run returns one of name's run records.
+func (m *Manager) Run(name string, id int) (RunRecord, bool) {
+	f, ok, err := m.ledger.Get(name, id)
+	if err != nil || !ok {
+		return RunRecord{}, false
+	}
+	return fromLedger(f), true
+}
+
+// Ledger is the run ledger the Manager writes (SPEC-0022), for the readers
+// that need more than one harness's records: the runs op's query, the metrics
+// feed, doctor.
+func (m *Manager) Ledger() *ledger.Ledger { return m.ledger }
 
 // RunLogPath is where run id of name logs: <jobs dir>/<name>/<id>.log, or ""
 // when name cannot be a directory of its own (runLogDir).
@@ -279,8 +342,9 @@ func (m *Manager) runLogDir(name string) string {
 	return filepath.Join(m.jobsDir, name)
 }
 
-// historyLocked returns name's history, creating it, and floors its last id at
-// the logs on disk the first time it is used in this process. Caller holds mu.
+// historyLocked returns name's allocator, creating it, and floors its last id
+// the first time it is used in this process: at the highest log file on disk,
+// and at the highest run id the ledger holds for name. Caller holds mu.
 func (m *Manager) historyLocked(name string) *runHistory {
 	h := m.runs[name]
 	if h == nil {
@@ -289,45 +353,36 @@ func (m *Manager) historyLocked(name string) *runHistory {
 	}
 	if !h.floored {
 		h.floored = true
-		if n := highestRunLog(m.runLogDir(name)); n > h.LastRunID {
-			h.LastRunID = n
-		}
+		h.LastRunID = max(h.LastRunID, highestRunLog(m.runLogDir(name)), m.ledger.MaxRunID(name))
 	}
 	return h
 }
 
-// keepRunsLocked is name's history bound. Caller holds mu.
-func (m *Manager) keepRunsLocked(name string) int {
+// keepRuns is name's per-run log bound.
+func (m *Manager) keepRuns(name string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if h, ok := m.cfg.Harnesses[name]; ok && h.KeepRuns > 0 {
 		return h.KeepRuns
 	}
 	return core.DefaultKeepRuns
 }
 
-// prune drops the oldest finished records until at most keep remain. The run
-// in flight is never dropped, so its log is never deleted from under it.
-func (h *runHistory) prune(keep int) {
-	for len(h.Runs) > keep {
-		i := slices.IndexFunc(h.Runs, func(r RunRecord) bool { return r.Outcome != OutcomeRunning })
-		if i < 0 {
-			return
-		}
-		h.Runs = slices.Delete(h.Runs, i, i+1)
-	}
-}
-
-// pruneRunLogs deletes name's run artifacts that no record refers to, so
-// history and disk cannot drift. Only ids up to upTo are considered: a file
-// newer than the history this call saw belongs to a run opened since, and is
-// not ours to judge.
+// pruneRunLogs keeps the artifacts of name's newest keep_runs runs and
+// deletes the rest. keep_runs bounds per-run logs only; the records stay in the
+// ledger, and read log_pruned once their log is gone (SPEC-0022 REQ-12, REQ-13).
 //
 // "Artifacts" is both the run's log and its event file (SPEC-0014 REQ "Event
-// Delivery To The Run": the event file is pruned together with the record and
-// the log). Pruning only the log would leave every event file on disk forever,
-// which is the worse half to keep: a webhook body is attacker-supplied text,
-// and a directory of them accumulating is exactly what `keep_runs` exists to
-// stop.
-func (m *Manager) pruneRunLogs(name string, kept map[int]bool, upTo int) {
+// Delivery To The Run": the event file is pruned together with the log).
+// Pruning only the log would leave every event file on disk forever, which is
+// the worse half to keep: a webhook body is attacker-supplied text, and a
+// directory of them accumulating is exactly what `keep_runs` exists to stop.
+//
+// Only ids up to the allocator's current value are considered, and a run the
+// ledger holds open is never pruned: its log is still being written. opening
+// is the run whose record was just opened; its log is created next, and it
+// counts toward keep_runs already.
+func (m *Manager) pruneRunLogs(name string, opening int) {
 	dir := m.runLogDir(name)
 	if dir == "" {
 		return
@@ -336,12 +391,37 @@ func (m *Manager) pruneRunLogs(name string, kept map[int]bool, upTo int) {
 	if err != nil {
 		return
 	}
-	for _, e := range entries {
-		id, ok := runArtifactID(e.Name())
-		if !ok || id > upTo || kept[id] {
-			continue
+	m.mu.Lock()
+	upTo := 0
+	if h := m.runs[name]; h != nil {
+		upTo = h.LastRunID
+	}
+	m.mu.Unlock()
+	keep := m.keepRuns(name)
+	open := map[int]bool{}
+	for _, f := range m.ledger.OpenRecords() {
+		if f.Harness == name {
+			open[f.RunID] = true
 		}
-		_ = os.Remove(filepath.Join(dir, e.Name()))
+	}
+	// The run being opened has no log yet, but it is the newest and counts.
+	ids := []int{opening}
+	for _, e := range entries {
+		if id, ok := runArtifactID(e.Name()); ok && id <= upTo && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	drop := map[int]bool{}
+	for i, id := range ids {
+		if len(ids)-i > keep && !open[id] {
+			drop[id] = true
+		}
+	}
+	for _, e := range entries {
+		if id, ok := runArtifactID(e.Name()); ok && drop[id] {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+		}
 	}
 }
 
@@ -389,40 +469,155 @@ func runIDWithSuffix(file, suffix string) (int, bool) {
 	return id, true
 }
 
-// restoreRunsLocked loads persisted histories and reconciles runs a dead daemon
-// left "running". A malformed history costs only that harness its records —
-// never the rest of state.json, and never an id, because of the log floor.
-// Caller holds mu.
-func (m *Manager) restoreRunsLocked(raw json.RawMessage) []runRef {
+// restoreRunsLocked loads each harness's run id allocator, and keeps any
+// record list a pre-ledger daemon left for the first-boot import. A malformed
+// entry costs only that harness its import — never the rest of state.json, and
+// never an id, because of the log and ledger floors. Caller holds mu.
+func (m *Manager) restoreRunsLocked(raw json.RawMessage) {
 	if len(raw) == 0 {
-		return nil
+		return
 	}
 	var byName map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &byName); err != nil {
-		return nil
+		return
 	}
-	var interrupted []runRef
 	for name, body := range byName {
-		var h runHistory
+		var h legacyHistory
 		if err := json.Unmarshal(body, &h); err != nil {
 			continue
 		}
-		for i := range h.Runs {
-			if h.Runs[i].Outcome == OutcomeRunning {
-				h.Runs[i].Outcome = OutcomeInterrupted
-				interrupted = append(interrupted, runRef{name: name, id: h.Runs[i].RunID})
+		m.runs[name] = &runHistory{LastRunID: h.LastRunID}
+		if len(h.Runs) > 0 {
+			m.legacyRuns[name] = h.Runs
+		}
+	}
+}
+
+// bootLedger brings the ledger up to date before any start is admitted:
+//
+//  1. the first-boot import copies state.json's record lists in, once
+//     (SPEC-0022 REQ-13), after which the next save drops them;
+//  2. backfill reads far enough back for every harness's newest records, so a
+//     run opened before the in-memory window is still found;
+//  3. reconciliation closes every record a dead daemon left open as
+//     interrupted, reason daemon_crash, with no end, and says so in its log
+//     (REQ-7).
+//
+// Errors are logged, not returned: a daemon that cannot write its ledger must
+// still supervise (REQ-6), and the failure is counted where doctor reads it.
+func (m *Manager) bootLedger() {
+	m.mu.Lock()
+	legacy := m.legacyRuns
+	names := slices.Collect(maps.Keys(m.supervisors))
+	for name := range legacy {
+		if !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	m.mu.Unlock()
+
+	if !m.ledger.Imported() {
+		var lines []ledger.Line
+		n := 0
+		for name, runs := range legacy {
+			for _, r := range runs {
+				lines = append(lines, m.importLines(name, r)...)
+				n++
 			}
 		}
-		m.runs[name] = &h
+		if err := m.ledger.Import(lines); err != nil {
+			log.Error("run history import failed; state.json keeps it for the next boot", "records", n, "err", err)
+		} else {
+			if n > 0 {
+				log.Info("imported run history from state.json into the ledger", "records", n, "dir", m.ledger.Dir())
+			}
+			m.mu.Lock()
+			m.legacyRuns = map[string][]RunRecord{}
+			m.mu.Unlock()
+			m.markDirty()
+		}
+	} else if len(legacy) > 0 {
+		// The import ran in an earlier boot that died before its save. The
+		// records are in the ledger; the list is only waiting to be dropped.
+		m.mu.Lock()
+		m.legacyRuns = map[string][]RunRecord{}
+		m.mu.Unlock()
+		m.markDirty()
 	}
-	return interrupted
+
+	if err := m.ledger.Backfill(names); err != nil {
+		log.Warn("run ledger backfill incomplete", "err", err)
+	}
+
+	var interrupted []runRef
+	for _, f := range m.ledger.OpenRecords() {
+		_, err := m.ledger.Append(ledger.Line{
+			Type: ledger.TypeClosed, Harness: f.Harness, RunID: f.RunID,
+			Record: ledger.Record{Outcome: string(OutcomeInterrupted), Reason: string(ReasonDaemonCrash)},
+		}, true)
+		if err != nil {
+			log.Error("could not close a run the last daemon left open", "harness", f.Harness, "run_id", f.RunID, "err", err)
+		}
+		interrupted = append(interrupted, runRef{name: f.Harness, id: f.RunID, log: f.Log})
+	}
+	m.noteInterrupted(interrupted)
+}
+
+// importLines turns one state.json record into ledger lines: a `decided` line
+// for a decision that started no process, else an `opened` line and, for a run
+// that had ended, a `closed` one. A record still running was left by a daemon
+// that died under it; it is imported open, and reconciliation closes it.
+func (m *Manager) importLines(name string, r RunRecord) []ledger.Line {
+	rec := toLedger(r)
+	rec.Imported = true
+	switch r.Outcome {
+	case OutcomeSkipped, OutcomeMissed:
+		return []ledger.Line{{Type: ledger.TypeDecided, At: r.StartedAt, Harness: name, RunID: r.RunID, Record: rec}}
+	}
+	rec.Log = m.RunLogPath(name, r.RunID)
+	open := rec
+	open.Outcome, open.EndedAt, open.ExitCode, open.Reason = string(OutcomeRunning), nil, nil, ""
+	lines := []ledger.Line{{Type: ledger.TypeOpened, At: r.StartedAt, Harness: name, RunID: r.RunID, Record: open}}
+	if r.Outcome == OutcomeRunning {
+		return lines
+	}
+	end := ledger.Record{Outcome: rec.Outcome, Reason: rec.Reason, EndedAt: rec.EndedAt, ExitCode: rec.ExitCode, Imported: true}
+	at := r.StartedAt
+	if r.EndedAt != nil {
+		at = *r.EndedAt
+		end.DurationMs = r.EndedAt.Sub(r.StartedAt).Milliseconds()
+	}
+	return append(lines, ledger.Line{Type: ledger.TypeClosed, At: at, Harness: name, RunID: r.RunID, Record: end})
+}
+
+// closeOpenRuns closes, as interrupted by a shutdown, every record still open
+// once the supervisors have stopped (SPEC-0022 REQ-7). Each supervisor closes
+// its own run on the way down; this is the net under a record no supervisor
+// owns any more.
+func (m *Manager) closeOpenRuns() {
+	now := time.Now()
+	for _, f := range m.ledger.OpenRecords() {
+		rec := ledger.Record{Outcome: string(OutcomeInterrupted), Reason: string(ReasonShutdown), EndedAt: &now}
+		if f.StartedAt != nil {
+			rec.DurationMs = now.Sub(*f.StartedAt).Milliseconds()
+		}
+		if _, err := m.ledger.Append(ledger.Line{Type: ledger.TypeClosed, At: now, Harness: f.Harness, RunID: f.RunID, Record: rec}, true); err != nil {
+			log.Error("could not close a run at shutdown", "harness", f.Harness, "run_id", f.RunID, "err", err)
+		}
+	}
 }
 
 // noteInterrupted appends the reconciliation to each interrupted run's log, so
-// the log does not simply stop mid-run with no explanation.
+// the log does not simply stop mid-run with no explanation. Only a per-run
+// log is written to; a resident's record names its durable log, which is the
+// supervisor's to write.
 func (m *Manager) noteInterrupted(runs []runRef) {
 	for _, r := range runs {
-		f, err := os.OpenFile(m.RunLogPath(r.name, r.id), os.O_WRONLY|os.O_APPEND, 0)
+		path := m.RunLogPath(r.name, r.id)
+		if path == "" || (r.log != "" && r.log != path) {
+			continue
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 		if err != nil {
 			continue
 		}
@@ -431,14 +626,15 @@ func (m *Manager) noteInterrupted(runs []runRef) {
 	}
 }
 
-// persistedRunsLocked marshals the histories of registered harnesses. A
-// harness gone from the config takes its history with it; its ids stay
-// reserved by the log floor. Caller holds mu.
+// persistedRunsLocked marshals the run id allocators of registered harnesses,
+// plus any record list still waiting for a first-boot import that failed. A
+// harness gone from the config takes its allocator with it; its ids stay
+// reserved by the log and ledger floors. Caller holds mu.
 func (m *Manager) persistedRunsLocked() json.RawMessage {
-	out := make(map[string]*runHistory, len(m.runs))
+	out := make(map[string]legacyHistory, len(m.runs))
 	for name, h := range m.runs {
 		if _, ok := m.supervisors[name]; ok {
-			out[name] = h
+			out[name] = legacyHistory{LastRunID: h.LastRunID, Runs: m.legacyRuns[name]}
 		}
 	}
 	if len(out) == 0 {
@@ -449,4 +645,57 @@ func (m *Manager) persistedRunsLocked() json.RawMessage {
 		return nil
 	}
 	return raw
+}
+
+// toLedger projects a run record onto the ledger's record fields.
+func toLedger(r RunRecord) ledger.Record {
+	rec := ledger.Record{
+		Kind:        ledger.KindOneshot,
+		Trigger:     string(r.Trigger),
+		Source:      r.Source,
+		EventID:     r.EventID,
+		EndedAt:     r.EndedAt,
+		ExitCode:    r.ExitCode,
+		Outcome:     string(r.Outcome),
+		Reason:      string(r.Reason),
+		Log:         r.Log,
+		Window:      r.Window,
+		FirstWindow: r.FirstWindow,
+		Windows:     r.Windows,
+		Coalesced:   r.Coalesced,
+	}
+	if !r.StartedAt.IsZero() {
+		t := r.StartedAt
+		rec.StartedAt = &t
+	}
+	if r.EndedAt != nil {
+		rec.DurationMs = r.EndedAt.Sub(r.StartedAt).Milliseconds()
+	}
+	return rec
+}
+
+// fromLedger projects a folded ledger record back onto a run record.
+func fromLedger(f ledger.Folded) RunRecord {
+	r := RunRecord{
+		RunID:       f.RunID,
+		Trigger:     RunTrigger(f.Trigger),
+		Outcome:     RunOutcome(f.Outcome),
+		EndedAt:     f.EndedAt,
+		ExitCode:    f.ExitCode,
+		Window:      f.Window,
+		FirstWindow: f.FirstWindow,
+		Windows:     f.Windows,
+		Reason:      RunReason(f.Reason),
+		Coalesced:   f.Coalesced,
+		Source:      f.Source,
+		EventID:     f.EventID,
+		Log:         f.Log,
+		LogPruned:   f.LogPruned,
+	}
+	if f.StartedAt != nil {
+		r.StartedAt = *f.StartedAt
+	} else {
+		r.StartedAt = f.FirstAt
+	}
+	return r
 }

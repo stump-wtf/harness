@@ -305,13 +305,19 @@ func TestSnapshotReportsConsecutiveFailures(t *testing.T) {
 // for a week on a healthy harness.
 //
 // @joestump-agent 09/23/2026 - Added in review (harness#589).
+//
+// @joestump-agent 09/24/2026 - Judge HealthyRun through snapshotAt instead
+// of the wall clock. With a 300ms HealthyRun, a poller starved past 300ms
+// under -race never saw the count at 2 and failed a correct supervisor (CI
+// run 13224). HealthyRun is now an hour, so the real clock can never clear
+// the count mid-poll, and the test picks the instants either side of it.
 func TestSnapshotClearsConsecutiveFailuresOnceTheRunIsHealthy(t *testing.T) {
 	p := Policy{
 		CrashWindow:    time.Millisecond,
 		CrashThreshold: 1000,
 		BackoffBase:    time.Millisecond,
 		BackoffCap:     2 * time.Millisecond,
-		HealthyRun:     300 * time.Millisecond,
+		HealthyRun:     time.Hour,
 		MaxRestarts:    10,
 		StopGrace:      80 * time.Millisecond,
 	}
@@ -322,19 +328,31 @@ func TestSnapshotClearsConsecutiveFailuresOnceTheRunIsHealthy(t *testing.T) {
 	s.Start()
 
 	// The third run is up, carrying the two failures before it.
+	var live Snapshot
 	if !waitUntil(3*time.Second, func() bool {
-		snap := s.Snapshot()
-		return snap.State == core.StateRunning && snap.PID != 0 && snap.ConsecutiveFailures == 2
+		live = s.Snapshot()
+		return live.State == core.StateRunning && live.PID != 0 && live.ConsecutiveFailures == 2
 	}) {
 		t.Fatalf("never reached a live run after two failures: %+v", s.Snapshot())
 	}
-	// Once that run has lasted HealthyRun it has come up successfully.
-	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().ConsecutiveFailures == 0 }) {
-		snap := s.Snapshot()
-		t.Fatalf("ConsecutiveFailures = %d after the run outlived HealthyRun (state %s, up %s); want 0",
-			snap.ConsecutiveFailures, snap.State, time.Since(snap.LastStarted))
+
+	// Up for exactly HealthyRun is not yet healthy: the rule is strict.
+	if got := s.snapshotAt(live.LastStarted.Add(p.HealthyRun)).ConsecutiveFailures; got != 2 {
+		t.Fatalf("ConsecutiveFailures = %d at exactly HealthyRun; want 2", got)
 	}
-	if st := s.Snapshot().State; st != core.StateRunning {
-		t.Fatalf("state = %s, want running (the reset must come from a healthy run, not an exit)", st)
+	// Past HealthyRun the run has come up successfully, and the snapshot
+	// says so while that same run is still going — not only at its exit.
+	healthy := s.snapshotAt(live.LastStarted.Add(p.HealthyRun + time.Nanosecond))
+	if healthy.ConsecutiveFailures != 0 {
+		t.Fatalf("ConsecutiveFailures = %d after the run outlived HealthyRun; want 0", healthy.ConsecutiveFailures)
+	}
+	if healthy.State != core.StateRunning || healthy.PID != live.PID {
+		t.Fatalf("state %s, PID %d; want the same run (PID %d) still running — the reset must come from a healthy run, not an exit",
+			healthy.State, healthy.PID, live.PID)
+	}
+	// The clear is the snapshot's reading, not the loop's: the loop still
+	// holds the streak until the run exits.
+	if got := s.Snapshot().ConsecutiveFailures; got != 2 {
+		t.Fatalf("wall-clock Snapshot ConsecutiveFailures = %d; want 2 (the run is minutes short of HealthyRun)", got)
 	}
 }

@@ -14,13 +14,13 @@ package supervisor
 // and failed". This file is the supervisor's half: the actor loop opens and
 // closes records, because it is the one goroutine that sees a spawn, an exit, a
 // timeout and a stop in order. The Manager's half (manager_runs.go) allocates
-// run ids, bounds each history to keep_runs, deletes the logs of records that
-// fall out of it, and persists the lot in state.json.
+// run ids, writes every record to the run ledger, and bounds the per-run logs
+// to keep_runs.
 //
 // Governing: ADR-0007 (extended with per-run records and logs), ADR-0008
 // (records carry outcomes, times and exit codes — never environment, prompt or
-// output), ADR-0013; SPEC-0008 REQ "Run History", REQ "Per-Run Logs", REQ "Run
-// Timeout", REQ "Overlap Policy".
+// output), ADR-0013, ADR-0028; SPEC-0008 REQ "Run History", REQ "Per-Run Logs",
+// REQ "Run Timeout", REQ "Overlap Policy"; SPEC-0022 REQ-5, REQ-7.
 //
 // @joestump-agent 09/11/2026 - Added for issue #119.
 //
@@ -76,10 +76,17 @@ const (
 	// go.
 	ReasonStopping RunReason = "stopping"
 	// ReasonOutsideHours: the firing arrived outside the harness's
-	// operating_hours window. Defined here with its siblings so the
-	// vocabulary is in one place; the gate that produces it is SPEC-0014 REQ
-	// "Operating Hours On Triggered Harnesses", not yet implemented.
+	// operating_hours window, so it never reached the overlap decision. The
+	// source manager decides it (internal/trigger/source) and the loop
+	// records it (firing_hours.go). Governing: SPEC-0014 REQ "Operating Hours
+	// On Triggered Harnesses".
 	ReasonOutsideHours RunReason = "outside_hours"
+	// ReasonShutdown: an interrupted run a clean daemon shutdown ended
+	// (SPEC-0022 REQ-5, REQ-7).
+	ReasonShutdown RunReason = "shutdown"
+	// ReasonDaemonCrash: an interrupted run found still open when the next
+	// daemon booted; its real end is unknown (SPEC-0022 REQ-7).
+	ReasonDaemonCrash RunReason = "daemon_crash"
 )
 
 // RunOutcome is how a run ended — or, for the outcomes that start no process,
@@ -137,9 +144,9 @@ type RunRecord struct {
 	FirstWindow *time.Time `json:"first_window,omitempty"`
 	// Windows counts the windows a missed record or a catch-up run covers.
 	Windows int `json:"windows,omitempty"`
-	// Reason says WHY a decision that started no process was taken. Present
-	// only on a skipped record.
-	// Governing: SPEC-0014 REQ "Run Record Fields".
+	// Reason qualifies the outcome: why a skipped decision started no
+	// process, and why an interrupted run was (shutdown, daemon_crash).
+	// Governing: SPEC-0014 REQ "Run Record Fields"; SPEC-0022 REQ-5.
 	Reason RunReason `json:"reason,omitempty"`
 	// Coalesced counts the firings one skipped record covers. It starts at 1
 	// and increments once per further skip that matches the same open key,
@@ -157,6 +164,11 @@ type RunRecord struct {
 	// of an event body, no header value and no credential (ADR-0008).
 	// Governing: SPEC-0014 REQ "Run Record Fields".
 	EventID string `json:"event_id,omitempty"`
+	// Log is the run's per-run log path, as recorded in its ledger record.
+	// LogPruned is set when keep_runs has since deleted that file.
+	// Governing: SPEC-0022 REQ-4, REQ-12.
+	Log       string `json:"log,omitempty"`
+	LogPruned bool   `json:"log_pruned,omitempty"`
 }
 
 // RunRequest asks for a run of a triggered harness.
@@ -179,15 +191,23 @@ type RunRequest struct {
 	Event *trigger.Envelope
 }
 
-// RunJournal stores run records. The Manager implements it; a supervisor with
-// no journal still enforces timeouts and overlap but keeps no history.
+// RunJournal stores run records. The Manager implements it, writing the run
+// ledger (SPEC-0022), whose only writer it is; a supervisor with no journal
+// still enforces timeouts and overlap but keeps no history.
+//
+// An error from OpenRun, CloseRun or AppendRun means the ledger has not synced
+// the line yet: it stays queued and is retried in order, and the run goes on
+// (SPEC-0022 REQ-6).
 type RunJournal interface {
-	// OpenRun allocates rec's run id, records it, persists, and returns the
-	// record with its id and the path its log should be written to.
+	// OpenRun allocates rec's run id and records it, on disk before it
+	// returns, and returns the record with its id and the path its log
+	// should be written to.
 	OpenRun(name string, rec RunRecord) (RunRecord, string, error)
-	// CloseRun replaces the record with rec's run id and persists.
+	// CloseRun records the end of the run with rec's run id, on disk before
+	// it returns.
 	CloseRun(name string, rec RunRecord) error
-	// AppendRun records a decision that started no process and persists.
+	// AppendRun records a decision that started no process, on disk before
+	// it returns.
 	AppendRun(name string, rec RunRecord) (RunRecord, error)
 	// CoalesceRun increments Coalesced on the stored record with this run id
 	// and persists, returning the updated record. It deliberately has no
@@ -538,11 +558,16 @@ func (p *process) killStragglers(deadline time.Time) {
 
 // finishRun closes the run in flight with outcome, then starts a queued firing
 // if the run ended on its own terms.
+func (s *Supervisor) finishRun(outcome RunOutcome, code *int) {
+	s.finishRunWith(outcome, code, "")
+}
+
+// finishRunWith is finishRun with a reason for the outcome (SPEC-0022 REQ-5).
 //
 // Every way a run ends comes through here — natural exit, spawn failure,
 // timeout, replace, operator stop and restart, daemon shutdown — so this is the
 // one place the run's log file is closed.
-func (s *Supervisor) finishRun(outcome RunOutcome, code *int) {
+func (s *Supervisor) finishRunWith(outcome RunOutcome, code *int, reason RunReason) {
 	// The process these skips were "during" is over, so the next skip opens
 	// a new record (REQ "Overlap Skip Coalescing": "When the run in flight
 	// ends, the next skip SHALL create a new record"). Cleared BEFORE the
@@ -560,12 +585,16 @@ func (s *Supervisor) finishRun(outcome RunOutcome, code *int) {
 	}
 	now := time.Now()
 	run.rec.Outcome = outcome
+	run.rec.Reason = reason
 	run.rec.EndedAt = &now
 	if code != nil {
 		c := *code
 		run.rec.ExitCode = &c
 	}
 	kv := []any{"run_id", run.rec.RunID, "outcome", string(outcome)}
+	if reason != "" {
+		kv = append(kv, "reason", string(reason))
+	}
 	if code != nil {
 		kv = append(kv, "exit_code", *code)
 	}
@@ -599,13 +628,13 @@ func (s *Supervisor) finishRun(outcome RunOutcome, code *int) {
 }
 
 // dropQueued records a held firing that will now never start.
-func (s *Supervisor) dropQueued(outcome RunOutcome) {
+func (s *Supervisor) dropQueued(outcome RunOutcome, reason RunReason) {
 	if s.queued == nil {
 		return
 	}
 	q := *s.queued
 	s.queued = nil
-	s.recordDecision(q, outcome)
+	s.recordDecisionWithReason(q, outcome, reason)
 }
 
 // recordDecision records a firing that starts no process, and returns the

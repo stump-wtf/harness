@@ -68,7 +68,7 @@ func TestBurstDuringOneRunCoalesces(t *testing.T) {
 		t.Fatalf("decisions = %d queued, %d skipped; want 1 and 199", queued, skipped)
 	}
 
-	recs := skippedRecords(m.Runs("busy"))
+	recs := skippedRecords(waitCoalesced(t, m, "busy", 199))
 	if len(recs) != 1 {
 		t.Fatalf("the history holds %d skipped records, want exactly 1 — 200 firings must not flush keep_runs", len(recs))
 	}
@@ -203,8 +203,14 @@ func TestSkipsFromDifferentSourcesDoNotCoalesce(t *testing.T) {
 		m.StartRun("busy", RunRequest{Trigger: TriggerSchedule})
 	}
 
-	recs := waitRuns(t, m, "busy", "three distinct skip records", func(rs []RunRecord) bool {
-		return len(skippedRecords(rs)) == 3
+	recs := waitRuns(t, m, "busy", "three distinct skip records, each counting 3", func(rs []RunRecord) bool {
+		skips := skippedRecords(rs)
+		for _, r := range skips {
+			if r.Coalesced != 3 {
+				return false
+			}
+		}
+		return len(skips) == 3
 	})
 	bySource := map[string]RunRecord{}
 	for _, r := range skippedRecords(recs) {
@@ -275,7 +281,7 @@ func TestConcurrentFiringsStartOneProcessAndHoldOne(t *testing.T) {
 	}
 	// Reported as a count rather than a dump: a failure here means 48
 	// records, and printing all of them buries the one number that matters.
-	skips := skippedRecords(m.Runs("busy"))
+	skips := skippedRecords(waitCoalesced(t, m, "busy", 48))
 	switch {
 	case len(skips) != 1:
 		t.Errorf("the history holds %d skipped records, want exactly 1", len(skips))
@@ -317,7 +323,7 @@ func TestCoalescingSurvivesAStateSaveFailure(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		m.StartRun("busy", req)
 	}
-	skips := skippedRecords(m.Runs("busy"))
+	skips := skippedRecords(waitCoalesced(t, m, "busy", 10))
 	switch {
 	case len(skips) != 1:
 		t.Errorf("the history holds %d skipped records after a failed save, want exactly 1", len(skips))
@@ -372,5 +378,27 @@ func TestAProcessWithNoRunDoesNotLeaveASkipOpen(t *testing.T) {
 	}
 	if skips[0].Coalesced != 1 || skips[1].Coalesced != 1 {
 		t.Errorf("coalesced counts = %d and %d, want 1 and 1", skips[0].Coalesced, skips[1].Coalesced)
+	}
+}
+
+// waitCoalesced returns name's history once a skipped record's count reads n,
+// or, after the deadline, as it stands, for the caller's own assertions to
+// report. The wait is for the ledger's writer: an increment is a buffered
+// line, and readers see a line once it is written, not when it is queued
+// (SPEC-0022 REQ-6). The count it waits for is still exact.
+func waitCoalesced(t *testing.T, m *Manager, name string, n int) []RunRecord {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rs := m.Runs(name)
+		for _, r := range skippedRecords(rs) {
+			if r.Coalesced == n {
+				return rs
+			}
+		}
+		if time.Now().After(deadline) {
+			return rs
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

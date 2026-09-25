@@ -211,15 +211,26 @@ on_overlap = "queue"   # default "skip"; or "replace"
 keep_runs = 30         # default 20
 ```
 
-- **History** lives in `state.json`: run id, trigger (`schedule`, `manual`,
-  `catch_up`), start, end, exit code, and an outcome — `success`, `failed`,
+- **History** lives in the run ledger, `$XDG_STATE_HOME/harness/ledger/`: one
+  append-only JSONL file per UTC day, private to your user (ADR-0028). Each run
+  records its id, trigger (`schedule`, `manual`, `catch_up`, `channel`,
+  `webhook`), start, end, exit code, and an outcome: `success`, `failed`,
   `timed_out`, `skipped`, `replaced`, `missed`, `cancelled`, or `interrupted`.
   Firings that start nothing (skipped, missed) are recorded too. Run ids never
-  repeat, and a run the daemon crashed under reads `interrupted` on the next
-  boot.
+  repeat. A run the daemon crashed under reads `interrupted` (reason
+  `daemon_crash`) on the next boot; one a clean shutdown stopped reads
+  `interrupted` (reason `shutdown`).
 - **Logs** are at `$XDG_STATE_HOME/harness/jobs/<name>/<run_id>.log` — the run's
-  output history and lifecycle lines, alongside the usual harness log. The oldest
-  records beyond `keep_runs`, and their logs, are pruned together.
+  output history and lifecycle lines, alongside the usual harness log.
+  `keep_runs` bounds these log files only: the oldest logs are deleted, and
+  their records stay in the ledger, marked `log_pruned`.
+
+:::note Upgrading from a release before the ledger
+The first daemon that has the ledger copies each harness's run history out of
+`state.json` into `ledger/` once, then drops it from `state.json`, which keeps
+only each harness's last run id. Downgrading past that release loses the view
+of run history.
+:::
 - **`timeout`** stops a run that goes on too long: SIGTERM, then SIGKILL after
   the stop grace. The run is `timed_out` and the harness shows `failed`.
 - **`on_overlap`** decides a firing that lands while a run is still going:
@@ -270,6 +281,37 @@ Rules:
   it, never overwrite it: a held harness stays `enabled = true`, and
   `harness stop` always stops the harness and clears `enabled`, whatever
   state it is in.
+
+### On a triggered harness: hours gate firings
+
+On a harness that sets `triggers` (and no `schedule`), `operating_hours` gates
+**firings**, not the process:
+
+```toml
+[harness.pr-review]
+harness = "claude-code"
+prompt_file = "~/.config/harness/prompts/pr-review.md"
+triggers = ["webhook.gitea-pr", "channel.switchboard"]
+operating_hours = "TZ=America/Los_Angeles Mon-Fri 09:00-18:00"
+catch_up = true   # one run when hours open, if anything was skipped
+```
+
+- A doorbell or webhook delivery that arrives outside the window starts
+  nothing. The run history gains a `skipped` record with reason
+  `outside_hours`, and a burst of them coalesces into one record with a
+  `coalesced` count. The webhook's `202` reports that harness as `skipped`.
+- The window is judged at the moment the daemon received the event, and it
+  is end-exclusive: a delivery at exactly 18:00:00 is out of hours.
+- A run already going when the window closes keeps going. Its `timeout`
+  bounds it, not the hours.
+- With `catch_up = true`, the first check after the window opens starts
+  **one** run with trigger `catch_up` if anything was skipped while it was
+  closed, however many deliveries that was. The run carries no event file; it
+  is the agent's cue to go and look. The daemon remembers the owed catch-up
+  across a restart.
+- `harness trigger <name>` is never gated.
+- `hours_shutdown` and `hours_shutdown_timeout` do not apply here and are
+  rejected: there is no resident session to close.
 
 ### Grammar and time zones
 
@@ -884,11 +926,12 @@ It never redirects and never serves files.
 
 | Status | When |
 |---|---|
-| `202` | Verified. `decision` is `fired` with one entry per bound harness (`started`/`skipped` carry `run_id`; `queued` does not), or `ignored` when `events` filtered it out. The response never waits for a run. |
+| `202` | Verified. `decision` is `fired` with one entry per bound harness (`started`/`skipped` carry `run_id`; `queued` does not), `ignored` when `events` filtered it out, or `duplicate` when its delivery ID already fired (with the first firing's `event_id`). `ignored` and `duplicate` fire nothing and make no run record. The response never waits for a run. |
 | `401` | Missing, malformed or wrong credential. Every cause gets the same body; the log names the route and peer, never the value presented. |
 | `404` | The name is unknown, disabled, or bound by no harness. All three are byte-identical, so routes cannot be enumerated. |
 | `405` | Any method other than `POST` on `/hooks/<name>` (or other than `GET` on `/healthz`). |
 | `413` | The body is over `max_body`. Checked before the credential is. |
+| `429` | The route is over its `rate_limit`. `Retry-After` says how many seconds until the next token. |
 | `503` | 64 deliveries are already in flight. |
 
 Every response carries `Content-Security-Policy`, `X-Frame-Options`,
@@ -897,12 +940,29 @@ plus `Strict-Transport-Security` when the listener terminates TLS itself.
 Slow clients are cut off: 10 s to send headers, 30 s to read the request,
 30 s to write the response, 60 s idle, 64 KiB of headers.
 
+After verification, each delivery goes through three filters, in order:
+
+1. **`events`**: an event name not in the list (or no event name at all) is
+   `202 ignored`.
+2. **De-duplication**: when the scheme has a delivery header (`delivery_header`
+   for `bearer`/`hmac-sha256`, the preset's otherwise) and the delivery
+   carries one, an ID that already fired on this route in the last 24 hours —
+   among the last 1024 kept — is `202 duplicate`. The set is in memory and
+   starts empty when the daemon does.
+3. **`rate_limit`**: a token bucket of `n` refilling `n` per unit, so `"2/m"`
+   allows a burst of two, then one every 30 s. Only a delivery that verified,
+   passed `events` and is not a duplicate spends a token, so forged traffic
+   cannot use up the real sender's budget. A `429` is not remembered as seen,
+   so the sender's retry fires. `"0"` turns the limit off.
+
+A reload keeps a route's bucket and de-duplication set as long as its name and
+`rate_limit` are unchanged; changing `rate_limit` starts both afresh.
+
 :::warning Only bearer is verified so far
 **Only `verify = "bearer"` is implemented so far.** A route using
 `hmac-sha256`, `github`, `gitea`, `gitlab` or `standard-webhooks` loads,
 logs a warning, and answers **every** delivery `401` until its verifier
-lands. It never accepts an unverified delivery. De-duplication and
-`rate_limit` are not enforced yet either.
+lands. It never accepts an unverified delivery.
 
 A non-loopback `webhook_listen` without TLS starts with a warning: bearer
 tokens then cross the network in cleartext. Bind loopback behind a
