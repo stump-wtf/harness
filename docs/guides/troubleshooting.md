@@ -99,7 +99,7 @@ three modes.
 ## It keeps restarting
 
 `harness list` shows `◐ degraded` or `◌ restarting`, and the restart count
-keeps climbing.
+keeps climbing, or it has already stopped at `✖ failed`.
 
 ```sh
 harness logs NAME --raw --lines 40
@@ -138,9 +138,10 @@ What to do right away:
   harness stop NAME
   ```
 
-  The supervisor is designed to give up and park a harness in `failed` after
-  repeated failures, but current builds don't apply that limit. A broken harness
-  keeps retrying until you stop it.
+  The daemon stops on its own eventually: after more than 5 consecutive
+  failures (non-zero exits from runs shorter than 5 minutes) it parks the
+  harness in `failed` (`✖ failed` in `harness list`, an error in
+  `harness doctor`). Stopping it yourself saves those last attempts.
 
 - **Once it's fixed, clear the state:** `harness restart NAME`. That also clears
   a `failed` state.

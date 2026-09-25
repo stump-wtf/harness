@@ -5,6 +5,19 @@ sidebar_position: 3
 
 # Your first supervised agent
 
+:::tip Paste this to your agent
+
+```text
+Read https://stump-wtf.github.io/harness/llms.txt and
+https://stump-wtf.github.io/harness/guides/first-agent. Put my agent CLI under
+Harness supervision as that page describes, using the Claude Code
+authentication mode that fits this machine. Then prove it: `harness list`
+shows it running, and `harness attach NAME --ro` shows the agent itself, not a
+login or trust prompt.
+```
+
+:::
+
 A **harness** is one supervised process. The daemon starts it in its own
 pseudo-terminal, keeps its scrollback, restarts it according to a policy you
 choose, and lets any client attach to it as if you had launched it in that
@@ -257,15 +270,60 @@ For a metered agent — anything that bills per token or draws on a plan's quota
   fails, and starts again. `restart_delay = 30` or more caps that at about two
   attempts a minute even before crash-loop backoff kicks in.
 
-:::caution Watch for harnesses that never settle
+:::note A harness that never settles ends up `failed`
 
-The supervisor is designed to give up and park a harness in `failed` after
-repeated consecutive failures. Current builds do not apply that limit, so a
-harness that fails every time keeps retrying at its backoff interval
-indefinitely. Check `harness doctor` for `degraded` harnesses, and `harness stop`
-anything that is looping.
+A failing harness does not retry forever. Every non-zero exit from a run that
+lasted less than **5 minutes** counts as a consecutive failure; a clean exit, or
+a run that lasts 5 minutes, resets the count. After **more than 5** consecutive
+failures the daemon gives up and parks the harness in **`failed`**
+(`✖ failed` in `harness list`), however long its `restart_delay` is, so a slow
+failure loop stops too, not just a fast one.
+
+A `failed` harness stays down until you fix the cause and run:
+
+```sh
+harness restart NAME
+```
+
+`harness doctor` reports it as an error with that same hint, and
+`harness describe NAME` shows its last exit code and whether it was flapping.
+The latch lives in the running daemon: a daemon restart starts an `enabled`
+harness again, and a harness that is still broken works its way back to
+`failed`. To keep it down across restarts, `harness stop NAME`.
 
 :::
+
+## Run it only during working hours
+
+An always-on agent draws on your plan's usage around the clock, including the
+hours nobody is looking at what it does. `operating_hours` gives a resident
+harness weekly windows it may run in. Outside them the daemon holds it down, and
+it starts again when the next window opens:
+
+```toml
+[harness.claude-main]
+harness = "claude-code"
+workdir = "~/src/my-project"
+restart = "on-failure"
+restart_delay = 30
+enabled = true
+operating_hours = "TZ=America/New_York Mon-Fri 09:00-18:00"
+```
+
+- Closing is **graceful** by default: the agent finishes its current turn first,
+  for up to 15 minutes (`hours_shutdown_timeout`). Set
+  `hours_shutdown = "immediate"` to stop it at the close instead.
+- Outside hours, `harness list` shows it as `off-hours`, not `stopped`, and its
+  NEXT column says when it opens.
+- Hours never touch `enabled`. `harness stop` still stops it for good, and the
+  next window does not undo that.
+- Working late? `harness start claude-main` out of hours runs it under a
+  one-hour lease; `harness start claude-main --for 3h` asks for longer.
+
+Hours go in the global `harness.toml` only, and cannot be combined with
+`schedule`: a scheduled sweep is already on a clock. The grammar, every rule and
+the error messages are in
+[Configuration → Operating hours](/usage/configuration#operating-hours).
 
 ## Changing a running harness
 

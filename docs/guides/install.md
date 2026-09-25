@@ -5,6 +5,18 @@ sidebar_position: 1
 
 # Install
 
+:::tip Paste this to your agent
+
+```text
+Read https://stump-wtf.github.io/harness/llms.txt and
+https://stump-wtf.github.io/harness/guides/install. Install Harness on this
+machine with the method that page recommends for my OS, then run `harness
+doctor` and show me its output. Done means doctor reports the config and
+daemon checks as ok, not that the install command exited 0.
+```
+
+:::
+
 Harness is one Go binary, `harness`, that is both the daemon and the client.
 Pick one of the two methods below, then verify with `harness doctor`.
 
