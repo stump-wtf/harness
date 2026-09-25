@@ -115,11 +115,21 @@ func newLoopRig(t *testing.T, threshold int) *loopRig {
 
 // call writes one tool_call row (no text, no reasoning) and its result row,
 // twelve seconds after the last, and waits until the observer delivered it.
+//
+// The rows are written only once a scan has begun at the new clock. A scan
+// takes its `now` when it begins and attributes a row only if an open run
+// covers it, and an open run ends at that `now` plus runtrace.Slack (2s). A
+// scan that took `now` before this 12s jump and read the rows after it
+// counted them Unattributed and moved its cursor past them, so the call was
+// never delivered: CI's `seen=20 ... Delivered:20 Dropped:0 Unattributed:1`.
+// Scans run one at a time, so once LastScan reaches r.at, every scan that can
+// read these rows has a `now` at least that late.
 func (r *loopRig) call(t *testing.T, name string, input map[string]any) {
 	t.Helper()
 	r.n++
 	r.at = r.at.Add(12 * time.Second)
 	r.c.Set(r.at)
+	eventually(t, fmt.Sprintf("a scan at call %d's clock", r.n), func() bool { return !r.obs.Stats().LastScan.Before(r.at) })
 	id := fmt.Sprintf("call-%d", r.n)
 	rt.AppendCrushMessages(t, r.db, "sess-1",
 		rt.CrushMessage{Role: "assistant", At: r.at, Parts: rt.ToolCall(id, name, input)},
@@ -127,10 +137,9 @@ func (r *loopRig) call(t *testing.T, name string, input map[string]any) {
 		// calls do not.
 		rt.CrushMessage{Role: "tool", At: r.at, Parts: rt.ToolResult(id, fmt.Sprintf(`{"id":%d}`, 46000+r.n))},
 	)
-	// Not eventually(): this wait has been seen to time out intermittently in
-	// a full `go test ./...`, and the observer's stats are what tell a call
-	// the observer never read (Delivered short) from one it delivered and the
-	// guard's subscription dropped (Dropped non-zero).
+	// Not eventually(): on a timeout the observer's stats tell a call it never
+	// read or could not attribute (Delivered short, Unattributed non-zero) from
+	// one it delivered and the guard's subscription dropped (Dropped non-zero).
 	want := uint64(r.n)
 	deadline := time.Now().Add(10 * time.Second)
 	for r.guard.Seen() < want {
