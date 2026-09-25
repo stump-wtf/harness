@@ -58,14 +58,16 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Release notes are the commit subjects since the last tag. Docs, tests and
+# chores are left out whether or not they carry a scope: v0.6.0's notes listed
+# chore(deps), chore(mergetrain), docs(adr,spec) and test(supervisor) because
+# the patterns only matched the bare prefix.
 changelog:
   use: git
   sort: asc
   filters:
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+      - '^(docs|test|chore)(\([^)]*\))?!?:'
       - "^Merge pull request"
 
 gitea_urls:
