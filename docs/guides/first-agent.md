@@ -216,6 +216,38 @@ anything that is looping.
 
 :::
 
+## Run it only during working hours
+
+An always-on agent draws on your plan's usage around the clock, including the
+hours nobody is looking at what it does. `operating_hours` gives a resident
+harness weekly windows it may run in. Outside them the daemon holds it down, and
+it starts again when the next window opens:
+
+```toml
+[harness.claude-main]
+harness = "claude-code"
+workdir = "~/src/my-project"
+restart = "on-failure"
+restart_delay = 30
+enabled = true
+operating_hours = "TZ=America/New_York Mon-Fri 09:00-18:00"
+```
+
+- Closing is **graceful** by default: the agent finishes its current turn first,
+  for up to 15 minutes (`hours_shutdown_timeout`). Set
+  `hours_shutdown = "immediate"` to stop it at the close instead.
+- Outside hours, `harness list` shows it as `off-hours`, not `stopped`, and its
+  NEXT column says when it opens.
+- Hours never touch `enabled`. `harness stop` still stops it for good, and the
+  next window does not undo that.
+- Working late? `harness start claude-main` out of hours runs it under a
+  one-hour lease; `harness start claude-main --for 3h` asks for longer.
+
+Hours go in the global `harness.toml` only, and cannot be combined with
+`schedule`: a scheduled sweep is already on a clock. The grammar, every rule and
+the error messages are in
+[Configuration → Operating hours](/usage/configuration#operating-hours).
+
 ## Changing a running harness
 
 Edit `harness.toml` and save. The daemon reloads, but a **running** harness
