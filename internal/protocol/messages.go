@@ -77,11 +77,17 @@ const (
 	// event, and ignores Event, so `trigger --event` against one silently
 	// starts a run with no event; the client refuses the flag rather than
 	// letting that happen (see client.TriggerWithEvent).
-	// ProtoMinor 12 added the run ledger query (SPEC-0022 REQ-15): Names,
+	// ProtoMinor 12 added the command harness kind (ADR-0023 / SPEC-0017
+	// REQ-2, REQ-14, REQ-16): the "command" value of the harness enum, and
+	// Argv on ProjectHarness and HarnessInfo — additive only. A daemon older
+	// than 12 refuses a project_up or scratchpad definition naming "command"
+	// as an unknown harness kind, so the new field is never silently dropped
+	// into a harness that runs something else.
+	// ProtoMinor 13 added the run ledger query (SPEC-0022 REQ-15): Names,
 	// Outcomes, Triggers and BeforeSeq on ControlReq for the runs op, OldestSeq
 	// on RunsData, and the REQ-4 record fields on RunInfo — additive only. A
 	// request carrying only Name and Limit is answered as before.
-	ProtoMinor = 12
+	ProtoMinor = 13
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -226,10 +232,14 @@ type ControlReq struct {
 type ProjectHarness struct {
 	Name string `json:"name"`
 	// Harness is the harness-kind enum ("crush", "claude-code", "codex",
-	// "generic"); empty means the default, "crush". It selects the adapter
-	// and the executable (ADR-0011).
+	// "generic", "command"); required, and re-validated by the daemon. It
+	// selects the adapter and the executable (ADR-0011).
 	Harness string   `json:"harness,omitempty"`
 	Args    []string `json:"args,omitempty"`
+	// Argv is a "command" harness's whole process, argv[0] first, carried
+	// verbatim and re-validated by the daemon (SPEC-0017 REQ-2, REQ-14).
+	// Set only with Harness = "command", which takes no Args.
+	Argv []string `json:"argv,omitempty"`
 	// Prompt mirrors the schema's agent one-shot `prompt`: exactly one of
 	// harness/prompt defines the argv, and a prompt harness carries empty
 	// args — the daemon synthesizes its argv at spawn time (ADR-0011).
@@ -325,6 +335,10 @@ type HarnessInfo struct {
 	// nothing on a host where the agents all work in one tree (SPEC-0006 REQ
 	// "Run Correlation"; issue #330).
 	Args []string `json:"args,omitempty"`
+	// Argv is a "command" harness's configured argv, exactly as written and
+	// as exec'd: `describe` shows it so an operator can see what runs
+	// (SPEC-0017 REQ-16).
+	Argv []string `json:"argv,omitempty"`
 	// LastStarted / LastExitAt (RFC 3339) bound the harness's latest run, so a
 	// client can attribute a session to the harness whose run covers it, not
 	// merely to one sharing its workdir (SPEC-0006 REQ "Run Correlation";

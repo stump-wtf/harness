@@ -9,7 +9,9 @@ package mergetrain
 // pinned, and verifies — real tree ids first, then bytes. A PR-level failure
 // gets exactly one comment per head, which is the author's todo; a
 // verification failure halts the driver, because an untested tree may be on
-// the base branch and nothing after that can be trusted.
+// the base branch and nothing after that can be trusted. A cancelled context
+// is not a verification failure: a shutdown landing between the merge and its
+// verification reports the cancellation and stops, rather than halting.
 //
 // No code path here opens, closes or edits a pull request, or pushes to a PR's
 // branch: the Forge interface offers no way to (SPEC-0025 REQ-13).
@@ -299,6 +301,16 @@ func (d *Driver) merge(ctx context.Context, key attemptKey, pr PullRequest, res 
 	d.log.Info(event("merged"), append(kv, "merged", merged)...)
 
 	if err := d.verify(ctx, res, merged); err != nil {
+		// A cancelled context is not a verification failure. A clean stop that
+		// lands between the merge and its verification makes verify's reads
+		// fail with context.Canceled; treating that as a halt would stop the
+		// driver permanently for a shutdown, and tell the author their merge
+		// was unverified when the daemon simply went away. Report the
+		// cancellation and let Run return; the merge itself stands.
+		if ctx.Err() != nil {
+			d.log.Warn(event("shutting down"), append(kv, "merged", merged, "err", err)...)
+			return ctx.Err()
+		}
 		d.halted = fmt.Errorf("%w: pr #%d: %v", ErrHalted, pr.Number, err)
 		d.log.Error(event("halted"), append(kv, "merged", merged, "err", err)...)
 		d.fail(ctx, key, pr, CauseVerifyFailed, fmt.Sprintf(

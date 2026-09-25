@@ -20,6 +20,7 @@ package webhook
 // Reconciliation On Reload", REQ "Concurrency Safety".
 //
 // @joestump 09/23/2026 - Introduced with the SPEC-0014 webhook listener (#458).
+// @joestump 09/24/2026 - A route keeps its limits across a reload (#460).
 
 import (
 	"charm.land/log/v2"
@@ -36,6 +37,9 @@ type route struct {
 	// verifier authenticates deliveries. Never nil: a source that cannot be
 	// verified gets a refusing verifier (verify.go).
 	verifier Verifier
+	// limits is the route's de-duplication set and token bucket. Never nil,
+	// and shared with the previous table's route when inherit carried it.
+	limits *routeLimits
 }
 
 // table is an immutable route set.
@@ -76,7 +80,26 @@ func buildTable(cfg *core.Config, newVerifier NewVerifierFunc, logger *log.Logge
 			logger.Warn("webhook route refuses every delivery", "source", ref, "verify", string(src.Verify), "err", err.Error())
 			v = refusing{why: err}
 		}
-		t.routes[src.Name] = &route{src: src, ref: ref, verifier: v}
+		t.routes[src.Name] = &route{src: src, ref: ref, verifier: v, limits: newRouteLimits(src.RateLimit)}
 	}
 	return t
+}
+
+// inherit hands each route in t the limits of prev's route of the same name,
+// when its rate_limit is unchanged, so a reload neither refills a drained
+// bucket nor forgets the delivery IDs that fired. A changed rate_limit starts
+// fresh: a bucket sized for the old limit is meaningless under the new one.
+// A route absent from prev — new, or re-enabled — starts fresh as well.
+//
+// It mutates t, so it runs before t is published, never after.
+// Governing: SPEC-0014 REQ "Source Reconciliation On Reload".
+func (t *table) inherit(prev *table) {
+	if t == nil || prev == nil {
+		return
+	}
+	for name, rt := range t.routes {
+		if old := prev.routes[name]; old != nil && old.limits.rateLimit == rt.limits.rateLimit {
+			rt.limits = old.limits
+		}
+	}
 }

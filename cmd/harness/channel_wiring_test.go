@@ -74,7 +74,7 @@ func TestDaemonWiringFiresAHarnessFromAChannelDoorbell(t *testing.T) {
 		t.Fatalf("Restore: %v", err)
 	}
 
-	sources := startDaemonSources(mgr)
+	sources := startDaemonSources(mgr, nil)
 	t.Cleanup(sources.Close)
 
 	deadline := time.Now().Add(10 * time.Second)

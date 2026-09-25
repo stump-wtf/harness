@@ -18,6 +18,7 @@ func TestRegistryGet(t *testing.T) {
 		{"crush", false},
 		{"codex", false},
 		{"generic", false},
+		{"command", false},
 		{"nonexistent", true},
 	}
 
@@ -46,7 +47,7 @@ func TestRegistryGet(t *testing.T) {
 func TestRegistryNames(t *testing.T) {
 	r := NewRegistryWithDefaults()
 	names := r.Names()
-	want := []string{"claude-code", "crush", "codex", "generic"}
+	want := []string{"claude-code", "crush", "codex", "generic", "command"}
 	if len(names) != len(want) {
 		t.Fatalf("got %d names, want %d", len(names), len(want))
 	}
@@ -309,19 +310,20 @@ func TestCodexPromptCommand(t *testing.T) {
 	}
 }
 
-func TestGenericPromptCommandFallsBackToCrush(t *testing.T) {
+// Generic has no prompt mode. It used to delegate to Crush, which is how
+// `generic` + `prompt` silently ran an agent nobody configured. Whatever the
+// options, it must hand back nothing to exec. SPEC-0017 REQ "Generic Kind
+// Rejects Prompts".
+func TestGenericPromptCommandSynthesizesNothing(t *testing.T) {
 	a := &Generic{}
-	cmd, args := a.PromptCommand("do something", core.AgentOpts{Quiet: true})
-	// Generic has no native prompt mode; falls back to crush so prompt
-	// harnesses without an explicit agent key still work.
-	if cmd != "crush" {
-		t.Fatalf("cmd = %q, want crush fallback for generic", cmd)
-	}
-	if len(args) == 0 {
-		t.Fatal("expected non-empty args")
-	}
-	if args[len(args)-1] != "do something" {
-		t.Fatalf("last arg = %q, want prompt as final element", args[len(args)-1])
+	for _, opts := range []core.AgentOpts{
+		{},
+		{Quiet: true, AutoAccept: true, Model: "m", MaxTurns: 3},
+	} {
+		cmd, args := a.PromptCommand("do something", opts)
+		if cmd != "" || args != nil {
+			t.Fatalf("Generic.PromptCommand(%+v) = %q %q, want no argv (generic has no prompt synthesis)", opts, cmd, args)
+		}
 	}
 }
 
@@ -337,4 +339,40 @@ func slicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// Command owns its argv: it synthesizes no prompt argv, reports no native
+// trajectory, and Argv hands back the configured array with only argv[0]'s
+// relative-path resolution applied. SPEC-0017 REQ-2 "Command Harness Kind".
+func TestCommandAdapter(t *testing.T) {
+	a := &Command{}
+	if cmd, args := a.PromptCommand("do something", core.AgentOpts{Model: "m", AutoAccept: true}); cmd != "" || args != nil {
+		t.Errorf("Command.PromptCommand = %q %q, want no argv", cmd, args)
+	}
+	if a.Executable() != "" || a.TrajectoryDir("/w") != "" || a.TailAdapter() != nil {
+		t.Error("Command claims an executable or a native trajectory")
+	}
+	if _, ok := NewRegistry().Resolve(core.Harness{Adapter: "command"}).(ArgvOwner); !ok {
+		t.Fatal("the registry's command adapter is not an ArgvOwner, so spawn would never ask it for the argv")
+	}
+	for _, tc := range []struct {
+		name, argv0, workdir, want string
+	}{
+		{"bare name uses PATH", "report", "/w", "report"},
+		{"absolute is untouched", "/usr/bin/report", "/w", "/usr/bin/report"},
+		{"relative with separator joins workdir", "./bin/report", "/w", "/w/bin/report"},
+		{"nested relative joins workdir", "scripts/report", "/w", "/w/scripts/report"},
+		{"no workdir leaves it relative", "./bin/report", "", "./bin/report"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := core.Harness{Adapter: "command", Argv: []string{tc.argv0, "a b", "{workdir}"}}
+			cmd, args := a.Argv(h, tc.workdir)
+			if cmd != tc.want {
+				t.Errorf("cmd = %q, want %q", cmd, tc.want)
+			}
+			if !slicesEqual(args, []string{"a b", "{workdir}"}) {
+				t.Errorf("args = %q, want the configured argv[1:] verbatim", args)
+			}
+		})
+	}
 }

@@ -7,6 +7,7 @@ package supervisor
 // provenance). ADR-0017.
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,5 +158,28 @@ func TestScratchRunInvalidDefinition(t *testing.T) {
 	}
 	if got := snapshotNames(m); len(got) != 0 {
 		t.Errorf("invalid scratch runs registered something: %v", got)
+	}
+}
+
+// TestScratchRunRefusesGenericPrompt is SPEC-0017 REQ "Generic Kind Rejects
+// Prompts", scenario "The wire refuses it too", for the scratchpad door: a
+// `generic` definition carrying either prompt source fails with
+// ErrInvalidProjectDef naming the harness, and nothing is registered.
+func TestScratchRunRefusesGenericPrompt(t *testing.T) {
+	m := newTestManager(t, managerCfg())
+	for _, def := range []core.Harness{
+		{Adapter: "generic", Prompt: "triage the queue"},
+		{Adapter: "generic", PromptFile: "/tmp/prompt.md"},
+	} {
+		_, err := m.ScratchRun(def, "gen")
+		if !errors.Is(err, ErrInvalidProjectDef) {
+			t.Fatalf("ScratchRun(%+v) err = %v, want ErrInvalidProjectDef", def, err)
+		}
+		if !strings.Contains(err.Error(), `harness "gen"`) {
+			t.Errorf("error %q does not name the harness", err)
+		}
+	}
+	if got := snapshotNames(m); len(got) != 0 {
+		t.Errorf("a refused generic prompt registered something: %v", got)
 	}
 }

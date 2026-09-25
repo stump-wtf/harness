@@ -38,7 +38,7 @@ func TestResolvePromptReadsAtSpawn(t *testing.T) {
 		t.Errorf("resolvePrompt mutated its argument: %+v", h)
 	}
 
-	name, args := execArgvWithRegistry(got, "/home/x", adapter.NewRegistryWithDefaults())
+	name, args := mustExecArgvReg(t, got, "/home/x", adapter.NewRegistryWithDefaults())
 	if name != "claude" {
 		t.Errorf("exec = %q, want claude", name)
 	}

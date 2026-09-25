@@ -30,12 +30,19 @@ import (
 // Enabled is a pointer so we can tell "absent" (default false) from an explicit
 // value without ambiguity.
 type rawHarness struct {
-	Harness           string   `toml:"harness"`
-	Args              []string `toml:"args"`
-	Prompt            string   `toml:"prompt"`
-	PromptFile        string   `toml:"prompt_file"`
-	Model             string   `toml:"model"`
-	AutoAccept        bool     `toml:"auto_accept"`
+	Harness string   `toml:"harness"`
+	Args    []string `toml:"args"`
+	// Argv is a `command` harness's whole process (SPEC-0017 REQ-2), and is
+	// rejected on every other kind. A plain slice checked on presence
+	// (non-nil), so `argv = []` on a claude-code harness is still refused.
+	Argv       []string `toml:"argv"`
+	Prompt     string   `toml:"prompt"`
+	PromptFile string   `toml:"prompt_file"`
+	Model      string   `toml:"model"`
+	// AutoAccept is a pointer so a `command` harness can reject the key on
+	// presence (SPEC-0017 REQ-3): `auto_accept = false` there does nothing,
+	// which is still a mistake worth hearing about at load.
+	AutoAccept        *bool    `toml:"auto_accept"`
 	MaxTurns          *int     `toml:"max_turns"`
 	Quiet             *bool    `toml:"quiet"`
 	Workdir           string   `toml:"workdir"`
@@ -516,7 +523,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	// other error message would be a red herring.
 	if strings.TrimSpace(rh.RemovedCmd) != "" {
 		return newError(filename, line,
-			"harness %q: \"cmd\" was replaced by the \"harness\" enum — set harness = \"crush\"|\"claude-code\"|\"codex\" for an agent, or harness = \"generic\" with args = [\"-c\", %q] to run an arbitrary command",
+			"harness %q: \"cmd\" was replaced by the \"harness\" enum — set harness = \"crush\"|\"claude-code\"|\"codex\" for an agent, or harness = \"command\" with argv = [%q, …] to run an arbitrary program",
 			name, strings.TrimSpace(rh.RemovedCmd))
 	}
 	if strings.TrimSpace(rh.RemovedAgent) != "" {
@@ -538,17 +545,35 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	switch {
 	case rh.Harness == "":
 		return newError(filename, line,
-			"harness %q: missing required key \"harness\" (want one of: crush, claude-code, codex, generic — use \"generic\" with args = [\"-c\", \"…\"] for an arbitrary command)",
+			"harness %q: missing required key \"harness\" (want one of: crush, claude-code, codex, generic, command — use \"command\" with argv = [\"…\"] for an arbitrary program)",
 			name)
 	case adapter == "":
 		return newError(filename, line, "harness %q: \"harness\" must not be blank", name)
 	}
 	switch adapter {
-	case "crush", "claude-code", "codex", "generic":
+	case "crush", "claude-code", "codex", "generic", core.AdapterCommand:
 	default:
 		return newError(filename, line,
-			"harness %q: unknown harness kind %q (want one of: crush, claude-code, codex, generic)",
+			"harness %q: unknown harness kind %q (want one of: crush, claude-code, codex, generic, command)",
 			name, adapter)
+	}
+	// `generic` runs sh; it has no prompt synthesis. It used to borrow
+	// Crush's, so an operator whose CLI was not in the list wrote `generic` +
+	// `prompt` and got `crush run <prompt>`, or a crash loop naming a binary
+	// they never configured. Checked before either prompt key is validated or
+	// prompt_file is read: whatever those say, this harness cannot run them.
+	// Governing: ADR-0023, SPEC-0017 REQ "Generic Kind Rejects Prompts".
+	if adapter == "generic" {
+		for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}} {
+			if k.val != "" {
+				return newError(filename, line,
+					"harness %q: \"generic\" runs sh and has no prompt synthesis, so it takes no %q; use harness = \"crush\"|\"claude-code\"|\"codex\" for a prompt one-shot, or harness = \"command\" with argv to run another program without a shell",
+					name, k.key)
+			}
+		}
+	}
+	if err := checkCommandKeys(adapter, rh); err != nil {
+		return newError(filename, line, "harness %q: %v", name, err)
 	}
 	prompt := strings.TrimSpace(rh.Prompt)
 	switch {
@@ -636,7 +661,8 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	// "attended" — there is no third state worth distinguishing (unlike
 	// `enabled`, whose omitted default is context-dependent).
 	// Governing: issue #58 (add `auto_accept` field for unattended mode).
-	if rh.AutoAccept && !isAgent {
+	autoAccept := rh.AutoAccept != nil && *rh.AutoAccept
+	if autoAccept && !isAgent {
 		return newError(filename, line,
 			"harness %q: \"auto_accept\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes its tool's flag through its own args)", name)
 	}
@@ -981,7 +1007,8 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		Name:         name,
 		Adapter:      adapter,
 		Args:         rh.Args,
-		AutoAccept:   rh.AutoAccept,
+		Argv:         rh.Argv,
+		AutoAccept:   autoAccept,
 		MaxTurns:     maxTurns,
 		Model:        model,
 		Prompt:       prompt,
@@ -1455,4 +1482,57 @@ func lineOf(headers []tableHeader, want string) int {
 		}
 	}
 	return 0
+}
+
+// checkCommandKeys applies the `command` kind's key rules, before any rule
+// that assumes an adapter executable: `argv` belongs to `command` alone, and
+// `command` takes `argv` in place of `args` and none of the keys that fold
+// flags into a synthesized agent argv. Every refusal is on presence, not
+// value — a key that silently does nothing is a mistake the operator should
+// hear about at load.
+//
+// Prompts, `schedule` and `triggers` are refused on `command` for now: this
+// is the resident slice of SPEC-0017. A prompt needs a delivery path
+// (REQ-12) and a one-shot needs the run wiring REQ-3 describes; until they
+// exist, loading such a harness would either drop the instruction or run
+// the argv on a clock nobody asked to be ignored. The refusals name the gap
+// so the error reads as "not yet", not as "wrong".
+// Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-3
+// "Command Harness Modes And Exclusions".
+func checkCommandKeys(adapter string, rh rawHarness) error {
+	if adapter != core.AdapterCommand {
+		if rh.Argv != nil {
+			return fmt.Errorf("\"argv\" is only accepted on harness = \"command\" (a %q harness runs its adapter's executable; use \"args\")", adapter)
+		}
+		return nil
+	}
+	if rh.Args != nil {
+		return errors.New("\"args\" is not accepted on a command harness: put the whole command line in \"argv\" (argv[0] is the executable)")
+	}
+	if err := core.CheckCommandArgv(rh.Argv); err != nil {
+		return err
+	}
+	for _, k := range []struct {
+		key string
+		set bool
+	}{{"auto_accept", rh.AutoAccept != nil}, {"max_turns", rh.MaxTurns != nil}, {"quiet", rh.Quiet != nil}} {
+		if k.set {
+			return fmt.Errorf("%q is not accepted on a command harness: a command harness owns its argv, so put the tool's own flag there", k.key)
+		}
+	}
+	if rh.Model != "" {
+		return errors.New("\"model\" is unused: no argv element references {{model}}, so nothing would pass it to the program")
+	}
+	for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}} {
+		if k.val != "" {
+			return fmt.Errorf("%q is not supported on a command harness yet: nothing delivers a prompt to its argv; use harness = \"crush\"|\"claude-code\"|\"codex\" for a prompt one-shot", k.key)
+		}
+	}
+	switch {
+	case rh.Schedule != "":
+		return errors.New("\"schedule\" is not supported on a command harness yet: a command harness is resident only (use a prompt harness for a scheduled one-shot)")
+	case rh.Triggers != nil:
+		return errors.New("\"triggers\" is not supported on a command harness yet: a command harness is resident only (use a prompt harness for a triggered one-shot)")
+	}
+	return nil
 }
