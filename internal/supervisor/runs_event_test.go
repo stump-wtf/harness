@@ -353,11 +353,15 @@ func TestEventFilePrunedWithTheRun(t *testing.T) {
 		paths = append(paths, eventPath(m, "pr-review", recs[len(recs)-1].RunID))
 	}
 
-	waitFor(t, 5*time.Second, "history is pruned to keep_runs", func() bool {
-		return len(m.Runs("pr-review")) == h.KeepRuns
-	})
+	// keep_runs bounds the artifacts, not the records (SPEC-0022 REQ-12):
+	// every run stays in the ledger, and only the newest keep_runs keep
+	// their log and event file.
+	recs := m.Runs("pr-review")
+	if len(recs) != 4 {
+		t.Fatalf("records = %d, want all 4 kept in the ledger", len(recs))
+	}
 	kept := map[int]bool{}
-	for _, r := range m.Runs("pr-review") {
+	for _, r := range recs[len(recs)-h.KeepRuns:] {
 		kept[r.RunID] = true
 	}
 

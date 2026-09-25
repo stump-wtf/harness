@@ -1,8 +1,8 @@
 # Harness
 
 `systemctl` for your agents — a Go + Charmbracelet client-server TUI for
-supervising, attaching to, and hopping between long-running harnesses (agent
-CLIs, REPLs, watchers). Successor to `zsh-harnessd`. See `README.md`.
+supervising, attaching to, and hopping between long-running coding agents.
+Successor to `zsh-harnessd`. See `README.md`.
 
 - Origin of truth: https://gitea.stump.rocks/stump.wtf/harness (Gitea). GitHub
   (https://github.com/stump-wtf/harness) is a read-only push mirror — issues,
@@ -12,8 +12,12 @@ CLIs, REPLs, watchers). Successor to `zsh-harnessd`. See `README.md`.
   a bug or propose a change, open a GitHub issue
   (https://github.com/stump-wtf/harness/issues/new/choose) instead; see
   "Development" in `README.md`.
-- The daemon (`harness daemon`) is deliberately agnostic about what runs inside a
-  harness. Keep it that way; agent-awareness bolts on later as a detector.
+- Harness is bound to agent-trace (ADR-0033). It supervises only agents whose
+  adapter agent-trace can read, and every run is recorded as that agent's
+  normalized trace. It is not a general process manager: an unsupported agent
+  or an arbitrary command is a load error, never a silent fallback. Do not add
+  escape hatches for arbitrary processes; new agents get support in agent-trace
+  first, then an adapter here.
 - Visual direction lives in `docs/design/` — calm ops cockpit, state legibility
   over decoration, the "hop" between harnesses is the signature interaction.
 

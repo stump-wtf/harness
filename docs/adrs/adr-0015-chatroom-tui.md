@@ -1,160 +1,198 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-19
 decision-makers: [joestump]
 governs: [SPEC-0009]
 related: [ADR-0001, ADR-0003, ADR-0011]
 ---
 
-# ADR-0015: Unified Chatroom TUI for Multi-Harness Agent Output
-
-> **Not yet implemented.** The chatroom TUI mode described here is design-stage; the TUI today has only dashboard and attached modes. See harness issue #3.
+# ADR-0015: Unified chatroom TUI for multi-harness agent output
 
 ## Context and Problem Statement
 
-How can we provide a unified, real-time "chatroom" style read-only TUI within Harness that aggregates output from all agent harnesses (Claude Code, Codex, Crush, OpenCode, Pi) into a single stream where each harness appears as a distinct "user" (e.g., `@crush-worker`) with their tool calls, results, and user messages displayed as chat messages and activity feed entries?
+An operator running several agent harnesses at once (Claude Code, Codex, Crush,
+OpenCode, Pi) can attach to one at a time, but has no single place to watch what
+all of them are doing. How does Harness provide a real-time, read-only
+"chatroom" view that merges every agent's activity into one stream, where each
+agent appears as a distinct user, and its tool calls, results and user messages
+read as chat messages beside an activity feed?
 
-This TUI would be a new view/mode within the existing Harness TUI (which already uses bubbletea/charmbracelet), leveraging `agent-trace`'s `tail.Watcher` to consume live events from all 5 harness adapters.
+The Harness TUI is already built on Bubble Tea, and
+[agent-trace](https://github.com/stump-wtf/agent-trace)'s `tail` package already
+parses all five agents' native transcript formats into one normalized `Event`
+stream.
 
 ## Decision Drivers
 
-* **Unified observability**: Developers run multiple agent harnesses simultaneously and need a single pane of glass to monitor all activity within Harness
-* **Leverage existing Harness TUI**: Harness already uses bubbletea/bubbles — the chatroom should be a native view, not a separate binary
-* **Leverage agent-trace**: `agent-trace`'s `tail` package already parses all harness formats and emits normalized `Event` streams
-* **Harness identity**: Each agent harness should have a distinct visual identity (username/color) in the chatroom
-* **Read-only**: The chatroom is for monitoring only — no input/interaction with the agent harnesses
-* **Real-time updates**: Must reflect live activity as it happens across all harnesses
-* **Integration with Harness daemon**: Chatroom should be accessible via the existing Harness client/server architecture
+* **Unified observability.** One pane showing activity across every agent on
+  the machine.
+* **Reuse the Harness TUI.** It already uses Bubble Tea and Bubbles; the
+  chatroom should be a native view, not a separate program.
+* **Reuse agent-trace.** Its `tail` package already parses every supported
+  agent's format and emits normalized events.
+* **Agent identity.** Each agent needs a distinct name and color, and a session
+  that belongs to a known harness should carry that harness's name.
+* **Read-only.** The chatroom is for watching; it sends nothing to any agent.
+* **Real time.** Activity appears as it happens.
+* **Responsive from the first frame.** A machine with years of transcripts must
+  not freeze the TUI while the stream catches up.
 
 ## Considered Options
 
-* **Option 1: New chatroom view within Harness TUI (chosen)**
-  * Pros: Native integration, reuses Harness TUI framework, single binary, daemon-managed
-  * Cons: Adds complexity to Harness TUI model
-
-* **Option 2: Separate `harness chatroom` binary using agent-trace**
-  * Pros: Simpler initial implementation, independent deployment
-  * Cons: Separate binary to maintain, doesn't integrate with Harness daemon/views, duplicate TUI framework
-
-* **Option 3: Web-based dashboard served by Harness daemon**
-  * Pros: Rich UI, easier layout
-  * Cons: Not a TUI, requires browser, more complex deployment
-
-* **Option 4: Pipe agent-trace output to external log viewer (lnav, less +F)**
-  * Pros: Zero development
-  * Cons: No harness-aware formatting, no chatroom metaphor, no activity feed, not integrated
+* **Option 1 — A chatroom view within the Harness TUI.**
+* **Option 2 — A separate chatroom binary built on agent-trace.**
+* **Option 3 — A web dashboard served by the daemon.**
+* **Option 4 — Pipe agent-trace output to an external log viewer** (`lnav`,
+  `less +F`).
 
 ## Decision Outcome
 
-Chosen option: **Option 1 — New chatroom view within Harness TUI**, because it provides native integration with the existing Harness TUI framework (bubbletea), single binary deployment, daemon-managed lifecycle, and leverages both Harness's TUI investment and agent-trace's parsing pipeline.
+Chosen option: **Option 1 — A chatroom view within the Harness TUI**, because it
+reuses the TUI's framework, theme and keybinding registry, ships in the one
+`harness` binary, and puts agent-trace's parsing behind a view operators already
+know how to reach.
+
+### The view
+
+The chatroom is a third TUI mode beside the dashboard and attached modes,
+entered with `C` from the dashboard through the SPEC-0001 keybinding registry.
+It shows a chronological stream of every agent's activity: each tool call as a
+chat line (time, agent name, action badge, tool, summary), tool results and
+file targets as follow-up lines, and user messages as chat messages, beside an
+activity-feed panel. Keys scroll, follow or pause the stream, toggle individual
+agents on and off, show all agents again, and return to the dashboard. The view
+is read-only.
+
+### One watcher, in the TUI process
+
+The TUI runs **one** agent-trace `tail.Watcher` for its whole lifetime, started
+when it connects to the daemon. That watcher feeds both the chatroom and the
+dashboard's live-activity field, and entering the chatroom starts nothing: it
+shows the stream already in progress. The watcher's first scan emits the entire
+history of every session it discovers (measured at about 76,000 events in 43
+seconds against a 1.2 GB Claude Code store), so events older than a 15-minute
+history window are dropped on arrival and the rest are delivered in batches, so a
+burst costs one frame rather than one frame per event.
+
+The watcher runs in the TUI, not the daemon. The daemon's contribution is
+attribution data: each harness's adapter, workdir and latest run window.
+
+### Identity
+
+Every session shows under its **tool identity** (`@claude-code`, `@codex`,
+`@crush`, `@opencode`, `@pi`), which is true of any session and claims nothing.
+A session that the SPEC-0006 run-correlation rule attributes to **exactly one**
+harness (same adapter, same workdir, a run whose window covers the session's
+start) shows as `@<harness name>` instead. Attribution under-reports
+rather than misattributes: a session another harness could have written keeps
+its tool identity. Colors come from the `internal/tui/theme` palette, so the
+chatroom degrades through the same color-profile path as the rest of the TUI.
 
 ### Consequences
 
-* Good, because: Native integration with Harness TUI — consistent keybindings, theming, layout
-* Good, because: Single binary (`harness`) — chatroom is just another view mode
-* Good, because: Daemon-managed — chatroom sessions can be supervised, attached, hopped like other harnesses
-* Good, because: Reuses agent-trace `tail.Watcher` + `classify` pipeline for event normalization
-* Bad, because: Adds complexity to Harness TUI model (new view, event buffer, rendering)
-* Bad, because: Harness TUI must now depend on agent-trace (already a dependency via go.mod)
+* Good, because the chatroom shares the TUI's keybindings, theme and layout.
+* Good, because it ships in the single `harness` binary as another view mode.
+* Good, because agent-trace's `tail` and `classify` packages do all transcript
+  parsing and action classification; Harness renders.
+* Good, because one watcher serves both the chatroom and the dashboard, so
+  transcripts are scanned once per TUI, not once per view entry.
+* Good, because naming a session after its harness only when attribution is
+  unambiguous means the chatroom never tells the operator a wrong harness did
+  something.
+* Bad, because it adds complexity to the TUI model: a third mode, an event
+  buffer, and a two-panel layout.
+* Bad, because the TUI depends on agent-trace and reads transcripts directly, so
+  it sees the transcripts on the host the TUI process runs on.
+* Bad, because backfill is bounded by dropping history: events older than the
+  window never reach the chatroom.
 
 ### Confirmation
 
-* Harness TUI launches with a new "chatroom" mode reachable from the Dashboard, its entry key declared through the Bubbles `key.Binding` registry SPEC-0001 REQ "Keybinding Registry" already mandates
-* Chatroom view connects to `tail.Watcher` with `DefaultAdapters()` on enter
-* Events from all 5 harnesses appear in unified chronological stream
-* Each harness shows as distinct username (e.g., `@crush-worker`, `@claude-code`)
-* Tool calls render as chat messages with action/type badges
-* Tool results render as follow-up messages with status indicators
-* User messages (marks) render as chat messages
-* Activity feed panel shows summary timeline
-* Keyboard controls: scroll, pause/resume, filter by harness, quit view
-* Exiting chatroom view cleanly stops watcher and returns to Harness main view
+SPEC-0009 states the requirements as testable scenarios, exercised by the
+tests in `internal/tui` and `internal/tui/chatroom`:
+
+* The chatroom is reachable from the dashboard through the keybinding registry
+  and returns to the dashboard on exit.
+* Events from every supported agent appear in one chronological stream.
+* Tool calls, results and user messages render as chat lines with action badges
+  and status indicators; the activity panel summarizes the timeline.
+* A session attributable to exactly one harness shows under that harness's
+  name, and a label is recomputed when attribution changes.
+* Scroll, follow and pause, per-agent filtering, and resize behave as
+  specified, including on monochrome terminals.
 
 ## Pros and Cons of the Options
 
-### Option 1: New chatroom view within Harness TUI
+### Option 1 — A chatroom view within the Harness TUI
 
-* Good, because: Native integration with existing Harness TUI framework
-* Good, because: Single binary, daemon-managed lifecycle
-* Good, because: Consistent theming, keybindings, layout with rest of Harness
-* Good, because: Can leverage Harness's existing viewport, status bar, help components
-* Neutral, because: Requires extending Harness TUI model with new view type
-* Bad, because: Adds complexity to Harness TUI (event buffer, dual viewport, rendering)
+* Good, because it integrates with the existing TUI framework and hop
+  mechanism.
+* Good, because it is one binary.
+* Good, because theming, keybindings and layout stay consistent.
+* Good, because it reuses the TUI's viewport, status bar and help components.
+* Neutral, because the TUI model gains a new view type.
+* Bad, because it adds complexity to the TUI (event buffer, two panels,
+  rendering).
 
-### Option 2: Separate `harness chatroom` binary
+### Option 2 — A separate chatroom binary
 
-* Good, because: Simpler initial implementation
-* Good, because: Independent deployment and iteration
-* Bad, because: Separate binary to maintain and distribute
-* Bad, because: Doesn't integrate with Harness daemon/views/hop mechanism
-* Bad, because: Duplicate TUI framework code (bubbletea setup, theming, keybindings)
+* Good, because the first version is simpler.
+* Good, because it can be built and released independently.
+* Bad, because it is another binary to maintain and distribute.
+* Bad, because it does not integrate with the daemon's views or the hop.
+* Bad, because it duplicates TUI setup, theming and keybindings.
 
-### Option 3: Web-based dashboard
+### Option 3 — A web dashboard served by the daemon
 
-* Good, because: Rich UI capabilities
-* Bad, because: Not a TUI — requires browser
-* Bad, because: More complex deployment (HTTP server, static assets)
-* Bad, because: Doesn't meet "TUI" requirement
+* Good, because a browser allows richer layout.
+* Bad, because it is not a TUI and needs a browser.
+* Bad, because the daemon would grow an HTTP server and static assets.
 
-### Option 4: Pipe to external log viewer
+### Option 4 — Pipe to an external log viewer
 
-* Good, because: Zero development
-* Bad, because: No harness-aware formatting or chatroom metaphor
-* Bad, because: No activity feed panel
-* Bad, because: Not integrated with Harness
+* Good, because it needs no development.
+* Bad, because it has no agent-aware formatting or chatroom metaphor.
+* Bad, because there is no activity feed.
+* Bad, because it is not integrated with Harness.
 
 ## Architecture Diagram
 
 ```mermaid
-graph TD
-    subgraph "Agent Harnesses"
-        CC["Claude Code<br/>~/.claude/projects/"]
-        CX["Codex<br/>~/.codex/sessions/"]
-        CR["Crush<br/>~/.local/share/crush/"]
-        OC["OpenCode<br/>~/.opencode/"]
-        PI["Pi<br/>~/.pi/agent/sessions/"]
+flowchart TD
+    subgraph transcripts["agent transcripts on this host"]
+        CC["Claude Code<br/>~/.claude/projects/"]:::store
+        CX["Codex<br/>~/.codex/sessions/"]:::store
+        CR["Crush<br/>~/.local/share/crush/"]:::store
+        OC["OpenCode"]:::store
+        PI["Pi<br/>~/.pi/agent/sessions/"]:::store
     end
 
-    subgraph "agent-trace (library)"
-        AD["Adapters<br/>5 implementations"]
-        LW["ListSessions"]
-        PS["Parse / ParseSince"]
-        WT["tail.Watcher<br/>Event channel"]
+    subgraph tui["harness TUI process"]
+        WT["agent-trace tail.Watcher<br/>one per TUI, started on connect"]:::client
+        FLT["drop events older than 15 min,<br/>deliver in batches"]:::client
+        CHAT["chatroom mode<br/>chat + activity panels"]:::client
+        DASH["dashboard<br/>live activity field"]:::client
+        ATTR["attribution<br/>(SPEC-0006 run correlation)"]:::client
     end
 
-    subgraph "Harness TUI (bubbletea)"
-        MAIN["Mode Machine<br/>Dashboard / Attached / Chatroom"]
-        CHAT["Chatroom mode<br/>Model + View"]
-        EM["Event Merger<br/>Chronological sort"]
-        VP["Viewport<br/>Chat + Activity panels"]
-        KB["Keybinding registry<br/>Scroll, filter, pause"]
-        DAEMON["Harness Daemon<br/>Supervision"]
-    end
+    D["harness daemon<br/>adapters, workdirs, run windows"]:::daemon
 
-    CC --> AD
-    CX --> AD
-    CR --> AD
-    OC --> AD
-    PI --> AD
-    AD --> LW
-    AD --> PS
-    LW --> WT
-    PS --> WT
-    WT -.->|go.mod dep| CHAT
-    CHAT --> EM
-    EM --> VP
-    KB --> CHAT
-    MAIN -->|view switch| CHAT
-    DAEMON -->|supervise| MAIN
+    CC & CX & CR & OC & PI --> WT
+    WT --> FLT
+    FLT --> CHAT
+    FLT --> DASH
+    D -->|"list"| ATTR
+    ATTR -->|"@harness name or @tool"| CHAT
 ```
 
 ## More Information
 
-* Related to SPEC-0009 which formalizes the requirements for the chatroom TUI view within Harness
-* Leverages existing `tail.Watcher`, `tail.Adapter`, `tail.Event`, `classify.Event`, `classify.Mark` types from agent-trace
-* New chatroom code will live under `internal/tui/` within Harness; the exact package layout is deferred to implementation, since `internal/tui` is a flat package today with no `views/` tree
-* Uses Harness's existing bubbletea setup, theming (lipgloss), and viewport components
-* Harness usernames: `@claude-code`, `@codex`, `@crush-worker`, `@opencode`, `@pi`
-  * *(Amended: `@crush-worker` named one particular harness but labelled every crush session on the machine. Tool identities are now `@claude-code`, `@codex`, `@crush`, `@opencode`, `@pi`, and a session SPEC-0006 REQ "Run Correlation" attributes to exactly one harness shows as `@<harness name>` — see SPEC-0009 REQ "Harness Identity Display".)*
-* Colors drawn from the existing `internal/tui/theme` palette (Accent, Mint, Amber, Cyan, Pink) so the chatroom degrades through the same `colorprofile` path as the rest of the TUI
-* Integrates with Harness daemon for supervision/lifecycle management
+* **Governs SPEC-0009** — the chatroom view's requirements.
+* **Related ADR-0001** — the Charm stack the view is built on.
+* **Related ADR-0003** — the attached mode the chatroom sits beside.
+* **Related ADR-0011** — the adapters whose transcripts agent-trace reads, and
+  SPEC-0006's run correlation that names a session's harness.
+* The chatroom uses agent-trace's `tail.Watcher`, `tail.Event`,
+  `classify.Event` and `classify.Mark` types. Its code lives in
+  `internal/tui/chatroom`, with the shared watcher and attribution in
+  `internal/tui`.

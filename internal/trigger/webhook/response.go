@@ -48,12 +48,13 @@ const (
 	errPayloadTooLarge  = "payload_too_large"
 	errUnavailable      = "unavailable"
 	errBadRequest       = "bad_request"
+	errRateLimited      = "rate_limited"
 )
 
 // errorBodies holds each error body pre-rendered.
 var errorBodies = func() map[string][]byte {
 	out := map[string][]byte{}
-	for _, code := range []string{errUnauthorized, errNotFound, errMethodNotAllowed, errPayloadTooLarge, errUnavailable, errBadRequest} {
+	for _, code := range []string{errUnauthorized, errNotFound, errMethodNotAllowed, errPayloadTooLarge, errUnavailable, errBadRequest, errRateLimited} {
 		b, _ := json.Marshal(map[string]string{"error": code})
 		out[code] = append(b, '\n')
 	}
@@ -119,6 +120,18 @@ func ignoredBody(name string) []byte {
 		Webhook  string `json:"webhook"`
 		Decision string `json:"decision"`
 	}{name, "ignored"})
+	return append(b, '\n')
+}
+
+// duplicateBody renders the 202 for a redelivery of an ID that already fired.
+// eventID is the event_id that firing reported, so the sender can tie the two
+// together.
+func duplicateBody(name, eventID string) []byte {
+	b, _ := json.Marshal(struct {
+		Webhook  string `json:"webhook"`
+		EventID  string `json:"event_id"`
+		Decision string `json:"decision"`
+	}{name, eventID, "duplicate"})
 	return append(b, '\n')
 }
 

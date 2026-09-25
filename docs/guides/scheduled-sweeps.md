@@ -147,8 +147,8 @@ keep_runs = 48         # default 20
   - `skip` records a `skipped` entry and does nothing.
   - `queue` runs once the current run ends, holding at most one queued run.
   - `replace` stops the current run and starts fresh.
-- **`keep_runs`** bounds history. Older run records and their log files are
-  pruned together.
+- **`keep_runs`** bounds per-run log files. Older logs are deleted; their run
+  records stay in the run ledger, marked `log_pruned`.
 
 All three, like `catch_up`, require `schedule`. A scheduled harness cannot also
 be `enabled = true` or belong to a profile. The schedule is what starts it.

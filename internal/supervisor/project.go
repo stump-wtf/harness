@@ -442,12 +442,19 @@ func validateHarnessDef(src string, h core.Harness) error {
 	// the file: an empty kind here would otherwise reach Resolve and pick
 	// an agent for a caller that never named one.
 	case h.Adapter == "":
-		return fmt.Errorf("%s: harness %q: %w: missing harness kind (want one of: crush, claude-code, codex, generic)",
+		return fmt.Errorf("%s: harness %q: %w: missing harness kind (want one of: crush, claude-code, codex, generic, command)",
 			src, h.Name, ErrInvalidProjectDef)
 	case h.Adapter != "crush" && h.Adapter != "claude-code" &&
-		h.Adapter != "codex" && h.Adapter != "generic":
+		h.Adapter != "codex" && h.Adapter != "generic" && h.Adapter != core.AdapterCommand:
 		return fmt.Errorf("%s: harness %q: %w: unknown harness kind %q",
 			src, h.Name, ErrInvalidProjectDef, h.Adapter)
+	// The same refusal the config parsers make: `generic` runs sh and has no
+	// prompt synthesis, so a prompt on it would otherwise reach spawn, which
+	// refuses it there (ErrGenericPrompt) — after it had been registered.
+	// Governing: ADR-0023, SPEC-0017 REQ "Generic Kind Rejects Prompts".
+	case h.Adapter == "generic" && (h.Prompt != "" || h.PromptFile != ""):
+		return fmt.Errorf("%s: harness %q: %w: %q runs sh and has no prompt synthesis, so it takes no prompt; use harness = %q|%q|%q for a prompt one-shot, or harness = %q with argv to run another program without a shell",
+			src, h.Name, ErrInvalidProjectDef, "generic", "crush", "claude-code", "codex", core.AdapterCommand)
 	case strings.TrimSpace(h.Prompt) != "" && len(h.Args) > 0:
 		return fmt.Errorf("%s: harness %q: %w: prompt and args are mutually exclusive",
 			src, h.Name, ErrInvalidProjectDef)
@@ -461,7 +468,40 @@ func validateHarnessDef(src string, h core.Harness) error {
 		return fmt.Errorf("%s: harness %q: %w: negative restart delay",
 			src, h.Name, ErrInvalidProjectDef)
 	}
+	if err := checkCommandDef(h); err != nil {
+		return fmt.Errorf("%s: harness %q: %w: %v", src, h.Name, ErrInvalidProjectDef, err)
+	}
 	return nil
+}
+
+// checkCommandDef is the wire's copy of the config parser's `command` key
+// rules (config.checkCommandKeys): the wire is a second front door into the
+// registry, so a hand-built project_up or scratchpad definition must not
+// register a command harness the file parser would refuse. It works on the
+// decoded core.Harness, so it tests values where the parser tests presence;
+// `quiet` is left out because the wire defaults it to true for every
+// definition, and it is inert on a command harness, whose argv spawn never
+// synthesizes. schedule and triggers do not travel on the wire at all.
+// Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-3, REQ-14
+// "Project And Wire Front Doors".
+func checkCommandDef(h core.Harness) error {
+	if h.Adapter != core.AdapterCommand {
+		if h.Argv != nil {
+			return fmt.Errorf("argv is only accepted on harness = %q (a %q harness runs its adapter's executable; use args)", core.AdapterCommand, h.Adapter)
+		}
+		return nil
+	}
+	switch {
+	case h.Args != nil:
+		return errors.New("args is not accepted on a command harness: put the whole command line in argv (argv[0] is the executable)")
+	case h.Prompt != "" || h.PromptFile != "":
+		return errors.New("a command harness takes no prompt yet: nothing delivers a prompt to its argv")
+	case h.Model != "":
+		return errors.New("model is unused: no argv element references {{model}}")
+	case h.AutoAccept || h.MaxTurns != 0:
+		return errors.New("auto_accept and max_turns are not accepted on a command harness: it owns its argv")
+	}
+	return core.CheckCommandArgv(h.Argv)
 }
 
 // harnessDefEqual reports whether two definitions are identical field-for-
@@ -470,6 +510,7 @@ func harnessDefEqual(a, b core.Harness) bool {
 	return a.Name == b.Name &&
 		a.Adapter == b.Adapter &&
 		slices.Equal(a.Args, b.Args) &&
+		slices.Equal(a.Argv, b.Argv) &&
 		a.Prompt == b.Prompt &&
 		a.PromptFile == b.PromptFile &&
 		a.Model == b.Model &&
