@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-19
 decision-makers: [joestump]
 extends: [ADR-0009, ADR-0011]
@@ -25,10 +25,10 @@ needs no file, no project, and no ceremony — and that cleans up after itself?
 * **Zero ceremony.** Creating a scratchpad must not touch any file: no
   `harness.toml` edit, no project file, no `--name` required. `harness run
   claude opus-5` is the whole interface.
-* **Genuinely ephemeral.** Unlike projects (durable until `down`/`rm` since the
-  2026-08-19 ADR-0009 amendment), a scratchpad is throwaway by construction: it
-  is never persisted to state.json and vanishes on daemon restart. The two
-  concepts must not blur again — that ambiguity is what created this ADR.
+* **Genuinely ephemeral.** Unlike projects, which persist until `down` or `rm`
+  (ADR-0009), a scratchpad is throwaway by construction: it is never persisted
+  to `state.json` and vanishes on daemon restart. The two concepts must not
+  blur.
 * **Names are the daemon's problem.** The user should never have to invent a
   unique name; the daemon mints one (`claude-opus-5-x4yx`-shaped: a slug of the
   invocation plus a short random suffix) and the client prints it.
@@ -36,8 +36,8 @@ needs no file, no project, and no ceremony — and that cleans up after itself?
   scrollback, logs — everything a configured harness has. `harness attach` on a
   scratchpad is the tmux-attach replacement.
 * **Explicit teardown only.** A scratchpad runs until `harness rm NAME`
-  (or daemon exit). Normal exit of the process leaves it registered (exit code
-  inspectable) until rm — sessions don't silently disappear under you.
+  (or daemon exit). A normal exit of the process leaves it registered, exit
+  code inspectable, until rm: sessions do not silently disappear.
 * **Daemon stays the supervisor** (ADR-0002/0005): the client verb pushes a
   definition over the control plane; there is no second execution engine.
 
@@ -58,8 +58,8 @@ needs no file, no project, and no ceremony — and that cleans up after itself?
 Chosen option: **Option 2 — a dedicated `scratch` provenance class**, because
 it keeps the three lifetimes honestly distinct — global (config-owned, durable),
 project (repo-owned, durable-until-down/rm), scratch (operator-owned, ephemeral)
-— while reusing the supervisor, the `remove` op from ADR-0009's amendment, and
-the attach/log planes wholesale. Option 1 was rejected because a synthetic
+— while reusing the supervisor, the `remove` op (ADR-0009), and the attach and
+log planes wholesale. Option 1 was rejected because a synthetic
 project would inherit project persistence semantics (or need special-casing to
 avoid them) and would show up in `harness down`/`ps` project scoping; Option 3
 because it smuggles a temp-file lifecycle into a gesture that must touch no
@@ -76,14 +76,12 @@ so `harness run claude opus-5` and `harness run htop` both work), the rest are
 its args. The daemon mints the name: `<slug>-<suffix>`, where the slug is the
 sanitized invocation (e.g. `claude-opus-5`) and the suffix is 4 random base36
 characters, retried on collision with any registered name. The reply carries
-the name; the client prints it, then attaches to it — **resolved 2026-08-22**:
-`harness run` is `tmux new-session`, not `tmux new-session -d`, so the default
-completes the gesture rather than leaving a second `harness attach` step
-required. `--detach` opts out (the `-d` equivalent), as do `--json` and
-piped/redirected stdio at either end, since none of those have a terminal to
-attach to.
-`--name` overrides the slug for people who care; uniqueness is still enforced
-by the suffix.
+the name; the client prints it, then attaches to it. `harness run` is
+`tmux new-session`, not `tmux new-session -d`: the default completes the
+gesture rather than leaving a second `harness attach` step. `--detach` opts
+out (the `-d` equivalent), as do `--json` and piped or redirected stdio at
+either end, since none of those has a terminal to attach to. `--name`
+overrides the slug; uniqueness is still enforced by the suffix.
 
 ### Lifecycle
 
@@ -95,17 +93,17 @@ project name `scratch` is reserved (refused at `project_up`), so the
 sentinel can never collide with a real project. Teardown is the
 existing `remove` op (`harness rm`), which accepts any provenance-tagged
 (registered) harness. A scratchpad whose process exits stays registered until
-rm (state `exited`); the default restart policy for a scratchpad is `no`,
+rm, with its exit state; the default restart policy for a scratchpad is `no`,
 matching session semantics rather than service semantics.
 
 ### Consequences
 
 * Good, because `screen`/`tmux`/`shpool`'s exact use case — "a terminal thing
-  for a while, then gone" — becomes `harness run` (which drops you straight
-  in, per the 2026-08-22 auto-attach resolution above) + rm, inside the one
+  for a while, then gone" — becomes `harness run` (which drops the operator
+  straight in) plus `harness rm`, inside the one
   supervisor that already owns PTYs and scrollback. `--detach` is there for
   the rarer "start it and walk away" case.
-* Good, because the durable/ephemeral split is now structural: persistence is
+* Good, because the durable/ephemeral split is structural: persistence is
   keyed on provenance, and `scratch` provenance is excluded from Save by
   construction — no flag-day, no per-callsite discipline.
 * Good, because `rm`, attach, logs, and the TUI list needed no new code paths —
@@ -114,7 +112,7 @@ matching session semantics rather than service semantics.
   that is the semantic — and the same failure mode as the tmux server).
 * Neutral, because `run`'s first-positional dispatch (kind vs. generic command)
   is a heuristic; an explicit `--kind` flag disambiguates the rare collision
-  (e.g. a command literally named `crush` you did not mean as a kind).
+  (a command literally named `crush` that was not meant as a kind).
 
 ### Confirmation
 
@@ -132,9 +130,9 @@ matching session semantics rather than service semantics.
 ### Option 1 — Synthetic "scratch" project
 
 * Good, because project_up/project_down/remove are reused verbatim.
-* Bad, because projects are durable since ADR-0009's amendment; a scratch
-  project would either persist (wrong) or need special-casing in Save/Restore
-  that amounts to implementing Option 2 anyway.
+* Bad, because projects persist (ADR-0009), so a scratch project would either
+  persist (wrong) or need special-casing in Save and Restore that amounts to
+  implementing Option 2 anyway.
 * Bad, because `harness down`/`ps` project scoping and the `<project>/`
   namespace would surface an operator-internal bookkeeping project to the user.
 
@@ -156,7 +154,13 @@ matching session semantics rather than service semantics.
 
 ## More Information
 
-* ADR-0009 (projects — the durable sibling; its 2026-08-19 amendment is why
-  scratchpads must NOT be projects).
-* ADR-0011 (the harness-kind enum and argv synthesis `run` reuses).
-* SPEC-0011 (requirements and scenarios).
+* **Extends ADR-0009** — projects are the durable sibling; because project
+  registrations persist, scratchpads must not be projects.
+* **Extends ADR-0011** — the harness-kind enum and argv synthesis `run` reuses.
+* **Related ADR-0002** — `run` is a thin-client gesture over the control
+  plane.
+* **Related ADR-0005** — scratchpads are supervised like any harness, with a
+  `no` restart default.
+* **Related ADR-0007** — the no-persistence rule is keyed on provenance in
+  `state.json`.
+* **Governs SPEC-0011** — requirements and scenarios.
