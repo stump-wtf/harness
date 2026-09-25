@@ -187,7 +187,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 	if ph.Quiet != nil {
 		quiet = *ph.Quiet
 	}
-	return core.Harness{
+	h := core.Harness{
 		// Only an opt-out crosses the wire (SPEC-0015 REQ-2): a project
 		// harness is never opted in by its own definition.
 		ExportTelemetry: projectTelemetryOptOut(ph.ExportTelemetry),
@@ -202,7 +202,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		MaxTurns:        ph.MaxTurns,
 		Quiet:           quiet,
 		Workdir:         ph.Workdir,
-		EnvFile:         ph.EnvFile,
+		EnvFiles:        ph.EnvFiles,
 		RestartDelay:    time.Duration(ph.RestartDelayMs) * time.Millisecond,
 		Restart:         restart,
 		Backend:         backend,
@@ -210,4 +210,10 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		Enabled:         ph.Enabled,
 		TmuxSocket:      ph.TmuxSocket,
 	}
+	// An older client sends only the legacy single-file string (SPEC-0018
+	// REQ-12); read it so the definition keeps its env file.
+	if h.EnvFiles == nil && ph.EnvFile != "" {
+		h.EnvFiles = []string{ph.EnvFile}
+	}
+	return h
 }

@@ -38,7 +38,7 @@ func TestParseZshHarnessdExample(t *testing.T) {
 		Adapter:      "crush",
 		Args:         []string{"--yolo", "--data-dir", "{workdir}", "--channels", "server:signal"},
 		Workdir:      "~/.local/share/crush-signal-channel",
-		EnvFile:      "~/.config/vault/secrets-static.env",
+		EnvFiles:     []string{"~/.config/vault/secrets-static.env"},
 		RestartDelay: 5 * time.Second,
 		Restart:      core.RestartAlways, // defaulted, not present in the file
 		Backend:      core.BackendNative, // defaulted, not present in the file

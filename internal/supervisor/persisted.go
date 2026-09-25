@@ -79,19 +79,24 @@ type persistedProjectHarness struct {
 	Argv   []string `json:"argv,omitempty"`
 	Prompt string   `json:"prompt,omitempty"`
 	// PromptFile is the PATH, never the file's contents (ADR-0018).
-	PromptFile     string `json:"prompt_file,omitempty"`
-	Model          string `json:"model,omitempty"`
-	AutoAccept     bool   `json:"auto_accept,omitempty"`
-	MaxTurns       int    `json:"max_turns,omitempty"`
-	Quiet          *bool  `json:"quiet,omitempty"`
-	Workdir        string `json:"workdir,omitempty"`
-	EnvFile        string `json:"env_file,omitempty"`
-	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
-	Restart        string `json:"restart,omitempty"`
-	Backend        string `json:"backend,omitempty"`
-	Description    string `json:"description,omitempty"`
-	Enabled        bool   `json:"enabled,omitempty"`
-	TmuxSocket     string `json:"tmux_socket,omitempty"`
+	PromptFile string `json:"prompt_file,omitempty"`
+	Model      string `json:"model,omitempty"`
+	AutoAccept bool   `json:"auto_accept,omitempty"`
+	MaxTurns   int    `json:"max_turns,omitempty"`
+	Quiet      *bool  `json:"quiet,omitempty"`
+	Workdir    string `json:"workdir,omitempty"`
+	// EnvFile is the legacy single-file form, kept so a state.json written by
+	// an older daemon still loads (SPEC-0018 REQ-12). New writes carry the
+	// list in EnvFiles, and a single file ALSO round-trips through EnvFile
+	// exactly as before, so a downgrade (or an old reader) loses nothing.
+	EnvFile        string   `json:"env_file,omitempty"`
+	EnvFiles       []string `json:"env_files,omitempty"`
+	RestartDelayMs int64    `json:"restart_delay_ms,omitempty"`
+	Restart        string   `json:"restart,omitempty"`
+	Backend        string   `json:"backend,omitempty"`
+	Description    string   `json:"description,omitempty"`
+	Enabled        bool     `json:"enabled,omitempty"`
+	TmuxSocket     string   `json:"tmux_socket,omitempty"`
 	// ExportTelemetry is a project's telemetry opt-out, kept so a daemon
 	// restart does not quietly re-include the harness (SPEC-0015 REQ-2).
 	ExportTelemetry *bool `json:"export_telemetry,omitempty"`
@@ -119,7 +124,8 @@ func toPersistedProjectHarness(h core.Harness) persistedProjectHarness {
 		MaxTurns:        h.MaxTurns,
 		Quiet:           quiet,
 		Workdir:         h.Workdir,
-		EnvFile:         h.EnvFile,
+		EnvFiles:        h.EnvFiles,
+		EnvFile:         singleEnvFile(h.EnvFiles),
 		RestartDelayMs:  h.RestartDelay.Milliseconds(),
 		Restart:         string(h.Restart),
 		Backend:         string(h.Backend),
@@ -149,7 +155,7 @@ func (p persistedProjectHarness) toCore() core.Harness {
 	if p.Quiet != nil {
 		quiet = *p.Quiet
 	}
-	return core.Harness{
+	h := core.Harness{
 		Name:            p.Name,
 		Adapter:         p.Harness,
 		Args:            p.Args,
@@ -161,7 +167,7 @@ func (p persistedProjectHarness) toCore() core.Harness {
 		MaxTurns:        p.MaxTurns,
 		Quiet:           quiet,
 		Workdir:         p.Workdir,
-		EnvFile:         p.EnvFile,
+		EnvFiles:        p.EnvFiles,
 		RestartDelay:    time.Duration(p.RestartDelayMs) * time.Millisecond,
 		Restart:         restart,
 		Backend:         backend,
@@ -170,6 +176,23 @@ func (p persistedProjectHarness) toCore() core.Harness {
 		TmuxSocket:      p.TmuxSocket,
 		ExportTelemetry: p.ExportTelemetry,
 	}
+	// A state.json written before the list form carries only the legacy
+	// string field (SPEC-0018 REQ-12); read it so an old state restores.
+	if h.EnvFiles == nil && p.EnvFile != "" {
+		h.EnvFiles = []string{p.EnvFile}
+	}
+	return h
+}
+
+// singleEnvFile mirrors a list back into the legacy string field when it
+// holds exactly one path, so a single-file env_file round-trips state.json
+// byte-compatibly (SPEC-0018 REQ-12). Lists of zero or many write nothing
+// there.
+func singleEnvFile(files []string) string {
+	if len(files) == 1 {
+		return files[0]
+	}
+	return ""
 }
 
 // persistedHarness is one harness's durable runtime state (ADR-0007). No config

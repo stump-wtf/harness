@@ -236,9 +236,12 @@ type Harness struct {
 	MaxTurns int
 	// Workdir is the process working directory (may contain a leading ~).
 	Workdir string
-	// EnvFile is a file of KEY=VALUE pairs sourced before launch (ADR-0008;
-	// secrets stay here, out of the config).
-	EnvFile string
+	// EnvFiles are files of KEY=VALUE pairs sourced before launch, in order
+	// (ADR-0008; secrets stay here, out of the config). A later file wins a
+	// key collision, so a shared claude.env can sit under a per-persona file
+	// (SPEC-0018 REQ-12). A missing file is tolerated; nil means the key is
+	// absent — an explicitly empty list is a parse error, never stored.
+	EnvFiles []string
 	// RestartDelay is the base delay between a crash and a respawn.
 	RestartDelay time.Duration
 	// Restart controls whether the harness is automatically restarted after it

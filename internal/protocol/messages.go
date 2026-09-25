@@ -83,7 +83,14 @@ const (
 	// than 12 refuses a project_up or scratchpad definition naming "command"
 	// as an unknown harness kind, so the new field is never silently dropped
 	// into a harness that runs something else.
-	ProtoMinor = 12
+	//
+	// ProtoMinor 13 added EnvFiles on ProjectHarness (SPEC-0018 REQ-12): the
+	// ordered list of env files a harness sources, a later file winning a key
+	// collision — additive only. The legacy single-file EnvFile is still sent
+	// whenever the list holds exactly one path, so an older peer loses
+	// nothing; a multi-file list is the one case an old peer cannot carry,
+	// and it reads the first file only.
+	ProtoMinor = 13
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -255,10 +262,16 @@ type ProjectHarness struct {
 	// PromptFile mirrors the schema's `prompt_file`: the PATH to the file
 	// holding the instruction, never its contents (ADR-0018). Clients show
 	// and round-trip the path; the daemon reads the file at spawn.
-	PromptFile     string `json:"prompt_file,omitempty"`
-	Workdir        string `json:"workdir,omitempty"`
-	EnvFile        string `json:"env_file,omitempty"`
-	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
+	PromptFile string `json:"prompt_file,omitempty"`
+	Workdir    string `json:"workdir,omitempty"`
+	// EnvFile is the legacy single-file form: a peer older than the list
+	// form (SPEC-0018 REQ-12) reads only this, so a single file is always
+	// mirrored here. EnvFiles carries the full ordered list; a reader that
+	// finds it empty falls back to EnvFile. Additive and omitempty, so no
+	// peer broke (ProtoMinor 13).
+	EnvFile        string   `json:"env_file,omitempty"`
+	EnvFiles       []string `json:"env_files,omitempty"`
+	RestartDelayMs int64    `json:"restart_delay_ms,omitempty"`
 	// Restart mirrors the schema's `restart` policy (core.RestartPolicy);
 	// empty means the always-restart default, matching an omitted key.
 	Restart     string `json:"restart,omitempty"`

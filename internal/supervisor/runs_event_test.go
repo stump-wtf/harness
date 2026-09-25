@@ -231,7 +231,7 @@ func TestRunEnvOverridesEnvFile(t *testing.T) {
 		[]byte("HARNESS_RUN_ID=999\nHARNESS_RUN_TRIGGER=bogus\nHARNESS_RUN_SOURCE=webhook.evil\nHARNESS_EVENT_FILE=/etc/passwd\nKEEP=mine\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h := core.Harness{Name: "x", EnvFile: envFile}
+	h := core.Harness{Name: "x", EnvFiles: []string{envFile}}
 	got, err := buildEnv(h, RunEnv{RunID: 7, Trigger: TriggerWebhook, Source: "webhook.gh", EventFile: "/tmp/7.event.json"})
 	if err != nil {
 		t.Fatal(err)
@@ -302,7 +302,7 @@ func TestRunEnvUnsetsWhatTheRunDoesNotHave(t *testing.T) {
 
 	// A scheduled run: no source and no event, so both names are ABSENT —
 	// not the env_file's value and not the daemon's.
-	got, err := buildEnv(core.Harness{Name: "x", EnvFile: envFile}, RunEnv{RunID: 3, Trigger: TriggerSchedule})
+	got, err := buildEnv(core.Harness{Name: "x", EnvFiles: []string{envFile}}, RunEnv{RunID: 3, Trigger: TriggerSchedule})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestRunEnvUnsetsWhatTheRunDoesNotHave(t *testing.T) {
 
 	// A resident harness: no run context at all. The daemon's inherited run
 	// context must not leak into it; its own env_file still stands.
-	got, err = buildEnv(core.Harness{Name: "x", EnvFile: envFile}, RunEnv{})
+	got, err = buildEnv(core.Harness{Name: "x", EnvFiles: []string{envFile}}, RunEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}

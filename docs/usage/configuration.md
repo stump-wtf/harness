@@ -31,7 +31,7 @@ enabled = false
 | `args` | argument list appended after the adapter's executable. Not accepted on `command`, which takes `argv` instead |
 | `argv` | `command` only: the whole process, `argv[0]` first, exec'd **without a shell**. See [The `command` kind](#the-command-kind) |
 | `workdir` | working directory (**required** for most commands) |
-| `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config) |
+| `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config). Also accepts a **list** sourced in order — `env_file = ["claude.env", "reviewer.env"]` — where a later file wins a key collision, so a shared subscription token can sit under a per-persona file; an empty list is a config error, and a missing file stays tolerated |
 | `description` | free-text shown in the dashboard |
 | `enabled` | autostart on daemon boot / after a daemon restart (`true`) |
 | `restart` | restart policy on exit — see [Restart policy](#restart-policy) |

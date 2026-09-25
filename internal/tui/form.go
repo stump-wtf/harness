@@ -103,8 +103,12 @@ type HarnessForm struct {
 	// argvErr is why the argv input did not parse (toForm), reported by
 	// Validate. Unlike args, a malformed argv is not silently dropped: saving
 	// would then write a command harness with no argv at all.
-	argvErr      error
-	Workdir      string
+	argvErr error
+	Workdir string
+	// EnvFile is the form's single-line encoding of the harness's env_file
+	// LIST (SPEC-0018 REQ-12): paths comma-separated, in order. A single
+	// path — the historical form — round-trips byte-identically, since the
+	// writer emits a string whenever the list holds one path.
 	EnvFile      string
 	RestartDelay int    // seconds
 	Restart      string // core.RestartPolicy; empty = the parse default
@@ -506,8 +510,18 @@ func (f HarnessForm) TOML() string {
 	if f.Workdir != "" {
 		fmt.Fprintf(&b, "workdir = %s\n", strconv.Quote(f.Workdir))
 	}
-	if f.EnvFile != "" {
-		fmt.Fprintf(&b, "env_file = %s\n", strconv.Quote(f.EnvFile))
+	// One path writes the historical string form; several write the list
+	// (SPEC-0018 REQ-12). The field is comma-separated, parsed in TOML().
+	if paths := splitEnvFileInput(f.EnvFile); len(paths) > 0 {
+		if len(paths) == 1 {
+			fmt.Fprintf(&b, "env_file = %s\n", strconv.Quote(paths[0]))
+		} else {
+			parts := make([]string, len(paths))
+			for i, p := range paths {
+				parts[i] = strconv.Quote(p)
+			}
+			fmt.Fprintf(&b, "env_file = [%s]\n", strings.Join(parts, ", "))
+		}
 	}
 	if f.RestartDelay > 0 {
 		fmt.Fprintf(&b, "restart_delay = %d\n", f.RestartDelay)
@@ -683,7 +697,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.args = shellQuoteJoin(h.Args)
 	fi.argv = formatArgvInput(h.Argv)
 	fi.workdir = h.Workdir
-	fi.envFile = h.EnvFile
+	fi.envFile = strings.Join(h.EnvFiles, ", ")
 	if h.RestartDelay > 0 {
 		fi.delay = strconv.Itoa(int(h.RestartDelay / time.Second))
 	}
@@ -797,6 +811,21 @@ func (fi formInputs) toForm() HarnessForm {
 //
 // @joestump-agent 08/23/2026 - Review fix; derive the separator set from the
 // splitter instead of restating it.
+// splitEnvFileInput parses the form's single-line env_file field into the
+// ordered path list (SPEC-0018 REQ-12): comma-separated, surrounding spaces
+// trimmed, empties dropped. A path containing a literal comma is not
+// representable in the single-line input — the same class of limitation as
+// the args input, and rarer.
+func splitEnvFileInput(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func needsShellQuote(a string) bool {
 	return strings.ContainsAny(a, "\"'\\") ||
 		strings.IndexFunc(a, unicode.IsSpace) >= 0

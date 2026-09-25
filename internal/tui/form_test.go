@@ -36,7 +36,7 @@ func TestHarnessFormRoundTrip(t *testing.T) {
 	}
 
 	body := AppendHarness([]byte("[harness.existing]\nharness = \"generic\"\n"), f)
-	cfg, err := config.Parse(body, "harness.toml")
+	cfg, err := config.Parse([]byte(body), "harness.toml")
 	if err != nil {
 		t.Fatalf("config.Parse rejected form TOML: %v\n---\n%s", err, body)
 	}
@@ -146,7 +146,7 @@ func TestEditPromptHarnessRoundTrip(t *testing.T) {
 		t.Fatalf("prompt key lost on save:\n%s", body)
 	}
 
-	cfg, err := config.Parse(body, "harness.toml")
+	cfg, err := config.Parse([]byte(body), "harness.toml")
 	if err != nil {
 		t.Fatalf("edited config did not parse: %v\n%s", err, body)
 	}
@@ -239,7 +239,7 @@ func TestEditModelHarnessRoundTrip(t *testing.T) {
 		t.Fatalf("model key lost on save:\n%s", body)
 	}
 
-	cfg, err := config.Parse(body, "harness.toml")
+	cfg, err := config.Parse([]byte(body), "harness.toml")
 	if err != nil {
 		t.Fatalf("edited config did not parse: %v\n%s", err, body)
 	}
@@ -326,7 +326,7 @@ func TestEditAutoAcceptHarnessRoundTrip(t *testing.T) {
 		t.Fatalf("auto_accept key lost on save:\n%s", body)
 	}
 
-	cfg, err := config.Parse(body, "harness.toml")
+	cfg, err := config.Parse([]byte(body), "harness.toml")
 	if err != nil {
 		t.Fatalf("edited config did not parse: %v\n%s", err, body)
 	}
@@ -531,7 +531,7 @@ func TestEditScheduledHarnessRoundTrip(t *testing.T) {
 	if !strings.Contains(string(body), `schedule = "0 */6 * * *"`) {
 		t.Fatalf("schedule key lost on save (the cron job would silently stop firing):\n%s", body)
 	}
-	cfg, err := config.Parse(body, "harness.toml")
+	cfg, err := config.Parse([]byte(body), "harness.toml")
 	if err != nil {
 		t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
 	}
@@ -598,7 +598,7 @@ func TestEditPreservesOmittedFields(t *testing.T) {
 	body := []byte(removeHarnessTOML(original, form.Name))
 	body = AppendHarness(body, form)
 
-	cfg, err := config.Parse(body, "harness.toml")
+	cfg, err := config.Parse([]byte(body), "harness.toml")
 	if err != nil {
 		t.Fatalf("edited config did not parse: %v\n%s", err, body)
 	}
@@ -612,8 +612,8 @@ func TestEditPreservesOmittedFields(t *testing.T) {
 	if h.Workdir != "~/.local/share/reduit" {
 		t.Errorf("workdir wiped by edit: %q", h.Workdir)
 	}
-	if h.EnvFile != "~/.config/vault/secrets.env" {
-		t.Errorf("env_file wiped by edit: %q", h.EnvFile)
+	if h.EnvFiles[0] != "~/.config/vault/secrets.env" {
+		t.Errorf("env_file wiped by edit: %q", h.EnvFiles[0])
 	}
 	if h.RestartDelay.Seconds() != 5 {
 		t.Errorf("restart_delay wiped by edit: %v", h.RestartDelay)
@@ -784,7 +784,7 @@ func TestEditCommandHarnessDescriptionOnly(t *testing.T) {
 	if !strings.Contains(string(body), argvLine+"\n") {
 		t.Errorf("rewritten table does not carry the argv line verbatim:\nwant %s\n---\n%s", argvLine, body)
 	}
-	after, err := config.Parse(body, "harness.toml")
+	after, err := config.Parse([]byte(body), "harness.toml")
 	if err != nil {
 		t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
 	}
@@ -890,7 +890,7 @@ func TestEditTmuxSocketHarnessRoundTrip(t *testing.T) {
 	if !strings.Contains(string(body), `tmux_socket = "/tmp/harness-shared.sock"`) {
 		t.Fatalf("tmux_socket key lost on save (the harness would fall back to the default socket):\n%s", body)
 	}
-	cfg, err := config.Parse(body, "harness.toml")
+	cfg, err := config.Parse([]byte(body), "harness.toml")
 	if err != nil {
 		t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
 	}
@@ -937,7 +937,7 @@ func TestTOMLKeepsTmuxSocketOnNativeBackend(t *testing.T) {
 // is carried implicitly by the header the rewrite emits.
 var harnessFormFields = []string{
 	"Name", "Adapter", "Args", "Argv", "Prompt", "PromptFile", "Model", "AutoAccept",
-	"Quiet", "MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart",
+	"Quiet", "MaxTurns", "Workdir", "EnvFiles", "RestartDelay", "Restart",
 	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule", "CatchUp",
 	"Timeout", "OnOverlap", "KeepRuns", "HarvestTrajectory", "MCPAllow",
 	"OperatingHours", "HoursShutdown", "HoursShutdownTimeout",
@@ -1148,7 +1148,7 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				t.Fatalf("unchanged edit failed validation: %v", err)
 			}
 			body := AppendHarness([]byte(removeHarnessTOML(original, name)), form)
-			after, err := config.Parse(body, "harness.toml")
+			after, err := config.Parse([]byte(body), "harness.toml")
 			if err != nil {
 				t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
 			}
@@ -1194,7 +1194,7 @@ func TestEditPreservesDenyAllMCPAllow(t *testing.T) {
 		t.Fatalf("edit failed validation: %v", err)
 	}
 	body := AppendHarness([]byte(removeHarnessTOML(original, "locked")), form)
-	cfg, err := config.Parse(body, "harness.toml")
+	cfg, err := config.Parse([]byte(body), "harness.toml")
 	if err != nil {
 		t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
 	}
@@ -1260,7 +1260,7 @@ func TestEditPreservesArgsContainingWhitespace(t *testing.T) {
 	}
 	form := editInputsFor(path, protocol.HarnessInfo{Name: "repl"}).toForm()
 	body := AppendHarness([]byte(removeHarnessTOML(original, "repl")), form)
-	cfg, err := config.Parse(body, "harness.toml")
+	cfg, err := config.Parse([]byte(body), "harness.toml")
 	if err != nil {
 		t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
 	}
@@ -1339,5 +1339,29 @@ func TestShellQuoteJoinCannotCarryAnEmptyArg(t *testing.T) {
 	}
 	if want := []string{"--empty"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q — if the empty arg now survives, see the note above", got, want)
+	}
+}
+
+// Governing: SPEC-0018 REQ-12. The form's single-line env_file field encodes
+// the list comma-separated; one path writes the historical string form, two
+// write a TOML list, and both re-parse.
+func TestFormEnvFileListRoundTrip(t *testing.T) {
+	one := HarnessForm{Name: "x", Harness: "crush", Workdir: "/tmp", EnvFile: "/a/claude.env"}
+	body := one.TOML()
+	if !strings.Contains(body, `env_file = "/a/claude.env"`) {
+		t.Errorf("single path must write the string form, got:\n%s", body)
+	}
+	two := HarnessForm{Name: "x", Harness: "crush", Workdir: "/tmp", EnvFile: "/a/claude.env, /a/reviewer.env"}
+	body = two.TOML()
+	if !strings.Contains(body, `env_file = ["/a/claude.env", "/a/reviewer.env"]`) {
+		t.Errorf("two paths must write the list form, got:\n%s", body)
+	}
+	cfg, err := config.Parse([]byte(body), "harness.toml")
+	if err != nil {
+		t.Fatalf("list form did not parse: %v", err)
+	}
+	h := cfg.Harnesses["x"]
+	if len(h.EnvFiles) != 2 {
+		t.Errorf("parsed EnvFiles = %v, want two paths", h.EnvFiles)
 	}
 }

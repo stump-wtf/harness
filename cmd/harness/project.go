@@ -248,16 +248,21 @@ func wireHarnesses(proj *config.Project) []protocol.ProjectHarness {
 	for _, name := range proj.Config.HarnessOrder {
 		h := proj.Config.Harnesses[name]
 		out = append(out, protocol.ProjectHarness{
-			Name:           name,
-			Harness:        h.Adapter,
-			Args:           h.Args,
-			Argv:           h.Argv,
-			Prompt:         h.Prompt,
-			PromptFile:     h.PromptFile,
-			Model:          h.Model,
-			AutoAccept:     h.AutoAccept,
-			Workdir:        h.Workdir,
-			EnvFile:        h.EnvFile,
+			Name:       name,
+			Harness:    h.Adapter,
+			Args:       h.Args,
+			Argv:       h.Argv,
+			Prompt:     h.Prompt,
+			PromptFile: h.PromptFile,
+			Model:      h.Model,
+			AutoAccept: h.AutoAccept,
+			Workdir:    h.Workdir,
+			EnvFiles:   h.EnvFiles,
+			// A daemon older than the list form (SPEC-0018 REQ-12) reads
+			// only EnvFile; mirror a single file there so the definition
+			// keeps its env. A multi-file list against an old daemon loses
+			// files 2+ on that daemon only.
+			EnvFile:        singleEnvFile(h.EnvFiles),
 			RestartDelayMs: h.RestartDelay.Milliseconds(),
 			Restart:        string(h.Restart),
 			Backend:        string(h.Backend),
@@ -270,4 +275,14 @@ func wireHarnesses(proj *config.Project) []protocol.ProjectHarness {
 		})
 	}
 	return out
+}
+
+// singleEnvFile is the legacy single-file view of an env_file list
+// (SPEC-0018 REQ-12): exactly one path renders as the string form, anything
+// else as empty (the list field carries the truth).
+func singleEnvFile(files []string) string {
+	if len(files) == 1 {
+		return files[0]
+	}
+	return ""
 }

@@ -50,6 +50,9 @@ args = ["--remote-control", "--dangerously-skip-permissions"]
 workdir = "~/src/my-project"
 description = "long-running agent in ~/src/my-project"
 enabled = false
+# env_file accepts a string or a list sourced in order; a later file wins a
+# key collision, so a shared subscription token sits under a per-persona file.
+# env_file = ["~/.config/harness/env/claude.env", "~/.config/harness/env/my-agent.env"]
 
 # An agent one-shot: give the harness a prompt instead of args and the
 # daemon synthesizes the agent invocation at spawn time from the harness's

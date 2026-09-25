@@ -90,6 +90,22 @@ func parseEnvFile(path string) ([]string, error) {
 	return out, nil
 }
 
+// parseEnvFiles reads each env file in order into a slice of "KEY=VALUE"
+// strings, a later file winning a key collision (SPEC-0018 REQ-12: a shared
+// claude.env sits under a per-persona file, and the persona's value wins).
+// A missing path is not an error, the same as the single-file form ever was.
+func parseEnvFiles(paths []string) ([]string, error) {
+	var out []string
+	for _, path := range paths {
+		kvs, err := parseEnvFile(path)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, kvs...)
+	}
+	return out, nil
+}
+
 // DiscoveryEnv returns the values h's process sees for keys — its env_file
 // layered over the daemon's own environment, the same composition buildEnv
 // gives the child — and nothing else. It exists so trajectory discovery can
@@ -106,7 +122,7 @@ func DiscoveryEnv(h core.Harness, keys []string) (map[string]string, error) {
 			out[k] = v
 		}
 	}
-	extra, err := parseEnvFile(h.EnvFile)
+	extra, err := parseEnvFiles(h.EnvFiles)
 	for _, kv := range extra {
 		k, v, _ := strings.Cut(kv, "=")
 		for _, want := range keys {
@@ -212,7 +228,7 @@ func (r RunEnv) vars() []string {
 // sane terminal defaults — a color-capable TERM and COLORTERM=truecolor —
 // for any key neither the daemon's environment nor the env_file already set.
 func buildEnv(h core.Harness, run RunEnv) ([]string, error) {
-	extra, err := parseEnvFile(h.EnvFile)
+	extra, err := parseEnvFiles(h.EnvFiles)
 	if err != nil {
 		return nil, err
 	}

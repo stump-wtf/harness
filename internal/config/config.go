@@ -42,24 +42,27 @@ type rawHarness struct {
 	// AutoAccept is a pointer so a `command` harness can reject the key on
 	// presence (SPEC-0017 REQ-3): `auto_accept = false` there does nothing,
 	// which is still a mistake worth hearing about at load.
-	AutoAccept        *bool    `toml:"auto_accept"`
-	MaxTurns          *int     `toml:"max_turns"`
-	Quiet             *bool    `toml:"quiet"`
-	Workdir           string   `toml:"workdir"`
-	EnvFile           string   `toml:"env_file"`
-	RestartDelay      int      `toml:"restart_delay"`
-	Restart           string   `toml:"restart"`
-	Backend           string   `toml:"backend"`
-	Description       string   `toml:"description"`
-	Enabled           *bool    `toml:"enabled"`
-	TmuxSocket        string   `toml:"tmux_socket"`
-	Schedule          string   `toml:"schedule"`
-	CatchUp           *bool    `toml:"catch_up"`
-	Timeout           *string  `toml:"timeout"`
-	OnOverlap         *string  `toml:"on_overlap"`
-	KeepRuns          *int     `toml:"keep_runs"`
-	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
-	MCPAllow          []string `toml:"mcp_allow"`
+	AutoAccept *bool  `toml:"auto_accept"`
+	MaxTurns   *int   `toml:"max_turns"`
+	Quiet      *bool  `toml:"quiet"`
+	Workdir    string `toml:"workdir"`
+	// EnvFile decodes `env_file` as a string or a non-empty list of strings
+	// (SPEC-0018 REQ-12). The located empty-list error fires in
+	// registerHarness, where the harness name is known.
+	EnvFile           envFileValue `toml:"env_file"`
+	RestartDelay      int          `toml:"restart_delay"`
+	Restart           string       `toml:"restart"`
+	Backend           string       `toml:"backend"`
+	Description       string       `toml:"description"`
+	Enabled           *bool        `toml:"enabled"`
+	TmuxSocket        string       `toml:"tmux_socket"`
+	Schedule          string       `toml:"schedule"`
+	CatchUp           *bool        `toml:"catch_up"`
+	Timeout           *string      `toml:"timeout"`
+	OnOverlap         *string      `toml:"on_overlap"`
+	KeepRuns          *int         `toml:"keep_runs"`
+	HarvestTrajectory *bool        `toml:"harvest_trajectory"`
+	MCPAllow          []string     `toml:"mcp_allow"`
 	// ExportTelemetry is the per-harness telemetry opt-in; nil follows
 	// [telemetry] export_all (SPEC-0015 REQ-1).
 	ExportTelemetry *bool `toml:"export_telemetry"`
@@ -92,6 +95,32 @@ type rawHarness struct {
 	// Delete-not-deprecate still owes the user a loud failure.
 	RemovedCmd   string `toml:"cmd"`
 	RemovedAgent string `toml:"agent"`
+}
+
+// envFileValue decodes `env_file` as a string (the historical form, byte for
+// byte) or a non-empty list of strings (SPEC-0018 REQ-12). Only the SHAPE is
+// checked here; the empty-list error is raised in registerHarness, where the
+// harness name and source location are known and the message can name them.
+type envFileValue []string
+
+func (e *envFileValue) UnmarshalTOML(v any) error {
+	switch t := v.(type) {
+	case string:
+		*e = envFileValue{t}
+	case []any:
+		out := make(envFileValue, 0, len(t))
+		for i, item := range t {
+			s, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("env_file: element %d is not a string", i)
+			}
+			out = append(out, s)
+		}
+		*e = out
+	default:
+		return errors.New(`env_file must be a string or a list of strings`)
+	}
+	return nil
 }
 
 // rawProfile mirrors a [profile.*] TOML table before validation.
@@ -514,6 +543,16 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		return newError(filename, line,
 			"harness %q: \"agent\" was renamed to \"harness\" — use harness = %q",
 			name, strings.TrimSpace(rh.RemovedAgent))
+	}
+
+	// `env_file = []` names no file and can only be a mistake — most likely a
+	// merge that dropped the entries (SPEC-0018 REQ-12). A single file or a
+	// non-empty list is fine; a MISSING file stays tolerated at spawn, the
+	// same as it has always been for the string form.
+	if rh.EnvFile != nil && len(rh.EnvFile) == 0 {
+		return newError(filename, line,
+			"harness %q: \"env_file\" must not be empty (name a file, list files, or remove the key)",
+			name)
 	}
 
 	// The `harness` enum key selects the adapter (and, for a long-running
@@ -999,7 +1038,6 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		PromptFile:   promptFilePath,
 		Quiet:        quiet,
 		Workdir:      resolve(rh.Workdir),
-		EnvFile:      resolve(rh.EnvFile),
 		RestartDelay: time.Duration(rh.RestartDelay) * time.Second,
 		Restart:      restartPolicy,
 		Backend:      backend,
@@ -1017,6 +1055,10 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		HoursShutdown:        shutdownMode,
 		HoursShutdownTimeout: shutdownTimeout,
 		Triggers:             triggers,
+	}
+	h.EnvFiles = make([]string, 0, len(rh.EnvFile))
+	for _, p := range rh.EnvFile {
+		h.EnvFiles = append(h.EnvFiles, resolve(p))
 	}
 	if isAgent {
 		// Args stay EMPTY for a prompt harness (spawn-time synthesis,
