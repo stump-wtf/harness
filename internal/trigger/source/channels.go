@@ -399,22 +399,37 @@ func (m *Manager) catchUp(ref string) {
 		if !ok || !h.CatchUp {
 			continue
 		}
-		m.catchUpOne(name, ref)
+		m.catchUpOne(name, ref, outsideHours(cfg, name, m.now()))
 	}
 }
 
 // catchUpOne starts one harness's catch-up run, recovering a panic for the
 // reason fireOne does.
-func (m *Manager) catchUpOne(name, ref string) {
+//
+// A reconnect catch-up is a firing like any other, so a harness whose
+// operating hours are closed records it skipped (outside_hours) instead —
+// which in turn owes it the one catch_up run its hours opening will start
+// (SPEC-0014 REQ "Operating Hours On Triggered Harnesses"). Without this a
+// daemon booted on a Saturday would run a gated harness at once.
+func (m *Manager) catchUpOne(name, ref string, outside bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			m.log.Error("catch-up firing panicked", "harness", name, "source", ref, "panic", fmt.Sprint(r))
 		}
 	}()
-	if _, ok := m.runner.StartRun(name, supervisor.RunRequest{
+	req := supervisor.RunRequest{
 		Trigger: supervisor.TriggerCatchUp,
 		Source:  ref,
-	}); !ok {
+	}
+	if outside {
+		if _, ok := m.runner.SkipRun(name, req, supervisor.ReasonOutsideHours); !ok {
+			m.log.Warn("catch-up fired for a harness the daemon does not know", "harness", name, "source", ref)
+			return
+		}
+		m.log.Info("catch-up skipped: outside operating hours", "harness", name, "source", ref)
+		return
+	}
+	if _, ok := m.runner.StartRun(name, req); !ok {
 		m.log.Warn("catch-up fired for a harness the daemon does not know", "harness", name, "source", ref)
 		return
 	}
@@ -454,12 +469,15 @@ type sessionHandler struct {
 // reason: whoever can ring the doorbell should not be able to decide what the
 // agent does about it.
 func (h *sessionHandler) Notification(content string, meta map[string]string) {
+	// ReceivedAt comes from the manager's clock, not a wall-clock read: the
+	// operating-hours gate judges the firing at this instant, and the daemon
+	// wires that clock to the scheduler's seam so both gates read one clock.
 	ev := &trigger.Envelope{
 		Version:    trigger.EnvelopeVersion,
 		Kind:       trigger.KindChannel,
 		Source:     h.ref,
 		EventID:    newEventID(),
-		ReceivedAt: time.Now().UTC(),
+		ReceivedAt: h.m.now().UTC(),
 		Channel:    &trigger.ChannelEvent{Content: content, Meta: meta},
 	}
 	h.m.noteEvent(h.ref)

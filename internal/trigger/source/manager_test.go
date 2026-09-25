@@ -41,6 +41,8 @@ type fakeRunner struct {
 type call struct {
 	name string
 	req  supervisor.RunRequest
+	// skip is the reason of a SkipRun; empty for a StartRun.
+	skip supervisor.RunReason
 }
 
 func (f *fakeRunner) StartRun(name string, req supervisor.RunRequest) (supervisor.RunDecision, bool) {
@@ -71,6 +73,22 @@ func (f *fakeRunner) StartRun(name string, req supervisor.RunRequest) (superviso
 	return supervisor.RunDecision{
 		Kind: supervisor.DecisionStarted,
 		Run:  supervisor.RunRecord{RunID: n},
+	}, true
+}
+
+// SkipRun records the skip as a call too, with its reason, so a test can
+// assert both that the harness was reached and that it was NOT asked to run.
+func (f *fakeRunner) SkipRun(name string, req supervisor.RunRequest, reason supervisor.RunReason) (supervisor.RunDecision, bool) {
+	f.mu.Lock()
+	f.calls = append(f.calls, call{name: name, req: req, skip: reason})
+	isUnknown := f.unknown[name]
+	f.mu.Unlock()
+	if isUnknown {
+		return supervisor.RunDecision{}, false
+	}
+	return supervisor.RunDecision{
+		Kind: supervisor.DecisionSkipped,
+		Run:  supervisor.RunRecord{Outcome: supervisor.OutcomeSkipped, Reason: reason},
 	}, true
 }
 

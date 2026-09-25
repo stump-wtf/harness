@@ -77,7 +77,13 @@ const (
 	// event, and ignores Event, so `trigger --event` against one silently
 	// starts a run with no event; the client refuses the flag rather than
 	// letting that happen (see client.TriggerWithEvent).
-	ProtoMinor = 11
+	// ProtoMinor 12 added the command harness kind (ADR-0023 / SPEC-0017
+	// REQ-2, REQ-14, REQ-16): the "command" value of the harness enum, and
+	// Argv on ProjectHarness and HarnessInfo — additive only. A daemon older
+	// than 12 refuses a project_up or scratchpad definition naming "command"
+	// as an unknown harness kind, so the new field is never silently dropped
+	// into a harness that runs something else.
+	ProtoMinor = 12
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -214,10 +220,14 @@ type ControlReq struct {
 type ProjectHarness struct {
 	Name string `json:"name"`
 	// Harness is the harness-kind enum ("crush", "claude-code", "codex",
-	// "generic"); empty means the default, "crush". It selects the adapter
-	// and the executable (ADR-0011).
+	// "generic", "command"); required, and re-validated by the daemon. It
+	// selects the adapter and the executable (ADR-0011).
 	Harness string   `json:"harness,omitempty"`
 	Args    []string `json:"args,omitempty"`
+	// Argv is a "command" harness's whole process, argv[0] first, carried
+	// verbatim and re-validated by the daemon (SPEC-0017 REQ-2, REQ-14).
+	// Set only with Harness = "command", which takes no Args.
+	Argv []string `json:"argv,omitempty"`
 	// Prompt mirrors the schema's agent one-shot `prompt`: exactly one of
 	// harness/prompt defines the argv, and a prompt harness carries empty
 	// args — the daemon synthesizes its argv at spawn time (ADR-0011).
@@ -313,6 +323,10 @@ type HarnessInfo struct {
 	// nothing on a host where the agents all work in one tree (SPEC-0006 REQ
 	// "Run Correlation"; issue #330).
 	Args []string `json:"args,omitempty"`
+	// Argv is a "command" harness's configured argv, exactly as written and
+	// as exec'd: `describe` shows it so an operator can see what runs
+	// (SPEC-0017 REQ-16).
+	Argv []string `json:"argv,omitempty"`
 	// LastStarted / LastExitAt (RFC 3339) bound the harness's latest run, so a
 	// client can attribute a session to the harness whose run covers it, not
 	// merely to one sharing its workdir (SPEC-0006 REQ "Run Correlation";
@@ -572,6 +586,12 @@ type RunInfo struct {
 	Windows     int    `json:"windows,omitempty"`
 	// HasLog reports whether the run has a log to read with logs --run.
 	HasLog bool `json:"has_log,omitempty"`
+	// LogPruned reports a run whose log keep_runs has deleted; its record
+	// stays in the run ledger (SPEC-0022 REQ-4, REQ-12).
+	LogPruned bool `json:"log_pruned,omitempty"`
+	// Reason qualifies the outcome: why a skip started no process, why an
+	// interrupted run was (shutdown, daemon_crash). SPEC-0022 REQ-5.
+	Reason string `json:"reason,omitempty"`
 	// Source is the trigger source reference behind the run, e.g.
 	// "webhook.gitea-pr" (SPEC-0014 REQ "Run Record Fields").
 	Source string `json:"source,omitempty"`

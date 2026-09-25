@@ -15,6 +15,7 @@ package daemon
 // @joestump-agent 09/11/2026 - Added for issue #120.
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -347,5 +348,78 @@ func TestJobEventsOverTheWire(t *testing.T) {
 	next, err := time.Parse(time.RFC3339, changed.NextRunAt)
 	if err != nil || next.Minute() != 30 {
 		t.Errorf("job_schedule_changed = %+v, want the new 04:30 window", changed)
+	}
+}
+
+// TestRunReadersServeFromTheLedger: with run history only in the ledger
+// (state.json keeps no records, SPEC-0022 REQ-13), the runs op that `trigger
+// --wait` polls, `logs --run` and jobs all still answer, and a record whose
+// log keep_runs pruned says so rather than vanishing (REQ-12).
+func TestRunReadersServeFromTheLedger(t *testing.T) {
+	dir := t.TempDir()
+	counter := `n=$(cat count 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > count; echo "output-of-run-$n"`
+	h := scheduledSh("counter", counter, dir)
+	h.KeepRuns = 1
+	td, _, _ := newJobsDaemon(t, h)
+	c := td.dial(t, nil)
+
+	for i := 1; i <= 2; i++ {
+		if _, err := c.Trigger("counter"); err != nil {
+			t.Fatal(err)
+		}
+		// What `trigger --wait` does: poll the runs op until the run is final.
+		waitRunsOver(t, c, "counter", finishedN(i))
+	}
+
+	// state.json, read as a file: the allocator and nothing else.
+	if err := td.mgr.Save(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(td.configPath), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ps struct {
+		Runs map[string]map[string]json.RawMessage `json:"runs"`
+	}
+	if err := json.Unmarshal(raw, &ps); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := ps.Runs["counter"]["runs"]; has || string(ps.Runs["counter"]["last_run_id"]) != "2" {
+		t.Fatalf("state.json runs = %s, want only last_run_id 2", raw)
+	}
+
+	rd, err := c.Runs("counter", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rd.Runs) != 2 || rd.Runs[0].RunID != 2 || rd.Runs[1].RunID != 1 {
+		t.Fatalf("runs = %+v, want runs 2 and 1, newest first", rd.Runs)
+	}
+	if r1 := rd.Runs[1]; !r1.LogPruned || r1.HasLog {
+		t.Errorf("run 1 = %+v, want log_pruned and no log", r1)
+	}
+	if r2 := rd.Runs[0]; r2.LogPruned || !r2.HasLog {
+		t.Errorf("run 2 = %+v, want its log", r2)
+	}
+
+	out, err := c.RunLogs("counter", 2, 100)
+	if err != nil || !strings.Contains(out.Text, "output-of-run-2") {
+		t.Errorf("logs --run 2: %v, text:\n%s", err, out.Text)
+	}
+	pruned, err := c.RunLogs("counter", 1, 100)
+	if err != nil {
+		t.Fatalf("logs --run 1 of a pruned run: %v", err)
+	}
+	if !strings.Contains(strings.Join(pruned.Notices, "\n"), "pruned by keep_runs") {
+		t.Errorf("logs --run 1 notices = %q, want one saying the log was pruned", pruned.Notices)
+	}
+
+	jobs, err := c.Jobs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].LastRun == nil || jobs[0].LastRun.RunID != 2 || jobs[0].LastRun.Outcome != "success" {
+		t.Errorf("jobs = %+v, want last run 2 success, read from the ledger", jobs)
 	}
 }

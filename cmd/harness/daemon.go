@@ -318,7 +318,7 @@ func runDaemon(o daemonOpts) {
 	// exercised against the Manager the daemon actually runs. It reads the
 	// live config per firing, so a reload's change to a harness's `triggers`
 	// applies from the next event (REQ "Source Reconciliation On Reload").
-	sources := startDaemonSources(mgr)
+	sources := startDaemonSources(mgr, nil)
 	// Issue #480: the harness_trigger_* families read this manager's states
 	// and the counters it shares with the webhook listener (SPEC-0014 REQ
 	// "Trigger Metrics").
@@ -501,8 +501,19 @@ func daemonMergeTrainOptions(mc core.MergeTrainConfig) daemon.MergeTrainOptions 
 // startDaemonScheduler is: a wiring test must be able to drive THE DAEMON'S
 // manager, not one it assembled itself (#315).
 //
-// Governing: ADR-0021; SPEC-0014 REQ "Firing", REQ "Concurrency Safety".
-func startDaemonSources(mgr *supervisor.Manager) *source.Manager {
+// clock is the scheduler's clock seam, nil for the real wall clock. The
+// source manager stamps each event's receive time from it and its
+// operating-hours gate judges the firing at that instant, so the firing gate
+// and the scheduler's gate pass (which starts the catch-up when hours open)
+// read the same clock — and a test drives both with one fake.
+//
+// Governing: ADR-0021; SPEC-0014 REQ "Firing", REQ "Concurrency Safety", REQ
+// "Operating Hours On Triggered Harnesses".
+func startDaemonSources(mgr *supervisor.Manager, clock scheduler.Clock) *source.Manager {
+	var now func() time.Time
+	if clock != nil {
+		now = clock.Now
+	}
 	sm := source.New(source.Options{
 		Runner: mgr,
 		// A function, not a snapshot: REQ "Source Reconciliation On Reload"
@@ -510,6 +521,7 @@ func startDaemonSources(mgr *supervisor.Manager) *source.Manager {
 		// from the next event, which is only true if each firing re-reads it.
 		Config: mgr.Config,
 		Log:    log.Default(),
+		Now:    now,
 	})
 	sm.Start(context.Background())
 	return sm
@@ -650,6 +662,17 @@ func (g hoursGate) CloseStep(name string, now time.Time) { g.mgr.CloseStep(name,
 func (g hoursGate) Arm(name string, closeAt time.Time) { g.mgr.Arm(name, closeAt) }
 
 func (g hoursGate) Release(name string) { g.mgr.Release(name) }
+
+// HoursSkipped and OpenFirings are the firing half of the gate, for a harness
+// with `triggers` (SPEC-0014 REQ "Operating Hours On Triggered Harnesses").
+func (g hoursGate) HoursSkipped(name string) bool { return g.mgr.HoursSkipped(name) }
+
+func (g hoursGate) OpenFirings(name string) {
+	d, ok := g.mgr.OpenFirings(name)
+	if ok && d.Kind != "" {
+		log.Info("catch-up after operating hours opened", "harness", name, "decision", string(d.Kind), "run_id", d.Run.RunID)
+	}
+}
 
 // scheduleStore adapts the Manager's state.json schedule marks to the
 // scheduler's Store seam. The two mark types match field for field, so these

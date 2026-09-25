@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/stump-wtf/agent-trace/tail"
 	"github.com/stump-wtf/harness/internal/core"
@@ -32,7 +33,7 @@ var ErrUnknownAdapter = errors.New("unknown adapter")
 // the trajectory surface — skill methods arrive in later stories.
 type Adapter interface {
 	// Name is the adapter's registry key: "claude-code", "crush", "codex",
-	// "generic".
+	// "generic", "command".
 	Name() string
 
 	// TrajectoryDir returns the directory where this tool stores session
@@ -56,7 +57,10 @@ type Adapter interface {
 	// one-shot with this adapter's CLI. Each adapter maps the generic
 	// AgentOpts onto its own flags (e.g. crush uses --yolo, claude uses
 	// --dangerously-skip-permissions). The prompt is always the final argv
-	// element. Governing: issue #74 (adapter-aware prompt synthesis).
+	// element. An adapter with no prompt mode (Generic) returns an empty
+	// cmd, which spawn treats as a refusal, never as something to exec.
+	// Governing: issue #74 (adapter-aware prompt synthesis), SPEC-0017 REQ
+	// "Generic Kind Rejects Prompts".
 	PromptCommand(prompt string, opts core.AgentOpts) (cmd string, args []string)
 }
 
@@ -68,7 +72,7 @@ type Registry struct {
 }
 
 // NewRegistry returns a Registry populated with the built-in adapters:
-// claude-code, crush, codex, and generic.
+// claude-code, crush, codex, generic, and command.
 func NewRegistry() *Registry {
 	r := &Registry{
 		entries: make(map[string]Adapter),
@@ -77,6 +81,7 @@ func NewRegistry() *Registry {
 	r.register(&Crush{})
 	r.register(&Codex{})
 	r.register(&Generic{})
+	r.register(&Command{})
 	return r
 }
 
@@ -95,7 +100,7 @@ func (r *Registry) Get(name string) (Adapter, error) {
 
 // Names returns every registered adapter name in insertion order.
 func (r *Registry) Names() []string {
-	return []string{"claude-code", "crush", "codex", "generic"}
+	return []string{"claude-code", "crush", "codex", "generic", "command"}
 }
 
 // Resolve selects the adapter for a harness from its `harness` enum key. Per
@@ -236,8 +241,71 @@ func (a *Generic) TrajectoryDir(_ string) string { return "" }
 
 func (a *Generic) TailAdapter() tail.Adapter { return nil }
 
-func (a *Generic) PromptCommand(prompt string, opts core.AgentOpts) (string, []string) {
-	return (&Crush{}).PromptCommand(prompt, opts)
+// PromptCommand returns no argv: Generic runs sh and has no prompt synthesis.
+// It used to delegate to Crush, so an operator whose CLI was not in the list
+// wrote `generic` + `prompt` and got `crush run <prompt>` (or a crash loop
+// naming a binary they never configured). Config validation now rejects the
+// combination at every front door; the empty executable is what lets spawn
+// refuse one that got past them, rather than guessing an agent.
+// Governing: ADR-0023, SPEC-0017 REQ "Generic Kind Rejects Prompts".
+func (a *Generic) PromptCommand(string, core.AgentOpts) (string, []string) {
+	return "", nil
+}
+
+// ArgvOwner is implemented by an adapter whose harness declares its own whole
+// argv instead of args appended to an adapter executable. Spawn asks for it
+// before anything else, so neither Executable nor PromptCommand is consulted
+// for such a harness. Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness
+// Kind".
+type ArgvOwner interface {
+	// Argv returns the executable and arguments to exec for h, whose
+	// relative paths resolve against workdir. It never returns a shell
+	// invocation or a joined command string.
+	Argv(h core.Harness, workdir string) (cmd string, args []string)
+}
+
+// Command is the adapter for `harness = "command"`: the harness's Argv is the
+// process, exec'd directly. It is the shell-free replacement for `generic` +
+// args = ["-c", "…"]: an argument containing spaces, `$(…)` or `;` reaches the
+// child as one byte-identical argument, because nothing ever parses it. Like
+// Generic it reports no native trajectory (a `transcripts` binding is
+// SPEC-0017 REQ-4, not yet here).
+// Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind".
+type Command struct{}
+
+func (a *Command) Name() string { return "command" }
+
+// Executable is empty: a command harness has no executable of its own, and
+// Argv (ArgvOwner) is what spawn runs.
+func (a *Command) Executable() string { return "" }
+
+func (a *Command) TrajectoryDir(_ string) string { return "" }
+
+func (a *Command) TailAdapter() tail.Adapter { return nil }
+
+// PromptCommand returns no argv. A command harness's operator owns its argv,
+// so there is nothing to synthesize; delivering a prompt to it (SPEC-0017
+// REQ-12) will be a render step over Argv, not a second argv. Spawn refuses a
+// prompt it cannot deliver instead of dropping it.
+func (a *Command) PromptCommand(string, core.AgentOpts) (string, []string) {
+	return "", nil
+}
+
+// Argv returns argv[0] and a copy of argv[1:]. A relative argv[0] containing
+// a path separator (`./bin/report`, `scripts/x`) resolves against workdir, so
+// it names the same file whichever directory the daemon was started from; a
+// bare name (`echo`) is left for spawn's PATH lookup, and an absolute path is
+// used as is. The arguments are copied, not aliased, so nothing downstream
+// can reach back into the registered definition.
+func (a *Command) Argv(h core.Harness, workdir string) (string, []string) {
+	if len(h.Argv) == 0 {
+		return "", nil
+	}
+	name := h.Argv[0]
+	if !filepath.IsAbs(name) && strings.ContainsRune(name, filepath.Separator) && workdir != "" {
+		name = filepath.Join(workdir, name)
+	}
+	return name, append([]string(nil), h.Argv[1:]...)
 }
 
 // NewRegistryWithDefaults returns a Registry with the built-in adapters.

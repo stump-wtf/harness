@@ -296,7 +296,7 @@ enabled = true
 
 	control := filepath.Join(shortSockDir(t), "started")
 	ctl, ctlOut, _ := runDaemonBinary(t, bin, config("127.0.0.1:"+freePort(t), control))
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(daemonStartupCeiling(t))
 	for {
 		if _, err := os.Stat(control); err == nil {
 			break
@@ -317,8 +317,8 @@ enabled = true
 		if err == nil {
 			t.Fatalf("daemon exited 0; want a refusal\n%s", out)
 		}
-	case <-time.After(15 * time.Second):
-		t.Fatalf("daemon did not refuse to start within 15s\n%s", out)
+	case <-time.After(daemonStartupCeiling(t)):
+		t.Fatalf("daemon did not refuse to start within %s\n%s", daemonStartupCeiling(t), out)
 	}
 	if !strings.Contains(out.String(), "refusing to start") || !strings.Contains(out.String(), "metrics_token_file") {
 		t.Errorf("refusal does not say why:\n%s", out)
@@ -351,7 +351,7 @@ enabled = false
 `, addr)
 	_, out, _ := runDaemonBinary(t, bin, cfg)
 
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(daemonStartupCeiling(t))
 	for {
 		resp, err := http.Get("http://" + addr + "/metrics")
 		if err == nil {
@@ -443,7 +443,7 @@ url = "http://127.0.0.1:9/mcp"
 		"XDG_DATA_HOME=", "CRUSH_GLOBAL_DATA=")
 
 	url := "http://" + addr + "/metrics"
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(daemonStartupCeiling(t))
 	for {
 		resp, err := http.Get(url)
 		if err == nil {
@@ -588,8 +588,8 @@ metrics_token_file = %q
 		if err == nil {
 			t.Fatalf("daemon exited 0; want a refusal\n%s", out)
 		}
-	case <-time.After(15 * time.Second):
-		t.Fatalf("daemon did not refuse to start within 15s\n%s", out)
+	case <-time.After(daemonStartupCeiling(t)):
+		t.Fatalf("daemon did not refuse to start within %s\n%s", daemonStartupCeiling(t), out)
 	}
 	if !strings.Contains(out.String(), "refusing to start") || !strings.Contains(out.String(), "metrics_token_file") {
 		t.Errorf("refusal does not say why:\n%s", out)
@@ -639,7 +639,7 @@ operating_hours = %q
 	// The first scrape that answers at all is the one under test: the
 	// listener only binds after Autostart has run.
 	var fams map[string]*dto.MetricFamily
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(daemonStartupCeiling(t))
 	for {
 		resp, err := http.Get("http://" + addr + "/metrics")
 		if err == nil {

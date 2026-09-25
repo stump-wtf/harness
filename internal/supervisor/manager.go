@@ -23,6 +23,7 @@ import (
 	"charm.land/log/v2"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/ledger"
 	"github.com/stump-wtf/harness/internal/runtrace"
 )
 
@@ -65,6 +66,10 @@ type ManagerOptions struct {
 	// (SPEC-0008 REQ "Per-Run Logs"). Defaults to a "jobs" directory beside
 	// the log directory — $XDG_STATE_HOME/harness/jobs in production.
 	JobsDir string
+	// LedgerDir is the run ledger's directory (SPEC-0022 REQ-1). Defaults to
+	// a "ledger" directory beside state.json — $XDG_STATE_HOME/harness/ledger
+	// in production.
+	LedgerDir string
 	// Watch, if set, is the turn-state bridge graceful closes sample.
 	// Defaults to a real internal/runtrace watcher; tests inject stubs so
 	// the close machinery can be driven without trace stores.
@@ -130,10 +135,18 @@ type Manager struct {
 	watch        TurnBridge
 	armedCloseAt map[string]time.Time
 
-	// runs is each scheduled harness's run history, and jobsDir the root of
-	// their per-run logs (manager_runs.go; SPEC-0008 REQ "Run History").
-	runs    map[string]*runHistory
-	jobsDir string
+	// runs is each harness's run id allocator, and jobsDir the root of the
+	// per-run logs (manager_runs.go; SPEC-0008 REQ "Run History"). The records
+	// themselves are in ledger, whose only writer is this Manager's
+	// RunJournal (SPEC-0022 REQ-6). legacyRuns holds a pre-ledger state.json's
+	// record lists until the first-boot import has copied them in (REQ-13).
+	runs       map[string]*runHistory
+	legacyRuns map[string][]RunRecord
+	jobsDir    string
+	ledger     *ledger.Ledger
+	// journalMu makes a run id's allocation and its ledger line's enqueue
+	// one step (appendNew), so ids and seqs agree on order.
+	journalMu sync.Mutex
 
 	// saveMu serializes Save. The debounced persist loop is not the only
 	// writer — the scheduler flushes its marks synchronously before a run
@@ -155,7 +168,12 @@ type Manager struct {
 
 	dirty  chan struct{}
 	closed chan struct{}
-	wg     sync.WaitGroup
+	// closeOnce guards closed, so Close is idempotent. It has to be: Close
+	// drains the ledger, and a caller that wants a drained ledger (a test
+	// reading the files, a shutdown path that also runs a t.Cleanup) would
+	// otherwise panic on the second call with "close of closed channel".
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 // NewManager builds a Manager for cfg. Supervisors are created (stopped) but not
@@ -177,8 +195,21 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 		jobsDir = filepath.Join(filepath.Dir(logCfg.Dir), "jobs")
 	}
 
+	ledgerDir := opts.LedgerDir
+	if ledgerDir == "" {
+		ledgerDir = filepath.Join(filepath.Dir(statePath), "ledger")
+	}
+	// Open does not fail: a ledger it cannot write yet queues and retries
+	// (SPEC-0022 REQ-6). What it could not read at boot is logged here.
+	lg, err := ledger.Open(ledgerDir, ledger.Options{})
+	if err != nil {
+		log.Error("run ledger boot incomplete", "dir", ledgerDir, "err", err)
+	}
+
 	m := &Manager{
 		runs:          make(map[string]*runHistory),
+		legacyRuns:    make(map[string][]RunRecord),
+		ledger:        lg,
 		jobsDir:       jobsDir,
 		policy:        policy,
 		statePath:     statePath,
@@ -283,7 +314,7 @@ func (m *Manager) Restore() error {
 
 	m.mu.Lock()
 	m.activeProfile = ps.ActiveProfile
-	interrupted := m.restoreRunsLocked(ps.Runs)
+	m.restoreRunsLocked(ps.Runs)
 	for name, sched := range ps.Schedules {
 		mark := ScheduleMark{Spec: sched.Spec, DecidedThrough: sched.DecidedThrough}
 		if sched.LastRunAt != nil {
@@ -388,6 +419,10 @@ func (m *Manager) Restore() error {
 			// Counters are observability, not intent — preserve them, the
 			// same contract the #99 fallback below keeps.
 			s.Restore(false, pr.RestartCount, pr.LastExitCode, last, started)
+			// A weekend's outside_hours skips are still owed their
+			// catch-up after a restart (SPEC-0014 REQ "Operating Hours
+			// On Triggered Harnesses"; firing_hours.go).
+			m.seedHoursSkipped(name, s)
 		case unresolved && hasAutostartProfile && autostart[name]:
 			// The persisted profile is gone, so the persisted per-harness
 			// intent it produced cannot be trusted either — a member recorded
@@ -413,10 +448,9 @@ func (m *Manager) Restore() error {
 	}
 	m.mu.Unlock()
 
-	if len(interrupted) > 0 {
-		m.noteInterrupted(interrupted)
-		m.markDirty() // the reconciled outcomes are state worth keeping
-	}
+	// Before Autostart admits anything: import, backfill and reconcile the
+	// run ledger (SPEC-0022 REQ-7, REQ-13).
+	m.bootLedger()
 	return nil
 }
 
@@ -1048,14 +1082,30 @@ func (m *Manager) addEphemeralSupervisorLocked(h core.Harness) {
 }
 
 // Close stops every harness, flushes final state, and tears down the manager.
+//
+// It is idempotent. The first call drains the run ledger (Ledger.Close), which
+// is what puts a coalesced skip's buffered count on disk; a second call is a
+// no-op rather than a panic, so a caller may close to read a drained ledger
+// and still have a t.Cleanup close it again.
 func (m *Manager) Close() {
-	for _, s := range m.snapshotSupervisors() {
-		s.Shutdown()
-	}
-	close(m.closed)
-	m.wg.Wait()
-	_ = m.Save() // final durable flush
+	m.closeOnce.Do(func() {
+		for _, s := range m.snapshotSupervisors() {
+			s.Shutdown()
+		}
+		close(m.closed)
+		m.wg.Wait()
+		_ = m.Save() // final durable flush
+		m.closeOpenRuns()
+		if err := m.ledger.Close(ledgerCloseTimeout); err != nil {
+			log.Error("run ledger did not drain at shutdown", "err", err)
+		}
+	})
 }
+
+// ledgerCloseTimeout bounds the run ledger's drain at shutdown (SPEC-0022
+// REQ-20): long enough for a queue of checkpoints and a sync, short enough
+// that a dead disk cannot hold the daemon's exit hostage.
+const ledgerCloseTimeout = 5 * time.Second
 
 // Save writes the current runtime state to state.json immediately (ADR-0007).
 // Project-registered harnesses are INCLUDED: a project registration is durable
