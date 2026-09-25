@@ -74,7 +74,7 @@ func TestDaemonWiringFiresAHarnessFromAGitHubWebhook(t *testing.T) {
 	cfg.Webhooks["ci"] = parsed.Webhooks["ci"]
 	mgr := newWiringManager(t, cfg)
 
-	sources := startDaemonSources(mgr)
+	sources := startDaemonSources(mgr, nil)
 	t.Cleanup(sources.Close)
 	wireSourceReload(mgr, sources)
 	webhooks := beginDaemonWebhooks(mgr, sources, "127.0.0.1:0")
