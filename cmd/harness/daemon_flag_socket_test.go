@@ -55,7 +55,8 @@ func isolatedEnv(t *testing.T) (env []string, emptyDefaultDir string) {
 	return env, dir
 }
 
-// startDaemonOnSocket boots a daemon on an explicit socket and waits for it.
+// startDaemonOnSocket boots a daemon on an explicit socket and waits for it to
+// answer (see daemonProc.waitReady for how long, and what ends the wait early).
 func startDaemonOnSocket(t *testing.T, bin string, env []string) (socket string, stop func()) {
 	t.Helper()
 	dir := shortSockDir(t)
@@ -65,26 +66,9 @@ func startDaemonOnSocket(t *testing.T, bin string, env []string) (socket string,
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(bin, "daemon", "start", "--socket", socket, "--config", cfg)
-	cmd.Env = env
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start daemon: %v", err)
-	}
-	stop = func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}
-	t.Cleanup(stop)
-
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if daemonAnswers(bin, env, socket) {
-			return socket, stop
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	t.Fatalf("daemon on %s never came up", socket)
-	return "", stop
+	d := startDaemonProc(t, bin, env, "daemon", "start", "--socket", socket, "--config", cfg)
+	d.waitReady(t, bin, env, socket)
+	return socket, d.stop
 }
 
 // daemonAnswers reports whether a daemon is reachable on socket.

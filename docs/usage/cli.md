@@ -129,7 +129,10 @@ Scheduled firings never collide this way.
 A gated harness — one with `operating_hours` set (see
 [Configuration → Operating hours](./configuration#operating-hours)) — is a
 resident harness the daemon holds down outside its configured windows,
-without ever touching `enabled`. `list`, `describe` and the TUI reuse the same
+without ever touching `enabled`. (On a harness with `triggers`, hours gate
+firings instead, and nothing below about holding or closing applies — see
+[Configuration → On a triggered harness](./configuration#on-a-triggered-harness-hours-gate-firings).)
+`list`, `describe` and the TUI reuse the same
 STATE/SCHEDULE/NEXT columns `harness jobs` does (no extra column) rather than
 inventing a parallel set:
 
@@ -162,8 +165,10 @@ harness, ends any lease, and clears `enabled`, whatever state it is in.
 `harness doctor` warns on a gated harness with `enabled = false` (hours will
 never start it), an `operating_hours` expression covering the entire week (it
 gates nothing), and graceful shutdown on a harness nothing can ever be
-attributed to (a `generic` adapter, or no `workdir`) — every close then
-degrades to immediate no matter what `hours_shutdown` says.
+attributed to (a `generic` or `command` adapter, or no `workdir`) — every
+close then degrades to immediate no matter what `hours_shutdown` says. On a
+harness with `triggers` only the whole-week warning applies: it must be
+`enabled = false`, and it has no resident process to close.
 
 ## Logs
 

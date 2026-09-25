@@ -196,6 +196,15 @@ func TestProjectUpInvalidDefsNoPartialState(t *testing.T) {
 		{"prompt with args", "reduit", []core.Harness{{
 			Name: "agent", Prompt: "hi", Args: []string{"x"}, Backend: core.BackendNative,
 		}}},
+		// `generic` runs sh and has no prompt synthesis: the wire refuses a
+		// prompt on it, as the config parsers do (SPEC-0017 REQ "Generic Kind
+		// Rejects Prompts", scenario "The wire refuses it too").
+		{"generic with prompt", "reduit", []core.Harness{{
+			Name: "agent", Adapter: "generic", Prompt: "triage the queue", Backend: core.BackendNative,
+		}}},
+		{"generic with prompt_file", "reduit", []core.Harness{{
+			Name: "agent", Adapter: "generic", PromptFile: "/tmp/prompt.md", Backend: core.BackendNative,
+		}}},
 		{"invalid backend", "reduit", []core.Harness{{Name: "agent", Adapter: "generic", Backend: "bogus"}}},
 		{"negative restart delay", "reduit", []core.Harness{{
 			Name: "agent", Adapter: "generic", Backend: core.BackendNative, RestartDelay: -time.Second,

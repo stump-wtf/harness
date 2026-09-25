@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -673,6 +674,128 @@ func TestFormValidate(t *testing.T) {
 	}
 }
 
+// TestFormValidateRefusesGenericPrompt: the form refuses what the parser
+// refuses, so saving cannot write a harness.toml that fails every later
+// reload. Resident generic still validates. SPEC-0017 REQ "Generic Kind
+// Rejects Prompts".
+func TestFormValidateRefusesGenericPrompt(t *testing.T) {
+	for _, f := range []HarnessForm{
+		{Name: "x", Harness: "generic", Prompt: "triage the queue"},
+		{Name: "x", Harness: "generic", PromptFile: "~/prompts/triage.md"},
+	} {
+		err := f.Validate()
+		if err == nil || !strings.Contains(err.Error(), "no prompt synthesis") {
+			t.Errorf("Validate(generic, prompt=%q, prompt_file=%q) = %v, want the generic-prompt refusal", f.Prompt, f.PromptFile, err)
+		}
+	}
+	if err := (HarnessForm{Name: "x", Harness: "generic", Args: []string{"-c", "sleep 1"}}).Validate(); err != nil {
+		t.Errorf("resident generic form should validate: %v", err)
+	}
+}
+
+// TestFormValidateCommand: the form refuses what the parser refuses for a
+// command harness, so a save cannot leave harness.toml unparseable, and it
+// accepts the resident shape. SPEC-0017 REQ-2, REQ-3.
+func TestFormValidateCommand(t *testing.T) {
+	ok := HarnessForm{Name: "x", Harness: "command", Argv: []string{"/bin/echo", "a b"}}
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("resident command form should validate: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		mut  func(*HarnessForm)
+		want string
+	}{
+		{"missing argv", func(f *HarnessForm) { f.Argv = nil }, `requires "argv"`},
+		{"placeholder argv0", func(f *HarnessForm) { f.Argv[0] = "{{event.repo}}" }, `"argv[0]"`},
+		{"args", func(f *HarnessForm) { f.Args = []string{"-c", "true"} }, "argv"},
+		{"prompt", func(f *HarnessForm) { f.Prompt = "hi" }, "no prompt"},
+		{"model", func(f *HarnessForm) { f.Model = "x/y" }, "model is unused"},
+		{"auto_accept", func(f *HarnessForm) { f.AutoAccept = true }, "owns its argv"},
+		{"max_turns", func(f *HarnessForm) { f.MaxTurns = 2 }, "owns its argv"},
+		{"schedule", func(f *HarnessForm) { f.Schedule = "0 6 * * *" }, "resident only"},
+		{"triggers", func(f *HarnessForm) { f.Triggers = []string{"webhook.ci"} }, "resident only"},
+		{"argv on crush", func(f *HarnessForm) { f.Harness = "crush" }, "argv is only accepted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := ok
+			f.Argv = slices.Clone(ok.Argv)
+			tc.mut(&f)
+			err := f.Validate()
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Validate = %v, want an error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestFormArgvInputMustParse: a malformed argv input is a validation error,
+// not a silently empty argv, and nothing but the array is accepted.
+func TestFormArgvInputMustParse(t *testing.T) {
+	for _, in := range []string{
+		`["/bin/echo", "a b"`,
+		`/bin/echo a b`,
+		"[\"/bin/echo\"]\nenabled = true",
+		`[1, 2]`,
+	} {
+		f := formInputs{name: "x", harness: "command", argv: in}.toForm()
+		if err := f.Validate(); err == nil || !strings.Contains(err.Error(), "argv must be a TOML array") {
+			t.Errorf("argv input %q: Validate = %v, want the TOML-array error", in, err)
+		}
+	}
+	f := formInputs{name: "x", harness: "command", argv: `["/bin/echo", "", 'lit\eral']`}.toForm()
+	if err := f.Validate(); err != nil {
+		t.Fatalf("valid argv input rejected: %v", err)
+	}
+	if want := []string{"/bin/echo", "", `lit\eral`}; !slices.Equal(f.Argv, want) {
+		t.Errorf("Argv = %q, want %q", f.Argv, want)
+	}
+}
+
+// TestEditCommandHarnessDescriptionOnly is REQ-15's "Editing an unrelated
+// field": an `e` edit that changes only the description writes back the same
+// argv, element for element. The file text is checked, not only the reparse:
+// the argv line must be exactly what the operator wrote.
+func TestEditCommandHarnessDescriptionOnly(t *testing.T) {
+	argvLine := `argv = ["/usr/local/bin/report", "--title", "a b", "it's \"x\"", "back\\slash", ""]`
+	original := strings.Join([]string{
+		"[harness.report]",
+		`harness = "command"`,
+		argvLine,
+		`description = "old"`,
+		"",
+	}, "\n")
+	path := filepath.Join(t.TempDir(), "harness.toml")
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := config.Parse([]byte(original), "harness.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fi := editInputsFor(path, protocol.HarnessInfo{Name: "report"})
+	fi.description = "new"
+	form := fi.toForm()
+	if err := form.Validate(); err != nil {
+		t.Fatalf("description-only edit failed validation: %v", err)
+	}
+	body := AppendHarness(nil, form)
+	if !strings.Contains(string(body), argvLine+"\n") {
+		t.Errorf("rewritten table does not carry the argv line verbatim:\nwant %s\n---\n%s", argvLine, body)
+	}
+	after, err := config.Parse(body, "harness.toml")
+	if err != nil {
+		t.Fatalf("rewritten config no longer parses: %v\n---\n%s", err, body)
+	}
+	if got, want := after.Harnesses["report"].Argv, before.Harnesses["report"].Argv; !slices.Equal(got, want) {
+		t.Errorf("argv after edit = %q, want %q", got, want)
+	}
+	if after.Harnesses["report"].Description != "new" {
+		t.Errorf("description not applied: %+v", after.Harnesses["report"])
+	}
+}
+
 // TestRemoveHarnessTOML verifies delete drops exactly the target table and keeps
 // the rest of the file (ADR-0006 file-is-truth; SPEC-0001 delete guard).
 func TestRemoveHarnessTOML(t *testing.T) {
@@ -813,7 +936,7 @@ func TestTOMLKeepsTmuxSocketOnNativeBackend(t *testing.T) {
 // issue #161's "audit the rest in the same pass". Name is the table name, and
 // is carried implicitly by the header the rewrite emits.
 var harnessFormFields = []string{
-	"Name", "Adapter", "Args", "Prompt", "PromptFile", "Model", "AutoAccept",
+	"Name", "Adapter", "Args", "Argv", "Prompt", "PromptFile", "Model", "AutoAccept",
 	"Quiet", "MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart",
 	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule", "CatchUp",
 	"Timeout", "OnOverlap", "KeepRuns", "HarvestTrajectory", "MCPAllow",
@@ -970,6 +1093,25 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				`hours_shutdown_timeout = "30m"`,
 				`description = "gated agent"`,
 				"export_telemetry = true",
+			},
+		},
+		{
+			// A command harness (SPEC-0017 REQ-2): argv replaces args, so it
+			// needs its own fixture. The elements carry every character the
+			// single-line input encoding has to survive — spaces, both
+			// quotes, a backslash, shell syntax, an empty element — and a
+			// relative argv[0] that must stay relative (it resolves against
+			// workdir at spawn, not at save).
+			name: "resident command harness",
+			table: []string{
+				"[harness.report]",
+				`harness = "command"`,
+				`argv = ["./bin/report", "a b", "it's \"quoted\"", "C:\\Users\\joe", "$(id)", ";", ""]`,
+				`workdir = "~/src/report"`,
+				"enabled = true",
+				`restart = "on-failure"`,
+				`operating_hours = "Mon-Fri 09:00-17:00"`,
+				`description = "nightly report"`,
 			},
 		},
 	}

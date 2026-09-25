@@ -363,7 +363,7 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 	return huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("name").Value(&fi.name),
-			huh.NewInput().Title("harness — required (crush/claude-code/codex/generic)").Value(&fi.harness),
+			huh.NewInput().Title("harness — required (crush/claude-code/codex/generic/command)").Value(&fi.harness),
 			huh.NewInput().Title("prompt (agent one-shot; instead of cmd/args)").Value(&fi.prompt),
 			huh.NewInput().Title("prompt_file (path to the instruction; instead of prompt)").Value(&fi.promptFile),
 			huh.NewInput().Title("model (agent model id; requires prompt)").Value(&fi.model),
@@ -377,6 +377,7 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 			huh.NewInput().Title("on_overlap (skip/queue/replace; blank = skip, or queue with triggers; requires schedule or triggers)").Value(&fi.onOverlap),
 			huh.NewInput().Title("keep_runs (run history kept; blank = 20; requires schedule or triggers)").Value(&fi.keepRuns),
 			huh.NewInput().Title("args (space-separated)").Value(&fi.args),
+			huh.NewInput().Title(`argv (command harness only; a TOML array, e.g. ["/usr/local/bin/report", "a b"]; exec'd, never via a shell)`).Value(&fi.argv),
 			huh.NewInput().Title("workdir").Value(&fi.workdir),
 			huh.NewInput().Title("env_file").Value(&fi.envFile),
 			huh.NewInput().Title("restart_delay (seconds)").Value(&fi.delay),
