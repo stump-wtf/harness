@@ -133,11 +133,29 @@ enabled = false
 # the adapter, which owns the executable a long-running harness runs (args are
 # appended after it) and the CLI-specific argv synthesized for a prompt
 # one-shot. REQUIRED -- there is no default. "generic" runs sh, so its args
-# are sh's args -- write args = ["-c", "<command line>"] to run an arbitrary
-# command (no projection, scrollback-only trajectory).
-# Valid values: "crush", "claude-code", "codex", "generic".
+# are sh's args (args = ["-c", "<command line>"]; no projection,
+# scrollback-only trajectory). "generic" takes NO prompt: it has no prompt
+# synthesis, so prompt or prompt_file on it is a config error (it used to run
+# crush).
+# "command" runs any other program WITHOUT a shell: its `argv` array is the
+# whole process, argv[0] first, and each element reaches the program as one
+# byte-identical argument ("a b" is one argument; $(...) and ; are just text).
+# argv[0] is looked up on PATH, or resolved against workdir when it is a
+# relative path containing "/". `args` is rejected on "command" and `argv` on
+# every other kind; auto_accept, max_turns, quiet and model are rejected (put
+# the program's own flags in argv). For now a command harness is resident
+# only: prompt, prompt_file, schedule and triggers are refused, and argv may
+# not contain "{{" (templates are still to come, ADR-0023, issue #500). This is
+# also how Pi, OMP or another unlisted agent CLI runs today.
+# Valid values: "crush", "claude-code", "codex", "generic", "command".
 #
 # harness = "claude-code"   # required on every [harness.*] table
+#
+# [harness.report-server]
+# harness = "command"
+# argv = ["/usr/local/bin/report", "--listen", ":8080", "--title", "Nightly report"]
+# workdir = "~/src/report"
+# enabled = true
 
 # Trajectory harvesting (SPEC-0006 REQ "Harvest Opt-In"): the opt-in for
 # exposing this harness's session transcripts read-only through the MCP facade
@@ -230,7 +248,10 @@ secret = "${GITEA_HOOK_SECRET}"
 # accepted, counted and dropped.
 events = ["pull_request"]
 # Optional: the largest body accepted (default "1MiB", ceiling "25MiB") and
-# the delivery rate this route allows (default "60/m", "0" for no limit).
+# the delivery rate this route allows (default "60/m", "0" for no limit). Only
+# verified, filtered, non-duplicate deliveries count against the rate; one over
+# it gets 429 + Retry-After. A redelivered ID (X-Gitea-Delivery here) that
+# already fired in the last 24 hours is answered "duplicate" and fires nothing.
 max_body = "2MiB"
 rate_limit = "120/m"
 description = "gitea pull-request events"
@@ -248,6 +269,12 @@ description = "gitea pull-request events"
 # deliberate: a cron firing that lands during a run is the same work coming
 # round again, so skipping it loses nothing, while an event firing is a
 # DIFFERENT event and dropping it loses work nothing will re-deliver.
+#
+# operating_hours on a triggered harness gates FIRINGS, not the process: an
+# event out of hours starts nothing and is recorded `skipped` (reason
+# `outside_hours`, a burst coalesced into one record), a run in flight at the
+# close finishes under its `timeout`, and `catch_up = true` starts ONE run when
+# hours next open if anything was skipped. `harness trigger` is never gated.
 [harness.pr-review]
 harness = "claude-code"
 prompt_file = "~/.config/harness/prompts/pr-review.md"
@@ -255,6 +282,8 @@ triggers = ["webhook.gitea-pr", "channel.switchboard"]
 timeout = "20m"
 keep_runs = 50
 description = "review a pull request when one arrives"
+# operating_hours = "TZ=America/Los_Angeles Mon-Fri 09:00-18:00"
+# catch_up = true
 
 # Profiles (ADR-0006): named groups of harnesses that switch together via
 # `harness use-profile <name>`. Only one profile is active at a time; the

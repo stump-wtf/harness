@@ -74,7 +74,10 @@ type persistedProjectHarness struct {
 	Name    string   `json:"name"`
 	Harness string   `json:"harness,omitempty"`
 	Args    []string `json:"args,omitempty"`
-	Prompt  string   `json:"prompt,omitempty"`
+	// Argv is a command harness's whole process (SPEC-0017 REQ-2), kept
+	// verbatim so a restored project harness execs exactly what was upped.
+	Argv   []string `json:"argv,omitempty"`
+	Prompt string   `json:"prompt,omitempty"`
 	// PromptFile is the PATH, never the file's contents (ADR-0018).
 	PromptFile     string `json:"prompt_file,omitempty"`
 	Model          string `json:"model,omitempty"`
@@ -108,6 +111,7 @@ func toPersistedProjectHarness(h core.Harness) persistedProjectHarness {
 		Name:            h.Name,
 		Harness:         h.Adapter,
 		Args:            h.Args,
+		Argv:            h.Argv,
 		Prompt:          h.Prompt,
 		PromptFile:      h.PromptFile,
 		Model:           h.Model,
@@ -149,6 +153,7 @@ func (p persistedProjectHarness) toCore() core.Harness {
 		Name:            p.Name,
 		Adapter:         p.Harness,
 		Args:            p.Args,
+		Argv:            p.Argv,
 		Prompt:          p.Prompt,
 		PromptFile:      p.PromptFile,
 		Model:           p.Model,

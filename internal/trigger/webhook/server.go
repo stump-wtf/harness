@@ -22,9 +22,10 @@
 //  8. rate limit
 //  9. fire
 //
-// Steps 7 and 8 are pass-through seams (#460). It deliberately does not use
-// http.ServeMux: a mux cleans paths and answers an unclean one with a 301,
-// and REQ "Webhook Routes" forbids the listener to redirect at all.
+// Steps 7 and 8 are one decision under one per-route lock (limits.go). It
+// deliberately does not use http.ServeMux: a mux cleans paths and answers an
+// unclean one with a 301, and REQ "Webhook Routes" forbids the listener to
+// redirect at all.
 //
 // Governing: ADR-0021, ADR-0004, ADR-0008; SPEC-0014 REQ "Webhook Listener",
 // REQ "Webhook Routes", REQ "Webhook Verification", REQ "Webhook Filtering",
@@ -33,6 +34,7 @@
 // SSH", "Webhook delivery".
 //
 // @joestump 09/23/2026 - Introduced with the SPEC-0014 webhook listener (#458).
+// @joestump 09/24/2026 - Filled steps 7 and 8: de-duplication and rate limit (#460).
 package webhook
 
 import (
@@ -43,6 +45,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -125,6 +128,11 @@ type Options struct {
 	MaxHeaderBytes    int
 	MaxConcurrent     int
 
+	// Outcomes counts deliveries ignored, de-duplicated or rate-limited, per
+	// source. Nil gets the server its own; the daemon can pass one it shares
+	// with whatever surfaces them.
+	Outcomes *trigger.OutcomeCounters
+
 	// newVerifier is the scheme registry; nil means NewVerifier. Unexported:
 	// only this package's tests substitute it, to observe whether a verifier
 	// ran at all.
@@ -138,6 +146,7 @@ type Server struct {
 	log         *log.Logger
 	now         func() time.Time
 	newVerifier NewVerifierFunc
+	outcomes    *trigger.OutcomeCounters
 
 	// routes is the current route table, swapped whole on reload.
 	routes atomic.Pointer[table]
@@ -167,8 +176,13 @@ func New(opts Options, cfg *core.Config) *Server {
 	if now == nil {
 		now = time.Now
 	}
+	outcomes := opts.Outcomes
+	if outcomes == nil {
+		outcomes = &trigger.OutcomeCounters{}
+	}
 	s := &Server{
 		settings:    opts.Settings,
+		outcomes:    outcomes,
 		firer:       opts.Firer,
 		log:         logger,
 		now:         now,
@@ -262,6 +276,10 @@ func (s *Server) Settings() Settings { return s.settings }
 // InFlight is how many deliveries hold a concurrency slot right now.
 func (s *Server) InFlight() int { return int(s.inFlight.Load()) }
 
+// Outcomes are the per-source counts of deliveries that verified but did not
+// fire.
+func (s *Server) Outcomes() *trigger.OutcomeCounters { return s.outcomes }
+
 // Reload swaps in the route table cfg describes, and reports whether want —
 // the listener settings the reloaded config asks for — differs from what the
 // listener is bound with.
@@ -274,7 +292,9 @@ func (s *Server) InFlight() int { return int(s.inFlight.Load()) }
 // Governing: SPEC-0014 REQ "Webhook Listener", REQ "Source Reconciliation On
 // Reload".
 func (s *Server) Reload(cfg *core.Config, want Settings) (restartRequired bool) {
-	s.routes.Store(buildTable(cfg, s.newVerifier, s.log))
+	next := buildTable(cfg, s.newVerifier, s.log)
+	next.inherit(s.routes.Load())
+	s.routes.Store(next)
 	if want == s.settings {
 		return false
 	}
@@ -377,17 +397,35 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ev := newEnvelope(rt, r, body, s.now().UTC())
+	at := s.now().UTC()
+	ev := newEnvelope(rt, r, body, at)
 
 	// 6. Events.
 	if !rt.eventAllowed(ev.Webhook.Event) {
+		s.outcomes.Inc(rt.ref, trigger.OutcomeIgnored)
 		s.log.Debug("webhook delivery ignored: event not in the allowlist", "source", rt.ref)
 		writeResponse(w, tlsOn, http.StatusAccepted, "application/json", ignoredBody(rt.src.Name))
 		return
 	}
-	// 7. De-duplication and 8. rate limit: pass-through seams. #460 adds
-	// them here, after `events` so a filtered delivery costs no budget, and
-	// before the firing so a rate-limited one is never recorded as seen.
+
+	// 7. De-duplication and 8. rate limit, decided together (limits.go):
+	// after `events`, so a filtered delivery costs no token, and a
+	// rate-limited one is never remembered as seen, so its retry fires.
+	// Governing: SPEC-0014 REQ "Webhook Filtering", REQ "Webhook Rate Limit".
+	switch verdict, seenID, wait := rt.limits.admit(ev.Webhook.Delivery, ev.EventID, at); verdict {
+	case admitDuplicate:
+		s.outcomes.Inc(rt.ref, trigger.OutcomeDuplicate)
+		s.log.Debug("webhook delivery ignored: delivery ID already fired", "source", rt.ref, "event_id", seenID)
+		writeResponse(w, tlsOn, http.StatusAccepted, "application/json", duplicateBody(rt.src.Name, seenID))
+		return
+	case admitRateLimited:
+		s.outcomes.Inc(rt.ref, trigger.OutcomeRateLimited)
+		secs := retryAfterSeconds(wait)
+		s.log.Warn("webhook delivery refused: route over its rate_limit", "source", rt.ref, "rate_limit", rt.src.RateLimit.String(), "retry_after_s", secs)
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		writeError(w, tlsOn, http.StatusTooManyRequests, errRateLimited)
+		return
+	}
 
 	// 9. Fire. StartRun returns once each harness's actor loop has decided,
 	// so this answers without waiting for any run to finish.
