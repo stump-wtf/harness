@@ -181,8 +181,10 @@ func triggerList(h core.Harness) string {
 	return strings.Join(h.Triggers, ", ")
 }
 
-// opRuns returns one harness's run history, newest first. Any known harness
-// may be asked — one that has since lost its schedule still has its history.
+// opRuns returns one harness's run history, newest first, from the run ledger
+// (SPEC-0022 REQ-13, REQ-15): from memory for recent records, from the day
+// files when the limit reaches further back. Any known harness may be asked —
+// one that has since lost its schedule still has its history.
 func (c *conn) opRuns(req protocol.ControlReq) {
 	if _, _, ok := c.srv.mgr.HarnessRecord(req.Name); !ok {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
@@ -192,10 +194,14 @@ func (c *conn) opRuns(req protocol.ControlReq) {
 	if limit <= 0 {
 		limit = defaultRunsLimit
 	}
-	runs := c.srv.mgr.Runs(req.Name)
+	runs, err := c.srv.mgr.LatestRuns(req.Name, limit)
+	if err != nil {
+		_ = c.pc.WriteError(req.ID, protocol.ErrInternal, "runs %q: %v", req.Name, err)
+		return
+	}
 	out := protocol.RunsData{Name: req.Name, Runs: []protocol.RunInfo{}}
-	for i := len(runs) - 1; i >= 0 && len(out.Runs) < limit; i-- {
-		out.Runs = append(out.Runs, c.runInfo(req.Name, runs[i]))
+	for _, r := range runs {
+		out.Runs = append(out.Runs, c.runInfo(req.Name, r))
 	}
 	c.respond(req, out)
 }
@@ -209,10 +215,10 @@ func (c *conn) opLogsRun(req protocol.ControlReq, snap supervisor.Snapshot, line
 	rec, ok := c.findRun(req.Name, req.Run)
 	if !ok {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownRun,
-			"harness %q has no run %d in its history (never run, or pruned past keep_runs)", req.Name, req.Run)
+			"harness %q has no run %d in its history (never run, or past the ledger's retention)", req.Name, req.Run)
 		return
 	}
-	text, hasLog := readRunLogTail(c.srv.mgr.RunLogPath(req.Name, rec.RunID), lines)
+	text, hasLog := readRunLogTail(runLogOf(c.srv.mgr, req.Name, rec), lines)
 	var notices []string
 	if !hasLog {
 		notices = append(notices, noRunLogNotice(rec))
@@ -246,14 +252,19 @@ func (c *conn) opLogsRun(req protocol.ControlReq, snap supervisor.Snapshot, line
 	c.respond(req, data)
 }
 
-// findRun returns name's record for run id.
+// findRun returns name's record for run id, from the run ledger.
 func (c *conn) findRun(name string, id int) (supervisor.RunRecord, bool) {
-	for _, r := range c.srv.mgr.Runs(name) {
-		if r.RunID == id {
-			return r, true
-		}
+	return c.srv.mgr.Run(name, id)
+}
+
+// runLogOf is the per-run log a record names. A record imported from a
+// pre-ledger state.json, or written before records carried their log, falls
+// back to where the log would be.
+func runLogOf(mgr *supervisor.Manager, name string, r supervisor.RunRecord) string {
+	if r.Log != "" {
+		return r.Log
 	}
-	return supervisor.RunRecord{}, false
+	return mgr.RunLogPath(name, r.RunID)
 }
 
 // runInfo projects a run record onto the wire.
@@ -281,11 +292,13 @@ func (c *conn) runInfo(name string, r supervisor.RunRecord) protocol.RunInfo {
 	// Record Fields").
 	info.Source = r.Source
 	info.EventID = r.EventID
-	if path := c.srv.mgr.RunLogPath(name, r.RunID); path != "" {
+	if path := runLogOf(c.srv.mgr, name, r); path != "" && !r.LogPruned {
 		if _, err := os.Stat(path); err == nil {
 			info.HasLog = true
 		}
 	}
+	info.LogPruned = r.LogPruned
+	info.Reason = string(r.Reason)
 	return info
 }
 
@@ -310,6 +323,9 @@ func noRunLogNotice(r supervisor.RunRecord) string {
 	switch r.Outcome {
 	case supervisor.OutcomeSkipped, supervisor.OutcomeMissed:
 		return fmt.Sprintf("run %d started no process (%s), so it has no log", r.RunID, r.Outcome)
+	}
+	if r.LogPruned {
+		return fmt.Sprintf("run %d's log was pruned by keep_runs; its record is kept in the run ledger", r.RunID)
 	}
 	return fmt.Sprintf("run %d has no log file (it could not be created, or was removed)", r.RunID)
 }

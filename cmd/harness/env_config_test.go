@@ -16,41 +16,10 @@ package main
 import (
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
-
-// startBackground launches the binary detached and returns a stop func.
-func startBackground(t *testing.T, bin string, env []string, args ...string) func() {
-	t.Helper()
-	cmd := exec.Command(bin, args...)
-	cmd.Env = env
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start %v: %v", args, err)
-	}
-	stop := func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}
-	t.Cleanup(stop)
-	return stop
-}
-
-// waitForSocket polls until the daemon answers on socket, or gives up.
-func waitForSocket(t *testing.T, bin string, env []string, socket string) bool {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if daemonAnswers(bin, env, socket) {
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false
-}
 
 // TestEnvSocketReachesTheClient proves HARNESS_SOCKET is honoured: a daemon is
 // started on a scratch socket, and a client given only the environment variable
@@ -193,13 +162,11 @@ func TestFilelessDaemonStarts(t *testing.T) {
 	socket := filepath.Join(dir, "fileless.sock")
 	absent := filepath.Join(dir, "definitely-not-here.toml")
 
-	cmd := startBackground(t, bin,
+	d := startDaemonProc(t, bin,
 		append(env, "HARNESS_SOCKET="+socket, "HARNESS_CONFIG="+absent),
 		"daemon", "run")
-	defer cmd()
-
-	if !waitForSocket(t, bin, env, socket) {
-		t.Fatalf("daemon with no config file at %s never came up on %s", absent, socket)
+	if err := d.awaitReady(bin, env, socket, daemonStartupCeiling(t)); err != nil {
+		t.Fatalf("daemon with no config file at %s: %v", absent, err)
 	}
 
 	out, code := runCLI(t, bin, append(env, "HARNESS_SOCKET="+socket), "list")

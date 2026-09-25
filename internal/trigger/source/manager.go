@@ -15,9 +15,13 @@
 // internal/trigger; this is that manager, one directory down.
 //
 // Governing: ADR-0021; SPEC-0014 REQ "Firing", REQ "Overlap Skip Coalescing",
-// REQ "Concurrency Safety".
+// REQ "Concurrency Safety", REQ "Operating Hours On Triggered Harnesses".
 //
 // @joestump 09/22/2026 - Introduced with SPEC-0014 firing fan-out (#457).
+//
+// @joestump 09/23/2026 - A harness whose operating_hours are closed at the
+// event's receive time is recorded skipped (outside_hours) instead of fired
+// (#484).
 package source
 
 import (
@@ -29,6 +33,7 @@ import (
 	"charm.land/log/v2"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/hours"
 	"github.com/stump-wtf/harness/internal/supervisor"
 	"github.com/stump-wtf/harness/internal/trigger"
 	"github.com/stump-wtf/harness/internal/trigger/channel"
@@ -41,6 +46,11 @@ type Runner interface {
 	// StartRun asks for a run of name, returning the decision and false for
 	// an unknown harness.
 	StartRun(name string, req supervisor.RunRequest) (supervisor.RunDecision, bool)
+	// SkipRun records a firing of name that must not run — its operating
+	// hours are closed — with reason, returning the skipped decision and
+	// false for an unknown harness. The skip coalesces on the harness's
+	// actor loop exactly as an overlap skip does.
+	SkipRun(name string, req supervisor.RunRequest, reason supervisor.RunReason) (supervisor.RunDecision, bool)
 }
 
 // Options configure a Manager.
@@ -89,6 +99,9 @@ type Decision struct {
 	Harness string
 	// Kind is "started", "queued" or "skipped"; empty when Err is set.
 	Kind supervisor.RunDecisionKind
+	// Reason says why a skipped decision was skipped: "overlap",
+	// "stopping" or "outside_hours". Empty unless Kind is "skipped".
+	Reason supervisor.RunReason
 	// RunID is the run's id, 0 for a queued firing (which has none until it
 	// starts) and for an error.
 	RunID int
@@ -293,7 +306,8 @@ func (m *Manager) Fire(ev *trigger.Envelope) []Decision {
 	// arrived, and REQ "Trigger Visibility"'s last event should say so.
 	m.NoteOutcome(ev.Source, trigger.OutcomeFired)
 
-	bound := m.config().BoundHarnesses(ev.Source)
+	cfg := m.config()
+	bound := cfg.BoundHarnesses(ev.Source)
 	if len(bound) == 0 {
 		// Not an error: a source may be declared, connected and simply not
 		// bound yet. Counting it is #480's job; saying so is this one's.
@@ -317,9 +331,45 @@ func (m *Manager) Fire(ev *trigger.Envelope) []Decision {
 			out = append(out, Decision{Harness: name, Err: "abandoned: the daemon is shutting down"})
 			continue
 		}
-		out = append(out, m.fireOne(name, runTrigger, ev))
+		out = append(out, m.fireOne(name, runTrigger, ev, outsideHours(cfg, name, ev.ReceivedAt)))
 	}
 	return out
+}
+
+// outsideHours reports whether name's operating_hours gate refuses a firing
+// received at at. A harness without operating_hours is never refused.
+//
+// It is judged at the event's receive time, not whenever this goroutine got
+// round to it: the daemon stamps ReceivedAt from the manager's clock, which
+// the daemon wires to the scheduler's clock seam, so the firing gate and the
+// scheduler's gate pass read one clock and cannot disagree about which side
+// of a boundary an event landed on. Windows are end-exclusive (internal/hours),
+// so an event received exactly at the close is out of hours.
+//
+// Only a harness with `triggers` gets here, and config load rejects
+// `schedule` alongside `operating_hours`, so every gated harness this sees is
+// trigger-only: its hours gate firings, never its process.
+// Governing: SPEC-0014 REQ "Operating Hours On Triggered Harnesses"; SPEC-0012
+// REQ "Gate Evaluation".
+func outsideHours(cfg *core.Config, name string, at time.Time) bool {
+	h, ok := cfg.Harnesses[name]
+	if !ok || h.OperatingHours == "" {
+		return false
+	}
+	expr := h.HoursExpr
+	if expr.String() == "" {
+		// Defense in depth, as the scheduler's gate has: config parsing
+		// always fills HoursExpr, but a hand-built config may carry only the
+		// raw string. One that does not parse gates nothing, which is what
+		// the scheduler does with it too.
+		parsed, err := hours.Parse(h.OperatingHours)
+		if err != nil {
+			return false
+		}
+		expr = parsed
+	}
+	in, _, _ := expr.In(at)
+	return !in
 }
 
 // fireOne fires a single harness, recovering a panic so one harness cannot
@@ -331,7 +381,10 @@ func (m *Manager) Fire(ev *trigger.Envelope) []Decision {
 // panicked, which is the failure REQ "Firing" names ("a failure to start one
 // harness SHALL NOT prevent the others").
 // Governing: SPEC-0014 REQ "Firing", REQ "Concurrency Safety".
-func (m *Manager) fireOne(name string, runTrigger supervisor.RunTrigger, ev *trigger.Envelope) (d Decision) {
+//
+// outside is the operating-hours verdict for this harness: a closed harness
+// is recorded skipped with reason outside_hours rather than asked to run.
+func (m *Manager) fireOne(name string, runTrigger supervisor.RunTrigger, ev *trigger.Envelope, outside bool) (d Decision) {
 	d = Decision{Harness: name}
 	defer func() {
 		if r := recover(); r != nil {
@@ -343,11 +396,22 @@ func (m *Manager) fireOne(name string, runTrigger supervisor.RunTrigger, ev *tri
 		}
 	}()
 
-	decision, ok := m.runner.StartRun(name, supervisor.RunRequest{
+	req := supervisor.RunRequest{
 		Trigger: runTrigger,
 		Source:  ev.Source,
 		Event:   ev,
-	})
+	}
+	var (
+		decision supervisor.RunDecision
+		ok       bool
+	)
+	if outside {
+		// The event rides the request only so the record can carry its id;
+		// a skip never writes an event file (runs.go decisionRecord).
+		decision, ok = m.runner.SkipRun(name, req, supervisor.ReasonOutsideHours)
+	} else {
+		decision, ok = m.runner.StartRun(name, req)
+	}
 	if !ok {
 		m.log.Warn("trigger fired for a harness the daemon does not know", "harness", name, "source", ev.Source)
 		return Decision{Harness: name, Err: "unknown harness"}
@@ -364,5 +428,5 @@ func (m *Manager) fireOne(name string, runTrigger supervisor.RunTrigger, ev *tri
 	m.log.Info("trigger fired",
 		"harness", name, "source", ev.Source, "event_id", ev.EventID,
 		"decision", string(decision.Kind), "run_id", decision.Run.RunID)
-	return Decision{Harness: name, Kind: decision.Kind, RunID: decision.Run.RunID}
+	return Decision{Harness: name, Kind: decision.Kind, Reason: decision.Run.Reason, RunID: decision.Run.RunID}
 }

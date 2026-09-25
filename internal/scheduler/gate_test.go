@@ -32,14 +32,18 @@ type fakeGate struct {
 	// closeAt is what CloseAt answers per name; a name absent from the map
 	// is unanchored (ok=false).
 	closeAt map[string]time.Time
-	calls   []string // "hold name mode" / "clos name" / "arm name" / "release name"
+	calls   []string // "hold name mode" / "clos name" / "arm name" / "release name" / "open name"
 	onHold  func()
+	// skipped is what HoursSkipped answers; OpenFirings clears it, as the
+	// real loop does.
+	skipped map[string]bool
 }
 
 func newFakeGate() *fakeGate {
 	return &fakeGate{
 		up: map[string]bool{}, held: map[string]bool{}, closing: map[string]bool{},
 		lease: map[string]time.Time{}, closeAt: map[string]time.Time{},
+		skipped: map[string]bool{},
 	}
 }
 
@@ -93,6 +97,19 @@ func (g *fakeGate) Release(name string) {
 	if g.held[name] {
 		g.up[name], g.held[name] = true, false
 	}
+}
+
+func (g *fakeGate) HoursSkipped(name string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.skipped[name]
+}
+
+func (g *fakeGate) OpenFirings(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.calls = append(g.calls, "open "+name)
+	g.skipped[name] = false
 }
 
 func (g *fakeGate) set(name string, up, held bool) {

@@ -436,8 +436,16 @@ func appendOperatingHoursCheck(rows []check, cfg *core.Config) []check {
 //     generic adapter, or no workdir) — SPEC-0012's degradation table has
 //     nothing to wait on, so every close is immediate no matter the config.
 //
+// On a harness with `triggers`, hours gate firings, not a resident process
+// (scheduler/gate.go keys on the same predicate), so only the whole-week
+// warning applies: the loader requires enabled = false there, and defaults
+// hours_shutdown to graceful although nothing is ever shut down.
+//
 // Pure over cfg, so each condition is independently testable — CLAUDE.md "A
 // zero": a check that never fires reads identically to one that works.
+//
+// @joestump-agent 09/25/2026 - Stopped the enabled and graceful-shutdown
+// warnings firing on every triggered harness with operating_hours (#634).
 func operatingHoursWarnings(cfg *core.Config) []string {
 	if cfg == nil {
 		return nil
@@ -448,14 +456,15 @@ func operatingHoursWarnings(cfg *core.Config) []string {
 		if h.OperatingHours == "" {
 			continue
 		}
-		if !h.Enabled {
+		gatesFirings := len(h.Triggers) > 0
+		if !h.Enabled && !gatesFirings {
 			warns = append(warns, fmt.Sprintf("%s: enabled = false — operating hours will never start it", name))
 		}
 		if in, _, ok := h.HoursExpr.In(time.Now()); in && !ok {
 			warns = append(warns, fmt.Sprintf("%s: operating_hours covers the entire week — it gates nothing", name))
 		}
-		if h.HoursShutdown == core.HoursShutdownGraceful && (h.Adapter == "generic" || supervisor.Workdir(h) == "") {
-			warns = append(warns, fmt.Sprintf("%s: graceful shutdown but nothing can be attributed to it (generic adapter or no workdir) — every close is immediate", name))
+		if !gatesFirings && h.HoursShutdown == core.HoursShutdownGraceful && (h.Adapter == "generic" || h.Adapter == core.AdapterCommand || supervisor.Workdir(h) == "") {
+			warns = append(warns, fmt.Sprintf("%s: graceful shutdown but nothing can be attributed to it (generic or command adapter, or no workdir) — every close is immediate", name))
 		}
 	}
 	return warns

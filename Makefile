@@ -8,7 +8,8 @@
 #   make daemon       # run the daemon in the foreground
 #   make tidy         # go mod tidy + gofumpt
 #   make lint         # static checks only (fmt, vet, go.mod/go.sum tidiness)
-#   make check        # just the CI gates (lint, test, race)
+#   make check        # just the CI gates (lint, test, race, fuzz)
+#   make fuzz         # run the fuzz targets for a bounded time (FUZZTIME)
 #
 # Override the binary path / version via:
 #   make VERSION=v0.1.0
@@ -28,7 +29,7 @@ LDFLAGS   := -X $(PKG)/internal/buildinfo.Version=$(VERSION)
 GOFLAGS   := -trimpath -ldflags "$(LDFLAGS)"
 BIN       := harness
 
-.PHONY: all build check lint fmt vet tidy-check test race tidy clean run daemon install version release-snapshot release-check
+.PHONY: all build check lint fmt vet tidy-check test race fuzz tidy clean run daemon install version release-snapshot release-check
 
 # The default "did I break it" loop.
 all: build check
@@ -37,8 +38,10 @@ all: build check
 build:
 	$(GO) build $(GOFLAGS) -o bin/$(BIN) ./cmd/harness
 
-# Full CI gate: the static checks, tests, and the race detector.
-check: lint test race
+# Full CI gate: the static checks, tests, the race detector, and a bounded
+# fuzz run. CI's pipeline calls `make check`, so adding `fuzz` here is what
+# puts it in CI.
+check: lint test race fuzz
 
 # Static checks only (the uniform `make lint` entry point).
 lint: fmt vet tidy-check
@@ -68,6 +71,23 @@ test:
 # -race needs CGO enabled.
 race:
 	CGO_ENABLED=1 $(GO) test -race ./...
+
+# Fuzz targets CI runs, as <package>:<target>. `go test -fuzz` takes one
+# target in one package per invocation, hence the loop. `make test` already
+# runs every target's seed corpus; this is the part that searches for new
+# inputs. FUZZTIME bounds each target so the gate stays predictable; raise it
+# locally (`make fuzz FUZZTIME=5m`) to dig. A failing input is written under
+# the package's testdata/fuzz/ — commit it with the fix as a regression seed.
+# internal/tmpl FuzzParse: SPEC-0017 REQ-6, issue #501.
+FUZZTIME    ?= 30s
+FUZZ_TARGETS := ./internal/tmpl:FuzzParse
+
+fuzz:
+	@set -e; for t in $(FUZZ_TARGETS); do \
+		pkg=$${t%%:*}; fn=$${t##*:}; \
+		echo "fuzz $$pkg $$fn ($(FUZZTIME))"; \
+		$(GO) test -run '^$$' -fuzz "^$$fn\$$" -fuzztime $(FUZZTIME) $$pkg; \
+	done
 
 # Apply formatting in place. Uses gofumpt if installed, falls back to gofmt.
 tidy:
