@@ -80,8 +80,12 @@ get it fully logged in:
   flow unless it already has a credential. Harness can't click through either
   for you. Which credential a supervised Claude Code should use depends on
   where the daemon runs; see
+<<<<<<< HEAD
   [Claude Code authentication](#claude-code-authentication) below. For exactly
   what Harness runs for Claude Code, see [Claude Code under Harness](./claude-code).
+=======
+  [Claude Code authentication](#claude-code-authentication) below.
+>>>>>>> origin/main
 - **Crush:** configure a provider in `crush.json` or its environment, and put
   the API key in the `env_file`.
 
