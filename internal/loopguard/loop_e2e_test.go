@@ -127,8 +127,18 @@ func (r *loopRig) call(t *testing.T, name string, input map[string]any) {
 		// calls do not.
 		rt.CrushMessage{Role: "tool", At: r.at, Parts: rt.ToolResult(id, fmt.Sprintf(`{"id":%d}`, 46000+r.n))},
 	)
+	// Not eventually(): this wait has been seen to time out intermittently in
+	// a full `go test ./...`, and the observer's stats are what tell a call
+	// the observer never read (Delivered short) from one it delivered and the
+	// guard's subscription dropped (Dropped non-zero).
 	want := uint64(r.n)
-	eventually(t, fmt.Sprintf("the guard to handle call %d", r.n), func() bool { return r.guard.Seen() >= want })
+	deadline := time.Now().Add(10 * time.Second)
+	for r.guard.Seen() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for the guard to handle call %d: seen=%d observer=%+v", r.n, r.guard.Seen(), r.obs.Stats())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // incident is the add_comment the worker repeated 608 times.
