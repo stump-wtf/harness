@@ -9,6 +9,7 @@ package tui
 // and that state never bleeds across a hop.
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -89,11 +90,17 @@ func TestPeekFormatterDroppedOnClose(t *testing.T) {
 }
 
 // Guard the fixture: these tests rely on the dashboard list carrying the
-// adapter name on the wire (protocol.HarnessInfo.Adapter).
+// adapter name on the wire (protocol.HarnessInfo.Adapter). The json tag is
+// the whole contract — drop it and the field unmarshals empty, PeekFormatter
+// resolution silently degrades to the byte-faithful mirror, and no compiler
+// error ever fires.
 func TestHarnessInfoCarriesAdapter(t *testing.T) {
+	raw := []byte(`{"name":"peek-fixture","adapter":"claude-code"}`)
 	var info protocol.HarnessInfo
-	info.Adapter = "claude-code"
+	if err := json.Unmarshal(raw, &info); err != nil {
+		t.Fatalf("fixture no longer unmarshals: %v", err)
+	}
 	if info.Adapter != "claude-code" {
-		t.Fatal("unreachable")
+		t.Fatalf("HarnessInfo.Adapter lost its wire tag; the peek formatter cannot resolve: %q", info.Adapter)
 	}
 }
