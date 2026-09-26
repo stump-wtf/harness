@@ -26,6 +26,7 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/stump-wtf/agent-trace/tail"
+	"github.com/stump-wtf/harness/internal/adapter"
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/runtrace"
 	"github.com/stump-wtf/harness/internal/tui/chatroom"
@@ -197,6 +198,12 @@ type Model struct {
 	peekCols     int
 	peekRows     int
 	peekView     *vtView
+	// peekFmt renders the guest's PTY bytes readably before they reach the
+	// emulator (issue #13). The claude-code adapter supplies one for its
+	// stream-json; nil keeps the byte-faithful mirror every other backend
+	// gets. It is replaced on every session change — it is stateful, and
+	// state from the previous harness must not bleed into the next one.
+	peekFmt adapter.PeekFormatter
 	// peekPainted latches once the live session's screen holds something. A
 	// session that is open but has never painted is not yet worth rendering
 	// over the polled tail (#290) — see peekLive.

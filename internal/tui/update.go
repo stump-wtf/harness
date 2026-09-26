@@ -107,7 +107,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// connection (#200), so route by id — ids are unique across both, and
 		// a frame still in flight from a closed session matches neither.
 		if m.peekView != nil && m.peekSess != 0 && msg.sessionID == m.peekSess {
-			m.peekView.write(msg.data)
+			// The backend's peek formatter (claude-code's stream-json, issue
+			// #13) renders the guest's bytes readably; nil keeps the
+			// byte-faithful mirror.
+			if m.peekFmt != nil {
+				m.peekView.write(m.peekFmt.FormatPTY(msg.data))
+			} else {
+				m.peekView.write(msg.data)
+			}
 			// Latch the moment the guest's screen holds something (#290). The
 			// scan costs a grid walk per frame only while the answer is still
 			// no — once it flips, and for a guest that never paints at all,

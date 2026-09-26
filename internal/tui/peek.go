@@ -28,6 +28,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/stump-wtf/harness/internal/adapter"
 	"github.com/stump-wtf/harness/internal/protocol"
 )
 
@@ -108,6 +109,15 @@ func (m *Model) syncPeekSession() tea.Cmd {
 	sid := m.nextSessionID()
 	m.peekSess, m.peekSessName = sid, name
 	m.peekCols, m.peekRows = cols, rows
+	// The preview renders the guest's PTY readably when the backend knows how
+	// (issue #13): claude-code stream-json becomes a legible narrative, every
+	// other backend keeps the byte-faithful mirror. A fresh session gets a
+	// fresh formatter — it is stateful, so a reused one would carry the last
+	// harness's partial line and heartbeat tally into the new one.
+	m.peekFmt = nil
+	if sel, ok := m.selectedHarness(); ok {
+		m.peekFmt = adapter.PeekFormatterFor(sel.Adapter)
+	}
 	// Re-use the emulator across selections rather than building one per
 	// session: a fresh vtView starts a reply pump that can never be stopped
 	// without racing the emulator's close flag (see vtView.pumpReplies).
@@ -140,6 +150,7 @@ func (m *Model) closePeekSession() tea.Cmd {
 	m.peekSess, m.peekSessName = 0, ""
 	m.peekCols, m.peekRows = 0, 0
 	m.peekPainted = false
+	m.peekFmt = nil
 	if sid == 0 || m.attach == nil {
 		return nil
 	}

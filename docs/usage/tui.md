@@ -46,6 +46,15 @@ back. If two clients are watching the same harness at different sizes, the
 smaller one wins — `harness describe <name>` lists every attached session and
 flags the one setting the minimum.
 
+A `claude-code` harness that runs headlessly prints its stream-json on the
+PTY, so the preview renders that backend's output readably instead of
+mirroring the raw feed (issue #13): heartbeat pings collapse into a single
+`[N heartbeats over Xs]` line that ticks while a tool runs, tool calls appear
+as their human-written description (`▸ Push branch to GitHub`), and the
+agent's messages show as plain text. Anything that is not modeled — shell
+errors, escape output, unknown event kinds — still passes through untouched.
+Every other adapter keeps the byte-faithful mirror.
+
 | Key | Action |
 |-----|--------|
 | `↵` | attach to the selected harness |
