@@ -161,7 +161,7 @@ call is not counted.
 
 Only a harness whose adapter writes a readable transcript (`claude-code`,
 `crush`, `codex`) **and** that has a `workdir` gets model-call series. A
-`generic` harness, or an agent harness with no workdir, has none. The daemon
+`generic` or `command` harness, or an agent harness with no workdir, has none. The daemon
 omits values it cannot compute rather than reporting a zero, which would look
 like a healthy, idle agent.
 

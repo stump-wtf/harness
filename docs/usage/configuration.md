@@ -298,6 +298,9 @@ On a harness that sets `triggers` (and no `schedule`), `operating_hours` gates
 **firings**, not the process:
 
 ```toml
+# Assumes [webhook.gitea-pr] and [channel.switchboard] tables are declared
+# too (see Webhook listener below); a triggers entry naming an undeclared
+# source fails to load.
 [harness.pr-review]
 harness = "claude-code"
 prompt_file = "~/.config/harness/prompts/pr-review.md"
@@ -438,8 +441,10 @@ enabled = true
 - `argv` is required and must be non-empty. `argv[0]` must not be blank.
 - A bare `argv[0]` (`"report"`) is looked up on `PATH`, like every other
   harness's executable. An absolute one is used as is. A relative one with a
-  `/` (`"./bin/report"`) resolves against the harness's `workdir`, not
-  against wherever the daemon was started.
+  `/` (`"./bin/report"`) resolves against the harness's `workdir`. Without a
+  `workdir` it resolves against the daemon's own working directory, which
+  depends on how the daemon was started — so set `workdir`, or use an
+  absolute path.
 - Elements are not expanded: `{workdir}` and `~` in `argv` stay literal.
   `argv[0]` can never be a `{{…}}` placeholder, so nothing substituted at run
   time can choose what runs. Templates in the other elements are not
@@ -911,7 +916,8 @@ It never redirects and never serves files.
 
 | Status | When |
 |---|---|
-| `202` | Verified. `decision` is `fired` with one entry per bound harness (`started`/`skipped` carry `run_id`; `queued` does not), `ignored` when `events` filtered it out, or `duplicate` when its delivery ID already fired (with the first firing's `event_id`). `ignored` and `duplicate` fire nothing and make no run record. The response never waits for a run. |
+| `202` | Verified. `decision` is `fired` with one entry per bound harness (`started`/`skipped` carry `run_id`; `queued` does not; `error` means that harness could not be fired at all — unknown to the supervisor, shut down under a reload, or its firing panicked — and carries no `run_id`, with the detail in the daemon log only), `ignored` when `events` filtered it out, or `duplicate` when its delivery ID already fired (with the first firing's `event_id`). `ignored` and `duplicate` fire nothing and make no run record. The response never waits for a run. |
+| `400` | The body could not be read for a reason other than size (for example, the connection dropped mid-body). Body `{"error":"bad_request"}`. |
 | `401` | Missing, malformed or wrong credential. Every cause gets the same body; the log names the route and peer, never the value presented. |
 | `404` | The name is unknown, disabled, or bound by no harness. All three are byte-identical, so routes cannot be enumerated. |
 | `405` | Any method other than `POST` on `/hooks/<name>` (or other than `GET` on `/healthz`). |

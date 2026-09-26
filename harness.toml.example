@@ -253,7 +253,8 @@ description = "switchboard doorbells for my-agent"
 
 # A webhook source. The route is POST /hooks/<name> on the listener configured
 # under [server] below; with no listener, the source is valid and simply has
-# nowhere to be served (`harness triggers` shows it as no_listener).
+# nowhere to be served (the daemon logs at startup that [webhook.*] sources
+# report no_listener).
 #
 # `verify` picks the authentication scheme: bearer, hmac-sha256, github,
 # gitea, gitlab or standard-webhooks. The four presets fix their own header
@@ -334,8 +335,8 @@ autostart = true
 # webhook_listen = "127.0.0.1:9080"
 # # Both TLS keys or neither; setting one is a parse error, because a
 # # half-configured pair is an operator who believes the listener is
-# # encrypted when it is not. A non-loopback bind with no TLS starts, warns at
-# # startup, and is flagged by `harness doctor`.
+# # encrypted when it is not. A non-loopback bind with no TLS starts and
+# # warns in the daemon log at startup (`harness doctor` does not flag it).
 # webhook_tls_cert_file = "/etc/harness/webhook.crt"
 # webhook_tls_key_file = "/etc/harness/webhook.key"
 

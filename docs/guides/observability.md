@@ -105,7 +105,7 @@ activity view prints `note` lines saying so and pointing at
 history of a full-screen agent is mostly its repainted screen, which buries the
 notices telling you what to do next.
 
-A `generic` harness has no agent transcript at all, so `harness logs` shows its
+A `generic` or `command` harness has no agent transcript at all, so `harness logs` shows its
 durable log directly. That is the whole record for one (ADR-0007).
 
 ### The durable log
@@ -134,7 +134,7 @@ It lives on disk too, so you can read it with ordinary tools:
 | `~/.local/state/harness/logs/NAME.log` | everything a harness printed, across runs (rotated) |
 | `~/.local/state/harness/jobs/NAME/RUN_ID.log` | one scheduled run's output and lifecycle |
 | `~/.local/state/harness/state.json` | intent, and each harness's last run id |
-| `~/.local/state/harness/ledger/YYYY-MM-DD.jsonl` | the run ledger: one record per run, for every harness |
+| `~/.local/state/harness/ledger/YYYY-MM-DD.jsonl` | the run ledger: one record per one-shot run (scheduled or triggered); resident processes are not recorded yet |
 
 :::caution Check raw output before you share it
 
