@@ -67,6 +67,21 @@ Read it top to bottom:
 5. **`ERROR`** is the error the agent reported. Here it is the reason for exit
    code 1.
 
+On a terminal the same view is coloured in the cockpit's palette: timestamps
+faint, each label its own colour, states as their glyph and colour
+(`● running`, `◌ starting`, `✖ failed`), errors in red. Consecutive identical
+lines collapse into one with a count and the span they cover, so an agent that
+logged the same provider error a thousand times reads as one line:
+
+```
+20:16:35  ERROR     ×1070 20:16:35–09:14:39  Bad Request: litellm.ContextWindowExceededError …
+```
+
+`--follow` collapses in place, updating the count as repeats arrive. Piped,
+redirected or with `--json`, the output is exactly as shown above: uncoloured,
+every line printed, for scripts and agents to parse. `NO_COLOR` keeps the
+glyphs and drops the colour.
+
 This run failed on its first real command, and then spent fifteen minutes
 retrying and pulling output into its context until the model refused. The fix
 is in the sweep's design, not its schedule: a narrower scope, plus a completion
@@ -106,6 +121,11 @@ durable log directly. That is the whole record for one (ADR-0007).
 2026/09/11 20:46:03 INFO state changed from=running to=stopped
 2026/09/11 20:46:03 INFO run finished run_id=2 outcome=success exit_code=0
 ```
+
+On a terminal Harness's own lines are coloured by level, with states as their
+glyph and colour (`from=◌ starting to=● running`); the agent's output between
+them prints exactly as it was written. The file itself is always the plain
+text above.
 
 It lives on disk too, so you can read it with ordinary tools:
 

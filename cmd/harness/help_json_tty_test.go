@@ -38,6 +38,13 @@ import (
 // assertions vacuous.
 func runOnPTY(t *testing.T, bin string, args ...string) []byte {
 	t.Helper()
+	return runOnPTYEnv(t, bin, nil, args...)
+}
+
+// runOnPTYEnv is runOnPTY with extra environment appended after the
+// colour-capable defaults, so a case can set NO_COLOR back on.
+func runOnPTYEnv(t *testing.T, bin string, extra []string, args ...string) []byte {
+	t.Helper()
 	pty, err := xpty.NewPty(100, 40)
 	if err != nil {
 		t.Skipf("no PTY available: %v", err)
@@ -49,7 +56,7 @@ func runOnPTY(t *testing.T, bin string, args ...string) []byte {
 	// reachable; without it a "plain" result would prove nothing. NO_COLOR is
 	// dropped rather than overridden — the convention is that any value,
 	// including the empty string, disables color.
-	cmd.Env = append(colorlessEnvStripped(), "TERM=xterm-256color", "CLICOLOR_FORCE=1")
+	cmd.Env = append(append(colorlessEnvStripped(), "TERM=xterm-256color", "CLICOLOR_FORCE=1"), extra...)
 	if err := pty.Start(cmd); err != nil {
 		t.Fatalf("start %s %v on pty: %v", bin, args, err)
 	}
