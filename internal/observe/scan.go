@@ -424,6 +424,15 @@ func (o *Observer) read(ctx context.Context, st *session, scopes []runtrace.Scop
 		return
 	}
 	st.lastSeen = now
+	// Judge what was read at the moment it was read, not at the scan's start.
+	// A scan reads its sessions one after another, and on a loaded host that
+	// takes seconds, so a call written while the scan was under way is dated
+	// after the scan's now. Measured against that now, a running harness's
+	// open window closed before the call did, and past runtrace.Slack the call
+	// was counted Unattributed and, the watermark already past it, never
+	// delivered. TestDaemonLoopGuardStopsTheRealHarness lost its calls that
+	// way under load.
+	readAt := o.opts.Now()
 
 	// What could be live at all, whoever wrote it: past the observer's own
 	// floor and this session's, and — on a baseline read — dated. Only these
@@ -446,7 +455,7 @@ func (o *Observer) read(ctx context.Context, st *session, scopes []runtrace.Scop
 		case !ok && baseline:
 			continue
 		case !ok:
-			when = now // not there at the last read, so it is from since then
+			when = readAt // not there at the last read, so it is from since then
 		case when.Before(floor):
 			continue
 		}
@@ -459,7 +468,7 @@ func (o *Observer) read(ctx context.Context, st *session, scopes []runtrace.Scop
 		return
 	}
 
-	name, claimants := runtrace.ClaimantAt(st.meta, at, scopes, now)
+	name, claimants := runtrace.ClaimantAt(st.meta, at, scopes, readAt)
 	st.contested = len(claimants) > 1
 	t := targets[name]
 	if name == "" || t == nil || !t.hasWorkdir {
@@ -485,7 +494,7 @@ func (o *Observer) read(ctx context.Context, st *session, scopes []runtrace.Scop
 		if c.when.Before(cutoff) {
 			continue
 		}
-		ev := Event{Harness: name, Adapter: t.scope.Adapter, Session: meta, Time: c.when, ObservedAt: now}
+		ev := Event{Harness: name, Adapter: t.scope.Adapter, Session: meta, Time: c.when, ObservedAt: readAt}
 		if c.mark {
 			ev.Kind, ev.Mark = KindMark, redactMark(c.mk)
 		} else {

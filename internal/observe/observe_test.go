@@ -429,6 +429,57 @@ func TestStreamedRowIsReadWhileUnlisted(t *testing.T) {
 	}
 }
 
+// TestCallWrittenDuringASlowScanIsDelivered: a scan that takes longer than
+// runtrace.Slack reads calls dated after the moment it started. The harness
+// that wrote them is still running, so they are its calls; judged against the
+// scan's start its open window had closed before they were written, and they
+// were counted Unattributed and never delivered. A loaded CI runner made that
+// the usual case for TestDaemonLoopGuardStopsTheRealHarness.
+func TestCallWrittenDuringASlowScanIsDelivered(t *testing.T) {
+	var slow sync.Mutex
+	slowScan := false
+	var f *fixture
+	f = newFixture(t, func(o *Options) {
+		now := o.Now
+		o.Now = func() time.Time {
+			at := now()
+			slow.Lock()
+			defer slow.Unlock()
+			if slowScan {
+				// Every reading is 10s after the last: a scan that long.
+				f.clock.Set(at.Add(10 * time.Second))
+			}
+			return at
+		}
+	})
+	f.src.add(core.Harness{Name: "worker", Adapter: "crush", Workdir: f.work}, running(start.Add(-time.Hour)))
+	rt.WriteCrushDB(t, f.crushDB(), rt.CrushSession{
+		ID: "s", Created: start, Updated: start.Add(time.Second),
+		Messages: []rt.CrushMessage{userSays("go", start.Add(time.Second))},
+	})
+	ch, cancel := f.obs.Subscribe("test", 64)
+	defer cancel()
+	f.tick(start.Add(5 * time.Second))
+	if got := describe(drain(ch)); !equal(got, []string{"worker:mark:user-message@0"}) {
+		t.Fatalf("first scan delivered %v, want the user message", got)
+	}
+
+	// The scan starts at +10s and reads the session at +20s; the call it
+	// finds was written at +17s, while it ran.
+	rt.AppendCrushMessages(t, f.crushDB(), "s", crushRead("a", start.Add(17*time.Second))...)
+	slow.Lock()
+	slowScan = true
+	slow.Unlock()
+	f.tick(start.Add(10 * time.Second))
+
+	if got := describe(drain(ch)); !equal(got, []string{"worker:tool:view@0"}) {
+		t.Fatalf("slow scan delivered %v, want the call the running harness wrote during it; stats %+v", got, f.obs.Stats())
+	}
+	if n := f.obs.Stats().Unattributed; n != 0 {
+		t.Errorf("Unattributed = %d, want 0: the only harness was running when the call was written", n)
+	}
+}
+
 // TestSlowSubscriberDropsFastOneDoesNot: a subscriber that never reads loses
 // what does not fit its buffer, counted; a subscriber that keeps up gets every
 // event; and the scan is never held up by either.

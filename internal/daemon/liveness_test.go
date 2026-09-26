@@ -21,6 +21,7 @@ import (
 	"github.com/stump-wtf/harness/internal/attach"
 	"github.com/stump-wtf/harness/internal/client"
 	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/testwait"
 )
 
 // reapFast tunes a test daemon so the reaper runs in milliseconds: a wedged
@@ -31,8 +32,10 @@ func reapFast(o *Options) {
 }
 
 // reapPatient keeps the fast ping cadence but gives a client a wide silence
-// budget — 20 unanswered PINGs — so the "healthy client is never evicted" test
-// cannot fail merely because a goroutine was descheduled under -race.
+// budget — 20 unanswered PINGs — so no healthy client in these tests (the
+// survivor, or a wedge-to-be before its wedge) can be evicted merely because
+// its reader was descheduled under -race. An eviction test pays the budget
+// once, after its wedge.
 func reapPatient(o *Options) {
 	o.PingInterval = 25 * time.Millisecond
 	o.LivenessTimeout = 500 * time.Millisecond
@@ -80,31 +83,67 @@ func recordResizes(td *testDaemon) *recordingController {
 	return rec
 }
 
-// wedge makes c answer exactly one PING and then stop reading forever — the
-// #183 client: still connected, still absorbing the daemon's writes into its
-// socket receive buffer, but no longer processing anything. The single PONG is
-// what makes it eligible for reaping at all (see conn.stale).
-func wedge(t *testing.T, c *client.Client) {
+// pongUntilWedged makes c a healthy client until the test calls the returned
+// wedge, and the #183 client after it: still connected, still absorbing the
+// daemon's writes into its socket receive buffer, but never reading again. It
+// returns once c has answered its first PING, the PONG that makes it eligible
+// for reaping at all (see conn.stale).
+//
+// The test, not the clock, picks the moment c wedges. A client that answered
+// one PING and went silent at once (this helper's predecessor) left the
+// attached state the eviction starts from observable for one silence budget
+// only, so a poll descheduled past it never saw that state; and the budget
+// that made that window short (reapFast's 75ms) was short enough to reap a
+// healthy client whose reader was descheduled as long.
+// TestEvictionRestoresSurvivingClientViewport failed in CI run 13900 on a PR
+// that touched no Go, and failed 2 in 40 under load on Linux with "viewport
+// after eviction = 80x24, want 200x50": the healthy client reaped, the wedged
+// one kept. Wedging after the assertion, under reapPatient, removes both.
+func pongUntilWedged(t *testing.T, c *client.Client) (wedge func()) {
 	t.Helper()
-	if err := c.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
-		t.Fatalf("set read deadline: %v", err)
-	}
-	for {
-		f, err := c.Conn().ReadFrame()
+	wedged := make(chan struct{})
+	first := make(chan error, 1)
+	go func() {
+		ponged := false
+		fail := func(err error) {
+			if !ponged {
+				first <- err
+			}
+		}
+		for {
+			f, err := c.Conn().ReadFrame()
+			if err != nil {
+				fail(err)
+				return
+			}
+			select {
+			case <-wedged:
+				return // stop reading: from here on the daemon's writes pile up
+			default:
+			}
+			if f.Type != protocol.TypePing {
+				continue
+			}
+			if err := c.Conn().WriteFrame(protocol.TypePong, nil); err != nil {
+				fail(err)
+				return
+			}
+			if !ponged {
+				ponged = true
+				first <- nil
+			}
+		}
+	}()
+	select {
+	case err := <-first:
 		if err != nil {
 			t.Fatalf("waiting for the first PING: %v", err)
 		}
-		if f.Type != protocol.TypePing {
-			continue
-		}
-		if err := c.Conn().WriteFrame(protocol.TypePong, nil); err != nil {
-			t.Fatalf("write PONG: %v", err)
-		}
-		break
+	case <-time.After(5 * time.Second):
+		t.Fatal("no PING within 5s")
 	}
-	if err := c.SetReadDeadline(time.Time{}); err != nil {
-		t.Fatalf("clear read deadline: %v", err)
-	}
+	var once sync.Once
+	return func() { once.Do(func() { close(wedged) }) }
 }
 
 // pongForever drains c and answers every PING until the connection dies — a
@@ -135,7 +174,7 @@ func pongForever(c *client.Client) (stop func()) {
 // waitSessions polls the harness's attach snapshot until it holds want sessions.
 func waitSessions(t *testing.T, td *testDaemon, name string, want int) attach.MuxSnapshot {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t, 5*time.Second))
 	var snap attach.MuxSnapshot
 	for {
 		snap, _ = td.reg.SnapshotFor(name)
@@ -163,12 +202,12 @@ func startSleeper(t *testing.T, td *testDaemon) {
 // change — with the last session gone the mux retains its last authoritative
 // size and drives no shrink onto the guest.
 func TestWedgedAttachSessionIsEvicted(t *testing.T) {
-	td := newTestDaemon(t, sleeperTOML, reapFast)
+	td := newTestDaemon(t, sleeperTOML, reapPatient)
 	rec := recordResizes(td)
 	startSleeper(t, td)
 
 	stuck := td.dial(t, nil)
-	wedge(t, stuck)
+	wedge := pongUntilWedged(t, stuck)
 	if err := stuck.AttachOpen(1, "sleeper", 90, 30, protocol.AttachRW); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
@@ -176,6 +215,7 @@ func TestWedgedAttachSessionIsEvicted(t *testing.T) {
 	if snap.Cols != 90 || snap.Rows != 30 {
 		t.Fatalf("viewport while attached = %dx%d, want 90x30", snap.Cols, snap.Rows)
 	}
+	wedge()
 
 	// The client is alive and its socket still accepts the daemon's PINGs; only
 	// its silence identifies it.
@@ -198,7 +238,7 @@ func TestWedgedAttachSessionIsEvicted(t *testing.T) {
 // (ADR-0003 recomputed over the survivors) — not merely un-clamped in the
 // bookkeeping.
 func TestEvictionRestoresSurvivingClientViewport(t *testing.T) {
-	td := newTestDaemon(t, sleeperTOML, reapFast)
+	td := newTestDaemon(t, sleeperTOML, reapPatient)
 	rec := recordResizes(td)
 	startSleeper(t, td)
 
@@ -214,7 +254,7 @@ func TestEvictionRestoresSurvivingClientViewport(t *testing.T) {
 	}
 
 	stuck := td.dial(t, nil)
-	wedge(t, stuck)
+	wedge := pongUntilWedged(t, stuck)
 	if err := stuck.AttachOpen(1, "sleeper", 80, 24, protocol.AttachRW); err != nil {
 		t.Fatalf("stuck attach: %v", err)
 	}
@@ -222,6 +262,7 @@ func TestEvictionRestoresSurvivingClientViewport(t *testing.T) {
 	if snap.Cols != 80 || snap.Rows != 24 {
 		t.Fatalf("viewport with the stuck client = %dx%d, want the 80x24 clamp", snap.Cols, snap.Rows)
 	}
+	wedge()
 
 	// Eviction, then recovery: the survivor's geometry comes back on its own.
 	snap = waitSessions(t, td, "sleeper", 1)
@@ -332,13 +373,6 @@ description = "never stops talking"
 // a quiet harness's output, so nothing blocked. This test removes that luck by
 // keeping output flowing, which fills any platform's buffer.
 func TestWedgedClientReapedWhileOutputBacksUp(t *testing.T) {
-	// reapPatient, not reapFast: this test has to observe the wedged client
-	// ATTACHED (two sessions) before the reaper takes it, and reapFast's 75ms
-	// silence budget is shorter than the attach round-trip can take on a
-	// loaded -race runner — the eviction this test is about would then happen
-	// before the assertion could see the state it evicts from, failing with
-	// "sessions = 1, want 2". 500ms keeps the same behaviour under test with
-	// room to watch it.
 	td := newTestDaemon(t, chattyTOML, reapPatient)
 	if _, err := td.dial(t, nil).Start("chatty"); err != nil {
 		t.Fatalf("start: %v", err)
@@ -353,11 +387,14 @@ func TestWedgedClientReapedWhileOutputBacksUp(t *testing.T) {
 	waitSessions(t, td, "chatty", 1)
 
 	stuck := td.dial(t, nil)
-	wedge(t, stuck)
+	wedge := pongUntilWedged(t, stuck)
 	if err := stuck.AttachOpen(1, "chatty", 80, 24, protocol.AttachRW); err != nil {
 		t.Fatalf("stuck attach: %v", err)
 	}
 	waitSessions(t, td, "chatty", 2)
+	// Wedged only now, attached: the output it stops reading fills its socket
+	// buffers, which is the backpressure the reaper must survive.
+	wedge()
 
 	// The wedged client goes, and the survivor's geometry comes back with it.
 	snap := waitSessions(t, td, "chatty", 1)

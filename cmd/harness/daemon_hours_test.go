@@ -27,6 +27,7 @@ import (
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/hours"
 	"github.com/stump-wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/testwait"
 )
 
 // stubClock is a fixed wall clock whose ticks the test sends by hand.
@@ -46,7 +47,7 @@ func (c *stubClock) NewTicker(time.Duration) (<-chan time.Time, func()) { return
 
 func waitUntil(t *testing.T, desc string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t, 5*time.Second))
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
