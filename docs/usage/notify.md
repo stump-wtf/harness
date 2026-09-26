@@ -139,3 +139,5 @@ An alert on a hook that has stopped working:
 - alert: HarnessNotifyHookFailing
   expr: increase(harness_notify_deliveries_total{result=~"error|timeout|dropped"}[1h]) > 0
 ```
+
+<!-- canary 2026-09-26: docs-only PR to exercise the forward review loop -->
