@@ -105,4 +105,3 @@ func TestAnsiScreenRepaints(t *testing.T) {
 		t.Fatalf("ansi screen lost content: %q", out)
 	}
 }
-

@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
-	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/promptd"
+	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/supervisor"
 )
 

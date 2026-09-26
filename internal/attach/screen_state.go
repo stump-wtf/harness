@@ -20,9 +20,9 @@ import (
 )
 
 // ScreenState is a point-in-time reading of one harness's visible screen: the
-// plain-text rows, and how long the screen has been unchanged as of the caller
-//'s now (so a caller with a clock of its own — a test, a sweep replaying a
-// capture — gets verdicts consistent with its own timeline).
+// plain-text rows, and how long the screen has been unchanged as of the
+// caller's own now (so a caller with a clock of its own — a test, a sweep
+// replaying a capture — gets verdicts consistent with its own timeline).
 //
 // The Manager wires a tee target for every configured harness at registration
 // (ManagerOptions.ExtraOutFor), so a Mux can exist long before the harness has
