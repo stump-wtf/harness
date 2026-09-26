@@ -18,7 +18,8 @@
 // identical reads all day (`make test` in an edit-test cycle, a queue poll per
 // doorbell), and those always have other calls or a new prompt between them.
 // The streak resets on any different tool call, on a user message (a new
-// prompt is new work), and on a new session. On the Threshold-th identical
+// prompt is new work), and on a new session — not on a turn-end mark, which
+// is the agent stopping rather than new input. On the Threshold-th identical
 // call in a row the guard stops the harness through the Manager — a stop, not
 // a restart, because a restarted crush resumes the looping session — logs an
 // ERROR naming the harness, the tool and the count to the daemon log and the
@@ -39,6 +40,9 @@
 // summary, targets) — for an MCP tool that is the tool name alone, whatever
 // the arguments — and counted over the session's whole life, so a worker's
 // eighth call to any one MCP tool in a session stopped it.
+//
+// @joestump-agent 09/26/2026 - agent-trace v0.6.0 emits turn-end marks; the
+// guard handles them explicitly as not a reset.
 package loopguard
 
 import (
@@ -206,8 +210,20 @@ func (g *Guard) handle(ev observe.Event) bool {
 	}
 	switch ev.Kind {
 	case observe.KindMark:
-		if ev.Mark.Type == "user-message" {
+		switch ev.Mark.Type {
+		case "user-message":
 			st.key, st.count = "", 0
+		case "turn-end":
+			// Deliberately not a reset (agent-trace v0.6.0 added the mark).
+			// The streak breaks on new input, and a turn ending is the agent
+			// stopping, not new input: a real next turn opens with its own
+			// user-message mark, which resets above. A turn that restarts
+			// with no prompt between (an automatic continuation) and repeats
+			// the same call is exactly the loop this guard exists to stop.
+		default:
+			// error, compaction, subagent and any future type: annotations,
+			// not calls or prompts. Retrying one call through provider errors
+			// is still a streak.
 		}
 		return false
 	case observe.KindTool:
