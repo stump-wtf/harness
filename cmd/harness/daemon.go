@@ -31,6 +31,8 @@ import (
 	"github.com/stump-wtf/harness/internal/config"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/daemon"
+	"github.com/stump-wtf/harness/internal/loopguard"
+	"github.com/stump-wtf/harness/internal/notify"
 	"github.com/stump-wtf/harness/internal/observe"
 	"github.com/stump-wtf/harness/internal/remote"
 	"github.com/stump-wtf/harness/internal/scheduler"
@@ -88,16 +90,16 @@ func startDaemonObserver(mgr *supervisor.Manager, opts observe.Options) *observe
 	return obs
 }
 
-// startDaemonLoopGuard subscribes the runaway tool-loop guard to the daemon's
-// observer, killing a run through the daemon's own Manager when one of its
-// sessions repeats one identical tool call past the threshold. It is a
-// function, like startDaemonObserver, so the wiring test drives the guard the
-// daemon builds.
+// startDaemonLoopGuard subscribes the runaway tool-loop guard to the
+// observer, stopping harnesses through the daemon's own Manager and reporting
+// each stop to the notifier (nil reports nowhere). The daemon closes it on
+// shutdown, before the observer stops and the Manager closes.
 //
-// Governing: stumpcloud/stumpcloud#469.
-func startDaemonLoopGuard(obs *observe.Observer, mgr *supervisor.Manager) *observe.LoopGuard {
-	g := observe.StartLoopGuard(obs, mgr, 0, nil)
-	log.Info("runaway loop guard active", "threshold", observe.DefaultLoopThreshold)
+// Governing: stumpcloud/stumpcloud#469; SPEC-0003 REQ "Operator
+// Notification".
+func startDaemonLoopGuard(mgr *supervisor.Manager, obs loopguard.Subscriber, n *daemonNotifier, opts loopguard.Options) *loopguard.Guard {
+	g := loopguard.New(mgr, n.loopGuardOptions(opts))
+	g.Start(obs)
 	return g
 }
 
@@ -277,6 +279,11 @@ func runDaemon(o daemonOpts) {
 	mgr := supervisor.NewManager(cfg, daemonManagerOptions(reg))
 	reg.SetController(mgr)
 
+	// The [notify] hook (SPEC-0003 REQ "Operator Notification", #725):
+	// subscribed before Autostart, so a harness that gives up during boot
+	// reaches the operator rather than only the log.
+	notifier := startDaemonNotify(mgr, notify.Options{})
+
 	// Mandated boot order (ADR-0005): restore intent from state.json, then
 	// autostart the intended running set, then serve clients.
 	if err := mgr.Restore(); err != nil {
@@ -302,6 +309,7 @@ func runDaemon(o daemonOpts) {
 	// Autostart, so the transitions boot causes are counted (SPEC-0013 REQ-2).
 	// Its observer, schedule and listener arrive below.
 	daemonMet := beginDaemonMetrics(mgr, metricsListener)
+	notifier.registerMetrics(daemonMet)
 	mgr.Autostart()
 
 	// Scheduled harnesses and the operating-hours gate share one wall-clock
@@ -328,11 +336,15 @@ func runDaemon(o daemonOpts) {
 	// beside startRemote below.
 	webhooks := beginDaemonWebhooks(mgr, sources, o.webhookListen)
 	wireWebhookReload(mgr, webhooks)
+	// A changed [notify] table applies on reload, composed onto the same
+	// hook after everything above.
+	wireNotifyReload(mgr, notifier)
 
 	srv := daemon.NewServer(daemon.Options{
 		Manager:    mgr,
 		Registry:   reg,
 		Scheduler:  sched,
+		Notifier:   notifier.d,
 		SocketPath: o.socketPath,
 		ConfigPath: o.configPath,
 		Version:    buildinfo.Version,
@@ -372,9 +384,7 @@ func runDaemon(o daemonOpts) {
 	// context-limit errors — the failure that reports healthy while the
 	// harness answers nothing — and rotate the session (stop, archive the
 	// store, start) when one stalls.
-	sessionGuard := supervisor.NewSessionGuard(mgr, 0, 0)
-	mgr.SetSessionGuard(sessionGuard)
-	sessionGuard.Start()
+	sessionGuard := startDaemonSessionGuard(mgr, notifier, 0, 0)
 	log.Info("session guard active", "interval", supervisor.DefaultSessionGuardInterval, "lookback", supervisor.DefaultSessionGuardLookback)
 
 	// Issue #390: read what the supervised agents write — tool calls, and the
@@ -385,11 +395,11 @@ func runDaemon(o daemonOpts) {
 	observer := startDaemonObserver(mgr, daemonObserverOptions())
 	log.Info("agent event observer active", "interval", observe.DefaultPollInterval)
 
-	// stumpcloud/stumpcloud#469: kill a run whose session repeats one
-	// identical tool call past the threshold — the shape behind the 608
-	// "." comments on harness#383/#384. The daemon keeps supervising; only
-	// the runaway run dies.
-	loopGuard := startDaemonLoopGuard(observer, mgr)
+	// stumpcloud/stumpcloud#469: stop a harness whose agent repeats one tool
+	// call with identical arguments, back to back — a loop no process exit
+	// ever reports.
+	loopGuard := startDaemonLoopGuard(mgr, observer, notifier, loopguard.Options{})
+	log.Info("runaway tool-loop guard active", "threshold", loopguard.DefaultThreshold)
 
 	// Issue #391: export that stream, only when [telemetry] names a
 	// destination and only for opted-in harnesses (SPEC-0015 REQ-1).
@@ -447,14 +457,16 @@ func runDaemon(o daemonOpts) {
 	mergeTrain.Stop()
 	// Before the observer and the Manager: metrics reads both.
 	daemonMet.Stop()
-	// Before the observer stops: the guard consumes from it, and its Stop
-	// unregisters the subscription so observer.Stop never closes a channel
-	// the guard is still reading.
-	loopGuard.Stop()
+	// Before the observer and the Manager: the guard reads one and stops
+	// harnesses through the other.
+	loopGuard.Close()
 	// Before the Manager closes: the observer reads its snapshots.
 	observer.Stop()
 	sessionGuard.Close()
 	mgr.SetSessionGuard(nil)
+	// After both guards, which report into it; its deliveries in flight get
+	// notify.DefaultShutdownGrace.
+	notifier.Close()
 	if cfgWatcher != nil {
 		cfgWatcher.Close()
 	}

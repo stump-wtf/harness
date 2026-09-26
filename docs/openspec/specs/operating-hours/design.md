@@ -108,7 +108,7 @@ transition.
 ### `Hold` and `Release` on the Manager
 
 `Manager.Stop` clears intent and `Manager.StartTransient` exists for scheduled
-firings (#159). Operating hours needs a third pair:
+firings. Operating hours needs a third pair:
 
 - **`Hold(name)`** sends a `hold` request to the supervisor's actor loop. The
   loop cancels a pending respawn, runs the graceful-stop sequence, marks the
@@ -228,7 +228,7 @@ exactly as it does for an ungated harness.
 ### Presentation reuses the schedule machinery
 
 `internal/schedfmt` already renders armed/next for scheduled harnesses, and
-#331 moved the cadence into the SCHEDULE/NEXT columns. Operating hours adds:
+the cadence has moved into the SCHEDULE/NEXT columns. Operating hours adds:
 
 - a state label `off-hours` for `Held`, styled like `armed`, and `closing`
   for a close in progress, in the transient-state styling;
@@ -240,7 +240,7 @@ exactly as it does for an ungated harness.
   `time.Local.String()` reports `Local` rather than the real IANA name. When
   `TZ` is unset nothing is trimmed, and the full expression shows.
 
-No new column (#343).
+No new column.
 
 ## Architecture
 

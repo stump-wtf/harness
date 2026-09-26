@@ -24,7 +24,7 @@ only way back was a **replay** — a new PR and a new review:
 - 18 replays were opened by the predecessor's reviewer, which flipped the
   author and forced a fresh cross-identity review.
 
-The block cannot simply be dropped (stumpcloud/stumpcloud#466, decision D1).
+The block cannot simply be dropped (decision D1 of the agent-contention epic).
 Gitea PR CI tests `refs/pull/N/head`, **not** the merge with `main`, so the
 block is the only thing making "the tree CI tested" equal "the tree that
 landed". In the window it caught zero integration failures, but it is the

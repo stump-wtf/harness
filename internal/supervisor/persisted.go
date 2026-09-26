@@ -79,19 +79,25 @@ type persistedProjectHarness struct {
 	Argv   []string `json:"argv,omitempty"`
 	Prompt string   `json:"prompt,omitempty"`
 	// PromptFile is the PATH, never the file's contents (ADR-0018).
-	PromptFile     string `json:"prompt_file,omitempty"`
-	Model          string `json:"model,omitempty"`
-	AutoAccept     bool   `json:"auto_accept,omitempty"`
-	MaxTurns       int    `json:"max_turns,omitempty"`
-	Quiet          *bool  `json:"quiet,omitempty"`
-	Workdir        string `json:"workdir,omitempty"`
-	EnvFile        string `json:"env_file,omitempty"`
-	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
-	Restart        string `json:"restart,omitempty"`
-	Backend        string `json:"backend,omitempty"`
-	Description    string `json:"description,omitempty"`
-	Enabled        bool   `json:"enabled,omitempty"`
-	TmuxSocket     string `json:"tmux_socket,omitempty"`
+	PromptFile string `json:"prompt_file,omitempty"`
+	Model      string `json:"model,omitempty"`
+	AutoAccept bool   `json:"auto_accept,omitempty"`
+	MaxTurns   int    `json:"max_turns,omitempty"`
+	Quiet      *bool  `json:"quiet,omitempty"`
+	Workdir    string `json:"workdir,omitempty"`
+	// EnvFile is the pre-REQ-12 single-path form, kept so state.json written
+	// by an older daemon still restores. New writes use EnvFiles only; a
+	// zero EnvFile here is expected and means nothing on its own.
+	EnvFile string `json:"env_file,omitempty"`
+	// EnvFiles is the env_file list in order, later file winning a collision
+	// (SPEC-0018 REQ-12). Only paths — never values (ADR-0008).
+	EnvFiles       []string `json:"env_files,omitempty"`
+	RestartDelayMs int64    `json:"restart_delay_ms,omitempty"`
+	Restart        string   `json:"restart,omitempty"`
+	Backend        string   `json:"backend,omitempty"`
+	Description    string   `json:"description,omitempty"`
+	Enabled        bool     `json:"enabled,omitempty"`
+	TmuxSocket     string   `json:"tmux_socket,omitempty"`
 	// ExportTelemetry is a project's telemetry opt-out, kept so a daemon
 	// restart does not quietly re-include the harness (SPEC-0015 REQ-2).
 	ExportTelemetry *bool `json:"export_telemetry,omitempty"`
@@ -119,7 +125,7 @@ func toPersistedProjectHarness(h core.Harness) persistedProjectHarness {
 		MaxTurns:        h.MaxTurns,
 		Quiet:           quiet,
 		Workdir:         h.Workdir,
-		EnvFile:         h.EnvFile,
+		EnvFiles:        h.EnvFiles,
 		RestartDelayMs:  h.RestartDelay.Milliseconds(),
 		Restart:         string(h.Restart),
 		Backend:         string(h.Backend),
@@ -150,18 +156,27 @@ func (p persistedProjectHarness) toCore() core.Harness {
 		quiet = *p.Quiet
 	}
 	return core.Harness{
-		Name:            p.Name,
-		Adapter:         p.Harness,
-		Args:            p.Args,
-		Argv:            p.Argv,
-		Prompt:          p.Prompt,
-		PromptFile:      p.PromptFile,
-		Model:           p.Model,
-		AutoAccept:      p.AutoAccept,
-		MaxTurns:        p.MaxTurns,
-		Quiet:           quiet,
-		Workdir:         p.Workdir,
-		EnvFile:         p.EnvFile,
+		Name:       p.Name,
+		Adapter:    p.Harness,
+		Args:       p.Args,
+		Argv:       p.Argv,
+		Prompt:     p.Prompt,
+		PromptFile: p.PromptFile,
+		Model:      p.Model,
+		AutoAccept: p.AutoAccept,
+		MaxTurns:   p.MaxTurns,
+		Quiet:      quiet,
+		Workdir:    p.Workdir,
+		EnvFiles: func() []string {
+			if p.EnvFiles != nil {
+				return p.EnvFiles
+			}
+			// An older state.json carries the single-path form.
+			if p.EnvFile == "" {
+				return nil
+			}
+			return []string{p.EnvFile}
+		}(),
 		RestartDelay:    time.Duration(p.RestartDelayMs) * time.Millisecond,
 		Restart:         restart,
 		Backend:         backend,

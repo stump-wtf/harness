@@ -36,6 +36,7 @@ import (
 	rt "github.com/stump-wtf/harness/internal/runtrace/runtracetest"
 	"github.com/stump-wtf/harness/internal/supervisor"
 	"github.com/stump-wtf/harness/internal/telemetry"
+	"github.com/stump-wtf/harness/internal/testwait"
 )
 
 // telemetryTestManager starts a real Manager running cfg's "worker" harness
@@ -45,14 +46,7 @@ func telemetryTestManager(t *testing.T, tmp string, cfg *core.Config) *superviso
 	t.Setenv("HOME", tmp)
 	t.Setenv("CRUSH_GLOBAL_DATA", "")
 	t.Setenv("XDG_DATA_HOME", "")
-	bin := filepath.Join(tmp, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bin, "crush"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeCrushOnPath(t, tmp)
 
 	reg := attach.NewRegistry(100)
 	opts := daemonManagerOptions(reg)
@@ -65,7 +59,7 @@ func telemetryTestManager(t *testing.T, tmp string, cfg *core.Config) *superviso
 	if !mgr.Start("worker") {
 		t.Fatal("Start returned false")
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t, 5*time.Second))
 	for {
 		if snap, _ := mgr.Snapshot("worker"); snap.State == core.StateRunning && snap.PID != 0 {
 			return mgr
@@ -154,7 +148,7 @@ export_telemetry = true
 
 	rt.AppendCrushMessages(t, db, "live", rt.CrushMessage{Role: "assistant", At: time.Now(), Parts: rt.FinishError("quota exhausted", "429")})
 
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t, 15*time.Second))
 	for {
 		bodies, paths := col.snapshot()
 		if rec, ok := findErrorRecord(bodies); ok {
@@ -172,7 +166,7 @@ export_telemetry = true
 		time.Sleep(20 * time.Millisecond)
 	}
 	// The same item reached the events file, under the daemon's resolved path.
-	deadline = time.Now().Add(5 * time.Second)
+	deadline = time.Now().Add(testwait.Budget(t, 5*time.Second))
 	for {
 		if data, _ := os.ReadFile(events); strings.Contains(string(data), `"severity":"ERROR"`) {
 			break
@@ -259,7 +253,7 @@ func TestDaemonTelemetryAbsentMeansNothing(t *testing.T) {
 		Messages: []rt.CrushMessage{{Role: "user", At: now, Parts: `[{"type":"text","data":{"text":"go"}}]`}}})
 	rt.AppendCrushMessages(t, db, "live", rt.CrushMessage{Role: "assistant", At: time.Now(), Parts: rt.FinishError("quota exhausted", "429")})
 	// Show the observer did deliver, so the silence below is not vacuous.
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t, 10*time.Second))
 	for obs.Stats().Delivered == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("the observer never delivered; this test would prove nothing")

@@ -1,0 +1,70 @@
+name: Bug report
+description: Something Harness does is wrong, or it broke.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Issues here are read and triaged onto the project's canonical tracker.
+        Security issue? Please don't file it here; see [SECURITY.md](https://github.com/stump-wtf/harness/blob/main/SECURITY.md).
+        Before you start, [Troubleshooting](https://stump-wtf.github.io/harness/guides/troubleshooting) covers the usual "it's green but nothing happens" cases.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Harness version
+      description: Output of `harness --version`, or the commit you built from.
+      placeholder: harness v0.5.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - Homebrew (stable)
+        - Homebrew --HEAD
+        - go install
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: macOS 26.1 (arm64) / Ubuntu 24.04 (amd64)
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent kind and version
+      description: The `harness = "…"` kind involved, and that CLI's version (`claude --version`, `crush --version`, `codex --version`). Put "n/a" if no agent is involved.
+      placeholder: claude-code, Claude Code 2.1.280
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: The relevant harness.toml table
+      description: Only the tables involved. **Remove tokens, keys and private hostnames first.** Credentials belong in an env_file, so the table itself should hold none.
+      render: toml
+  - type: textarea
+    id: doctor
+    attributes:
+      label: harness doctor output
+      description: Run `harness doctor` as the user the daemon runs as. Redact anything private.
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Anything relevant from `harness logs NAME --raw` or the daemon's log. Redact anything private.
+      render: text

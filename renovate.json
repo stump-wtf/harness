@@ -1,4 +1,32 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "postUpdateOptions": ["gomodTidy"]
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Bump the stack manifest's component tag and digest together (SPEC-0018 REQ-16)",
+      "managerFilePatterns": [
+        "/^internal/stack/manifest\\.toml$/"
+      ],
+      "matchStrings": [
+        "image\\s*=\\s*\"(?<depName>[^\"]+)\"\\s*\\n(?:[^\\n]*\\n)*?tag\\s*=\\s*\"(?<currentValue>[^\"]+)\"\\s*\\ndigest\\s*=\\s*\"(?<currentDigest>sha256:[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Bump the manifest [plugin.*] skill pins (REQ-14). github-tags follows release tags; the two plugins still pinned to commit SHAs update once they cut tags (claude-plugin-switchboard#16, claude-plugin-cairn#11).",
+      "managerFilePatterns": [
+        "/^internal/stack/manifest\\.toml$/"
+      ],
+      "matchStrings": [
+        "repo\\s*=\\s*\"(?<depName>stump-wtf/[^\"]+)\"\\s*\\nref\\s*=\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "github-tags",
+      "pinDigests": true
+    }
+  ]
 }

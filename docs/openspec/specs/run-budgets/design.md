@@ -13,10 +13,10 @@ store, and how they compose with the machinery that already exists:
 * the **run machinery** (SPEC-0008, `internal/supervisor/runs.go`,
   `manager_runs.go`), whose `StartRun`, timeout kill and `RunJournal` are the
   enforcement and recording points;
-* the **observer** (`internal/observe`, merged in #416), the only source of
+* the **observer** (`internal/observe`), the only source of
   agent activity in the daemon;
-* the **error classifier** (SPEC-0013 REQ-3, `internal/metrics/classify.go` on
-  #407), which already maps error text to `quota|auth|timeout|transport|other`;
+* the **error classifier** (SPEC-0013 REQ-3, `internal/metrics/classify.go`),
+  which already maps error text to `quota|auth|timeout|transport|other`;
 * the **run ledger** (SPEC-0022, ADR-0028, accepted with this spec on
   2026-09-22 and not yet built), which stores every run record and hosts the
   usage accumulator.
@@ -135,7 +135,7 @@ true. `held` in projections becomes `hold_reasons`.
 **Rationale**: every rule SPEC-0012 established for a hold (it is not a crash,
 `enabled` survives, backoff resets, a `failed` harness stays failed, `stop`
 clears it) is correct for quota and budget too. One path means one set of
-tests, and the #385 display machinery (`off-hours`) extends to `parked` and
+tests, and the operating-hours display machinery (`off-hours`) extends to `parked` and
 `over-budget` rather than growing a parallel branch.
 
 **Migration**: `hold()` today logs `reason=operating_hours`; the log line keeps
@@ -146,7 +146,7 @@ clients: Harness is pre-1.0, and the client and daemon ship in one binary.
 
 ### One classifier, moved to `internal/modelerr`
 
-**Choice**: once #407 merges, `internal/metrics/classify.go` moves to
+**Choice**: once the metrics implementation merges, `internal/metrics/classify.go` moves to
 `internal/modelerr` (the tables, `Classify`, the classes), and gains
 `ResetAfter(adapter, note string, now time.Time) (time.Time, bool)`.
 `internal/metrics` and the park detector both import it.
@@ -286,7 +286,7 @@ sequenceDiagram
     else held / skipped / waiting
         M->>J: AppendRun skipped (reason) or hold(reason)
     end
-    O->>A: usage items (agent-trace#105)
+    O->>A: agent-trace usage items
     A->>M: fold cost/tokens into run + dayTotals
     M->>S: cap crossed → stop (budget_exceeded)
     O->>D: error marks → modelerr.Classify
@@ -312,16 +312,16 @@ stateDiagram-v2
 
 - **The meter lags by a poll and a turn** → caps are documented as approximate
   ceilings; `timeout` remains the hard wall-clock bound.
-- **agent-trace#105 is a hard dependency for token and cost caps** → the
+- **agent-trace's usage items are a hard dependency for token and cost caps** → the
   meter-free half (run counts, concurrency, parking) ships first and does not
   wait on it.
 - **The run-log fallback matches text** → scoped to non-zero one-shot exits and
-  4 KiB, clamped, and retired when agent-trace#104 lands. A test pins that a zero
+  4 KiB, clamped, and retired when claude-code API errors arrive as marks. A test pins that a zero
   exit is never classified.
 - **A false park stops useful work** → loud in every surface, bounded by the
   backoff or the parsed reset, and cleared by one `harness start`.
-- **Holds generalization touches the #385 display work in flight** → SPEC-0021's
-  visibility story is sequenced after #385, and reuses its `schedfmt` labels.
+- **Holds generalization touches the operating-hours display work in flight** → SPEC-0021's
+  visibility story is sequenced after it, and reuses its `schedfmt` labels.
 - **Operator prices go stale** → `doctor` lists served models without prices and
   prices no run has used; the ledger records `cost_source` so a dashboard can
   separate recorded from priced cost.
@@ -330,7 +330,7 @@ stateDiagram-v2
 
 1. Additive config keys and the `[budget]` table: an old config loads unchanged.
 2. `state.json` gains `parks` additively; an older daemon ignores it.
-3. The classifier move lands as a pure refactor after #407, with no behaviour
+3. The classifier move lands as a pure refactor after the metrics implementation, with no behaviour
    change and its tests moved with it.
 4. `held` is removed from the projection in the same change that adds
    `hold_reasons`, with no transition release. Upgrade note (release notes):
@@ -354,7 +354,7 @@ left open.
 - **The run-log text fallback.** Accepted
   as temporary. Matching the last 4 KiB of a non-zero exit's sanitized run log
   stays until claude-code API errors arrive as marks, then it is removed.
-  stump.wtf/agent-trace#104 closed on 2026-09-22 (agent-trace PR #111), but
+  agent-trace's claude-code reader gained those marks on 2026-09-22, but
   Harness still pins an agent-trace from 2026-08-10, so the fallback retires
   with the dependency bump that picks the marks up.
 - **Should `--over-budget` on a resident default to the remaining operating

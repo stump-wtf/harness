@@ -77,42 +77,42 @@ Harness would not call Switchboard.**
 
 The decision has four parts.
 
-### Decision 1 — Who holds the lease
+**Axis 1: who holds the lease.**
 
-* **Option 1 — The agent holds it.** This is ADR-0021 as written. Build nothing.
-* **Option 2 — The daemon holds it** around a fresh one-shot per attempt.
-* **Option 3 — A wrapper command holds it.** A small program (`sb-relay -- claude -p …`)
+* **1A. The agent holds it.** This is ADR-0021 as written. Build nothing.
+* **1B. The daemon holds it** around a fresh one-shot per attempt.
+* **1C. A wrapper command holds it.** A small program (`sb-relay -- claude -p …`)
   claims, heartbeats, runs the agent as its child and reports. Harness runs the
   wrapper as an ordinary triggered harness.
-* **Option 4 — Switchboard runs the worker.** A Switchboard-side runner starts a process
+* **1D. Switchboard runs the worker.** A Switchboard-side runner starts a process
   per claim.
 
-### Decision 2 — Where the retry loop lives
+**Axis 2: where the retry loop lives.**
 
-* **Option 1 — In Switchboard.** Harness reports each attempt. `fail` schedules
+* **2A. In Switchboard.** Harness reports each attempt. `fail` schedules
   Switchboard's backoff and re-queue, the re-queue rings again, and a new firing
   starts the next attempt with a new process.
-* **Option 2 — In Harness.** Harness holds one lease across several processes and
+* **2B. In Harness.** Harness holds one lease across several processes and
   reports only the final verdict.
 
-### Decision 3 — Who decides success
+**Axis 3: who decides success.**
 
-* **Option 1 — The agent's exit code.**
-* **Option 2 — An operator-authored `success_check` command**, falling back to the exit
+* **3A. The agent's exit code.**
+* **3B. An operator-authored `success_check` command**, falling back to the exit
   code when none is set.
-* **Option 3 — The agent calls `complete` or `fail` itself** (the status quo).
+* **3C. The agent calls `complete` or `fail` itself** (the status quo).
 
-### Decision 4 — Which todo an attempt claims
+**Axis 4: which todo an attempt claims.**
 
-* **Option 1 — `claim_next`** on the lease source's queue, every time.
-* **Option 2 — The todo named in the firing.** Parse `meta.todo_id` from the doorbell,
+* **4A. `claim_next`** on the lease source's queue, every time.
+* **4B. The todo named in the firing.** Parse `meta.todo_id` from the doorbell,
   or `todo_id` from a notify hook body, and `claim` that id.
 
 ## Decision Outcome
 
-Chosen options: **Decision 1, Option 2** (the daemon holds the lease), **Decision 2, Option 1** (Switchboard owns
-the retry loop), **Decision 3, Option 2** (a success check, falling back to the exit code) and
-**Decision 4, Option 1** (`claim_next`).
+Chosen options: **1B** (the daemon holds the lease), **2A** (Switchboard owns
+the retry loop), **3B** (a success check, falling back to the exit code) and
+**4A** (`claim_next`).
 
 In one sentence: a **leased harness** is an ADR-0021 triggered harness that
 names a lease source. For each firing, Harness admits the run, claims a todo
@@ -287,8 +287,8 @@ A `fail` carries a Cairn handle when one exists, chosen in this order:
    replaces the tags outright; there is no per-server fallback between them.
 3. **None.** The summary alone still reaches the next attempt.
 
-A trace handle becomes a fourth source once Harness ADR-0022 (PR #408) exports
-traces and Cairn can ingest them (Cairn ADR-0015, epic #138). The relay does not
+A trace handle becomes a fourth source once Harness ADR-0022 exports
+traces and Cairn can ingest them (Cairn ADR-0015). The relay does not
 depend on it.
 
 ### Dead letters, concurrency and budgets
@@ -371,7 +371,7 @@ granted, not a version difference.
 | Switchboard | ADR-0038 / SPEC-0033 (in flight) | Team-owned endpoints and queues; Harness is unaffected because it acts as one endpoint |
 | Cairn | ADR-0027 / SPEC-0021 (in flight) | The attempt receipt's shape |
 | Cairn | ADR-0023 / SPEC-0017 (in flight) | Server-side redaction, a second layer behind Harness's own |
-| Cairn | ADR-0015 (proposed, epic #138) | Trace handles, later |
+| Cairn | ADR-0015 (proposed) | Trace handles, later |
 
 ### Visibility
 
@@ -445,7 +445,7 @@ SPEC-0019 (`relay-attempts`) makes this testable. Acceptance tests include:
 
 ### Deferred
 
-* **Claiming the todo the firing named** (Decision 4, Option 2). Revisit if FIFO order
+* **Claiming the todo the firing named** (option 4B). Revisit if FIFO order
   proves wrong for someone.
 * **Delivering a verdict across a daemon restart.** A verdict that cannot be
   delivered before the lease deadline is recorded `report_lost`, and Switchboard
@@ -457,9 +457,7 @@ SPEC-0019 (`relay-attempts`) makes this testable. Acceptance tests include:
 
 ## Pros and Cons of the Options
 
-### Decision 1 — Who holds the lease
-
-#### Option 1 — The agent holds the lease (status quo)
+### 1A — The agent holds the lease (status quo)
 
 * Good, because it exists and needs no daemon code.
 * Good, because the daemon stays out of Switchboard entirely.
@@ -469,7 +467,7 @@ SPEC-0019 (`relay-attempts`) makes this testable. Acceptance tests include:
 * Bad, because a per-attempt process cannot hold a lease across its own death,
   so the relay is impossible without a second supervisor.
 
-#### Option 2 — The daemon holds the lease (chosen)
+### 1B — The daemon holds the lease (chosen)
 
 * Good, because the lease holder is the process supervisor, so liveness and
   lease are one fact.
@@ -480,10 +478,10 @@ SPEC-0019 (`relay-attempts`) makes this testable. Acceptance tests include:
 * Bad, because it reverses ADR-0021's "no upstream tools" for leased harnesses,
   and couples Harness to Switchboard's drain contract.
 
-#### Option 3 — A wrapper command holds the lease
+### 1C — A wrapper command holds the lease
 
 * Good, because the daemon stays out of Switchboard, which is the argument
-  ADR-0021's Decision 1, Option 3 made for its bridge.
+  ADR-0021's option 1C made for its bridge.
 * Bad, because the wrapper is a second supervisor. It must propagate signals,
   timeouts and PTY behaviour to its child, and it hides the agent from
   `harness attach`, the run log and the observer.
@@ -492,7 +490,7 @@ SPEC-0019 (`relay-attempts`) makes this testable. Acceptance tests include:
 * Neutral, because it remains available to anyone who prefers it: a leased
   harness is opt-in.
 
-#### Option 4 — Switchboard runs the worker
+### 1D — Switchboard runs the worker
 
 * Good, because the queue and the worker would share one process.
 * Bad, because Switchboard is a multi-tenant service. Running tenant processes
@@ -500,9 +498,7 @@ SPEC-0019 (`relay-attempts`) makes this testable. Acceptance tests include:
 * Bad, because the work usually has to run where the code, credentials and tools
   are, which is a Harness host.
 
-### Decision 2 — Where the retry loop lives
-
-#### Option 1 — Switchboard owns the retry loop (chosen)
+### 2A — Switchboard owns the retry loop (chosen)
 
 * Good, because attempts, backoff, cap and dead letter already exist there and
   are visible on the Board.
@@ -511,22 +507,20 @@ SPEC-0019 (`relay-attempts`) makes this testable. Acceptance tests include:
 * Bad, because each retry waits for Switchboard's backoff and a new doorbell,
   which adds latency between attempts.
 
-#### Option 2 — Harness owns the retry loop
+### 2B — Harness owns the retry loop
 
 * Good, because retries are immediate and need no second doorbell.
 * Bad, because Switchboard sees one long attempt. Its attempt budget, history
   and dead letter stop meaning anything, and the Board shows a single claim.
 * Bad, because a daemon crash mid-loop loses every attempt's notes.
 
-### Decision 3 — Who decides success
-
-#### Option 1 — The agent's exit code
+### 3A — The agent's exit code
 
 * Good, because it needs no configuration.
 * Bad, because exit status reflects the agent CLI, not the work. It is kept only
   as the fallback when no check is configured.
 
-#### Option 2 — An operator-authored success check (chosen)
+### 3B — An operator-authored success check (chosen)
 
 * Good, because success is whatever the operator can test: CI status, a test
   run, an HTTP probe.
@@ -535,15 +529,13 @@ SPEC-0019 (`relay-attempts`) makes this testable. Acceptance tests include:
 * Bad, because the check is code on the attempt's critical path, and a broken
   check fails every attempt.
 
-#### Option 3 — The agent reports its own verdict
+### 3C — The agent reports its own verdict
 
 * Good, because it matches how resident workers operate today.
 * Bad, because it keeps the verdict and the lease with the component least able
   to hold them, and it lets a confused model complete work that is not done.
 
-### Decision 4 — Which todo an attempt claims
-
-#### Option 1 — `claim_next` every time (chosen)
+### 4A — `claim_next` every time (chosen)
 
 * Good, because payloads stay opaque, which is ADR-0021's rule, and the doorbell
   stays a hint, which is Switchboard's.
@@ -551,13 +543,13 @@ SPEC-0019 (`relay-attempts`) makes this testable. Acceptance tests include:
 * Bad, because the event file can describe a different todo from the one
   claimed. The context file is authoritative, and the docs must say so.
 
-#### Option 2 — Claim the todo the firing named
+### 4B — Claim the todo the firing named
 
 * Good, because the event and the claimed todo always agree.
 * Bad, because Harness would parse payloads: `meta.todo_id` on channels, a body
   field on webhooks. That is a second reversal of ADR-0021, for no gain in a
   FIFO queue.
-* Bad, because a lost race still needs a `claim_next` fallback, so Decision 4, Option 1's code
+* Bad, because a lost race still needs a `claim_next` fallback, so 4A's code
   path exists anyway.
 
 ## Architecture Diagram
@@ -625,31 +617,31 @@ sequenceDiagram
 
 ## More Information
 
-* **Extends ADR-0021.** It adds leased
+* **Extends [ADR-0021](adr-0021-on-demand-one-shots.md).** It adds leased
   harnesses, and it reverses ADR-0021's "the daemon never calls an upstream's
   tools" for them, as described above. Firing, overlap, event files and the
   channel listener are otherwise unchanged. ADR-0021's deferred result callbacks
   are delivered for leased harnesses.
-* **Extends ADR-0013.** An attempt is a
+* **Extends [ADR-0013](adr-0013-scheduled-one-shot-jobs.md).** An attempt is a
   run, and its record gains relay fields. A run now spans the claim, the process,
   the check and the report.
-* **Extends ADR-0008.** Lease source
+* **Extends [ADR-0008](adr-0008-security-and-secrets.md).** Lease source
   credentials follow the `env_file` rule, and the lease token is a capability
   held in memory for one attempt.
-* **Related ADR-0019.** Hours gate firings before
+* **Related [ADR-0019](adr-0019-operating-hours.md).** Hours gate firings before
   the claim. ADR-0019's "will not call Switchboard at open or close" still holds.
-* **Related ADR-0020.** Relay adds two
+* **Related [ADR-0020](adr-0020-prometheus-metrics-endpoint.md).** Relay adds two
   metric families.
-* **Related ADR-0011** and
-  **ADR-0006.** The prompt and argv are
+* **Related [ADR-0011](adr-0011-agent-adapters.md)** and
+  **[ADR-0006](adr-0006-configuration-and-profiles.md).** The prompt and argv are
   unchanged, and the config gains `[queue.*]`, `[cairn.*]` and harness keys.
 * **Related records accepted with this one (2026-09-22):**
-  ADR-0023 (command kind;
+  [ADR-0023](adr-0023-command-one-shots-and-templating.md) (command kind;
   relay wraps the run, so it applies to that kind too), linked in this ADR's
-  front matter; ADR-0026,
-  ADR-0027 (budgets) and
-  ADR-0028 (run history), which carry the
-  `related` edge to this ADR. ADR-0022 (telemetry export, #408) is not on
+  front matter; [ADR-0026](adr-0026-fail-closed-model-pinning.md),
+  [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets) and
+  [ADR-0028](adr-0028-run-history-ledger.md) (run history), which carry the
+  `related` edge to this ADR. ADR-0022 (telemetry export) is not on
   `main` yet, so it stays cited by number.
 * **Cross-repo records, cited by number (accepted in the same review):**
   Switchboard ADR-0039 / SPEC-0034 (attempt history, this ADR's sibling),

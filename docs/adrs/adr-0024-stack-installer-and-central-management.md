@@ -691,9 +691,10 @@ sequenceDiagram
 * **Cairn:** agent personal access tokens owned by a human; teams and per-owner
   webhooks in ADR-0029; actionable validation errors in ADR-0025, which `init`
   surfaces verbatim. A consented CLI mint for agent tokens would remove the
-  paste step. Cairn's single-binary work (cairn#246) would shrink the bundle.
+  paste step. Cairn's single-binary work would shrink the bundle.
 * **Homebrew:** the `harness` formula gains no dependency. A `cairn` CLI
-  formula (homebrew-tap#20, for cairn#183) is recommended alongside it, and an
+  formula in the Homebrew tap, giving the CLI its first public install path,
+  is recommended alongside it, and an
   optional `switchboard` operator CLI formula later.
 
 ## More Information
@@ -713,7 +714,7 @@ sequenceDiagram
   ADR-0029 (dev-channels
   auto-confirm, which `init` writes for a resident Claude Code persona only
   when the user opts in for that persona, with its warning). ADR-0022
-  (telemetry export, #408) is not on `main` yet, so it stays cited by number.
+  (telemetry export) is not on `main` yet, so it stays cited by number.
 * Cross-repo records, cited by number (accepted in the same review):
   Switchboard ADR-0030, ADR-0032, ADR-0034, ADR-0038 and SPEC-0024; Cairn
   ADR-0025 and ADR-0029.

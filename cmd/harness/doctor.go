@@ -59,6 +59,10 @@ type doctorResult struct {
 	// TelemetryCheck is the warning row for a [telemetry] config that does
 	// not resolve (the daemon would refuse to start).
 	TelemetryCheck *checkResult `json:"telemetry_check,omitempty"`
+	// Notify is the [notify] hook row; NotifyTest is present only with
+	// --notify-test (SPEC-0003 REQ "Operator Notification").
+	Notify     *checkResult `json:"notify,omitempty"`
+	NotifyTest *checkResult `json:"notify_test,omitempty"`
 	// Settings reports every process setting with the source that supplied it,
 	// so "which one won — my flag, HARNESS_*, the file, or the default?" is
 	// answerable without reading code. It is not a health check and does not
@@ -100,7 +104,12 @@ type summaryResult struct {
 // The checks are ordered cheapest-first; a daemon that can't be reached
 // still lets you see the config + summary rows. When --json is set, a
 // machine-readable doctorResult object is emitted on stdout instead.
-func runDoctor(o verbOpts) int {
+func runDoctor(o verbOpts) int { return runDoctorWith(o, false) }
+
+// runDoctorWith is runDoctor plus --notify-test, which has the daemon run the
+// [notify] hook once and adds its outcome as a row (SPEC-0003 REQ "Operator
+// Notification").
+func runDoctorWith(o verbOpts, notifyTest bool) int {
 	var rows []check
 
 	// --- Check 1: config file exists and parses ----------------------------
@@ -169,6 +178,12 @@ func runDoctor(o verbOpts) int {
 		// "Operating Hours Visibility") — no point skipping them just because
 		// the daemon is down.
 		rows = appendOperatingHoursCheck(rows, cfg)
+		// The notify row is config-only without a daemon; the test needs one.
+		rows = append(rows, notifyCheck(cfg, nil, false))
+		if notifyTest {
+			rows = append(rows, check{name: "notify_test", level: cliui.LevelError,
+				detail: "the daemon is not reachable, so it cannot run the hook", hint: "start it with: harness daemon"})
+		}
 		// No point continuing further: every later check needs the daemon.
 		// Resolved process settings and where each came from. A resolve failure
 		// is non-fatal but reported — see resolvedSettings.
@@ -230,6 +245,19 @@ func runDoctor(o verbOpts) int {
 			info = nil
 		}
 		rows = append(rows, sshCheck(cfg.Server, info))
+	}
+
+	// --- Check: notify hook -------------------------------------------------
+	// Governing: SPEC-0003 REQ "Operator Notification".
+	{
+		info := &di
+		if !diOK {
+			info = nil
+		}
+		rows = append(rows, notifyCheck(cfg, info, c.SupportsNotify()))
+		if notifyTest {
+			rows = append(rows, notifyTestCheck(c))
+		}
 	}
 
 	// --- Check: operating hours misconfiguration ---------------------------
@@ -503,6 +531,12 @@ func emitDoctorJSON(w io.Writer, rows []check, resolved []settings.Resolved, tel
 		case "telemetry":
 			c := cr
 			res.TelemetryCheck = &c
+		case "notify":
+			c := cr
+			res.Notify = &c
+		case "notify_test":
+			c := cr
+			res.NotifyTest = &c
 		}
 	}
 	if len(resolved) > 0 {

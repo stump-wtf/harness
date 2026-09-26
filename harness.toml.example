@@ -29,6 +29,20 @@
 # env_file = "/etc/harness/otel.env" # OTEL_EXPORTER_OTLP_* incl. headers
 # export_all = false
 
+# Optional notify hook (SPEC-0003 REQ "Operator Notification"). The daemon
+# runs this program — exec'd without a shell, so argv[0] must be absolute —
+# when a harness gives up into `failed`, starts crash-looping, is stopped by
+# the runaway tool-loop guard, or has its session rotated, and again when it
+# recovers. It gets HARNESS_NOTIFY_EVENT/_HARNESS/_HOST/_STATE/_MESSAGE in
+# its environment and the same facts as JSON on stdin. Test it with
+# `harness doctor --notify-test`. See docs/usage/notify.md.
+#
+# [notify]
+# command  = ["/home/me/.config/harness/notify.sh"]
+# events   = ["failed", "flapping", "loop_stopped", "session_rotated", "recovered"]  # add "run_failed" to hear about failed scheduled runs
+# timeout  = "15s"
+# cooldown = "15m"   # per (harness, event); "0s" alerts on every occurrence
+
 # Each harness is one supervised process. The new-style [harness.<name>]
 # form is preferred; a bare [name] table is supported for backward
 # compatibility (ADR-0006).
@@ -48,6 +62,9 @@ enabled = true
 harness = "claude-code"
 args = ["--remote-control", "--dangerously-skip-permissions"]
 workdir = "~/src/my-project"
+# env_file takes one path, or a LIST of paths loaded in order (later file
+# wins a key collision): a shared credential file plus a per-persona one.
+env_file = ["~/.config/harness/env/claude.env", "~/.config/harness/env/my-agent.env"]
 description = "long-running agent in ~/src/my-project"
 enabled = false
 
@@ -77,6 +94,11 @@ max_turns = 20
 # its output to whatever attaches instead. Requires `prompt`; a long-running harness
 # passes its tool's own tone flag through `args`.
 # quiet = false
+# SPEC-0018 REQ-11: claude-code one-shot persona keys (all require `prompt`/
+# `prompt_file`; paths resolve against this file).
+# system_prompt_file = "personas/reviewer/system.md"  # APPENDS to the model's system prompt
+# mcp_config = "personas/reviewer/mcp.json"           # --mcp-config … --strict-mcp-config
+# allowed_tools = ["Read", "Bash(git log:*)"]         # each entry one argv element
 workdir = "~/src/my-project"
 description = "one-shot agent run"
 enabled = false
@@ -142,11 +164,17 @@ enabled = false
 # byte-identical argument ("a b" is one argument; $(...) and ; are just text).
 # argv[0] is looked up on PATH, or resolved against workdir when it is a
 # relative path containing "/". `args` is rejected on "command" and `argv` on
-# every other kind; auto_accept, max_turns, quiet and model are rejected (put
-# the program's own flags in argv). For now a command harness is resident
-# only: prompt, prompt_file, schedule and triggers are refused, and argv may
-# not contain "{{" (templates are still to come, ADR-0023, issue #500). This is
-# also how Pi, OMP or another unlisted agent CLI runs today.
+# every other kind; auto_accept, max_turns and quiet are rejected (put the
+# program's own flags in argv). With `schedule` or `triggers` a command harness
+# is a one-shot that needs NO prompt (restart defaults to "no", and every other
+# one-shot exclusion applies); prompt and prompt_file are still refused.
+# argv[1:] elements may be templates (ADR-0023, SPEC-0017): {{path}} is
+# required (a run lacking it is recorded skipped, reason template_unresolved),
+# {{path?}} is optional (empty when absent). argv may reference harness.name,
+# harness.workdir, model, run.id, run.trigger, run.source, run.started_at and
+# run.date, and never event text. Each element renders to exactly one
+# argument. `model` is accepted only when an element references {{model}}.
+# This is also how Pi, OMP or another unlisted agent CLI runs.
 # Valid values: "crush", "claude-code", "codex", "generic", "command".
 #
 # harness = "claude-code"   # required on every [harness.*] table
@@ -156,6 +184,11 @@ enabled = false
 # argv = ["/usr/local/bin/report", "--listen", ":8080", "--title", "Nightly report"]
 # workdir = "~/src/report"
 # enabled = true
+#
+# [harness.nightly-report]
+# harness = "command"
+# argv = ["/usr/local/bin/report", "--run", "{{run.id}}", "--date", "{{run.date}}"]
+# schedule = "CRON_TZ=Europe/Berlin 0 6 * * *"
 
 # Trajectory harvesting (SPEC-0006 REQ "Harvest Opt-In"): the opt-in for
 # exposing this harness's session transcripts read-only through the MCP facade
@@ -231,7 +264,8 @@ description = "switchboard doorbells for my-agent"
 
 # A webhook source. The route is POST /hooks/<name> on the listener configured
 # under [server] below; with no listener, the source is valid and simply has
-# nowhere to be served (`harness triggers` shows it as no_listener).
+# nowhere to be served (the daemon logs at startup that [webhook.*] sources
+# report no_listener).
 #
 # `verify` picks the authentication scheme: bearer, hmac-sha256, github,
 # gitea, gitlab or standard-webhooks. The four presets fix their own header
@@ -256,8 +290,9 @@ max_body = "2MiB"
 rate_limit = "120/m"
 description = "gitea pull-request events"
 
-# The harness the two sources fire. `triggers` requires a prompt source for
-# the same reason `schedule` does — a triggered unit is a one-shot agent run —
+# The harness the two sources fire. `triggers` requires a prompt source (or
+# harness = "command") for the same reason `schedule` does — a triggered unit
+# is a one-shot run —
 # and is mutually exclusive with `enabled = true`, with profile membership,
 # and with a respawning restart policy: each of those would fire the one-shot
 # with no event for it to act on.
@@ -312,8 +347,8 @@ autostart = true
 # webhook_listen = "127.0.0.1:9080"
 # # Both TLS keys or neither; setting one is a parse error, because a
 # # half-configured pair is an operator who believes the listener is
-# # encrypted when it is not. A non-loopback bind with no TLS starts, warns at
-# # startup, and is flagged by `harness doctor`.
+# # encrypted when it is not. A non-loopback bind with no TLS starts and
+# # warns in the daemon log at startup (`harness doctor` does not flag it).
 # webhook_tls_cert_file = "/etc/harness/webhook.crt"
 # webhook_tls_key_file = "/etc/harness/webhook.key"
 

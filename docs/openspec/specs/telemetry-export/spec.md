@@ -19,7 +19,7 @@ observer attributes to a harness — as three independent, opt-in signals:
 * **A local JSONL events file**: one JSON object per observed item, for
   file-tailing shippers. No network.
 
-The source is the observer in `internal/observe` (issue #390). This spec
+The source is the observer in `internal/observe`. This spec
 consumes its `Event` stream and its guarantees — marks delivered on their own,
 per-session sequence order, at most once per daemon lifetime, no history
 replay, ambiguous sessions withheld — and does not restate them.
@@ -34,7 +34,7 @@ the opposite audience, and it MUST stay exactly as it is today.
 
 Export requires both a **destination** and a **contributing harness**. Neither
 implies the other, and reading a transcript locally (`harness logs`, the TUI,
-`harvest_trajectory`) implies neither (issue #94).
+`harvest_trajectory`) implies neither.
 
 A destination is configured when, in the global `harness.toml`, at least one of
 `[telemetry] logs = true`, `[telemetry] traces = true`, or a non-empty

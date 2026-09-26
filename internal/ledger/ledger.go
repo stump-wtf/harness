@@ -154,6 +154,9 @@ type Record struct {
 	FirstWindow *time.Time `json:"first_window,omitempty"`
 	Windows     int        `json:"windows,omitempty"`
 	Coalesced   int        `json:"coalesced,omitempty"`
+	// MissingPath is the argv template path a template_unresolved skip
+	// lacked: a path's NAME ("run.source"), never a value (SPEC-0017 REQ-11).
+	MissingPath string `json:"missing_path,omitempty"`
 }
 
 // ModelUse is one served model and provider (REQ-4).

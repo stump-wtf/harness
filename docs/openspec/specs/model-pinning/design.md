@@ -5,16 +5,16 @@
 `model` is a string passed as `--model` on a synthesized one-shot argv
 (`AgentOpts.Model`, `internal/adapter/adapter.go`). Nothing expresses a
 provider or a data policy. Nothing checks what served a call. The daemon
-observer (`internal/observe`, #416) delivers every agent-trace event and mark
+observer (`internal/observe`) delivers every agent-trace event and mark
 for every harness. agent-trace's `SessionMeta.Model` is session-level, and it
-exposes no provider. stump.wtf/agent-trace#105 adds per-message usage items
+exposes no provider. A planned agent-trace change adds per-message usage items
 carrying model, provider, generation ID, tokens and cost.
 
 ADR-0026 chooses per-client rendering plus transcript attestation, a hold on
 mismatch, and a `doctor --models` canary. Governing spec: SPEC-0020.
 
-Related specs: SPEC-0006 (adapters), SPEC-0013 (metrics; PR #407 implements
-it), SPEC-0008 (run records), SPEC-0003 (state machine), SPEC-0002 (protocol).
+Related specs: SPEC-0006 (adapters), SPEC-0013 (metrics),
+SPEC-0008 (run records), SPEC-0003 (state machine), SPEC-0002 (protocol).
 Records accepted with this one on 2026-09-22: ADR-0023/SPEC-0017 (the
 `command` kind, `transcripts`, and the `pi`/`omp` adapters), ADR-0028/SPEC-0022
 (the run ledger), ADR-0027 (budgets, which share the observer's usage items),
@@ -36,7 +36,7 @@ and ADR-0025 (supervisor-held leases).
   does not own the gateway.
 - Proving data retention per call. It is requested and canaried, not attested.
 - Codex pinning in v1.
-- A Harness egress proxy (ADR-0026, Decision 1, Option 3). It is the fallback if
+- A Harness egress proxy (ADR-0026 option 1C). It is the fallback if
   transcripts prove insufficient.
 - Budget and cost enforcement. ADR-0027 owns that, from the same usage items.
 
@@ -146,7 +146,7 @@ removal is a reviewed change. Scrubbing happens in `buildEnv` after the
 
 ### Evidence capability
 
-| Adapter | Transcript records (with agent-trace#105) | `openrouter` | `anthropic` | `litellm` |
+| Adapter | Transcript records (with agent-trace usage items) | `openrouter` | `anthropic` | `litellm` |
 | --- | --- | --- | --- | --- |
 | Claude Code | per-message `message.model` | n/a | `model+provider` (first party by construction) | `model` |
 | Crush | message `model`; its own provider ID, not the upstream one | `model`, or `model+provider` via generation lookup if a generation ID is recorded | n/a | `model` |
@@ -154,7 +154,7 @@ removal is a reviewed change. Scrubbing happens in `buildEnv` after the
 | `command` | its `transcripts` adapter's row | same | same | same |
 
 The table is data (`PinEvidence`), updated as agent-trace and the clients
-record more. Until #105 lands, every row is `model` at best, taken from
+record more. Until agent-trace emits usage items, every row is `model` at best, taken from
 `SessionMeta.Model`, which is session-level only. That makes `attest = "full"`
 a load error everywhere except Claude Code on `anthropic`. The capability check
 states that plainly, rather than pretending.
@@ -178,7 +178,7 @@ sequenceDiagram
     participant Sup as supervisor (actor loop)
     participant Ren as adapter PinRenderer
     participant C as client process
-    participant Obs as observer (#416)
+    participant Obs as observer
     participant K as modelpin.Checker
     participant L as run ledger (SPEC-0008 / ADR-0028)
     Sup->>Ren: RenderPin(pin, harness, pins/<h>/)
@@ -274,7 +274,7 @@ flowchart TB
         SP["spawn: render → pins/&lt;h&gt;/, scrub, argv"]
         HOLD["pin_hold in state.json (REQ-12)"]
     end
-    OBS["internal/observe (#416)"]
+    OBS["internal/observe"]
     MET["metrics (SPEC-0013 registry)"]
     DOC["cmd/harness doctor --models"]
 
@@ -297,7 +297,7 @@ flowchart TB
   that captures request bodies in CI, the REQ-4 override check, and attestation
   as the backstop. A renderer that silently stops applying is caught at the
   first call.
-- **Evidence gaps until agent-trace#105.** → A load-time capability error makes
+- **Evidence gaps until agent-trace emits usage items.** → A load-time capability error makes
   the gap explicit. `attest = "model"` is available and doctor warns about it.
   The generation lookup closes the provider gap for OpenRouter wherever a
   generation ID is recorded.
@@ -319,35 +319,36 @@ flowchart TB
    no runtime change. A pin that validates but has no renderer yet fails at
    load, as "not offered".
 2. The Claude Code `anthropic` renderer and argument guard. This is the only
-   `attest = "full"` path available before agent-trace#105.
+   `attest = "full"` path available before agent-trace emits usage items.
 3. Scrubbing.
 4. The checker with `SessionMeta.Model` evidence (`attest = "model"`), the hold,
    run outcomes, visibility and metrics.
 5. Crush, then Pi/OMP renderers. Pi/OMP depend on SPEC-0017's adapters.
-6. The generation lookup and per-message evidence, once agent-trace#105 lands.
+6. The generation lookup and per-message evidence, once agent-trace emits usage items.
    This turns `attest = "full"` on.
 7. `doctor --models` direct cases, then `--through-client`.
-8. Docs: the fail-closed section in the
-   [configuration reference](https://stump-wtf.github.io/harness/usage/configuration) beside the
-   failover advice, sequenced after PR #408, which also edits that page.
+8. Docs: the fail-closed section in `docs/usage/configuration.md` beside the
+   failover advice, sequenced after the telemetry-export PR, which also edits that page.
 
 Rollback: remove `model_pin` from a harness. The pins directory is removed at
 its next spawn.
 
-## Settled Questions
+## Open Questions
 
 One question stays open; the rest were settled in the Operation Stumply design
 review.
 
 - **Does the pinned Pi/OMP version's models configuration carry OpenRouter
   `provider` preferences natively?** **Open** (design review 2026-09-22): it is
-  unverified. Story #520 checks it first. If it does not, Pi/OMP pins are
+  unverified. The Pi/OMP renderer story checks it first. If it does not, Pi/OMP pins are
   `litellm`-only until it does, or until a Pi extension ships.
-- **What happens on a mismatch by default?** `on_mismatch = "hold"` is the default (REQ-12). A pin fails
+- **What happens on a mismatch by default?** Resolved (design review
+  2026-09-22): `on_mismatch = "hold"` is the default (REQ-12). A pin fails
   closed; `fail-run` is the opt-in alternative.
-- **What does a LiteLLM gateway report as the served model?** Measured, not decided in advance: the canary's `gateway`
+- **What does a LiteLLM gateway report as the served model?** Resolved (design
+  review 2026-09-22): measured, not decided in advance: the canary's `gateway`
   case records whether it is the upstream ID or the alias. Until it shows the
   upstream ID, `litellm` attestation is on the alias.
 - **Should `accept_served` accept a pattern for dated suffixes beyond the
-  eight-digit rule?** Deferred until a real
-  route needs it.
+  eight-digit rule?** Resolved (design review 2026-09-22): deferred until a real
+  route needs it, as proposed.

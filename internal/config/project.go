@@ -193,6 +193,11 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 		if len(h.parts) >= 1 && h.parts[0] == "mergetrain" {
 			return nil, forbiddenTableErr(filename, full, h.line)
 		}
+		// The notify hook is a program the daemon runs; a cloned repository
+		// does not get to choose one (SPEC-0003 REQ "Operator Notification").
+		if len(h.parts) >= 1 && h.parts[0] == "notify" {
+			return nil, forbiddenTableErr(filename, full, h.line)
+		}
 		// Trigger sources are daemon-owned: the daemon holds a channel
 		// session and serves a webhook route from the config of record, and
 		// a project harness never enters that view. A project source would

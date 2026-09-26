@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded
 date: 2026-07-27
 decision-makers: [joestump]
 extends: [ADR-0002]
@@ -231,18 +231,18 @@ flowchart TD
 
 ## More Information
 
-* **Extends ADR-0002** — the facade is
+* **Extends [ADR-0002](adr-0002-daemon-client-architecture.md)** — the facade is
   a thin client over the existing control plane, not a second engine.
-* **Related ADR-0004** — the broker
+* **Related [ADR-0004](adr-0004-transport-and-remote-access.md)** — the broker
   endpoint is local-only, reached over the same Unix socket trust boundary;
   remote MCP is explicitly out of scope here.
-* **Related ADR-0005** — upstream MCP
+* **Related [ADR-0005](adr-0005-supervision-and-lifecycle.md)** — upstream MCP
   servers are supervised by the same restart machinery as harnesses.
-* **Related ADR-0008** — `mcp_allow`
+* **Related [ADR-0008](adr-0008-security-and-secrets.md)** — `mcp_allow`
   implements the per-key authorization scoping ADR-0008 deferred; upstream
   servers receive secrets by `env_file` exactly as harnesses do, and the daemon
   retains none of them.
-* **Governs SPEC-0005**.
-* Enables ADR-0012, whose distiller
+* **Governs [SPEC-0005](../openspec/specs/mcp-surface/spec.md)**.
+* Enables [ADR-0012](adr-0012-cross-harness-distillation.md), whose distiller
   reads trajectories through this facade and whose learned skills are served
   through this facade's search tools.

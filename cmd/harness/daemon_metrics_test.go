@@ -42,6 +42,7 @@ import (
 	"github.com/stump-wtf/harness/internal/metrics"
 	rt "github.com/stump-wtf/harness/internal/runtrace/runtracetest"
 	"github.com/stump-wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/testwait"
 )
 
 // scrapeURL fetches and parses a /metrics endpoint.
@@ -115,14 +116,7 @@ func TestDaemonMetricsReportTheRealManager(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("CRUSH_GLOBAL_DATA", "")
 	t.Setenv("XDG_DATA_HOME", "")
-	bin := filepath.Join(tmp, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bin, "crush"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeCrushOnPath(t, tmp)
 	work := filepath.Join(tmp, "work")
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
@@ -146,7 +140,7 @@ func TestDaemonMetricsReportTheRealManager(t *testing.T) {
 	if !mgr.Start(h.Name) {
 		t.Fatal("Start returned false for a configured harness")
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t, 5*time.Second))
 	for {
 		if snap, _ := mgr.Snapshot(h.Name); snap.State == core.StateRunning && snap.PID != 0 {
 			break
@@ -186,7 +180,7 @@ func TestDaemonMetricsReportTheRealManager(t *testing.T) {
 		Parts: rt.FinishError("Too Many Requests", `{"type":"error","error":{"type":"rate_limit_error"}}`),
 	})
 
-	deadline = time.Now().Add(10 * time.Second)
+	deadline = time.Now().Add(testwait.Budget(t, 10*time.Second))
 	var fams map[string]*dto.MetricFamily
 	for {
 		fams = scrapeURL(t, url)
@@ -644,7 +638,7 @@ operating_hours = %q
 
 	// The held harness settles as stopped. Poll: the hold is applied on the
 	// supervisor's actor loop, so the first scrape may predate it.
-	deadline = time.Now().Add(10 * time.Second)
+	deadline = time.Now().Add(testwait.Budget(t, 10*time.Second))
 	for {
 		stopped, _ := sample(fams, "harness_harness_state", "harness", "afterhours", "state", "stopped")
 		failed, okF := sample(fams, "harness_harness_state", "harness", "afterhours", "state", "failed")

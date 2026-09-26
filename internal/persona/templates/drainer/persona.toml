@@ -1,0 +1,8 @@
+description = "Drains a Switchboard queue: claims todos until empty, completes or fails each one"
+mode = "one-shot"
+client = "claude-code"
+queues = ["triage"]
+triggers = ["server:switchboard"]
+mcp_servers = ["switchboard"]
+allowed_tools = ["Read", "Grep", "Glob", "mcp__switchboard__claim_next", "mcp__switchboard__complete", "mcp__switchboard__fail"]
+max_runs_per_day = 100

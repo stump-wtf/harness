@@ -31,8 +31,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // runCLI execs the binary with args in an isolated environment and returns
@@ -226,3 +229,71 @@ func TestCLIVersion(t *testing.T) {
 // daemon_flag_socket_test.go, so a refactor that moves them fails loudly here
 // rather than as a confusing compile error in an unrelated file.
 var _ = os.Getenv
+
+// runCLIStdout execs the binary and returns stdout alone, with stdout a pipe —
+// exactly what a script capturing `$(harness start x)` sees. Stderr is kept
+// separate so a stray warning cannot pass for (or hide) the contract line.
+func runCLIStdout(t *testing.T, bin string, env []string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	cmd.Env = env
+	cmd.Dir = t.TempDir() // no ancestor project file can rescope the name
+	var so, se strings.Builder
+	cmd.Stdout, cmd.Stderr = &so, &se
+	err := cmd.Run()
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	} else if err != nil {
+		t.Fatalf("exec %v: %v", args, err)
+	}
+	return so.String(), se.String(), code
+}
+
+// plainLifecycleRE is the one-line lifecycle record: glyph, name, arrow,
+// state. The state a start/restart lands in depends on timing, so the test
+// checks the shape and then that the glyph is the state's own (SPEC-0003).
+var plainLifecycleRE = regexp.MustCompile(`^(\S+) demo → (\S+)\n$`)
+
+// TestCLIOneShotVerbsPlainWhenPiped pins the non-TTY half of the styled-verb
+// contract (verb_render.go): with stdout a pipe, start/stop/restart/reload
+// print exactly the plain line they always printed — no ANSI, no spinner, no
+// context line — and `daemon stop` keeps its stderr line. Styling these on a
+// terminal must never leak into a script's capture.
+func TestCLIOneShotVerbsPlainWhenPiped(t *testing.T) {
+	bin := buildHarnessBinary(t)
+	env, _ := isolatedEnv(t)
+	socket, _ := startDaemonOnSocket(t, bin, env)
+
+	for _, verb := range []string{"start", "restart", "stop"} {
+		out, errOut, code := runCLIStdout(t, bin, env, "--socket", socket, verb, "demo")
+		if code != 0 {
+			t.Fatalf("%s demo exited %d\nstdout: %q\nstderr: %q", verb, code, out, errOut)
+		}
+		if strings.Contains(out, "\x1b") {
+			t.Errorf("%s demo wrote ANSI to a pipe: %q", verb, out)
+		}
+		m := plainLifecycleRE.FindStringSubmatch(out)
+		if m == nil {
+			t.Errorf("%s demo: stdout %q is not the plain `<glyph> demo → <state>` line", verb, out)
+			continue
+		}
+		if st := core.State(m[2]); !st.Valid() || m[1] != st.Glyph() {
+			t.Errorf("%s demo: glyph %q does not match state %q", verb, m[1], m[2])
+		}
+	}
+
+	out, _, code := runCLIStdout(t, bin, env, "--socket", socket, "reload")
+	if code != 0 || out != "reloaded — 1 harnesses\n" {
+		t.Errorf("reload on a pipe = %q (exit %d), want %q", out, code, "reloaded — 1 harnesses\n")
+	}
+
+	out, _, _ = runCLIStdout(t, bin, env, "--socket", socket, "--json", "start", "demo")
+	if strings.Contains(out, "\x1b") || !strings.HasPrefix(strings.TrimSpace(out), "{") {
+		t.Errorf("--json start is not plain JSON: %q", out)
+	}
+
+	out, errOut, code := runCLIStdout(t, bin, env, "daemon", "--socket", socket, "stop")
+	if code != 0 || out != "" || !regexp.MustCompile(`^harness: daemon \(pid \d+\) stopping\n$`).MatchString(errOut) {
+		t.Errorf("daemon stop on a pipe: exit %d stdout %q stderr %q", code, out, errOut)
+	}
+}

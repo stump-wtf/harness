@@ -214,7 +214,7 @@ followed.
 
 REQ-1 touches `registerHarness`, `validateHarnessDef`, `internal/tui/form.go`,
 `Generic.PromptCommand` and the spawn guard. It needs none of the rest, so it
-ships first (#420). `Generic.PromptCommand` returns `("", nil)`, and
+ships first. `Generic.PromptCommand` returns `("", nil)`, and
 `execArgvWithRegistry` returns `ErrGenericPrompt` when the adapter is `generic`
 and a prompt is set. A test asserts that no `exec.Cmd` is constructed. The test
 fails if the delegation to Crush is restored.
@@ -314,7 +314,7 @@ flowchart TD
 
 ## Migration Plan
 
-1. **#420 (REQ-1)** ships first and alone. A `generic` + `prompt` config fails
+1. **REQ-1** ships first and alone. A `generic` + `prompt` config fails
    to load with a message naming the agent kinds. Our fleet has none. Anyone
    else sees a load error instead of a wrong-agent run, and the release notes
    say so.

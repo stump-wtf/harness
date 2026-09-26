@@ -25,15 +25,14 @@ approved provider, or nothing":
   fields `data_collection = "deny"` and `zdr = true`. Model-level fallback
   (`models: [...]`) and auto-routing (`openrouter/auto`) substitute the model
   itself. A client that never sends these fields gets substitution.
-* **Our docs recommend substitution.** The configuration reference's
-  [Model routing and provider failover](../usage/configuration.md#model-routing-and-provider-failover)
-  section recommends a LiteLLM gateway with retries,
+* **Our docs recommend substitution.** `docs/usage/configuration.md`, "Model
+  routing and provider failover", recommends a LiteLLM gateway with retries,
   `fallbacks` to a cheaper tier, and cooldown re-probes. It is the right advice
   for an always-on worker. The same page concedes that failover "removes a
   fail-closed spend cap" and is "the wrong one for an unattended cron job that
   nobody is watching". Harness offers no fail-closed alternative.
 * **Nothing verifies the served model.** The daemon's agent event observer
-  (`internal/observe`, merged in #416) reads agent-trace events for every
+  (`internal/observe`) reads agent-trace events for every
   harness. agent-trace exposes a session-level `SessionMeta.Model` only: no
   per-call model and no provider. SPEC-0013's reachability series count calls
   and errors, not *which* model answered. A silent substitution looks exactly
@@ -84,35 +83,35 @@ substitute when that route is unavailable, and prove it after every run?
 
 ## Considered Options
 
-### Decision 1 — Where the pin is enforced
+**Axis 1: where the pin is enforced.**
 
-* **Option 1 — Declare and verify only.** Nothing is rendered. Harness attests the
+* **1A. Declare and verify only.** Nothing is rendered. Harness attests the
   served model after each run.
-* **Option 2 — Render into each client's own config, and attest from the transcript.**
-* **Option 3 — A Harness-run egress proxy.** Each pinned harness talks to a loopback
+* **1B. Render into each client's own config, and attest from the transcript.**
+* **1C. A Harness-run egress proxy.** Each pinned harness talks to a loopback
   proxy that injects the provider preferences into every request and reads
   `model`/`provider` from every response.
-* **Option 4 — Delegate to a gateway.** Harness pins a LiteLLM alias and trusts the
+* **1D. Delegate to a gateway.** Harness pins a LiteLLM alias and trusts the
   gateway's configuration.
 
-### Decision 2 — When attestation runs
+**Axis 2: when attestation runs.**
 
-* **Option 1 — After the run only.**
-* **Option 2 — Continuously during the run**, through the observer, stopping the run at
+* **2A. After the run only.**
+* **2B. Continuously during the run**, through the observer, stopping the run at
   the first mismatch, plus a final sweep at exit.
 
-### Decision 3 — Proof
+**Axis 3: proof.**
 
-* **Option 1 — None.** The rendered config is the proof.
-* **Option 2 — `harness doctor --models`:** a canary that probes the approved route,
+* **3A. None.** The rendered config is the proof.
+* **3B. `harness doctor --models`:** a canary that probes the approved route,
   a deliberately unavailable one, and (optionally) the real client end to end.
 
 ## Decision Outcome
 
-Chosen options: **Decision 1, Option 2** (render per client, attest from the transcript), **Decision 2, Option 2**
-(continuous attestation with a final sweep), and **Decision 3, Option 2** (a `doctor --models`
-canary). Decision 1, Option 4 is kept as one of Decision 1, Option 2's render targets rather than a substitute for
-it, and Decision 1, Option 3 is recorded as the fallback if transcript attestation proves
+Chosen options: **1B** (render per client, attest from the transcript), **2B**
+(continuous attestation with a final sweep), and **3B** (a `doctor --models`
+canary). 1D is kept as one of 1B's render targets rather than a substitute for
+it, and 1C is recorded as the fallback if transcript attestation proves
 insufficient.
 
 ### The schema
@@ -186,7 +185,7 @@ from what the client itself recorded:
 1. **Evidence.** For every model call in the harness's transcripts, the served
    model and, when available, the served provider (the OpenRouter upstream
    provider, not the client's route ID). This needs per-message usage items from
-   agent-trace: stump.wtf/agent-trace#105 (per-message model, provider,
+   agent-trace, which does not emit them yet (per-message model, provider,
    request/generation ID, tokens and cost). Where a transcript records a
    generation ID but not the provider, the daemon MAY resolve the provider
    through the route's generation-metadata endpoint, using the harness's own
@@ -226,7 +225,7 @@ it.
 ### Where it surfaces
 
 * **`harness list`**: the STATE cell shows a held or mismatched harness without
-  adding a column (the table is already at its width budget, #343).
+  adding a column (the table is already at its width budget).
 * **`harness describe`**: shows the pin, the rendered target files, the last
   attestation, and the served model and provider of the first mismatch.
 * **`harness doctor`**: a fail row for every held harness or recent mismatch,
@@ -302,8 +301,8 @@ gateway that substitutes anyway.
   `harness_model_mismatch_total` routes through the operator's Alertmanager to
   Switchboard's notification sinks (Switchboard ADR-0034). Harness still never
   calls Switchboard (ADR-0019, ADR-0021).
-* **Cairn.** Telemetry export (ADR-0022, PR #408) carries each call's served
-  model and provider on its spans once agent-trace#105 lands, so a Cairn trace
+* **Cairn.** Telemetry export (ADR-0022) carries each call's served
+  model and provider on its spans once agent-trace emits usage items, so a Cairn trace
   or receipt (Cairn ADR-0027) can cite the attestation instead of restating it.
 
 ### Consequences
@@ -320,7 +319,7 @@ gateway that substitutes anyway.
 * Bad, because Harness now knows each client's routing configuration. That is a
   per-client, per-version maintenance surface of the kind adapter flags already
   are.
-* Bad, because full attestation depends on agent-trace#105 and on what each
+* Bad, because full attestation depends on agent-trace's usage items and on what each
   client records. Until then only `attest = "model"` is possible for most
   clients, and Crush's upstream provider may never be in its store without the
   generation lookup.
@@ -354,9 +353,7 @@ canary. Acceptance includes:
 
 ## Pros and Cons of the Options
 
-### Decision 1 — Where the pin is enforced
-
-#### Option 1 — Declare and verify only
+### 1A. Declare and verify only
 
 * Good, because it needs no per-client rendering code.
 * Bad, because it only detects. Every substitution has already happened, and
@@ -364,7 +361,7 @@ canary. Acceptance includes:
 * Bad, because the operator still hand-configures each client, which is the
   work the customer's wrapper does.
 
-#### Option 2 — Render per client and attest from the transcript (chosen)
+### 1B. Render per client and attest from the transcript (chosen)
 
 * Good, because enforcement happens where the request is built, in the client's
   own supported format, with no process on the hot path.
@@ -373,7 +370,7 @@ canary. Acceptance includes:
 * Bad, because there is a renderer per client and version, and attestation is
   bounded by what each transcript records.
 
-#### Option 3 — A Harness-run egress proxy
+### 1C. A Harness-run egress proxy
 
 * Good, because one component enforces and attests for every client, whatever
   it supports or records.
@@ -384,10 +381,10 @@ canary. Acceptance includes:
   "supervision must not block the agent" posture rule out.
 * Bad, because TLS to the route terminates in the daemon, which makes it a
   credential store and a man-in-the-middle by design.
-* Neutral, because it is the fallback if transcripts prove unable to evidence providers
-  even after agent-trace#105.
+* Neutral: it is the fallback if transcripts prove unable to evidence providers
+  even after agent-trace emits usage items.
 
-#### Option 4 — Delegate to a gateway
+### 1D. Delegate to a gateway
 
 * Good, because LiteLLM already speaks provider preferences, and one gateway
   serves many clients.
@@ -397,15 +394,13 @@ canary. Acceptance includes:
 * Kept as a render target (`route = "litellm"`), with the canary verifying the
   gateway.
 
-### Decision 2 — When attestation runs
-
-#### Option 1 — After the run only
+### 2A. After the run only
 
 * Good, because it is simple: one check per run.
 * Bad, because a substituted model keeps working, committing and commenting for
   the whole run before anything stops it.
 
-#### Option 2 — Continuous with a final sweep (chosen)
+### 2B. Continuous with a final sweep (chosen)
 
 * Good, because the first substituted call stops the run.
 * Good, because the final sweep catches calls the observer's poll interval had
@@ -413,15 +408,13 @@ canary. Acceptance includes:
 * Bad, because the stop lands mid-turn, and whatever that call already did
   stands. Rendering is what prevents the call. Attestation limits the damage.
 
-### Decision 3 — Proof
-
-#### Option 1 — No canary
+### 3A. No canary
 
 * Good, because it costs nothing.
 * Bad, because a pin whose route silently ignores `allow_fallbacks` passes every
   check until the day it substitutes.
 
-#### Option 2 — `harness doctor --models` (chosen)
+### 3B. `harness doctor --models` (chosen)
 
 * Good, because it proves the negative case, which configuration alone never
   can.
@@ -445,7 +438,7 @@ flowchart LR
     C["client (crush · omp · claude)"]
     RT["route (OpenRouter · Anthropic · gateway)"]
     T["transcript"]
-    O["observer (#416)<br/>+ agent-trace#105 usage items"]
+    O["observer<br/>+ agent-trace usage items"]
     A{"pin checker:<br/>model · provider"}
     OUT["model_mismatch / model_unattested<br/>(run ledger, ADR-0028)<br/>hold · metrics · doctor"]
     DOC["harness doctor --models<br/>approved · unavailable · through-client"]
@@ -460,33 +453,32 @@ flowchart LR
 
 ## More Information
 
-* **Extends ADR-0011.** Adapters gain a pin
+* **Extends [ADR-0011](adr-0011-agent-adapters.md).** Adapters gain a pin
   renderer and an attestation capability declaration beside `PromptCommand`.
-* **Extends ADR-0020.** Adds
+* **Extends [ADR-0020](adr-0020-prometheus-metrics-endpoint.md).** Adds
   attestation series beside the reachability series. ADR-0020 answers "is a
   model answering?", and this ADR answers "is it the right one?".
-* **Related ADR-0008** (credentials,
-  scrubbing), **ADR-0013** and
-  **ADR-0021** (runs, skips, holds on
+* **Related [ADR-0008](adr-0008-security-and-secrets.md)** (credentials,
+  scrubbing), **[ADR-0013](adr-0013-scheduled-one-shot-jobs.md)** and
+  **[ADR-0021](adr-0021-on-demand-one-shots.md)** (runs, skips, holds on
   firings).
 * **Related records accepted with this one (2026-09-22):**
-  ADR-0023 (the `command`
+  [ADR-0023](adr-0023-command-one-shots-and-templating.md) (the `command`
   kind, whose pins are attestation-only through `transcripts`, and the
   `pi`/`omp` adapters this renders for),
-  ADR-0025
+  [ADR-0025](adr-0025-supervisor-held-leases-and-relay-attempts.md)
   (supervisor-held leases, which fail the todo on a mismatch) and
-  ADR-0024 (the
+  [ADR-0024](adr-0024-stack-installer-and-central-management.md) (the
   installer renders pins), linked in this ADR's front matter;
-  ADR-0028 (the run ledger that carries
+  [ADR-0028](adr-0028-run-history-ledger.md) (the run ledger that carries
   `model_mismatch` and the served model) and
-  ADR-0027 (budgets, which
+  [ADR-0027](adr-0027-run-budgets-and-usage-limit-backoff.md) (budgets, which
   share the observer's per-call usage items), which carry the edge to this
-  ADR. ADR-0022 (telemetry export, #408) is not on `main` yet, so it stays
+  ADR. ADR-0022 (telemetry export) is not on `main` yet, so it stays
   cited by number.
-* **Upstream:** stump.wtf/agent-trace#105, per-message usage items with model,
+* **Upstream:** agent-trace, per-message usage items with model,
   provider and generation ID.
-* **Docs:** the configuration reference's
-  [Model routing and provider failover](../usage/configuration.md#model-routing-and-provider-failover)
-  section gains the fail-closed alternative beside it (an implementation
-  story, sequenced after PR #408, which also edits that page).
+* **Docs:** `docs/usage/configuration.md`, "Model routing and provider
+  failover", gains the fail-closed alternative beside it (an implementation
+  story, sequenced after the telemetry-export PR, which also edits that page).
 * **Governing spec:** SPEC-0020 (`docs/openspec/specs/model-pinning/`).

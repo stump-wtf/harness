@@ -37,7 +37,7 @@ moment an operator most needs to see something. ADR-0020 exists because a quota
 outage ran twenty hours green; a log export built on the Watcher would have been
 silent through the same twenty hours.
 
-The daemon-side agent-event observer (`internal/observe`, issue #390) closes
+The daemon-side agent-event observer (`internal/observe`) closes
 that gap: it polls each supervised harness's sessions, attributes every item to a
 harness with the runtrace rules, and delivers tool events and marks on their own,
 in per-session order, at most once, with no history replay. This ADR decides how
@@ -45,8 +45,8 @@ Harness turns that stream into telemetry an operator can ship.
 
 ## Decision Drivers
 
-* **Consent.** Reading a transcript locally is not consent to publish it (issue
-  #94). Nothing leaves the process, and nothing is written to a new file, unless
+* **Consent.** Reading a transcript locally is not consent to publish it.
+  Nothing leaves the process, and nothing is written to a new file, unless
   the operator named a destination *and* the harness is opted in.
 * **Secrets never reach config or the wire.** A collector credential lives in
   the environment or an env file, never in `harness.toml` (ADR-0008). Transcript
@@ -124,7 +124,7 @@ Harness turns that stream into telemetry an operator can ship.
 
 * **Option 1 — Reuse `harvest_trajectory`.** Rejected: that key consents to the local MCP
   facade reading a transcript — another agent on the same machine. Publication
-  to an external collector is a different audience, and #94 is precisely the
+  to an external collector is a different audience, and publication consent is precisely the
   rule that one does not imply the other.
 * **Option 2 — Fleet-wide only.** Cannot exclude the one harness that handles something
   sensitive.
@@ -231,8 +231,7 @@ queueing and retry behaviour, and the self-telemetry contract.
 ## More Information
 
 * SPEC-0015 (telemetry export) and its design notes.
-* Issue #390 — the daemon-side agent-event observer this builds on.
-* Issue #391 — this work. Issue #94 — publication consent.
+* The daemon-side agent-event observer (`internal/observe`) this builds on.
 * ADR-0020 / SPEC-0013 — the metrics endpoint that publishes the self-telemetry.
 * ADR-0008 — secrets stay out of `harness.toml` and out of our output.
 * The OTLP specification's JSON encoding and exporter environment variables are

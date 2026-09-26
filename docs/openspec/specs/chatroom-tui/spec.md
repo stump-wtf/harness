@@ -86,7 +86,7 @@ Each harness SHALL have a distinct visual identity in the chatroom.
 
 The tool identity was once `@crush-worker` for crush, which labelled every crush
 session on the machine — scheduled sweeps, other agents, interactive runs — as
-one particular harness (issue #302).
+one particular harness.
 
 #### Scenario: Harness Color
 
