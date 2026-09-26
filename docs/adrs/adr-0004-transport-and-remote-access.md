@@ -2,6 +2,7 @@
 status: superseded
 date: 2026-07-18
 decision-makers: [joestump]
+related: [ADR-0003, ADR-0008]
 ---
 
 # ADR-0004 — Transport: Unix-socket control plane + Wish/SSH data plane

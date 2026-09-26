@@ -2,6 +2,8 @@
 status: accepted
 date: 2026-07-18
 decision-makers: [joestump]
+enables: [ADR-0003, ADR-0004]
+related: [ADR-0002]
 ---
 
 # ADR-0001 — Language & ecosystem: Go + Charmbracelet

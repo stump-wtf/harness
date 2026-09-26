@@ -2,6 +2,7 @@
 status: accepted
 date: 2026-07-18
 decision-makers: [joestump]
+related: [ADR-0006, ADR-0007]
 ---
 
 # ADR-0005 — Supervision: daemon self-supervises harnesses; init only supervises the daemon
