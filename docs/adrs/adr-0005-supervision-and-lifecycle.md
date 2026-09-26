@@ -6,7 +6,6 @@ decision-makers: [joestump]
 
 # ADR-0005 — Supervision: daemon self-supervises harnesses; init only supervises the daemon
 
-
 ## Context and problem statement
 
 Today supervision is *per harness*: each is a systemd `--user` unit (or launchd

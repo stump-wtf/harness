@@ -6,7 +6,6 @@ decision-makers: [joestump]
 
 # ADR-0014: Reload Autostarts Newly-Introduced Harnesses
 
-
 ## Context
 
 When a harness with `enabled = true` is added to `harness.toml` while the

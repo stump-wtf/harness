@@ -6,7 +6,6 @@ decision-makers: [joestump]
 
 # ADR-0004 — Transport: Unix-socket control plane + Wish/SSH data plane
 
-
 ## Context and problem statement
 
 Clients (local TUI, scriptable CLI, remote sessions) need to reach the daemon for

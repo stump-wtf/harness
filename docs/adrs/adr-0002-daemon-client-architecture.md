@@ -6,7 +6,6 @@ decision-makers: [joestump]
 
 # ADR-0002 — Process model: long-lived daemon + thin TUI client
 
-
 ## Context and problem statement
 
 The product is explicitly *"a little daemon that runs and you can hop into

@@ -6,7 +6,6 @@ decision-makers: [joestump]
 
 # ADR-0006 — Configuration & profiles ("configurations of harnesses")
 
-
 ## Context and problem statement
 
 The pitch is *"hop into different **configurations** of AI harnesses."* Today's

@@ -6,6 +6,7 @@ decision-makers: [joestump]
 
 # ADR-0001 — Language & ecosystem: Go + Charmbracelet
 
+Decided by Joe, with Claude Design on the UX surface.
 
 ## Context and problem statement
 
