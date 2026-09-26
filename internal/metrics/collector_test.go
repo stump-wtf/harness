@@ -263,7 +263,7 @@ func TestForbiddenLabelsNeverAppear(t *testing.T) {
 	src := newFakeSource()
 	h := crushHarness("worker")
 	h.Model = "claude-opus-5-secret-model"
-	h.EnvFile = "/secrets/ANTHROPIC.env"
+	h.EnvFiles = []string{"/secrets/ANTHROPIC.env"}
 	h.Prompt = "drain the queue PROMPTTEXT"
 	src.add(h, runningSnap())
 	feed := newFakeFeed()

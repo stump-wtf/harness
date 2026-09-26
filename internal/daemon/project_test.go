@@ -9,6 +9,7 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -565,5 +566,34 @@ func TestHarnessFromWireTelemetryOptOutOnly(t *testing.T) {
 				t.Fatalf("ExportTelemetry = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// SPEC-0018 REQ-12: the wire carries the env_file list, and the two forms
+// compose so an older client that sends only a string behaves as before.
+func TestHarnessFromWireEnvFileList(t *testing.T) {
+	list := []string{"claude.env", "reviewer.env"}
+	ph := protocol.ProjectHarness{Name: "reviewer", Enabled: true, EnvFiles: list, EnvFile: "claude.env"}
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded protocol.ProjectHarness
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if h := harnessFromWire(decoded); !slices.Equal(h.EnvFiles, list) {
+		t.Errorf("EnvFiles = %q, want %q (the list wins)", h.EnvFiles, list)
+	}
+
+	// An older client sends only the single-path form.
+	old := protocol.ProjectHarness{Name: "solo", Enabled: true, EnvFile: "secrets.env"}
+	if h := harnessFromWire(old); !slices.Equal(h.EnvFiles, []string{"secrets.env"}) {
+		t.Errorf("EnvFiles = %q, want the single path wrapped", h.EnvFiles)
+	}
+
+	// Neither form set: no extra environment, not a one-blank list.
+	if h := harnessFromWire(protocol.ProjectHarness{Name: "bare"}); h.EnvFiles != nil {
+		t.Errorf("EnvFiles = %q, want nil", h.EnvFiles)
 	}
 }

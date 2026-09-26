@@ -89,7 +89,14 @@ const (
 	// and two of them are restrictions (allowed_tools, --strict-mcp-config),
 	// so the client refuses to send them to one rather than run a persona
 	// with more authority than it declared (see client.ProjectUp).
-	ProtoMinor = 13
+	// ProtoMinor 14 added EnvFiles on ProjectHarness, the env_file list form
+	// (SPEC-0018 REQ-12) — additive only. The single-path EnvFile stays and
+	// an older daemon that ignores env_files still serves a one-element list
+	// through it, because the client sets both for that case. A longer list
+	// has no single-path spelling, so the client refuses to send one to a
+	// daemon older than 14 rather than start the harness with no env file
+	// (see client.ProjectUp).
+	ProtoMinor = 14
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -269,10 +276,17 @@ type ProjectHarness struct {
 	// PromptFile mirrors the schema's `prompt_file`: the PATH to the file
 	// holding the instruction, never its contents (ADR-0018). Clients show
 	// and round-trip the path; the daemon reads the file at spawn.
-	PromptFile     string `json:"prompt_file,omitempty"`
-	Workdir        string `json:"workdir,omitempty"`
-	EnvFile        string `json:"env_file,omitempty"`
-	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
+	PromptFile string `json:"prompt_file,omitempty"`
+	Workdir    string `json:"workdir,omitempty"`
+	// EnvFile is the single-path form; a daemon honors it when EnvFiles is
+	// absent, so an older client that sends only a string still works.
+	EnvFile string `json:"env_file,omitempty"`
+	// EnvFiles is the env_file list in order, later file winning a key
+	// collision (SPEC-0018 REQ-12). Additive and omitempty: an older daemon
+	// ignores it (the client refuses a multi-file list to a daemon older than
+	// 14), and an absent list falls back to EnvFile.
+	EnvFiles       []string `json:"env_files,omitempty"`
+	RestartDelayMs int64    `json:"restart_delay_ms,omitempty"`
 	// Restart mirrors the schema's `restart` policy (core.RestartPolicy);
 	// empty means the always-restart default, matching an omitted key.
 	Restart     string `json:"restart,omitempty"`

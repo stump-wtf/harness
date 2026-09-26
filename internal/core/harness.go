@@ -253,9 +253,11 @@ type Harness struct {
 	AllowedTools []string
 	// Workdir is the process working directory (may contain a leading ~).
 	Workdir string
-	// EnvFile is a file of KEY=VALUE pairs sourced before launch (ADR-0008;
-	// secrets stay here, out of the config).
-	EnvFile string
+	// EnvFiles are files of KEY=VALUE pairs sourced before launch, in order,
+	// a later file winning a key collision (ADR-0008; secrets stay here, out
+	// of the config; SPEC-0018 REQ-12 accepts a list of env_file). Nil and a
+	// blank-only list both mean "no extra environment".
+	EnvFiles []string
 	// RestartDelay is the base delay between a crash and a respawn.
 	RestartDelay time.Duration
 	// Restart controls whether the harness is automatically restarted after it

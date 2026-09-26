@@ -49,24 +49,28 @@ type rawHarness struct {
 	// AutoAccept is a pointer so a `command` harness can reject the key on
 	// presence (SPEC-0017 REQ-3): `auto_accept = false` there does nothing,
 	// which is still a mistake worth hearing about at load.
-	AutoAccept        *bool    `toml:"auto_accept"`
-	MaxTurns          *int     `toml:"max_turns"`
-	Quiet             *bool    `toml:"quiet"`
-	Workdir           string   `toml:"workdir"`
-	EnvFile           string   `toml:"env_file"`
-	RestartDelay      int      `toml:"restart_delay"`
-	Restart           string   `toml:"restart"`
-	Backend           string   `toml:"backend"`
-	Description       string   `toml:"description"`
-	Enabled           *bool    `toml:"enabled"`
-	TmuxSocket        string   `toml:"tmux_socket"`
-	Schedule          string   `toml:"schedule"`
-	CatchUp           *bool    `toml:"catch_up"`
-	Timeout           *string  `toml:"timeout"`
-	OnOverlap         *string  `toml:"on_overlap"`
-	KeepRuns          *int     `toml:"keep_runs"`
-	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
-	MCPAllow          []string `toml:"mcp_allow"`
+	AutoAccept *bool  `toml:"auto_accept"`
+	MaxTurns   *int   `toml:"max_turns"`
+	Quiet      *bool  `toml:"quiet"`
+	Workdir    string `toml:"workdir"`
+	// EnvFile decodes as a string (the historical form, byte for byte) or a
+	// list of strings loaded in order (SPEC-0018 REQ-12). Nil means the key
+	// is absent; an explicit empty list is rejected in registerHarness, where
+	// the harness name and source line are known.
+	EnvFile           envFileValue `toml:"env_file"`
+	RestartDelay      int          `toml:"restart_delay"`
+	Restart           string       `toml:"restart"`
+	Backend           string       `toml:"backend"`
+	Description       string       `toml:"description"`
+	Enabled           *bool        `toml:"enabled"`
+	TmuxSocket        string       `toml:"tmux_socket"`
+	Schedule          string       `toml:"schedule"`
+	CatchUp           *bool        `toml:"catch_up"`
+	Timeout           *string      `toml:"timeout"`
+	OnOverlap         *string      `toml:"on_overlap"`
+	KeepRuns          *int         `toml:"keep_runs"`
+	HarvestTrajectory *bool        `toml:"harvest_trajectory"`
+	MCPAllow          []string     `toml:"mcp_allow"`
 	// ExportTelemetry is the per-harness telemetry opt-in; nil follows
 	// [telemetry] export_all (SPEC-0015 REQ-1).
 	ExportTelemetry *bool `toml:"export_telemetry"`
@@ -99,6 +103,35 @@ type rawHarness struct {
 	// Delete-not-deprecate still owes the user a loud failure.
 	RemovedCmd   string `toml:"cmd"`
 	RemovedAgent string `toml:"agent"`
+}
+
+// envFileValue decodes `env_file` as a string or a list of strings. Only the
+// SHAPE is checked here; the empty-list error is raised in registerHarness,
+// which knows the harness name and the declaring line. A bare string becomes
+// a one-element list, so a string keeps its current meaning byte for byte
+// (including a blank one, which the supervisor tolerates like a missing
+// file).
+// Governing: SPEC-0018 REQ-12.
+type envFileValue []string
+
+func (e *envFileValue) UnmarshalTOML(v any) error {
+	switch t := v.(type) {
+	case string:
+		*e = envFileValue{t}
+	case []any:
+		out := make(envFileValue, 0, len(t))
+		for i, item := range t {
+			s, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("env_file: element %d is not a string", i)
+			}
+			out = append(out, s)
+		}
+		*e = out
+	default:
+		return errors.New(`env_file must be a string or a list of strings`)
+	}
+	return nil
 }
 
 // rawProfile mirrors a [profile.*] TOML table before validation.
@@ -504,6 +537,25 @@ func addHarness(cfg *core.Config, st *loadState, filename, name string, line int
 // parameters: defaultEnabled (global autostart is opt-in, project bring-up is
 // opt-out) and resolve, applied to workdir/env_file (project files resolve
 // relative paths against the project root; nil stores them verbatim).
+// resolveEnvFiles applies resolve to every env_file entry, preserving order
+// (SPEC-0018 REQ-12: a list loads in order, later file wins). resolve is nil
+// for the global config, where — exactly like workdir — paths stay raw until
+// spawn expands ~; a project file resolves each entry against its root.
+func resolveEnvFiles(files envFileValue, resolve func(string) string) []string {
+	if files == nil {
+		return nil
+	}
+	out := make([]string, len(files))
+	for i, f := range files {
+		if resolve != nil {
+			out[i] = resolve(f)
+		} else {
+			out[i] = f
+		}
+	}
+	return out
+}
+
 func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHarness, defaultEnabled bool, resolve func(string) string) error {
 	if _, exists := cfg.Harnesses[name]; exists {
 		return newError(filename, line, "duplicate harness %q", name)
@@ -1054,6 +1106,18 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		}
 	}
 
+	// `env_file` is rejected as an explicit empty list (SPEC-0018 REQ-12
+	// scenario "An empty list"): unlike an absent key or even a blank string,
+	// which mean "no extra environment", `env_file = []` can only be a
+	// mistake — almost always a list whose entries were deleted — and a
+	// harness whose secrets silently stopped loading is exactly the
+	// authenticate-later failure mode the missing-file tolerance exists to
+	// avoid hiding.
+	if rh.EnvFile != nil && len(rh.EnvFile) == 0 {
+		return newError(filename, line,
+			"harness %q: \"env_file\" must not be an empty list (name at least one file, or remove the key)", name)
+	}
+
 	if resolve == nil {
 		resolve = func(p string) string { return p }
 	}
@@ -1073,7 +1137,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		MCPConfig:        mcpConfigPath,
 		AllowedTools:     allowedTools,
 		Workdir:          resolve(rh.Workdir),
-		EnvFile:          resolve(rh.EnvFile),
+		EnvFiles:         resolveEnvFiles(rh.EnvFile, resolve),
 		RestartDelay:     time.Duration(rh.RestartDelay) * time.Second,
 		Restart:          restartPolicy,
 		Backend:          backend,

@@ -1175,7 +1175,7 @@ func (s *Supervisor) applyConfig(h core.Harness) {
 func runAffecting(a, b core.Harness) bool {
 	if a.Adapter != b.Adapter || a.Prompt != b.Prompt || a.PromptFile != b.PromptFile || a.Model != b.Model ||
 		a.AutoAccept != b.AutoAccept || a.MaxTurns != b.MaxTurns || a.Quiet != b.Quiet ||
-		a.Workdir != b.Workdir || a.EnvFile != b.EnvFile ||
+		a.Workdir != b.Workdir || !slices.Equal(a.EnvFiles, b.EnvFiles) ||
 		a.SystemPromptFile != b.SystemPromptFile || a.MCPConfig != b.MCPConfig ||
 		!slices.Equal(a.AllowedTools, b.AllowedTools) ||
 		a.RestartDelay != b.RestartDelay || a.Backend != b.Backend || a.TmuxSocket != b.TmuxSocket {

@@ -236,6 +236,17 @@ func filterProjectHarnesses(hs []protocol.HarnessInfo, project string) []protoco
 	return out
 }
 
+// singleEnvFile renders a one-element env_file list into the wire's
+// single-path field, so a daemon older than the list form still receives the
+// file. A longer list has no single-path spelling — the daemon must
+// understand env_files to honor it.
+func singleEnvFile(files []string) string {
+	if len(files) == 1 {
+		return files[0]
+	}
+	return ""
+}
+
 // wireHarnesses converts the parsed project definitions (in file order) into
 // the protocol's project_up payload. Enabled is carried through faithfully:
 // the wire default is false and the daemon only autostarts enabled harnesses,
@@ -261,13 +272,17 @@ func wireHarnesses(proj *config.Project) []protocol.ProjectHarness {
 			MCPConfig:        h.MCPConfig,
 			AllowedTools:     h.AllowedTools,
 			Workdir:          h.Workdir,
-			EnvFile:          h.EnvFile,
-			RestartDelayMs:   h.RestartDelay.Milliseconds(),
-			Restart:          string(h.Restart),
-			Backend:          string(h.Backend),
-			Description:      h.Description,
-			TmuxSocket:       h.TmuxSocket,
-			Enabled:          h.Enabled,
+			// Both forms go on the wire: the list is authoritative, and a
+			// one-element list is echoed into the single-path field so an
+			// older daemon (which ignores env_files) still gets the file.
+			EnvFile:        singleEnvFile(h.EnvFiles),
+			EnvFiles:       h.EnvFiles,
+			RestartDelayMs: h.RestartDelay.Milliseconds(),
+			Restart:        string(h.Restart),
+			Backend:        string(h.Backend),
+			Description:    h.Description,
+			TmuxSocket:     h.TmuxSocket,
+			Enabled:        h.Enabled,
 			// A project file can only opt out; carry that, so export_all
 			// cannot publish a harness its project excluded (SPEC-0015).
 			ExportTelemetry: h.ExportTelemetry,

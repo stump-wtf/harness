@@ -74,3 +74,29 @@ func TestPersonaKeysRefuseAnOlderDaemon(t *testing.T) {
 		t.Errorf("a definition without persona keys must still reach an older daemon: %v", err)
 	}
 }
+
+// TestEnvFileListRefusesAnOlderDaemon: a daemon before ProtoMinor 14 ignores
+// env_files, so a two-file list would start the harness with no env file at
+// all. A one-element list still travels as EnvFile and must go through (review
+// of #719).
+func TestEnvFileListRefusesAnOlderDaemon(t *testing.T) {
+	multi := protocol.ProjectHarness{Name: "reviewer", EnvFiles: []string{"/p/claude.env", "/p/reviewer.env"}}
+	single := protocol.ProjectHarness{Name: "solo", EnvFile: "/p/claude.env", EnvFiles: []string{"/p/claude.env"}}
+	for _, v := range []string{"1.13", "1", ""} {
+		c := &Client{daemon: protocol.Hello{ProtoVersion: v}}
+		if _, err := c.ProjectUp("p", []protocol.ProjectHarness{multi}); err == nil || !strings.Contains(err.Error(), "predates env_file lists") {
+			t.Errorf("project up, proto %q: err = %v, want a refusal", v, err)
+		}
+		if _, err := c.ScratchRun(multi, ""); err == nil || !strings.Contains(err.Error(), "predates env_file lists") {
+			t.Errorf("scratch run, proto %q: err = %v, want a refusal", v, err)
+		}
+	}
+	old := &Client{daemon: protocol.Hello{ProtoVersion: "1.13"}}
+	if err := old.checkEnvFileList([]protocol.ProjectHarness{single}); err != nil {
+		t.Errorf("a one-element list must still reach an older daemon: %v", err)
+	}
+	current := &Client{daemon: protocol.Hello{ProtoVersion: protocol.ProtoVersion}}
+	if err := current.checkEnvFileList([]protocol.ProjectHarness{multi}); err != nil {
+		t.Errorf("this build's own proto %q refuses its own env_file list: %v", protocol.ProtoVersion, err)
+	}
+}

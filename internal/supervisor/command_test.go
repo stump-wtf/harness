@@ -82,12 +82,12 @@ func probeHarness(t *testing.T, name, argv0 string, args ...string) (core.Harnes
 		t.Fatal(err)
 	}
 	return core.Harness{
-		Name:    name,
-		Adapter: core.AdapterCommand,
-		Argv:    append([]string{argv0}, args...),
-		EnvFile: envFile,
-		Backend: core.BackendNative,
-		Restart: core.RestartNo,
+		Name:     name,
+		Adapter:  core.AdapterCommand,
+		Argv:     append([]string{argv0}, args...),
+		EnvFiles: []string{envFile},
+		Backend:  core.BackendNative,
+		Restart:  core.RestartNo,
 	}, out
 }
 

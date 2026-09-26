@@ -165,6 +165,20 @@ func projectTelemetryOptOut(v *bool) *bool {
 	return &f
 }
 
+// envFilesFromWire maps the wire's env_file forms onto core's list: the list
+// wins when present, and the single-path form becomes a one-element list so
+// an older client that sends only a string behaves exactly as before
+// (SPEC-0018 REQ-12; the wire change is additive).
+func envFilesFromWire(single string, list []string) []string {
+	if list != nil {
+		return list
+	}
+	if single == "" {
+		return nil
+	}
+	return []string{single}
+}
+
 func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 	backend := core.Backend(ph.Backend)
 	if ph.Backend == "" {
@@ -205,7 +219,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		AllowedTools:     ph.AllowedTools,
 		Quiet:            quiet,
 		Workdir:          ph.Workdir,
-		EnvFile:          ph.EnvFile,
+		EnvFiles:         envFilesFromWire(ph.EnvFile, ph.EnvFiles),
 		RestartDelay:     time.Duration(ph.RestartDelayMs) * time.Millisecond,
 		Restart:          restart,
 		Backend:          backend,

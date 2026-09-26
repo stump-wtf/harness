@@ -48,6 +48,9 @@ enabled = true
 harness = "claude-code"
 args = ["--remote-control", "--dangerously-skip-permissions"]
 workdir = "~/src/my-project"
+# env_file takes one path, or a LIST of paths loaded in order (later file
+# wins a key collision): a shared credential file plus a per-persona one.
+env_file = ["~/.config/harness/env/claude.env", "~/.config/harness/env/my-agent.env"]
 description = "long-running agent in ~/src/my-project"
 enabled = false
 

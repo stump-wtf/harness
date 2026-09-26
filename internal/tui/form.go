@@ -103,9 +103,12 @@ type HarnessForm struct {
 	// argvErr is why the argv input did not parse (toForm), reported by
 	// Validate. Unlike args, a malformed argv is not silently dropped: saving
 	// would then write a command harness with no argv at all.
-	argvErr      error
-	Workdir      string
-	EnvFile      string
+	argvErr error
+	Workdir string
+	// EnvFile is the harness's env_file list in order (SPEC-0018 REQ-12).
+	// A one-element list round-trips as the historical string form; a longer
+	// one is written as a TOML list.
+	EnvFile      []string
 	RestartDelay int    // seconds
 	Restart      string // core.RestartPolicy; empty = the parse default
 	Backend      string
@@ -513,8 +516,14 @@ func (f HarnessForm) TOML() string {
 	if f.Workdir != "" {
 		fmt.Fprintf(&b, "workdir = %s\n", strconv.Quote(f.Workdir))
 	}
-	if f.EnvFile != "" {
-		fmt.Fprintf(&b, "env_file = %s\n", strconv.Quote(f.EnvFile))
+	if len(f.EnvFile) == 1 {
+		fmt.Fprintf(&b, "env_file = %s\n", strconv.Quote(f.EnvFile[0]))
+	} else if len(f.EnvFile) > 1 {
+		parts := make([]string, len(f.EnvFile))
+		for i, e := range f.EnvFile {
+			parts[i] = strconv.Quote(e)
+		}
+		fmt.Fprintf(&b, "env_file = [%s]\n", strings.Join(parts, ", "))
 	}
 	if f.RestartDelay > 0 {
 		fmt.Fprintf(&b, "restart_delay = %d\n", f.RestartDelay)
@@ -709,7 +718,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.args = shellQuoteJoin(h.Args)
 	fi.argv = formatArgvInput(h.Argv)
 	fi.workdir = h.Workdir
-	fi.envFile = h.EnvFile
+	fi.envFile = strings.Join(h.EnvFiles, ", ")
 	if h.RestartDelay > 0 {
 		fi.delay = strconv.Itoa(int(h.RestartDelay / time.Second))
 	}
@@ -737,6 +746,19 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	return fi
 }
 
+// splitEnvFileInput parses the form's comma-separated env_file field into the
+// list the harness carries (SPEC-0018 REQ-12). Blank entries are dropped, so
+// an untouched single-path edit round-trips as the same one-element list.
+func splitEnvFileInput(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 // toForm converts the Huh string-bound inputs into a typed HarnessForm, parsing
 // space-separated args and the integer restart_delay.
 func (fi formInputs) toForm() HarnessForm {
@@ -756,7 +778,7 @@ func (fi formInputs) toForm() HarnessForm {
 		Timeout:          strings.TrimSpace(fi.timeout),
 		OnOverlap:        strings.TrimSpace(fi.onOverlap),
 		Workdir:          strings.TrimSpace(fi.workdir),
-		EnvFile:          strings.TrimSpace(fi.envFile),
+		EnvFile:          splitEnvFileInput(fi.envFile),
 		Restart:          strings.TrimSpace(fi.restart),
 		Backend:          strings.TrimSpace(fi.backend),
 		TmuxSocket:       strings.TrimSpace(fi.tmuxSocket),
