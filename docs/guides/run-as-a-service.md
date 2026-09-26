@@ -240,6 +240,14 @@ ANTHROPIC_API_KEY=sk-ant-...
 GITHUB_TOKEN=ghp_...
 ```
 
+That key is for Crush's Anthropic provider. A **Claude Code** harness under a
+headless service (a systemd unit, or a system LaunchDaemon) cannot reach a
+Keychain login, and should carry a subscription token from `claude setup-token`
+instead: `CLAUDE_CODE_OAUTH_TOKEN=...` in the same kind of `0600` file.
+`ANTHROPIC_API_KEY` bills the API rather than your subscription, and Claude Code
+prefers it over the token whenever both are set. See
+[Claude Code authentication](./first-agent#claude-code-authentication).
+
 Things worth knowing about `env_file`:
 
 - It is plain `KEY=VALUE`. Blank lines, `#` comments, a leading `export`, and

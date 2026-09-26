@@ -51,7 +51,9 @@ func cmdLogEvents(c *client.Client, o verbOpts, w io.Writer) error {
 		if ld.Source != protocol.LogSourceAgentTrace {
 			return followLogs(c, o)
 		}
-		return followActivity(w, ld, fetch, o.lines, func() bool {
+		v := newActivityView(w, logStyleFor(w))
+		v.live = true
+		return followActivity(v, ld, fetch, o.lines, func() bool {
 			time.Sleep(activityPoll)
 			return true
 		})
@@ -63,26 +65,34 @@ func cmdLogEvents(c *client.Client, o verbOpts, w io.Writer) error {
 	if o.json {
 		return printJSON(ld)
 	}
-	renderActivity(w, ld)
+	newActivityView(w, logStyleFor(w)).render(ld)
 	return nil
 }
 
-// renderActivity prints a logs reply. A reply that is not the activity view is
-// the durable log tail and prints as such.
+// renderActivity prints a logs reply as plain text: the exact bytes a pipe, a
+// script or an agent reads. A reply that is not the activity view is the
+// durable log tail and prints as such.
 func renderActivity(w io.Writer, ld protocol.LogsData) {
+	newActivityView(w, nil).render(ld)
+}
+
+// render prints one logs reply through the view.
+func (v *activityView) render(ld protocol.LogsData) {
 	if ld.Source != protocol.LogSourceAgentTrace {
-		printLogText(w, ld.Text)
+		v.flush()
+		writeLogText(newRawWriter(v.w, v.st), ld.Text)
 		return
 	}
 	if ld.Run != nil {
-		fmt.Fprintln(w, runHeader(*ld.Run))
+		v.header(*ld.Run)
 	}
 	for _, n := range ld.Notices {
-		fmt.Fprintln(w, noteLine(n))
+		v.note(n)
 	}
 	for _, e := range ld.Entries {
-		fmt.Fprintln(w, formatEntry(e))
+		v.entry(e)
 	}
+	v.flush()
 	// The activity view never prints the durable log, even if a daemon sent
 	// one: this view is agent activity, and the stored history of a
 	// full-screen agent is its repainted screen. `--raw` is the way to read
@@ -96,8 +106,11 @@ func renderActivity(w io.Writer, ld protocol.LogsData) {
 // Re-fetches ask for four times the line budget: more than that arriving within
 // one poll interval is not a rate an agent runs tools at, and the entries' IDs
 // make the overlap harmless.
-func followActivity(w io.Writer, first protocol.LogsData, fetch func(lines int) (protocol.LogsData, error), lines int, wait func() bool) error {
-	renderActivity(w, first)
+//
+// The view carries the styling: a plain view prints exactly what a pipe has
+// always read, a styled one collapses repeats in place as they arrive.
+func followActivity(v *activityView, first protocol.LogsData, fetch func(lines int) (protocol.LogsData, error), lines int, wait func() bool) error {
+	v.render(first)
 	seen := map[string]bool{}
 	for _, e := range first.Entries {
 		seen[e.ID] = true
@@ -113,45 +126,72 @@ func followActivity(w io.Writer, first protocol.LogsData, fetch func(lines int) 
 		}
 		if ld.Run != nil && ld.Run.Start != run {
 			run = ld.Run.Start
-			fmt.Fprintln(w, runHeader(*ld.Run))
+			v.header(*ld.Run)
 		}
 		for _, e := range ld.Entries {
 			if seen[e.ID] {
 				continue
 			}
 			seen[e.ID] = true
-			fmt.Fprintln(w, formatEntry(e))
+			v.entry(e)
 		}
+		v.flush()
 	}
 	return nil
 }
 
-// runHeader names the run: when, how it ended, which adapter, which directory.
-func runHeader(r protocol.LogRun) string {
+// runFields is a run header's columns, each already made inert.
+type runFields struct {
+	// parsed is false when Start is not a timestamp: start then holds it
+	// verbatim and every other field is empty.
+	parsed bool
+	start  string
+	// end is the end clock, or "" while the run is in flight.
+	end     string
+	exit    *int
+	adapter string
+	workdir string
+}
+
+// runParts splits a run into its header columns.
+func runParts(r protocol.LogRun) runFields {
 	start, err := time.Parse(time.RFC3339Nano, r.Start)
 	if err != nil {
-		return "run " + inert(r.Start)
+		return runFields{start: inert(r.Start)}
 	}
 	start = start.Local()
-	parts := []string{"run " + start.Format("2006-01-02 15:04:05")}
+	f := runFields{parsed: true, start: start.Format("2006-01-02 15:04:05"), exit: r.ExitCode, adapter: inert(r.Adapter), workdir: inert(r.Workdir)}
 	if end, err := time.Parse(time.RFC3339Nano, r.End); err == nil {
 		end = end.Local()
 		layout := "15:04:05"
 		if end.Format("2006-01-02") != start.Format("2006-01-02") {
 			layout = "2006-01-02 15:04:05"
 		}
-		parts[0] += " → " + end.Format(layout)
+		f.end = end.Format(layout)
+	}
+	return f
+}
+
+// runHeader names the run: when, how it ended, which adapter, which directory.
+func runHeader(r protocol.LogRun) string {
+	f := runParts(r)
+	if !f.parsed {
+		return "run " + f.start
+	}
+	parts := []string{"run " + f.start}
+	if f.end != "" {
+		parts[0] += " → " + f.end
 	} else {
 		parts[0] += " → running"
 	}
-	if r.ExitCode != nil {
-		parts = append(parts, fmt.Sprintf("exit %d", *r.ExitCode))
+	if f.exit != nil {
+		parts = append(parts, fmt.Sprintf("exit %d", *f.exit))
 	}
-	if r.Adapter != "" {
-		parts = append(parts, inert(r.Adapter))
+	if f.adapter != "" {
+		parts = append(parts, f.adapter)
 	}
-	if r.Workdir != "" {
-		parts = append(parts, inert(r.Workdir))
+	if f.workdir != "" {
+		parts = append(parts, f.workdir)
 	}
 	return strings.Join(parts, " · ")
 }
@@ -163,6 +203,19 @@ func noteLine(n string) string {
 
 // formatEntry is one entry: local clock time, a label, the detail.
 func formatEntry(e protocol.LogEntry) string {
+	p := entryParts(e)
+	return fmt.Sprintf("%s  %-8s  %s%s", p.clock, p.label, p.detail, p.suffix)
+}
+
+// entryFields is one entry's columns, each already made inert. The plain and
+// the styled renderers both print these, so they differ only in styling.
+type entryFields struct {
+	clock, label, detail, suffix string
+}
+
+// entryParts splits an entry into its columns: local clock time, a label, the
+// detail, and a failure suffix.
+func entryParts(e protocol.LogEntry) entryFields {
 	clock := "--:--:--"
 	if t, err := time.Parse(time.RFC3339Nano, e.Time); err == nil {
 		clock = t.Local().Format("15:04:05")
@@ -192,7 +245,7 @@ func formatEntry(e protocol.LogEntry) string {
 	if e.Ambiguous {
 		label = "?" + label
 	}
-	return fmt.Sprintf("%s  %-8s  %s%s", clock, inert(label), clip(inert(detail), detailWidth), suffix)
+	return entryFields{clock: clock, label: inert(label), detail: clip(inert(detail), detailWidth), suffix: suffix}
 }
 
 // inert flattens s onto one line and drops every control character, so no

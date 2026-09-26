@@ -1,0 +1,7 @@
+description = "Reviews a diff against the repo's standards: correctness, tests, style, security"
+mode = "one-shot"
+client = "claude-code"
+queues = ["review"]
+mcp_servers = ["switchboard"]
+allowed_tools = ["Read", "Grep", "Glob", "Bash(git log:*)", "Bash(git diff:*)"]
+max_runs_per_day = 40

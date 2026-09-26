@@ -99,7 +99,8 @@ The `generic` kind, which ran an arbitrary `sh` command, is deprecated and is
 being removed (ADR-0033); a harness must be an agent agent-trace can read.
 `command` is what replaces it for a program that is not an agent —
 `harness.toml.example` has the details, including why a `command` harness has
-no `args` and is resident-only for now.
+no `args`, and how it runs on a `schedule` or `triggers` with its argv
+templated over the run.
 
 Then `harness doctor` verifies config, daemon, and state. The full config
 reference and every verb are in the docs above.

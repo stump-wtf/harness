@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/testwait"
 )
 
 // managerCfg builds a one/two-harness config with an autostart profile.
@@ -189,7 +190,17 @@ func TestManagerEmitsLifecycleEvents(t *testing.T) {
 
 func TestManagerEmitsExitedAndFlapping(t *testing.T) {
 	cfg := managerCfg(shHarness("crash", "exit 1", 0))
-	m := newTestManager(t, cfg)
+	// A crash window no spawn can outlast. Flapping is CrashThreshold exits
+	// inside CrashWindow, and fastPolicy's 150ms is shorter than one `exit 1`
+	// spawn can take under -race on a loaded runner: every run then outlived
+	// the window, reset the flap count, and the harness went straight to
+	// give-up without ever flapping ("missing events: exited=true
+	// flapping=false" in a loaded Linux -race run of the full suite).
+	p := fastPolicy()
+	p.CrashWindow = time.Minute
+	dir := t.TempDir()
+	m := NewManager(cfg, ManagerOptions{Policy: p, StatePath: filepath.Join(dir, "state.json"), LogDir: filepath.Join(dir, "logs")})
+	t.Cleanup(m.Close)
 	events, cancel := m.Events()
 	defer cancel()
 	if err := m.Restore(); err != nil {
@@ -198,7 +209,7 @@ func TestManagerEmitsExitedAndFlapping(t *testing.T) {
 	m.Start("crash")
 
 	sawExited, sawFlapping := false, false
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(testwait.Budget(t, 3*time.Second))
 	for !(sawExited && sawFlapping) {
 		select {
 		case ev := <-events:

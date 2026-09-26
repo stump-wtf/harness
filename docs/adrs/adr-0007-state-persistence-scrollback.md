@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded
 date: 2026-07-18
 decision-makers: [joestump]
 extends: [ADR-0003]
@@ -151,7 +151,7 @@ configuration (ADR-0006); this file is runtime state only. TOML is intent;
 
 * Rotation tests pin rotation by size and age, backup pruning that never
   touches a sibling harness, and the project-namespaced log path.
-* Sanitizer tests pin this behavior: a repaint-in-place stream writes no
+* Sanitizer tests pin the sanitized-log behavior: a repaint-in-place stream writes no
   lines and no escape codes, printed rows land verbatim, the final screen is
   flushed once, lifecycle events are recorded, and credentials are masked
   before the row reaches disk.

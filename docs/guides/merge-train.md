@@ -56,8 +56,8 @@ Watch the daemon log for these lines:
 | `mergetrain bypass detected` | `main` moved without the train |
 
 Run it for a week and count trains built, green versus red, and the causes of
-failures. The bar for going further is in stumpcloud/stumpcloud#466 and
-stump.wtf/harness#540:
+failures. The bar for going further is set by the agent-contention epic that
+proposed the train, and by stump.wtf/harness#540:
 
 - replays under 3% of PRs;
 - no untested tree merged;
@@ -72,10 +72,9 @@ In one change, and for one repository only:
 2. Turn off `block_on_outdated_branch` for that repo's `main` rule:
 
    ```sh
-   curl -sS -X PATCH \
-     -H "Authorization: token $GITEA_TOKEN" -H 'Content-Type: application/json' \
-     https://gitea.stump.rocks/api/v1/repos/stump.wtf/harness/branch_protections/main \
-     -d '{"block_on_outdated_branch": false}'
+   tea api --login gitea.stump.rocks -X PATCH \
+     repos/stump.wtf/harness/branch_protections/main \
+     -F block_on_outdated_branch=false
    ```
 
 While the block is still on, the forge refuses to merge any PR that is behind
@@ -87,19 +86,18 @@ PR. That is why the two changes go together.
 Put the block back:
 
 ```sh
-curl -sS -X PATCH \
-  -H "Authorization: token $GITEA_TOKEN" -H 'Content-Type: application/json' \
-  https://gitea.stump.rocks/api/v1/repos/stump.wtf/harness/branch_protections/main \
-  -d '{"block_on_outdated_branch": true}'
+tea api --login gitea.stump.rocks -X PATCH \
+  repos/stump.wtf/harness/branch_protections/main \
+  -F block_on_outdated_branch=true
 ```
 
 Then set `mode = "report"` (or `enabled = false`) and restart the daemon.
 Check that the block really is on again by reading the rule back rather than
-trusting the PATCH's exit code:
+trusting the PATCH's exit code (`tea api` exits 0 even on an error):
 
 ```sh
-curl -sS -H "Authorization: token $GITEA_TOKEN" \
-  https://gitea.stump.rocks/api/v1/repos/stump.wtf/harness/branch_protections/main \
+tea api --login gitea.stump.rocks \
+  repos/stump.wtf/harness/branch_protections/main \
   | jq .block_on_outdated_branch
 ```
 

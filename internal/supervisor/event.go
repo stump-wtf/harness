@@ -49,6 +49,25 @@ const (
 	// bus, the same way it does for EventScheduleChanged. Governing: ADR-0019,
 	// SPEC-0012 REQ "Operating Hours Visibility".
 	EventHoursChanged EventKind = "harness_hours_changed"
+
+	// EventTemplateRenderFailed is emitted when a spawn's argv template
+	// could not be rendered, so nothing was exec'd; RenderFailure says why.
+	// It feeds harness_template_render_failures_total and is NOT relayed to
+	// clients: the run record (or the failed start) is the operator-facing
+	// account, and this event carries no path or value of its own.
+	// Governing: SPEC-0017 REQ-11 "Rendering", REQ "Error Handling
+	// Standards".
+	EventTemplateRenderFailed EventKind = "harness_template_render_failed"
+)
+
+// Render failure reasons, the `reason` label of
+// harness_template_render_failures_total (SPEC-0017 REQ-11).
+const (
+	// RenderFailureUnresolved: a required template value was absent.
+	RenderFailureUnresolved = "unresolved"
+	// RenderFailureGrammar: a template did not parse at spawn — only
+	// reachable by a definition that bypassed every load-time check.
+	RenderFailureGrammar = "grammar"
 )
 
 // Event is one lifecycle notification. Only the fields relevant to Kind are
@@ -85,6 +104,10 @@ type Event struct {
 	// Restarts (↻) and NextRetryIn are set for EventFlapping.
 	Restarts    int
 	NextRetryIn time.Duration
+
+	// RenderFailure is set for EventTemplateRenderFailed: one of the
+	// RenderFailure* reasons.
+	RenderFailure string
 }
 
 // subBuffer is the per-subscriber queue depth. Publishing never blocks on a

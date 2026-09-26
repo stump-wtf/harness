@@ -373,9 +373,9 @@ during shutdown ahead of `srv.Close()` and `mgr.Close()`.
   logged; a crash before the next successful write could then repeat or lose a
   window.
 - **Consumers branch on a key.** Every surface that renders a scheduled harness
-  distinctly (`ls`, `describe`, the cockpit) tests `Schedule != ""` itself
-  `internal/schedfmt` shares the phrasing; SPEC-0008 REQ "Schedule Visibility"
-  holds them to one answer.
+  distinctly (`ls`, `describe`, the cockpit) tests `Schedule != ""`
+  itself. `internal/schedfmt` shares the phrasing; SPEC-0008 REQ "Schedule
+  Visibility" holds them to one answer.
 - **Config writers must carry every key.** The TUI form rewrites a whole
   `[harness.*]` table, so any schema key it does not carry would be deleted on
   save. A census test walks every `core.Harness` field and a round-trip

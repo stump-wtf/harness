@@ -13,6 +13,9 @@ package config
 // first, because Load checks both exist and the guides use ~ paths.
 //
 // @joestump-agent 09/11/2026 - Added alongside the 0-to-1 user guides.
+//
+// @joestump 09/24/2026 - Also loads docs/patterns/, the cross-stack patterns
+// cookbook, whose configs are copied as often as the guides'.
 
 import (
 	"bufio"
@@ -143,14 +146,26 @@ func TestDocsGuideTOMLExamplesLoad(t *testing.T) {
 	if len(files) == 0 {
 		t.Fatal("no guides found under docs/guides — did they move? update this test")
 	}
+	// The patterns cookbook is copied from just as often, so it is held to the
+	// same bar. Its subtests carry a "patterns/" prefix; the guides' names are
+	// unchanged.
+	patterns, err := filepath.Glob(filepath.Join("..", "..", "docs", "patterns", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, patterns...)
 	checked := 0
 	for _, f := range files {
+		prefix := ""
+		if filepath.Base(filepath.Dir(f)) == "patterns" {
+			prefix = "patterns/"
+		}
 		for _, b := range docsTOMLBlocks(t, f) {
 			if !docsTableHeaderRe.MatchString(b.body) {
 				continue
 			}
 			checked++
-			name := filepath.Base(f) + ":" + itoa(b.line)
+			name := prefix + filepath.Base(f) + ":" + itoa(b.line)
 			t.Run(name, func(t *testing.T) {
 				if err := loadDocsConfig(t, b.body); err != nil {
 					t.Errorf("%s: example does not load: %v\n---\n%s", name, err, b.body)

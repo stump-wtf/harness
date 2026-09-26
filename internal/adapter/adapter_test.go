@@ -376,3 +376,49 @@ func TestCommandAdapter(t *testing.T) {
 		})
 	}
 }
+
+// Governing: SPEC-0018 REQ-11. The persona keys fold into the synthesized
+// argv after --dangerously-skip-permissions/--model/--max-turns and before
+// --verbose, so every variadic flag is followed by a flag; each allowed tool
+// is its own argv element.
+func TestClaudeCodePromptCommandPersonaKeys(t *testing.T) {
+	a := &ClaudeCode{}
+	cmd, args := a.PromptCommand("review the diff", core.AgentOpts{
+		Quiet:            true,
+		AutoAccept:       true,
+		Model:            "claude-sonnet-4",
+		MaxTurns:         30,
+		SystemPromptFile: "/cfg/personas/reviewer/system.md",
+		MCPConfig:        "/cfg/personas/reviewer/mcp.json",
+		AllowedTools:     []string{"Read", "Bash(git log:*)", "mcp__switchboard__claim_next"},
+	})
+	if cmd != "claude" {
+		t.Fatalf("cmd = %q, want claude", cmd)
+	}
+	want := []string{
+		"-p",
+		"--dangerously-skip-permissions",
+		"--model", "claude-sonnet-4",
+		"--max-turns", "30",
+		"--append-system-prompt-file", "/cfg/personas/reviewer/system.md",
+		"--mcp-config", "/cfg/personas/reviewer/mcp.json",
+		"--strict-mcp-config",
+		"--allowedTools", "Read", "Bash(git log:*)", "mcp__switchboard__claim_next",
+		"--verbose", "--output-format", "stream-json",
+		"review the diff",
+	}
+	if !slicesEqual(args, want) {
+		t.Fatalf("args = %q\nwant    %q", args, want)
+	}
+	// "Bash(git log:*)" must stay ONE argv element, never a comma-split shell
+	// word.
+	whole := false
+	for _, a := range args {
+		if a == "Bash(git log:*)" {
+			whole = true
+		}
+	}
+	if !whole {
+		t.Errorf("tool with parens was not kept whole: %q", args)
+	}
+}

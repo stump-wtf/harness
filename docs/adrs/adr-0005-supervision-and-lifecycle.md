@@ -1,7 +1,10 @@
-# ADR-0005 — Supervision: daemon self-supervises harnesses; init only supervises the daemon
+---
+status: accepted
+date: 2026-07-18
+decision-makers: [joestump]
+---
 
-- **Status:** Proposed
-- **Date:** 2026-07-18
+# ADR-0005 — Supervision: daemon self-supervises harnesses; init only supervises the daemon
 
 ## Context and problem statement
 

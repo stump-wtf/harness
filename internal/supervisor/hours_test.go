@@ -320,9 +320,15 @@ func TestUseProfileRespectsTheGate(t *testing.T) {
 	if snap, _ := m.Snapshot("held"); snap.State != core.StateStopped || !snap.Held || !snap.Enabled {
 		t.Errorf("held member: state=%s held=%v enabled=%v, want stopped/held/enabled", snap.State, snap.Held, snap.Enabled)
 	}
-	if ph := waitPersisted(t, statePath, "held", core.StateStopped); !ph.Enabled {
-		t.Error("state.json does not record the held member's intent as true")
-	}
+	// Poll for the intent, not only the state: the Stop above already had
+	// "held" persisted stopped with enabled = false, so a state-only wait can
+	// return that pre-UseProfile file before the debounced persist writes the
+	// profile's intent. Under load it did, failing in 0.1s with the intent
+	// correct in memory.
+	waitFor(t, 3*time.Second, "state.json records the held member's intent as true", func() bool {
+		ph, ok := readPersisted(t, statePath, "held")
+		return ok && ph.State == core.StateStopped && ph.Enabled
+	})
 	if snap, _ := m.Snapshot("up"); snap.State != core.StateRunning || snap.PID != pid {
 		t.Errorf("running member bounced: state=%s pid %d → %d", snap.State, pid, snap.PID)
 	}

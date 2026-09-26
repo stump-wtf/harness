@@ -131,6 +131,7 @@ func newRootCmd() *cobra.Command {
 		newRunsCmd(g),
 		newAttachCmd(g),
 		newDoctorCmd(g),
+		newInitCmd(g),
 		newDaemonCmd(g),
 	)
 
@@ -306,17 +307,21 @@ func newAttachCmd(g *globalOpts) *cobra.Command {
 // newDoctorCmd keeps doctor's own reporting and exit code: it never returns an
 // error to cliui.Fatal, it exits directly, exactly as the previous dispatch did.
 func newDoctorCmd(g *globalOpts) *cobra.Command {
-	return &cobra.Command{
+	var notifyTest bool
+	cmd := &cobra.Command{
 		Use:           "doctor",
 		Short:         "run health checks (config, daemon, harnesses)",
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			exitFn(runDoctor(g.opts()))
+			exitFn(runDoctorWith(g.opts(), notifyTest))
 			return nil
 		},
 	}
+	// Governing: SPEC-0003 REQ "Operator Notification".
+	cmd.Flags().BoolVar(&notifyTest, "notify-test", false, "have the daemon run the [notify] hook once with a test event")
+	return cmd
 }
 
 // exitFn is os.Exit in production and a capture point in tests, so a command

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/testwait"
 )
 
 // ---- test helpers --------------------------------------------------------
@@ -61,44 +62,13 @@ func newTestSupervisor(t *testing.T, h core.Harness, p Policy) *Supervisor {
 	return s
 }
 
-// testCeiling scales a test's wait under load, bounded by the test binary's
-// own -timeout so a genuine hang still fails on that rather than running past
-// it.
-//
-// The fixed waits here were sized against an idle machine. `make test` runs
-// every package in parallel, and under that load a 5 s poll failed a correct
-// supervisor: TestLedgerCarriesNoSecrets, whose one isolated pass measured
-// 5.09 s, then failed 5 times in 6 under concurrent load. The 10 s of
-// headroom keeps -timeout's own report available when something really is
-// stuck.
-//
-// @joestump-agent 09/24/2026 - Added with the ledger (#444), whose Add()ed
-// run goes through the ledger's sync path and so is slower under load.
-func testCeiling(t *testing.T, want time.Duration) time.Duration {
-	t.Helper()
-	if dl, ok := t.Deadline(); ok {
-		if left := time.Until(dl) - 10*time.Second; left > want {
-			// Never scale past 4x: a wait this long is not a slow machine.
-			return min(left, 4*want)
-		}
-	}
-	return want
-}
-
 // waitFor polls cond until true or the deadline; fails the test otherwise.
 // The deadline is timeout, scaled up when the test binary has the headroom
-// (testCeiling).
+// (testwait.Budget). It was first scaled for TestLedgerCarriesNoSecrets, whose
+// isolated pass measured 5.09s against a 5s poll (#444).
 func waitFor(t *testing.T, timeout time.Duration, desc string, cond func() bool) {
 	t.Helper()
-	timeout = testCeiling(t, timeout)
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	t.Fatalf("timed out after %v waiting for: %s", timeout, desc)
+	testwait.Until(t, timeout, 2*time.Millisecond, desc, cond)
 }
 
 func waitState(t *testing.T, s *Supervisor, want core.State) {

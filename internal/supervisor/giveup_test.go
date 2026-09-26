@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/testwait"
 )
 
 // scheduledHarness builds a cron one-shot.
@@ -29,9 +30,11 @@ func scheduledHarness(name, script, spec string) core.Harness {
 	return h
 }
 
-// waitUntil polls cond, returning whether it became true before the deadline.
-func waitUntil(timeout time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
+// waitUntil polls cond, returning whether it became true before the deadline:
+// timeout, scaled up under load (testwait.Budget).
+func waitUntil(t *testing.T, timeout time.Duration, cond func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(testwait.Budget(t, timeout))
 	for time.Now().Before(deadline) {
 		if cond() {
 			return true
@@ -55,7 +58,7 @@ func TestSlowReliableFailureGivesUp(t *testing.T) {
 	s := newTestSupervisor(t, shHarnessWithRestart("slowfail", "sleep 0.06; exit 1", time.Millisecond, core.RestartOnFailure), p)
 	s.Start()
 
-	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateFailed }) {
+	if !waitUntil(t, 3*time.Second, func() bool { return s.Snapshot().State == core.StateFailed }) {
 		snap := s.Snapshot()
 		t.Fatalf("never gave up: restarts=%d flapping=%v state=%s (MaxRestarts=%d)",
 			snap.RestartCount, snap.Flapping, snap.State, p.MaxRestarts)
@@ -81,7 +84,7 @@ func TestHealthyRunClearsFailureBudget(t *testing.T) {
 	s.Start()
 
 	// Well past MaxRestarts worth of runs; each one is healthy before it dies.
-	if !waitUntil(2*time.Second, func() bool { return s.Snapshot().RestartCount > p.MaxRestarts+1 }) {
+	if !waitUntil(t, 2*time.Second, func() bool { return s.Snapshot().RestartCount > p.MaxRestarts+1 }) {
 		t.Fatalf("expected repeated restarts, got %d", s.Snapshot().RestartCount)
 	}
 	if st := s.Snapshot().State; st == core.StateFailed {
@@ -107,7 +110,7 @@ func TestCleanExitClearsFailureBudget(t *testing.T) {
 	s := newTestSupervisor(t, shHarnessWithRestart("alt", script, time.Millisecond, core.RestartAlways), p)
 	s.Start()
 
-	if !waitUntil(2*time.Second, func() bool { return s.Snapshot().RestartCount > p.MaxRestarts+2 }) {
+	if !waitUntil(t, 2*time.Second, func() bool { return s.Snapshot().RestartCount > p.MaxRestarts+2 }) {
 		t.Fatalf("expected repeated restarts, got %d", s.Snapshot().RestartCount)
 	}
 	if st := s.Snapshot().State; st == core.StateFailed {
@@ -121,7 +124,7 @@ func TestScheduledFailureDoesNotRespawn(t *testing.T) {
 	s := newTestSupervisor(t, scheduledHarness("sched-fail", "exit 1", "0 */6 * * *"), fastPolicy())
 	s.Start()
 
-	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateFailed }) {
+	if !waitUntil(t, 3*time.Second, func() bool { return s.Snapshot().State == core.StateFailed }) {
 		t.Fatalf("expected failed, got %s", s.Snapshot().State)
 	}
 	before := s.Snapshot().RestartCount
@@ -140,7 +143,7 @@ func TestScheduledCleanExitStopsAndWaits(t *testing.T) {
 	s := newTestSupervisor(t, scheduledHarness("sched-ok", "exit 0", "0 */6 * * *"), fastPolicy())
 	s.Start()
 
-	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateStopped }) {
+	if !waitUntil(t, 3*time.Second, func() bool { return s.Snapshot().State == core.StateStopped }) {
 		t.Fatalf("expected stopped, got %s", s.Snapshot().State)
 	}
 	before := s.Snapshot().RestartCount
@@ -181,7 +184,7 @@ func TestScheduledFiringClearsStaleRestartCount(t *testing.T) {
 			// enabled == false. Testing through Start would set enabled = true
 			// and exercise a fall-through the scheduler never takes.
 			s.StartTransient()
-			if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == tc.want }) {
+			if !waitUntil(t, 3*time.Second, func() bool { return s.Snapshot().State == tc.want }) {
 				t.Fatalf("expected %s, got %s", tc.want, s.Snapshot().State)
 			}
 			if got := s.Snapshot().RestartCount; got != 0 {
@@ -201,7 +204,7 @@ func TestUnscheduledHarnessKeepsRestartHistory(t *testing.T) {
 	s.Restore(false, 7, 0, time.Time{}, time.Time{})
 
 	s.Start()
-	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateStopped }) {
+	if !waitUntil(t, 3*time.Second, func() bool { return s.Snapshot().State == core.StateStopped }) {
 		t.Fatalf("expected stopped, got %s", s.Snapshot().State)
 	}
 	if got := s.Snapshot().RestartCount; got != 7 {
@@ -220,7 +223,7 @@ func TestScheduledFailedFiringLandsInFailed(t *testing.T) {
 	s := newTestSupervisor(t, scheduledHarness("sweeper", "exit 1", "0 */6 * * *"), fastPolicy())
 	s.StartTransient()
 
-	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateFailed }) {
+	if !waitUntil(t, 3*time.Second, func() bool { return s.Snapshot().State == core.StateFailed }) {
 		t.Fatalf("a scheduled firing that exited 1 settled as %s, want failed — "+
 			"a failed sweep must not read as a clean one", s.Snapshot().State)
 	}
@@ -235,12 +238,12 @@ func TestScheduledFailedFiringLandsInFailed(t *testing.T) {
 func TestStoppingRunningScheduledHarnessLandsInStopped(t *testing.T) {
 	s := newTestSupervisor(t, scheduledHarness("sweeper", "sleep 30", "0 */6 * * *"), fastPolicy())
 	s.StartTransient()
-	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateRunning }) {
+	if !waitUntil(t, 3*time.Second, func() bool { return s.Snapshot().State == core.StateRunning }) {
 		t.Fatalf("sweep never came up: %s", s.Snapshot().State)
 	}
 
 	s.Stop()
-	if !waitUntil(3*time.Second, func() bool { return s.Snapshot().State == core.StateStopped }) {
+	if !waitUntil(t, 3*time.Second, func() bool { return s.Snapshot().State == core.StateStopped }) {
 		t.Fatalf("harness stop on a running sweep landed in %s, want stopped — "+
 			"an operator's stop is not a failure", s.Snapshot().State)
 	}
@@ -266,7 +269,7 @@ func TestSnapshotReportsConsecutiveFailures(t *testing.T) {
 	s.Start()
 
 	seen := map[int]bool{}
-	if !waitUntil(3*time.Second, func() bool {
+	if !waitUntil(t, 3*time.Second, func() bool {
 		snap := s.Snapshot()
 		seen[snap.ConsecutiveFailures] = true
 		return snap.State == core.StateFailed
@@ -291,7 +294,7 @@ func TestSnapshotReportsConsecutiveFailures(t *testing.T) {
 	// A deliberate start resets the budget (clearFailLatch), and the snapshot
 	// must say so.
 	s.Start()
-	if !waitUntil(time.Second, func() bool { return s.Snapshot().ConsecutiveFailures < p.MaxRestarts+1 }) {
+	if !waitUntil(t, time.Second, func() bool { return s.Snapshot().ConsecutiveFailures < p.MaxRestarts+1 }) {
 		t.Errorf("ConsecutiveFailures stayed %d after a deliberate start", s.Snapshot().ConsecutiveFailures)
 	}
 }
@@ -329,7 +332,7 @@ func TestSnapshotClearsConsecutiveFailuresOnceTheRunIsHealthy(t *testing.T) {
 
 	// The third run is up, carrying the two failures before it.
 	var live Snapshot
-	if !waitUntil(3*time.Second, func() bool {
+	if !waitUntil(t, 3*time.Second, func() bool {
 		live = s.Snapshot()
 		return live.State == core.StateRunning && live.PID != 0 && live.ConsecutiveFailures == 2
 	}) {

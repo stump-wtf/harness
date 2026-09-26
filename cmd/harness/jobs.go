@@ -212,7 +212,15 @@ func printRunsTable(w io.Writer, rd protocol.RunsData) error {
 	for _, r := range rd.Runs {
 		t.Row(strconv.Itoa(r.RunID), r.Trigger, runOutcomeCell(r), runStartedCell(r), runDurationCell(r), runExitCell(r))
 	}
-	return t.Flush()
+	if err := t.Flush(); err != nil {
+		return err
+	}
+	for _, n := range runSkipNotes(rd.Runs) {
+		if _, err := fmt.Fprintln(w, n); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // runOutcomeCell is the outcome, with the window count a missed record covers
@@ -222,6 +230,21 @@ func runOutcomeCell(r protocol.RunInfo) string {
 		return fmt.Sprintf("missed ×%d", r.Windows)
 	}
 	return r.Outcome
+}
+
+// runSkipNotes are the lines printed under the runs table for skips an
+// operator has to act on: a template_unresolved skip names the template path
+// the run lacked, because which value was missing is the whole of what fixing
+// it needs, and it does not fit a table cell. The path is a name, never a
+// value (SPEC-0017 REQ-11).
+func runSkipNotes(runs []protocol.RunInfo) []string {
+	var notes []string
+	for _, r := range runs {
+		if r.Outcome == "skipped" && r.Reason == "template_unresolved" {
+			notes = append(notes, fmt.Sprintf("run #%d skipped: template_unresolved ({{%s}} has no value for a %s run)", r.RunID, r.MissingPath, r.Trigger))
+		}
+	}
+	return notes
 }
 
 func runStartedCell(r protocol.RunInfo) string {
@@ -313,12 +336,12 @@ func cmdTrigger(c *client.Client, o verbOpts) error {
 		if o.json {
 			return printJSON(td)
 		}
-		fmt.Println(triggerLine(td))
+		emit(os.Stdout, triggerLine(td)+"\n", func(s lifecycleStyle) string { return s.renderTrigger(td) })
 		return nil
 	}
 
 	if !o.json {
-		fmt.Fprintln(os.Stderr, triggerLine(td))
+		emit(os.Stderr, triggerLine(td)+"\n", func(s lifecycleStyle) string { return s.renderTrigger(td) })
 	}
 	if td.Decision == protocol.TriggerSkipped {
 		if o.json {
@@ -341,7 +364,7 @@ func cmdTrigger(c *client.Client, o verbOpts) error {
 			return err
 		}
 	} else {
-		fmt.Fprintln(os.Stderr, finishLine(o.name, final))
+		emit(os.Stderr, finishLine(o.name, final)+"\n", func(s lifecycleStyle) string { return s.renderFinish(o.name, final) })
 	}
 	if code := waitExitCode(final); code != 0 {
 		return exitCodeError{code: code}

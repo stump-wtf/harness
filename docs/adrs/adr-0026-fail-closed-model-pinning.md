@@ -185,7 +185,7 @@ from what the client itself recorded:
 1. **Evidence.** For every model call in the harness's transcripts, the served
    model and, when available, the served provider (the OpenRouter upstream
    provider, not the client's route ID). This needs per-message usage items from
-   agent-trace: stump.wtf/agent-trace#105 (per-message model, provider,
+   agent-trace, which does not emit them yet (per-message model, provider,
    request/generation ID, tokens and cost). Where a transcript records a
    generation ID but not the provider, the daemon MAY resolve the provider
    through the route's generation-metadata endpoint, using the harness's own
@@ -302,7 +302,7 @@ gateway that substitutes anyway.
   Switchboard's notification sinks (Switchboard ADR-0034). Harness still never
   calls Switchboard (ADR-0019, ADR-0021).
 * **Cairn.** Telemetry export (ADR-0022) carries each call's served
-  model and provider on its spans once agent-trace#105 lands, so a Cairn trace
+  model and provider on its spans once agent-trace emits usage items, so a Cairn trace
   or receipt (Cairn ADR-0027) can cite the attestation instead of restating it.
 
 ### Consequences
@@ -319,7 +319,7 @@ gateway that substitutes anyway.
 * Bad, because Harness now knows each client's routing configuration. That is a
   per-client, per-version maintenance surface of the kind adapter flags already
   are.
-* Bad, because full attestation depends on agent-trace#105 and on what each
+* Bad, because full attestation depends on agent-trace's usage items and on what each
   client records. Until then only `attest = "model"` is possible for most
   clients, and Crush's upstream provider may never be in its store without the
   generation lookup.
@@ -382,7 +382,7 @@ canary. Acceptance includes:
 * Bad, because TLS to the route terminates in the daemon, which makes it a
   credential store and a man-in-the-middle by design.
 * Neutral: it is the fallback if transcripts prove unable to evidence providers
-  even after agent-trace#105.
+  even after agent-trace emits usage items.
 
 ### 1D. Delegate to a gateway
 
@@ -438,7 +438,7 @@ flowchart LR
     C["client (crush · omp · claude)"]
     RT["route (OpenRouter · Anthropic · gateway)"]
     T["transcript"]
-    O["observer<br/>+ agent-trace#105 usage items"]
+    O["observer<br/>+ agent-trace usage items"]
     A{"pin checker:<br/>model · provider"}
     OUT["model_mismatch / model_unattested<br/>(run ledger, ADR-0028)<br/>hold · metrics · doctor"]
     DOC["harness doctor --models<br/>approved · unavailable · through-client"]
@@ -476,7 +476,7 @@ flowchart LR
   share the observer's per-call usage items), which carry the edge to this
   ADR. ADR-0022 (telemetry export) is not on `main` yet, so it stays
   cited by number.
-* **Upstream:** stump.wtf/agent-trace#105, per-message usage items with model,
+* **Upstream:** agent-trace, per-message usage items with model,
   provider and generation ID.
 * **Docs:** `docs/usage/configuration.md`, "Model routing and provider
   failover", gains the fail-closed alternative beside it (an implementation

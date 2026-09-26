@@ -231,7 +231,7 @@ func TestRunEnvOverridesEnvFile(t *testing.T) {
 		[]byte("HARNESS_RUN_ID=999\nHARNESS_RUN_TRIGGER=bogus\nHARNESS_RUN_SOURCE=webhook.evil\nHARNESS_EVENT_FILE=/etc/passwd\nKEEP=mine\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	h := core.Harness{Name: "x", EnvFile: envFile}
+	h := core.Harness{Name: "x", EnvFiles: []string{envFile}}
 	got, err := buildEnv(h, RunEnv{RunID: 7, Trigger: TriggerWebhook, Source: "webhook.gh", EventFile: "/tmp/7.event.json"})
 	if err != nil {
 		t.Fatal(err)
@@ -290,44 +290,34 @@ func TestRunEnvUnsetsWhatTheRunDoesNotHave(t *testing.T) {
 	t.Setenv("HARNESS_EVENT_FILE", "/stale/41.event.json")
 	t.Setenv("HARNESS_RUN_ID", "41")
 
-	lookup := func(env []string, key string) (string, bool) {
-		val, found := "", false
-		for _, kv := range env {
-			if k, v, ok := strings.Cut(kv, "="); ok && k == key {
-				val, found = v, true
-			}
-		}
-		return val, found
-	}
-
 	// A scheduled run: no source and no event, so both names are ABSENT —
 	// not the env_file's value and not the daemon's.
-	got, err := buildEnv(core.Harness{Name: "x", EnvFile: envFile}, RunEnv{RunID: 3, Trigger: TriggerSchedule})
+	got, err := buildEnv(core.Harness{Name: "x", EnvFiles: []string{envFile}}, RunEnv{RunID: 3, Trigger: TriggerSchedule})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, k := range []string{"HARNESS_RUN_SOURCE", "HARNESS_EVENT_FILE"} {
-		if v, ok := lookup(got, k); ok {
+		if v, ok := lookupEnv(got, k); ok {
 			t.Errorf("a scheduled run was spawned with %s=%q; it has none, so it must be unset", k, v)
 		}
 	}
-	if v, _ := lookup(got, "HARNESS_RUN_ID"); v != "3" {
+	if v, _ := lookupEnv(got, "HARNESS_RUN_ID"); v != "3" {
 		t.Errorf("HARNESS_RUN_ID = %q, want 3", v)
 	}
-	if v, _ := lookup(got, "KEEP"); v != "mine" {
+	if v, _ := lookupEnv(got, "KEEP"); v != "mine" {
 		t.Errorf("stripping the reserved names took an ordinary env_file key with it: KEEP = %q", v)
 	}
 
 	// A resident harness: no run context at all. The daemon's inherited run
 	// context must not leak into it; its own env_file still stands.
-	got, err = buildEnv(core.Harness{Name: "x", EnvFile: envFile}, RunEnv{})
+	got, err = buildEnv(core.Harness{Name: "x", EnvFiles: []string{envFile}}, RunEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := lookup(got, "HARNESS_RUN_ID"); ok {
+	if v, ok := lookupEnv(got, "HARNESS_RUN_ID"); ok {
 		t.Errorf("the daemon's own HARNESS_RUN_ID=%q leaked into a resident harness", v)
 	}
-	if v, _ := lookup(got, "HARNESS_EVENT_FILE"); v != "/etc/passwd" {
+	if v, _ := lookupEnv(got, "HARNESS_EVENT_FILE"); v != "/etc/passwd" {
 		t.Errorf("a resident harness's env_file HARNESS_EVENT_FILE = %q, want its own value to stand", v)
 	}
 }
@@ -463,4 +453,67 @@ func logField(log, name string) string {
 		return ""
 	}
 	return rest[:j]
+}
+
+// SPEC-0018 REQ-12 scenario "Shared and per-persona files": with a list of
+// env files, a later file wins a key collision, and the winner reaches the
+// child through the same composition buildEnv gives a single file.
+func TestBuildEnvEnvFileListLaterFileWins(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "claude.env")
+	second := filepath.Join(dir, "reviewer.env")
+	if err := os.WriteFile(first, []byte("SHARED_TOKEN=first\nONLY_FIRST=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("SHARED_TOKEN=second\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := buildEnv(core.Harness{Name: "x", EnvFiles: []string{first, second}}, RunEnv{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := lookupEnv(got, "SHARED_TOKEN"); v != "second" {
+		t.Errorf("SHARED_TOKEN = %q, want %q (the later file wins)", v, "second")
+	}
+	if v, _ := lookupEnv(got, "ONLY_FIRST"); v != "1" {
+		t.Errorf("ONLY_FIRST = %q, want %q (earlier files still contribute)", v, "1")
+	}
+}
+
+// REQ-12: a missing file in a list is tolerated, as a missing string
+// env_file is; a present later file still applies.
+func TestBuildEnvEnvFileListMissingFileTolerated(t *testing.T) {
+	dir := t.TempDir()
+	present := filepath.Join(dir, "present.env")
+	if err := os.WriteFile(present, []byte("KEEP=mine\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "absent.env")
+	got, err := buildEnv(core.Harness{Name: "x", EnvFiles: []string{missing, present}}, RunEnv{})
+	if err != nil {
+		t.Fatalf("a missing file in the list must be tolerated: %v", err)
+	}
+	if v, _ := lookupEnv(got, "KEEP"); v != "mine" {
+		t.Errorf("KEEP = %q, want %q", v, "mine")
+	}
+}
+
+// REQ-12: DiscoveryEnv reads the merged list, later file winning.
+func TestDiscoveryEnvReadsEnvFileList(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "a.env")
+	second := filepath.Join(dir, "b.env")
+	if err := os.WriteFile(first, []byte("CRUSH_GLOBAL_DATA=/first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("CRUSH_GLOBAL_DATA=/second\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DiscoveryEnv(core.Harness{Name: "x", EnvFiles: []string{first, second}}, []string{"CRUSH_GLOBAL_DATA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["CRUSH_GLOBAL_DATA"] != "/second" {
+		t.Errorf("DiscoveryEnv CRUSH_GLOBAL_DATA = %q, want /second", got["CRUSH_GLOBAL_DATA"])
+	}
 }

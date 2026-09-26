@@ -288,7 +288,7 @@ A `fail` carries a Cairn handle when one exists, chosen in this order:
 3. **None.** The summary alone still reaches the next attempt.
 
 A trace handle becomes a fourth source once Harness ADR-0022 exports
-traces and Cairn can ingest them (Cairn ADR-0015, epic cairn#138). The relay does not
+traces and Cairn can ingest them (Cairn ADR-0015). The relay does not
 depend on it.
 
 ### Dead letters, concurrency and budgets
@@ -371,7 +371,7 @@ granted, not a version difference.
 | Switchboard | ADR-0038 / SPEC-0033 (in flight) | Team-owned endpoints and queues; Harness is unaffected because it acts as one endpoint |
 | Cairn | ADR-0027 / SPEC-0021 (in flight) | The attempt receipt's shape |
 | Cairn | ADR-0023 / SPEC-0017 (in flight) | Server-side redaction, a second layer behind Harness's own |
-| Cairn | ADR-0015 (proposed, epic cairn#138) | Trace handles, later |
+| Cairn | ADR-0015 (proposed) | Trace handles, later |
 
 ### Visibility
 

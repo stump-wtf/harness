@@ -339,9 +339,9 @@ func TestExecArgvWithRegistryNoKindIsRefused(t *testing.T) {
 		Prompt: "check deployments",
 		Quiet:  true,
 	}
-	cmd, args, err := execArgvWithRegistry(h, "/home/x", reg)
+	plan, err := execArgvWithRegistry(h, "/home/x", RunEnv{}, reg)
 	if !errors.Is(err, ErrGenericPrompt) {
-		t.Fatalf("execArgv = %q %q, %v; want ErrGenericPrompt (no default agent)", cmd, args, err)
+		t.Fatalf("execArgv = %q %q, %v; want ErrGenericPrompt (no default agent)", plan.name, plan.args, err)
 	}
 }
 

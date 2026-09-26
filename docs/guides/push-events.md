@@ -162,6 +162,12 @@ SWITCHBOARD_TOKEN=sbk_...
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
+`ANTHROPIC_API_KEY` here is the Crush worker's model provider key. For a
+**Claude Code** worker on Linux or a headless box, use a subscription token
+from `claude setup-token` (`CLAUDE_CODE_OAUTH_TOKEN=...`) instead: an API key
+bills the API, not your subscription. See
+[Claude Code authentication](./first-agent#claude-code-authentication).
+
 ### 3. Supervise it
 
 ```toml

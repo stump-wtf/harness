@@ -26,6 +26,7 @@ import (
 	"github.com/stump-wtf/harness/internal/attach"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/testwait"
 	"github.com/stump-wtf/harness/internal/trigger"
 	"github.com/stump-wtf/harness/internal/trigger/channel/testserver"
 )
@@ -77,7 +78,7 @@ func TestDaemonWiringFiresAHarnessFromAChannelDoorbell(t *testing.T) {
 	sources := startDaemonSources(mgr, nil)
 	t.Cleanup(sources.Close)
 
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t, 10*time.Second))
 	for {
 		st, ok := sources.StatusOf("channel.sb")
 		if ok && st.State == trigger.StateConnected {
@@ -93,7 +94,7 @@ func TestDaemonWiringFiresAHarnessFromAChannelDoorbell(t *testing.T) {
 	srv.PushNotification(`{"content":"` + sentinel + `","meta":{"todo_id":"t-1"}}`)
 
 	var rec supervisor.RunRecord
-	deadline = time.Now().Add(15 * time.Second)
+	deadline = time.Now().Add(testwait.Budget(t, 15*time.Second))
 	for {
 		runs := mgr.Runs("pr-review")
 		if len(runs) == 1 && runs[0].Outcome != supervisor.OutcomeRunning {

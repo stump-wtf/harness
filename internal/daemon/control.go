@@ -61,6 +61,8 @@ func (c *conn) handleControl(payload []byte) {
 		c.opTrigger(req)
 	case protocol.OpRuns:
 		c.opRuns(req)
+	case protocol.OpNotifyTest:
+		c.opNotifyTest(req)
 	default:
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownOp, "unknown op %q", req.Op)
 	}
@@ -114,6 +116,9 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		info.Model = h.Model
 		info.AutoAccept = h.AutoAccept
 		info.MaxTurns = h.MaxTurns
+		info.SystemPromptFile = h.SystemPromptFile
+		info.MCPConfig = h.MCPConfig
+		info.AllowedTools = h.AllowedTools
 		info.Quiet = h.Quiet
 		info.Backend = string(h.Backend)
 		info.Description = h.Description
@@ -407,6 +412,7 @@ func (c *conn) opDaemonInfo() protocol.DaemonInfo {
 		res.SshAddr = addr
 		res.SshKeys = keys
 	}
+	res.Notify = c.srv.notifyInfo()
 	return res
 }
 

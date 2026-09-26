@@ -129,6 +129,22 @@ Two launchd specifics worth knowing:
   credentials in the text are masked before anything else in the daemon sees
   it. Nothing leaves the host yet: this is the feed the upcoming metrics and
   telemetry exporters consume.
+- **Runaway tool loops are stopped**: an agent that calls the same tool with
+  the same arguments 8 times in a row — no other tool call and no new prompt
+  in between — is stuck, not working, however healthy its process looks. The
+  daemon stops that harness (a stop, like `harness stop`: its enabled intent
+  is cleared and its `restart` policy does not bring it back, because a
+  restarted `crush` resumes the looping session) and logs an `ERROR` naming
+  the harness, the tool and the count to both the daemon log and the
+  harness's own log. Start it again once you have looked. Repeating a call
+  with other work between — `make test` after each edit, one queue poll per
+  prompt — never counts; nor does calling the same tool with different
+  arguments. A loop that alternates between two calls is not caught.
+- **Someone hears about it**: with a [`[notify]` hook](./notify) configured,
+  the daemon runs your program when a harness gives up into `failed`, starts
+  crash-looping, is stopped by the loop guard, or has its session rotated —
+  and again when it recovers. Without one, all of the above reaches only the
+  logs.
 - **State persistence (ADR-0007)**: the daemon persists intent to `state.json`,
   restores it on boot, and re-attaches to intended running set regardless of how
   it restarted.

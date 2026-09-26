@@ -157,29 +157,21 @@ func lifecycle(verb string) func(*client.Client, verbOpts) error {
 		if o.all {
 			return lifecycleAll(c, o, verb)
 		}
-		var (
-			info protocol.HarnessInfo
-			err  error
-		)
-		switch verb {
-		case "start":
-			if o.forDur != "" {
-				info, err = c.StartFor(o.name, o.forDur)
-			} else {
-				info, err = c.Start(o.name)
-			}
-		case "stop":
-			info, err = c.Stop(o.name)
-		case "restart":
-			info, err = c.Restart(o.name)
+		// Animated path: on a real terminal (and only outside --json) one
+		// harness gets the same treatment --all does — spinner while the
+		// daemon works, then the SPEC-0003 transition record (verb_render.go).
+		// Pipes and scripts keep the plain one-line contract below.
+		if !o.json && cliui.WriterIsTTY(os.Stdout) {
+			return runLifecycleOneAnimated(c, verb, o.name, o.forDur)
 		}
+		info, err := callLifecycle(c, verb, o.name, o.forDur)
 		if err != nil {
 			return err
 		}
 		if o.json {
 			return printJSON(info)
 		}
-		fmt.Printf("%s %s → %s\n", stateGlyph(info.State), info.Name, info.State)
+		fmt.Print(plainLifecycleLine(info))
 		return nil
 	}
 }
@@ -209,25 +201,14 @@ func lifecycleAll(c *client.Client, o verbOpts, verb string) error {
 		errs    []string
 	)
 	for _, h := range hs {
-		var (
-			info protocol.HarnessInfo
-			e    error
-		)
-		switch verb {
-		case "start":
-			info, e = c.Start(h.Name)
-		case "stop":
-			info, e = c.Stop(h.Name)
-		case "restart":
-			info, e = c.Restart(h.Name)
-		}
+		info, e := callLifecycle(c, verb, h.Name, "")
 		if e != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", h.Name, e))
 			continue
 		}
 		results = append(results, info)
 		if !o.json {
-			fmt.Printf("%s %s → %s\n", stateGlyph(info.State), info.Name, info.State)
+			fmt.Print(plainLifecycleLine(info))
 		}
 	}
 	if o.json {

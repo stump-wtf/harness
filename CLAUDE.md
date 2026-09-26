@@ -48,8 +48,10 @@ Traps in this repo specifically, each of which has already cost a wrong
   it keeps its old argv until it restarts. Read the process, not the file.
 - **CI.** `GET /actions/runs` (the list) requires auth even on this public
   repo — it 401s anonymously — while `GET /actions/runs/<id>` does not —
-  so an anonymous list poll is indistinguishable from "no CI ran". Use
-  `$GITEA_TOKEN`, and read `conclusion`, never an exit code.
+  so an anonymous list poll is indistinguishable from "no CI ran". Poll with
+  `tea api --login gitea.stump.rocks 'repos/stump.wtf/harness/actions/runs?limit=5'`
+  (never curl with `$GITEA_TOKEN`, which agent shells do not have), and read
+  `conclusion`, never an exit code: `tea api` exits 0 on a 404 too.
 - **Tests.** A test that builds its own fixture where production builds the
   real thing passes against broken code too. `TestDaemonManagerOptionsEnableGiveUp`
   exists because every give-up test constructed its own `Policy`, so none of

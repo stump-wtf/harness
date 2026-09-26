@@ -20,6 +20,7 @@
     "@docusaurus/preset-classic": "3.10.2",
     "@docusaurus/theme-mermaid": "3.10.2",
     "@mdx-js/react": "^3.0.0",
+    "@panzoom/panzoom": "4.6.2",
     "clsx": "^2.0.0",
     "lib-artifact-transforms": "github:joestump/lib-artifact-transforms#main",
     "plugin-content-adrs": "github:joestump/plugin-content-adrs#main",

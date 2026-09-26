@@ -59,8 +59,8 @@ trajectories as a billing meter". Two things have changed since:
   continuously (the observer), and SPEC-0013 already
   trusts it enough to alert on.
 * agent-trace can report token usage, recorded cost, and the model and provider
-  that served each message. It does not yet, and stump.wtf/agent-trace#105 asks
-  for exactly that.
+  that served each message. It does not yet; per-message usage items are the
+  planned upstream change.
 
 How does Harness bound what an autonomous loop spends, per run and per day,
 and treat an exhausted quota as a pause rather than a crash, without learning
@@ -248,7 +248,7 @@ its over-budget harnesses on the first tick after it wakes.
 ### The meter
 
 The meter is the per-run **usage accumulator** ADR-0028 defines. It folds
-agent-trace usage items (stump.wtf/agent-trace#105), delivered by the observer,
+agent-trace's per-message usage items, delivered by the observer,
 into the open run's record: tokens by kind, the models and providers that served
 it, and cost. Cost comes from the first of:
 
@@ -288,10 +288,10 @@ can never disagree about what a quota error looks like. The error reaches the
 classifier from:
 
 * the observer's **error marks**, for every agent whose reader surfaces provider
-  errors (crush today; claude-code once stump.wtf/agent-trace#104 lands);
+  errors (crush today; claude-code once its reader surfaces API errors as marks);
 * as a fallback for a **one-shot that exits non-zero** with no classified error
   observed, the last 4 KiB of its sanitized run log. This fallback exists for
-  Claude Code `-p` runs until agent-trace#104 lands, and it retires then.
+  Claude Code `-p` runs until those marks arrive, and it retires then.
 
 A `quota` error **parks** the harness when either:
 
@@ -431,14 +431,14 @@ merged, and a follow-up story folds the amendment into SPEC-0012 when it ships.
   its provider refuses it.
 * Good, because the hold generalization gives hours, quota and budget one
   release path and one display rule.
-* Bad, because token and cost caps depend on agent-trace#105, and cost for
-  Claude Code and codex needs operator-maintained prices. Until agent-trace#105 lands only
+* Bad, because token and cost caps depend on agent-trace's usage items, and cost for
+  Claude Code and codex needs operator-maintained prices. Until they land only
   the meter-free caps and parking work.
 * Bad, because caps overrun by up to one turn, since usage arrives after the
   tokens are spent.
 * Bad, because the run-log fallback is text matching on output, the approach
   ADR-0020 rejected for metrics. It is scoped to one adapter's non-zero exits,
-  clamped, and retires with agent-trace#104.
+  clamped, and retires once claude-code API errors arrive as marks.
 * Bad, because a budget spent by 09:30 holds the agent for the rest of the day,
   ADR-0019's objection to 1D. It is the point of a daily cap. `--over-budget`
   is the escape hatch, and hours plus budgets together are the intended use.
@@ -515,7 +515,7 @@ fake clock and the real supervisor path:
 * Good, because it is one source for every agent the observer reads, and the
   same stream that feeds SPEC-0013 and telemetry export.
 * Good, because it never invents a price.
-* Bad, because it needs agent-trace#105, and priced cost is only as current as
+* Bad, because it needs agent-trace's usage items, and priced cost is only as current as
   the operator's table.
 
 ### 2B — Scrape Claude Code's `stream-json` result
@@ -625,9 +625,9 @@ flowchart TD
   counters' store and the usage accumulator), which carries the edge to this
   ADR. ADR-0022 (telemetry export) is not on `main` yet, so it stays
   cited by number.
-* **Depends on** stump.wtf/agent-trace#105 (usage, cost, model and provider
-  items) for token and cost caps, and on stump.wtf/agent-trace#104 (claude-code
-  API errors as marks) to retire the run-log fallback.
+* **Depends on** agent-trace's per-message usage items (usage, cost, model and
+  provider) for token and cost caps, and on its claude-code reader surfacing
+  API errors as marks to retire the run-log fallback.
 * **Evidence**: a self-hosting customer's autonomous loops exhausting a Claude
   usage allowance mid-rollout; the 2026-09-14 and 2026-09-19 quota outages.
 * **SPEC-0021** (`run-budgets`) holds the requirements.
