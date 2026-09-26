@@ -198,8 +198,12 @@ type Harness struct {
 	// cmd's argv, so a cmd harness passes --model through its own Args): the
 	// supervisor folds the value into the synthesized agent argv at spawn time
 	// via AgentCommand, so it never rides Args and, like the prompt text, is
-	// exempt from {workdir} arg expansion.
-	// Governing: ADR-0011; issue #57 (add `model` field for model selection).
+	// exempt from {workdir} arg expansion. The one exception is a "command"
+	// harness, which owns its argv: there Model is accepted only when an Argv
+	// element references {{model}}, and reaches the program only through that
+	// placeholder (CheckCommandTemplateContext).
+	// Governing: ADR-0011; issue #57 (add `model` field for model selection);
+	// SPEC-0017 REQ-3.
 	Model string
 	// AutoAccept enables unattended/yolo mode for a prompt harness, bypassing
 	// the agent CLI's permission prompts. Config truth only, and it requires
@@ -234,11 +238,30 @@ type Harness struct {
 	// Governing: ADR-0011; issue #59 (add `max_turns` field for budget
 	// capping).
 	MaxTurns int
+	// SystemPromptFile is a claude-code one-shot persona file appended to the
+	// model's system prompt (SPEC-0018 REQ-11). Config truth only, valid only
+	// on a claude-code harness WITH a prompt source (validation enforces
+	// both); the supervisor folds it into the synthesized argv at spawn as
+	// --append-system-prompt-file, never desugared into Args. The value is a
+	// PATH resolved against the declaring file (ADR-0018), never contents.
+	// Governing: SPEC-0018 REQ-11.
+	SystemPromptFile string
+	// MCPConfig names an MCP servers file for a claude-code one-shot
+	// (SPEC-0018 REQ-11), emitted as --mcp-config <path> --strict-mcp-config
+	// so the run sees exactly the servers the persona needs and nothing from
+	// the user's own configuration. PATH, resolved like PromptFile.
+	MCPConfig string
+	// AllowedTools caps a claude-code one-shot's tool access
+	// (SPEC-0018 REQ-11), each entry its own argv element after
+	// --allowedTools. Entries never start with "-" (validation enforces it).
+	AllowedTools []string
 	// Workdir is the process working directory (may contain a leading ~).
 	Workdir string
-	// EnvFile is a file of KEY=VALUE pairs sourced before launch (ADR-0008;
-	// secrets stay here, out of the config).
-	EnvFile string
+	// EnvFiles are files of KEY=VALUE pairs sourced before launch, in order,
+	// a later file winning a key collision (ADR-0008; secrets stay here, out
+	// of the config; SPEC-0018 REQ-12 accepts a list of env_file). Nil and a
+	// blank-only list both mean "no extra environment".
+	EnvFiles []string
 	// RestartDelay is the base delay between a crash and a respawn.
 	RestartDelay time.Duration
 	// Restart controls whether the harness is automatically restarted after it
@@ -434,12 +457,13 @@ const AdapterCommand = "command"
 //
 // argv[0] is what gets exec'd, so it must be a non-blank literal: a
 // placeholder there would let a rendered value choose the executable.
-// Placeholders in argv[1:] are SPEC-0017 REQ-6 templates, which do not exist
-// yet, so any "{{" there is refused outright rather than passed to the child
-// as literal text an operator meant to be substituted; the template grammar
-// replaces this refusal with a parse and a reference check.
+// argv[1:] elements are SPEC-0017 REQ-6 templates: each must parse, and each
+// reference must be in the argv location's allow set (argvtmpl.go), so an
+// unknown path, a malformed "{{" or untrusted text fails here, located by
+// element, line and column. The rules that also depend on the rest of the
+// harness (model, schedule, triggers) are CheckCommandTemplateContext.
 // Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-6
-// "Template Grammar".
+// "Template Grammar", REQ-7 "Template Context", REQ-10 "Untrusted Free Text".
 func CheckCommandArgv(argv []string) error {
 	if len(argv) == 0 {
 		return errors.New(`harness = "command" requires "argv", a non-empty array (argv[0] is the executable, exec'd without a shell)`)
@@ -450,9 +474,15 @@ func CheckCommandArgv(argv []string) error {
 	case strings.Contains(argv[0], "{{"):
 		return fmt.Errorf(`"argv[0]" %q must be a literal executable: a placeholder cannot choose what runs`, argv[0])
 	}
-	for i, a := range argv[1:] {
-		if strings.Contains(a, "{{") {
-			return fmt.Errorf(`"argv[%d]" %q contains "{{", but argv templates are not supported yet`, i+1, a)
+	ts, err := parseArgvTemplates(argv)
+	if err != nil {
+		return err
+	}
+	for i, t := range ts {
+		for _, r := range t.Refs() {
+			if err := checkArgvRef(i, r); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -481,6 +511,15 @@ type AgentOpts struct {
 	AutoAccept bool
 	// MaxTurns caps agent iterations, emitted as --max-turns when > 0.
 	MaxTurns int
+	// SystemPromptFile appends a persona file to the model's system prompt
+	// (claude-code only), emitted as --append-system-prompt-file when set.
+	SystemPromptFile string
+	// MCPConfig scopes the run's MCP servers to one file (claude-code only),
+	// emitted as --mcp-config <path> --strict-mcp-config when set.
+	MCPConfig string
+	// AllowedTools lists tool permissions, each entry its own argv element
+	// after --allowedTools (claude-code only).
+	AllowedTools []string
 }
 
 // QualifiedName returns the daemon-wide name a project-local harness registers
@@ -583,6 +622,9 @@ type Config struct {
 	Telemetry TelemetryConfig
 	// MergeTrain is the optional global [mergetrain] table (SPEC-0025 REQ-1).
 	MergeTrain MergeTrainConfig
+	// Notify is the optional global [notify] table (SPEC-0003 REQ "Operator
+	// Notification"); the zero value is off.
+	Notify NotifyConfig
 	// Channels is every [channel.*] trigger source keyed by name, nil when
 	// none are declared. Governing: ADR-0021; SPEC-0014 REQ "Channel Source
 	// Table".

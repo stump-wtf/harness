@@ -1,0 +1,65 @@
+# The stack manifest (SPEC-0018 REQ-16): everything `harness stack` installs,
+# pinned by tag AND digest, embedded in every release. The installer installs
+# only what CI tested together; `:latest` is a build error (manifest_test.go
+# fails the build naming the component).
+#
+# The release gate (epic #423): `stack up` ships only once the manifest's
+# minimum Switchboard and Cairn releases exist — a Switchboard release with
+# self-managed webhooks (Switchboard ADR-0032 / SPEC-0027) and a Cairn
+# release whose container reads its own environment. The pins below are
+# placeholders pending those releases; Renovate keeps them current once real.
+version = 1
+
+[postgres]
+image = "ghcr.io/stump-wtf/postgres"
+tag = "17.6"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+minimum = "17.0"
+major = 17
+
+[switchboard]
+image = "ghcr.io/stump-wtf/switchboard"
+tag = "v0.0.0-placeholder"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+minimum = "v0.0.0-placeholder"
+
+[cairn]
+image = "ghcr.io/stump-wtf/cairn"
+tag = "v0.0.0-placeholder"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+minimum = "v0.0.0-placeholder"
+
+[objectstore]
+image = "ghcr.io/stump-wtf/garage"
+tag = "1.2.0"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+minimum = "1.2.0"
+
+# Caddy is optional at runtime (--caddy) but pinned here like everything else.
+[caddy]
+image = "ghcr.io/stump-wtf/caddy"
+tag = "2.10.0"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+minimum = "2.10.0"
+
+# REQ-14 (amended): plugins pin a release tag where the repository has one,
+# a commit SHA otherwise — never a branch. claude-plugin-harness has v0.1.0;
+# switchboard and cairn still pin commits until their tag issues close
+# (claude-plugin-switchboard#16, claude-plugin-cairn#11).
+[plugin.harness]
+repo = "stump-wtf/claude-plugin-harness"
+ref = "v0.1.0"
+
+[plugin.switchboard]
+repo = "stump-wtf/claude-plugin-switchboard"
+ref = "8f1c2d3" # placeholder commit SHA; replaced by a tag
+
+[plugin.cairn]
+repo = "stump-wtf/claude-plugin-cairn"
+ref = "2b7e9a1" # placeholder commit SHA; replaced by a tag
+
+[[note]]
+component = "switchboard"
+version = "v0.4.0"
+breaking = true
+text = "env-seeded receivers were removed; re-create receivers as endpoints with the operator API before upgrading."

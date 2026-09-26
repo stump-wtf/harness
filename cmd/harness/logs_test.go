@@ -121,7 +121,7 @@ func TestFollowActivityPrintsEachEntryOnce(t *testing.T) {
 	polls := []protocol.LogsData{second, nextRun}
 	var buf bytes.Buffer
 	var asked []int
-	err := followActivity(&buf, first, func(lines int) (protocol.LogsData, error) {
+	err := followActivity(newActivityView(&buf, nil), first, func(lines int) (protocol.LogsData, error) {
 		asked = append(asked, lines)
 		ld := polls[0]
 		polls = polls[1:]

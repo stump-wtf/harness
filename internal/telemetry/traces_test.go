@@ -54,7 +54,7 @@ func TestTraceIDMatchesBuildTrace(t *testing.T) {
 
 // Re-keying depends on BuildTrace making exactly one span per mapped item, in
 // timeline order. This pins that against the vendored version with every mark
-// type, including two BuildTrace maps to nothing.
+// type, including three BuildTrace maps to nothing (turn-end since v0.6.0).
 func TestMapsToSpanMatchesBuildTrace(t *testing.T) {
 	conv := &converter{}
 	var items []traceItem
@@ -70,6 +70,7 @@ func TestMapsToSpanMatchesBuildTrace(t *testing.T) {
 	add(markEv("w", "k", 2, "subagent", "helper", t0))
 	add(markEv("w", "k", 2, "some-future-type", "x", t0))
 	add(toolEv("w", "k", 2, "c", false, t0))
+	add(markEv("w", "k", 3, "turn-end", "end_turn", t0))
 	add(markEv("w", "k", 3, "user-message", "again", t0))
 
 	mapped := 0
@@ -84,7 +85,7 @@ func TestMapsToSpanMatchesBuildTrace(t *testing.T) {
 	}
 	// The IDs are the items' own, in timeline order, and parents point at
 	// re-keyed turn IDs.
-	wantOrder := []string{items[0].id, items[1].id, items[3].id, items[4].id, items[5].id, items[7].id, items[8].id}
+	wantOrder := []string{items[0].id, items[1].id, items[3].id, items[4].id, items[5].id, items[7].id, items[9].id}
 	for i, sp := range spans {
 		if sp.SpanID != wantOrder[i] {
 			t.Fatalf("span %d (%s) id %s, want %s", i, sp.Name, sp.SpanID, wantOrder[i])

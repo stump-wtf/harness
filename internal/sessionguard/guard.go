@@ -47,13 +47,24 @@ type GuardStatus struct {
 	Errors  int  // of those, how many were context-limit errors
 }
 
-// StorePath resolves the crush project store for a harness working
-// directory: <workdir>/.crush/crush.db, where crush writes unless a config
-// relocates data_directory. Empty when no store exists (the harness is not
-// crush, has never started, or keeps its store elsewhere) — callers skip
-// the harness rather than guess at a relocated path.
-func StorePath(workdir string) string {
+// StorePath resolves the crush session database a harness writes: crush.db
+// inside store, the data directory the harness is configured with (crush's
+// --data-dir/-D, or options.data_directory — the supervisor resolves it with
+// runtrace.Store, the resolver trace correlation uses), or, when store is
+// empty, <workdir>/.crush/crush.db, where crush writes by default. Empty when
+// no database exists there (the harness has never started, or has not yet
+// created its store) — callers skip the harness rather than guess. A
+// configured store with no database is never answered with the workdir one:
+// that store belongs to whichever harness does write it.
+//
+// It used to consult only <workdir>/.crush, which every production crush
+// harness bypasses with --data-dir, so the guard skipped all of them while
+// they failed every turn on context-limit errors for hours.
+func StorePath(store, workdir string) string {
 	db := filepath.Join(workdir, ".crush", "crush.db")
+	if store != "" {
+		db = filepath.Join(store, "crush.db")
+	}
 	if _, err := os.Stat(db); err != nil {
 		return ""
 	}

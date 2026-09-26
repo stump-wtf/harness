@@ -1,0 +1,8 @@
+description = "Implements one planned step: code, tests, and a clean run of the test suite"
+mode = "one-shot"
+client = "claude-code"
+queues = ["implementation"]
+mcp_servers = ["switchboard"]
+allowed_tools = ["Read", "Edit", "Write", "Grep", "Glob", "Bash"]
+max_runs_per_day = 40
+model = "sonnet"

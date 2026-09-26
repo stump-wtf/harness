@@ -198,6 +198,10 @@ func TestImportRunsOnceIntoTheRightDays(t *testing.T) {
 const crashChildEnv = "HARNESS_LEDGER_CRASH_CHILD"
 
 func TestMain(m *testing.M) {
+	// Before the crash child too: a SIGKILL leaves the page cache alone, so
+	// no property here needs the disk, and a child whose sync ran past
+	// SyncTimeout on a loaded runner exited and failed its parent.
+	SkipSyncForTesting()
 	if dir := os.Getenv(crashChildEnv); dir != "" {
 		crashChild(dir)
 		return

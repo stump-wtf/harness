@@ -112,6 +112,11 @@ type formInputs struct {
 	// round-trips it — the save path rewrites the whole table, so a dropped
 	// prompt_file is a scheduled harness silently losing its instructions.
 	promptFile string
+	// systemPromptFile/mcpConfig/allowedTools are the claude-code one-shot
+	// persona keys (SPEC-0018 REQ-11); allowedTools is shell-quoted, same
+	// encoding as args, because a tool pattern can carry a space. Carried for
+	// the round-trip reason promptFile is.
+	systemPromptFile, mcpConfig, allowedTools string
 	// tmuxSocket/mcpAllow are string-bound like the rest; mcpAllow is
 	// space-separated (parsed by toForm, same shape as args).
 	tmuxSocket, description, mcpAllow             string

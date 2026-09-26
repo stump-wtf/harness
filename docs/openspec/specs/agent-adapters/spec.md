@@ -265,7 +265,7 @@ A tool's trajectory store is machine-global: it holds sessions from every
 harness running that tool, from sibling harnesses sharing a working directory,
 and from the operator's own interactive runs. The daemon SHALL attribute a
 native trajectory session to a run of a harness only when **all** of the
-following hold, and SHALL NOT attribute it otherwise (issue #89):
+following hold, and SHALL NOT attribute it otherwise:
 
 1. **Adapter and store.** The session was discovered in a store the harness's
    own tool instance writes to:

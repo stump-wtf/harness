@@ -25,7 +25,30 @@ import (
 	"github.com/stump-wtf/harness/internal/observe"
 	rt "github.com/stump-wtf/harness/internal/runtrace/runtracetest"
 	"github.com/stump-wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/testwait"
 )
+
+// fakeCrushOnPath puts a `crush` stand-in first on PATH: the crush adapter
+// spawns `crush`, and this one stays up, without the real tool, until the
+// supervisor stops it.
+//
+// Until it is stopped, not for a while. It used to exit after 30 seconds,
+// and a loaded runner can take longer than that to get from the spawn to the
+// observer's first scan. The harness has exited by then, its run window closes
+// before the session is written, and the observer rightly attributes the
+// session to no one. CI run 13777 ran these tests for 60-141s and reported
+// exactly that: Sessions:0, Delivered:0.
+func fakeCrushOnPath(t *testing.T, tmp string) {
+	t.Helper()
+	bin := filepath.Join(tmp, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "crush"), []byte("#!/bin/sh\nwhile :; do sleep 1; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
 
 func TestDaemonObserverDeliversForTheRealManager(t *testing.T) {
 	tmp := t.TempDir()
@@ -34,16 +57,7 @@ func TestDaemonObserverDeliversForTheRealManager(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("CRUSH_GLOBAL_DATA", "")
 	t.Setenv("XDG_DATA_HOME", "")
-	// The crush adapter spawns `crush`; a stand-in that just stays up keeps
-	// the harness running without the real tool.
-	bin := filepath.Join(tmp, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bin, "crush"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeCrushOnPath(t, tmp)
 	work := filepath.Join(tmp, "work")
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
@@ -73,7 +87,7 @@ func TestDaemonObserverDeliversForTheRealManager(t *testing.T) {
 	if !mgr.Start(h.Name) {
 		t.Fatal("Start returned false for a configured harness")
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t, 5*time.Second))
 	for {
 		if snap, _ := mgr.Snapshot(h.Name); snap.State == core.StateRunning && snap.PID != 0 {
 			break
@@ -101,7 +115,7 @@ func TestDaemonObserverDeliversForTheRealManager(t *testing.T) {
 
 	rt.AppendCrushMessages(t, db, "live", rt.CrushMessage{Role: "assistant", At: time.Now(), Parts: rt.FinishError("quota exhausted", "429")})
 
-	timeout := time.After(10 * time.Second)
+	timeout := time.After(testwait.Budget(t, 10*time.Second))
 	for {
 		select {
 		case ev := <-ch:

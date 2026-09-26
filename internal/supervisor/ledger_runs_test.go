@@ -253,7 +253,7 @@ func TestLedgerCarriesNoSecrets(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	h := sweep("sweep", "")
 	h.Adapter, h.Args = "claude-code", nil
-	h.EnvFile = envFile
+	h.EnvFiles = []string{envFile}
 	h.Prompt = "use " + token + " to log in"
 	m, closeM := e.manager(t, sweepCfg(h), fastPolicy())
 	m.StartRun("sweep", RunRequest{Trigger: TriggerSchedule})

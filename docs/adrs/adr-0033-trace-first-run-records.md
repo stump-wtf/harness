@@ -10,8 +10,8 @@ related: [ADR-0003, ADR-0008, ADR-0012, ADR-0013, ADR-0017, ADR-0020, ADR-0021, 
 # ADR-0033: The agent trace is the run record; scrollback is a terminal view
 
 > **Not yet implemented.** Design stage. The records live in the store of
-> ADR-0037. Normalizing a one-shot's output depends on agent-trace#132
-> and agent-trace#133.
+> ADR-0037. Normalizing a one-shot's output depends on agent-trace's stream
+> normalizer and its `agent-trace` CLI, neither of which exists yet.
 
 ## Context and Problem Statement
 
@@ -59,8 +59,8 @@ Three more gaps sit beside the record itself:
   record for a process Harness cannot account for.
 * **Redaction is written three times.** Harness's `internal/redact` is
   hand-written regular expressions. Cairn has planned gitleaks v8 as its
-  redaction engine, inside its own non-importable `internal/redact`
-  (stump.wtf/cairn#289). agent-trace offers only a `Redact func(string) string`
+  redaction engine, inside its own non-importable `internal/redact`.
+  agent-trace offers only a `Redact func(string) string`
   hook. The same secret can be masked by one tool and missed by the next.
 * **A run cannot be shared.** Harness carries `internal/cairnexport`, which maps
   an agent-trace trace onto Cairn's `POST /v1/runs` ingest, but nothing calls
@@ -279,9 +279,9 @@ Harness holds no stream parser of its own.
 * agent-trace gains a normalizer that reads an `io.Reader` of stream lines and
   emits the same `classify.Event` values, marks, session metadata and usage
   items its transcript adapters emit for the same agent, plus a result item
-  (agent-trace#132, `stream-json` first).
+  (`stream-json` first).
 * The same normalizer ships as a binary: `agent-trace normalize` reads a stream
-  on stdin and writes normalized records as JSON lines (agent-trace#133). A
+  on stdin and writes normalized records as JSON lines. A
   pipeline can run `claude -p --output-format stream-json … | agent-trace
   normalize`, and a captured `.stream.jsonl` can be replayed through it to debug
   a run.
@@ -401,7 +401,7 @@ Harness, agent-trace and Cairn use one redaction package,
   signatures, so its callers (runtrace, observe, daemon logs, supervisor
   sanitize, the TUI chatroom, telemetry) change nothing. Once they import the
   shared package directly, the shim is deleted.
-* Cairn imports the package instead of building its own (stump.wtf/cairn#289).
+* Cairn imports the package instead of building its own.
   That makes Cairn depend on agent-trace, a trace library, for redaction. That
   is the cost of this placement.
 * The rule set is versioned in one place: an agent-trace release. A rule added
@@ -534,10 +534,9 @@ cairn_export = true
 * Bad, because betterleaks' library API is not yet stable, so upgrades can mean
   code changes inside the shared package.
 * Bad, because Cairn takes a dependency on agent-trace for redaction.
-* Bad, because this depends on new agent-trace work: the stream normalizer
-  (agent-trace#132), the `agent-trace` binary (agent-trace#133), the shared
-  redaction package (agent-trace#134), and usage items (agent-trace#105) for
-  transcript-tailed sessions.
+* Bad, because this depends on new agent-trace work: the stream normalizer,
+  the `agent-trace` binary, the shared redaction package, and agent-trace's
+  usage items for transcript-tailed sessions.
 * Bad, because a transcript pointer can dangle. Only the normalized events are
   guaranteed to last as long as the retention window.
 
@@ -662,7 +661,7 @@ cairn_export = true
 * Good, because the same bus carries both sources, one per session.
 * Good, because the normalizer is one piece of code used in process by Harness
   and as `agent-trace normalize` by pipelines and debugging.
-* Bad, because it waits on agent-trace#132 and agent-trace#133.
+* Bad, because it waits on agent-trace's stream normalizer and its binary.
 * Bad, because a CLI that changes its stream format breaks the normalizer. It
   reports unparseable lines, so a format change shows as a counter rising, not
   as silence.
@@ -872,7 +871,6 @@ flowchart LR
   describing Harness as agnostic about what it runs, and the README's `generic`
   example is replaced.
 * **Depends on** agent-trace: the `io.Reader` stream normalizer, `stream-json`
-  first (agent-trace#132); the `agent-trace` binary with `normalize` from stdin
-  (agent-trace#133); a shared betterleaks-based `redact` package
-  (agent-trace#134); and usage items (agent-trace#105). Cairn's move to the
-  shared redactor is tracked in stump.wtf/cairn#289.
+  first; the `agent-trace` binary with `normalize` from stdin; a shared
+  betterleaks-based `redact` package; and agent-trace's usage items. Cairn's
+  move to the shared redactor is separate Cairn work.

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded
 date: 2026-07-18
 decision-makers: [joestump]
 extends: [ADR-0003]
@@ -74,7 +74,7 @@ restoring the intended running set after a restart is what ADR-0005 requires.
   rotates at 8 MiB or 24 hours and keeps five backups. It backs
   `harness logs <name>` for live and dead harnesses alike, uniformly across
   platforms.
-* **The durable log is line-oriented text, not a byte tee** (see #279). It
+* **The durable log is line-oriented text, not a byte tee**. It
   receives the screen rows that actually scrolled off the emulator (a spinner
   that repaints in place produces nothing), a final-screen flush when the
   stream ends, and structured lifecycle events (state changes, exits,
@@ -151,7 +151,7 @@ configuration (ADR-0006); this file is runtime state only. TOML is intent;
 
 * Rotation tests pin rotation by size and age, backup pruning that never
   touches a sibling harness, and the project-namespaced log path.
-* Sanitizer tests pin the #279 behavior: a repaint-in-place stream writes no
+* Sanitizer tests pin the sanitized-log behavior: a repaint-in-place stream writes no
   lines and no escape codes, printed rows land verbatim, the final screen is
   flushed once, lifecycle events are recorded, and credentials are masked
   before the row reaches disk.

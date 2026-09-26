@@ -179,3 +179,60 @@ and `harness_flapping { name, restarts, next_retry_in }`.
 
 - **WHEN** any harness transitions between states
 - **THEN** subscribed clients receive `harness_state_changed` without polling
+
+### Requirement: Operator Notification
+
+When a harness needs a person, the daemon SHALL tell one: if the global
+`[notify]` table names a program, the daemon SHALL run it on a transition into
+`failed` (give-up), on crash-loop escalation (`flapping`), when the runaway
+tool-loop guard stops a harness (`loop_stopped`), when the session guard rotates
+a wedged session or fails to (`session_rotated`), on a failed or timed-out
+scheduled or triggered run (`run_failed`, opt-in), and when a harness it
+reported `failed` or `loop_stopped` is running again (`recovered`). The program
+is a daemon-side hook, not a supervised harness (ADR-0033 governs what the
+daemon supervises, and is untouched): it SHALL be exec'd without a shell from an
+absolute `argv[0]`, SHALL receive the event as JSON on stdin and as
+`HARNESS_NOTIFY_EVENT`, `HARNESS_NOTIFY_HARNESS`, `HARNESS_NOTIFY_HOST`,
+`HARNESS_NOTIFY_STATE` and `HARNESS_NOTIFY_MESSAGE` in its environment, and
+every string SHALL pass the daemon's credential redaction (ADR-0008) before it
+leaves. The message SHALL carry the most useful cause the daemon has — the
+agent's last output line before exit, or the looping tool and count — and the
+command that shows more.
+
+Delivery SHALL never block supervision (ADR-0007): it is asynchronous and
+bounded, a full queue drops the notification and counts it, and a hook that
+outlives the configured `timeout` SHALL be killed with its whole process group.
+A repeat of the same event for the same harness inside `cooldown` SHALL be
+suppressed; a `recovered` clears that harness's `failed` and `loop_stopped`
+cooldowns. Outcomes SHALL be logged and exported as
+`harness_notify_deliveries_total{event,result}` (SPEC-0013). The table SHALL be
+validated at load, refused in project files and `harness_d` drop-ins, and
+applied on reload. `harness doctor` SHALL report whether a hook is configured
+and its last delivery, and `harness doctor --notify-test` SHALL have the daemon
+run it once with a `test` event.
+
+#### Scenario: Give-up reaches a person
+
+- **WHEN** a harness exits 1 on every start after printing
+  `Error: You must be logged in to use Remote Control.` and gives up into
+  `failed`
+- **THEN** the daemon runs the notify hook with `HARNESS_NOTIFY_EVENT=failed`,
+  and the message and `cause` quote that line
+
+#### Scenario: A loop-guard stop is not silent
+
+- **WHEN** the loop guard stops a harness and clears its enabled intent
+- **THEN** the hook receives `loop_stopped` naming the tool and the count, and
+  a later transition of that harness to `running` sends `recovered`
+
+#### Scenario: A flapping harness does not spam
+
+- **WHEN** a harness flaps repeatedly inside the cooldown window
+- **THEN** the hook runs once for it and later occurrences are counted as
+  `suppressed`
+
+#### Scenario: A hung hook cannot stall the daemon
+
+- **WHEN** the hook does not exit within `timeout`
+- **THEN** its process group is killed, the delivery is recorded as `timeout`,
+  and supervision was never blocked on it

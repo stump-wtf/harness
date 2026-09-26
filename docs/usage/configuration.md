@@ -31,7 +31,7 @@ enabled = false
 | `args` | argument list appended after the adapter's executable. Not accepted on `command`, which takes `argv` instead |
 | `argv` | `command` only: the whole process, `argv[0]` first, exec'd **without a shell**. See [The `command` kind](#the-command-kind) |
 | `workdir` | working directory (**required** for most commands) |
-| `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config) |
+| `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config). Also accepts a **list** of files loaded in order, a later file winning a key collision — `env_file = ["claude.env", "reviewer.env"]` — so a shared credential file and a per-persona one compose without copying. A missing file is tolerated, exactly as a missing string is; an empty list is a load error |
 | `description` | free-text shown in the dashboard |
 | `enabled` | autostart on daemon boot / after a daemon restart (`true`) |
 | `restart` | restart policy on exit — see [Restart policy](#restart-policy) |
@@ -73,6 +73,9 @@ workdir = "~/src/my-project"
 | `model` | which model the agent runs, e.g. `claude-opus-5`. Requires `prompt`; folded into the synthesized argv |
 | `auto_accept` | run unattended, bypassing the agent's permission prompts (the vendor's yolo flag). Requires `prompt`; fold into the synthesized argv |
 | `max_turns` | cap on how many iterations the agent may run before stopping. Requires `prompt`; 0 or omitted means unlimited |
+| `system_prompt_file` | **claude-code one-shots only.** Path to a persona file appended to Claude Code's system prompt — it appends, it never replaces. Requires `prompt`/`prompt_file`; the path resolves against the declaring file, and a missing file fails the load |
+| `mcp_config` | **claude-code one-shots only.** Path to an MCP servers file, emitted as `--mcp-config <path> --strict-mcp-config`, so the run sees exactly the servers the persona names and nothing from your own configuration |
+| `allowed_tools` | **claude-code one-shots only.** List of tool permissions, each entry its own argv element after `--allowedTools` — `["Read", "Bash(git log:*)"]`. An entry that is blank or starts with `-` is a config error |
 | `quiet` | run headless (suppress the agent's interactive output). Defaults to `true` for a prompt one-shot; set `false` to stream output to whoever attaches |
 
 These agent fields are **config truth only** — they are never written into
@@ -87,7 +90,7 @@ is dropped, not emulated:
 | `harness` | Synthesized command | Ignored fields |
 |-----------|---------------------|----------------|
 | `crush` | `crush [--yolo] run [--quiet] [--model M] <prompt>` | `max_turns` (Crush has no turn cap) |
-| `claude-code` | `claude -p [--dangerously-skip-permissions] [--model M] [--max-turns N] --verbose --output-format stream-json <prompt>` | `quiet` (`-p` is already headless) |
+| `claude-code` | `claude -p [--dangerously-skip-permissions] [--model M] [--max-turns N] [--append-system-prompt-file F] [--mcp-config F --strict-mcp-config] [--allowedTools T…] --verbose --output-format stream-json <prompt>` | `quiet` (`-p` is already headless) |
 | `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
 | `generic` | none — a `prompt` or `prompt_file` on `generic` is a config error | — |
 
@@ -145,7 +148,9 @@ the [Scheduled sweeps guide](/guides/scheduled-sweeps).
 
 Rules:
 
-- Requires `prompt` or `prompt_file` — only agent one-shots can be scheduled.
+- Requires `prompt` or `prompt_file`, or `harness = "command"` — only
+  one-shots can be scheduled, and a command harness's argv is its whole job
+  (see [The `command` kind](#the-command-kind)).
 - At each firing the harness starts if no run is in flight; a firing that lands
   mid-run follows `on_overlap` (below), and never stacks a second process.
 - The run exiting is terminal for that firing; the restart policy applies only
@@ -295,6 +300,9 @@ On a harness that sets `triggers` (and no `schedule`), `operating_hours` gates
 **firings**, not the process:
 
 ```toml
+# Assumes [webhook.gitea-pr] and [channel.switchboard] tables are declared
+# too (see Webhook listener below); a triggers entry naming an undeclared
+# source fails to load.
 [harness.pr-review]
 harness = "claude-code"
 prompt_file = "~/.config/harness/prompts/pr-review.md"
@@ -435,29 +443,107 @@ enabled = true
 - `argv` is required and must be non-empty. `argv[0]` must not be blank.
 - A bare `argv[0]` (`"report"`) is looked up on `PATH`, like every other
   harness's executable. An absolute one is used as is. A relative one with a
-  `/` (`"./bin/report"`) resolves against the harness's `workdir`, not
-  against wherever the daemon was started.
+  `/` (`"./bin/report"`) resolves against the harness's `workdir`. Without a
+  `workdir` it resolves against the daemon's own working directory, which
+  depends on how the daemon was started — so set `workdir`, or use an
+  absolute path.
 - Elements are not expanded: `{workdir}` and `~` in `argv` stay literal.
   `argv[0]` can never be a `{{…}}` placeholder, so nothing substituted at run
-  time can choose what runs. Templates in the other elements are not
-  supported yet, so any `{{` in `argv` is a config error for now.
+  time can choose what runs. The other elements may be templates; see
+  [Argv templates](#argv-templates).
 - `args` is rejected on a `command` harness (put everything in `argv`), and
   `argv` is rejected on every other kind.
 - `auto_accept`, `max_turns` and `quiet` are rejected: the harness owns its
-  argv, so put the program's own flags there. `model` is rejected too,
-  because no element references `{{model}}`.
-- It is a **resident** harness. It takes `enabled`, `restart`,
-  `restart_delay` and `operating_hours` with the same defaults as `generic`
-  (`restart = "always"`). `prompt`, `prompt_file`, `schedule` and `triggers`
-  are refused for now; command one-shots are still to come (issue #500).
+  argv, so put the program's own flags there. `model` is accepted only when
+  an `argv` element references `{{model}}`; otherwise it does nothing and is
+  rejected.
+- With no `schedule` and no `triggers` it is a **resident** harness. It takes
+  `enabled`, `restart`, `restart_delay` and `operating_hours` with the same
+  defaults as `generic` (`restart = "always"`).
+- With `schedule` or `triggers` it is a **one-shot**, and needs no prompt: the
+  argv is the whole job. Each firing produces a run record, a per-run log,
+  `timeout`, `on_overlap` and `keep_runs`, exactly as for an agent one-shot,
+  and it defaults to `restart = "no"`. Every other one-shot exclusion still
+  applies (`enabled = true`, `restart = "always"`, `operating_hours` with a
+  `schedule`, and so on).
+- `prompt` and `prompt_file` are refused for now: nothing delivers a prompt to
+  a command harness's argv yet (issue #500).
 - Like `generic`, it reports no native trajectory (scrollback only).
 - It works in a project `harness.toml`, through `harness up`, and in the TUI
   edit form, where `argv` is edited as the same TOML array. `harness describe`
-  shows the kind and the argv exactly as written.
+  shows the kind and the argv exactly as written, templates included, never a
+  rendering.
 
-Pi, OMP or any other agent CLI not listed above runs this way, as a resident
-harness: `harness = "command"`, `argv = ["omp", …]`. Until command one-shots
-and the `pi`/`omp` adapters ship, it cannot be scheduled or triggered.
+```toml
+[harness.nightly-report]
+harness = "command"
+argv = ["/usr/local/bin/report", "--run", "{{run.id}}", "--date", "{{run.date}}"]
+schedule = "CRON_TZ=Europe/Berlin 0 6 * * *"
+workdir = "~/src/report"
+```
+
+Pi, OMP or any other agent CLI not listed above runs this way:
+`harness = "command"`, `argv = ["omp", …]`, resident, on a `schedule`, or on
+`triggers`.
+
+#### Argv templates
+
+An `argv` element after `argv[0]` may contain placeholders. Each element is
+rendered **once per spawn** into **exactly one argument**: nothing is split,
+trimmed, globbed or re-quoted, and an element that renders empty is passed as
+an empty argument, so the program always receives as many arguments as `argv`
+has elements (SPEC-0017 REQ-6, REQ-11).
+
+| Form | Meaning |
+|------|---------|
+| `{{path}}` | a required value: if the run does not have it, nothing runs |
+| `{{path?}}` | an optional value: empty when the run does not have it |
+| `{{literal_open}}` | the two characters `{{` |
+
+A lone `}}` is literal text. There are no functions, filters, pipelines,
+conditionals or loops; `{{printf …}}` is a config error.
+
+`argv` may reference these paths, and nothing else:
+
+| Path | Value | Present when |
+|------|-------|--------------|
+| `harness.name` | the harness's name | always |
+| `harness.workdir` | the expanded working directory | always |
+| `model` | the harness's `model` | `model` is set |
+| `run.id` | the run's ID | the harness has `schedule` or `triggers` |
+| `run.trigger` | `schedule`, `catch_up`, `manual`, `channel` or `webhook` | the harness has `schedule` or `triggers` |
+| `run.source` | the trigger source, e.g. `webhook.ci` | a source caused the run |
+| `run.started_at` | the run's start, RFC 3339 UTC | always |
+| `run.date` | `YYYY-MM-DD` in the schedule's `CRON_TZ`/`TZ` zone, else the daemon's local zone | always |
+
+Every template is checked when the config loads, and each failure names the
+element, line and column:
+
+- a malformed placeholder, or an unknown path;
+- event text in argv in **any** form (`{{event.title}}`, `{{untrusted
+  event.body}}`, …): text an outside party wrote never becomes an argument.
+  Give the program `$HARNESS_EVENT_FILE` to read instead;
+- `event.*` paths and `{{prompt}}`, which are not available in argv yet;
+- a required `{{run.id}}`, `{{run.trigger}}` or `{{run.source}}` on a harness
+  with neither `schedule` nor `triggers` (it has no run records, so it could
+  never render);
+- a required `{{run.source}}` on a harness with a `schedule` (a clock firing
+  has no source, so every scheduled run would be skipped). Write
+  `{{run.source?}}`;
+- a required `{{model}}` with no `model` set.
+
+If a required value is still absent when a run spawns — a manual run of a
+triggered harness has no `run.source`, say — nothing is exec'd. The run is
+recorded `skipped` with reason `template_unresolved` and the missing path's
+name, which `harness runs` prints under the table and `--json` carries as
+`reason` and `missing_path`. A start with no run record fails instead, with a
+`start failed` line naming the path in the harness log. Either way
+`harness_template_render_failures_total` counts it.
+
+Rendered values are never written anywhere: not to `state.json`, not to run
+records, not to protocol frames, not to logs. They exist only in the child's
+argv, which, like any argv, other local users can read with `ps`. Do not
+template secrets into it.
 
 ```toml
 [harness.my-agent]
@@ -727,6 +813,31 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN" # the variable's NAME, required whe
 - **Restart to apply.** A change to `[mergetrain]` takes effect at the next
   daemon restart.
 
+## Notifications (`[notify]`)
+
+One program the daemon runs when a harness needs a person: it gave up into
+`failed`, is crash-looping, was stopped by the loop guard, or had its session
+rotated. See [Notifications](./notify) for the events, the payload and a
+minimal hook.
+
+```toml
+[notify]
+command  = ["/home/me/.config/harness/notify.sh"]  # required; argv[0] absolute, no shell
+events   = ["failed", "flapping", "loop_stopped", "session_rotated", "recovered"]  # default
+timeout  = "15s"                                    # default 15s, 1s–5m
+cooldown = "15m"                                    # default 15m, 0s–24h; per harness and event
+```
+
+- **Validated at load.** A relative `command[0]`, an unknown event, an empty
+  `events` list or an out-of-range duration refuses the config with the
+  offending key's line. `run_failed` is the one event left out of the default
+  set.
+- **Global only.** A project `harness.toml` or a `harness_d` drop-in that
+  contains `[notify]` is refused: a cloned repository does not get to choose a
+  program the daemon runs.
+- **Reload applies it.** Adding, changing or removing the table takes effect at
+  the next `harness reload` (or config-watch reload), no restart needed.
+
 ## Restart policy
 
 The `restart` key mirrors Docker Compose's directive and controls whether a
@@ -883,7 +994,8 @@ It never redirects and never serves files.
 
 | Status | When |
 |---|---|
-| `202` | Verified. `decision` is `fired` with one entry per bound harness (`started`/`skipped` carry `run_id`; `queued` does not), `ignored` when `events` filtered it out, or `duplicate` when its delivery ID already fired (with the first firing's `event_id`). `ignored` and `duplicate` fire nothing and make no run record. The response never waits for a run. |
+| `202` | Verified. `decision` is `fired` with one entry per bound harness (`started`/`skipped` carry `run_id`; `queued` does not; `error` means that harness could not be fired at all — unknown to the supervisor, shut down under a reload, or its firing panicked — and carries no `run_id`, with the detail in the daemon log only), `ignored` when `events` filtered it out, or `duplicate` when its delivery ID already fired (with the first firing's `event_id`). `ignored` and `duplicate` fire nothing and make no run record. The response never waits for a run. |
+| `400` | The body could not be read for a reason other than size (for example, the connection dropped mid-body). Body `{"error":"bad_request"}`. |
 | `401` | Missing, malformed or wrong credential. Every cause gets the same body; the log names the route and peer, never the value presented. |
 | `404` | The name is unknown, disabled, or bound by no harness. All three are byte-identical, so routes cannot be enumerated. |
 | `405` | Any method other than `POST` on `/hooks/<name>` (or other than `GET` on `/healthz`). |
