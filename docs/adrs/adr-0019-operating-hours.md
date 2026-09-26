@@ -206,7 +206,7 @@ attributed with SPEC-0006 REQ "Run Correlation", which credits a resumed session
 writing it, without giving up its fail-closed rule.
 
 The turn-end marker itself comes from agent-trace's per-agent readers, and none
-of them reports it yet (agent-trace#102):
+of them reports it yet (agent-trace's turn-boundary marks are still open work):
 
 * claude-code transcripts carry `stop_reason` on every assistant record
   (`end_turn` when a turn ends, `tool_use` mid-turn), and the reader does not
@@ -319,7 +319,7 @@ progress re-reads its timeout on every step, so a reload applies to it too.
   agent is back belongs in the sender (see *More Information*).
 * Bad, because every listing surface gains another branch (held versus
   stopped) on top of ADR-0013's `Schedule != ""`. It reuses the NEXT column
-  rather than adding one (#343).
+  rather than adding one.
 * Neutral, because the scheduler tick has a second consumer. The cost is still
   the wakeup, not the comparison.
 

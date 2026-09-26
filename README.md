@@ -112,10 +112,21 @@ but the TOML schema and daemon protocol can still change before v1.
 
 ## Development
 
-Development happens on a private Gitea instance, which is the origin of truth.
-[github.com/stump-wtf/harness](https://github.com/stump-wtf/harness) is a
-read-only mirror of it, so issues and pull requests opened on GitHub are not
-seen.
+Development happens on a private Gitea instance, which is the origin of truth;
+[github.com/stump-wtf/harness](https://github.com/stump-wtf/harness) is its
+public copy, updated on every push.
+
+- **Found a bug or want something?**
+  [Open a GitHub issue](https://github.com/stump-wtf/harness/issues/new/choose).
+  Issues there are read and triaged onto the canonical tracker. The bug form
+  asks for what we need to reproduce it: `harness --version`, how you
+  installed it, your OS and agent CLI, the relevant `harness.toml` table, and
+  `harness doctor` output.
+- **Have a fix?** Open an issue describing it and link your branch or fork.
+  Pull requests can't be merged on GitHub, because each sync from the canonical
+  repository overwrites it, so a maintainer carries the change across and
+  credits you.
+- **Security issue?** Don't open a public issue; see [SECURITY.md](SECURITY.md).
 
 ```sh
 make check       # fmt + vet + test + race + fuzz (the CI gate)

@@ -39,12 +39,12 @@ worked, or where its trace went.
 | Where | Written by | Reliability |
 | --- | --- | --- |
 | `state.json` run history | the Manager's `RunJournal`, called from the actor loop at every run exit path | durable, bounded to 20 |
-| the lifecycle bus (`EventRunFinished`) | the supervisor | lossy by design: a slow subscriber drops events. #407's `harness_scheduled_runs_total` counts from here, and counts its own drops |
+| the lifecycle bus (`EventRunFinished`) | the supervisor | lossy by design: a slow subscriber drops events. The metrics endpoint's `harness_scheduled_runs_total` counts from here, and counts its own drops |
 | the durable log | `logEvent` | text |
 
-The observer (#390, merged as #416) adds a fourth stream, of agent *activity*
+The observer adds a fourth stream, of agent *activity*
 (tool calls, error marks). It is the source of SPEC-0013's model-reachability
-series and of #408's telemetry export, and it knows nothing about runs.
+series and of ADR-0022's telemetry export, and it knows nothing about runs.
 
 The customer evidence is specific. A self-hosting customer's operating plan
 calls for a daily sweep that reconciles their tracker, pull requests and
@@ -90,7 +90,7 @@ loop wait on a database and without storing anything ADR-0008 forbids?
   directory.
 * **1B. SQLite** (`modernc.org/sqlite` is already a dependency).
 * **1C. Grow `state.json`**: raise `keep_runs`, add resident records.
-* **1D. An external system as the record**: OTLP logs (#408) or Prometheus.
+* **1D. An external system as the record**: OTLP logs (ADR-0022) or Prometheus.
 
 **Axis 2 — how consumers stay consistent:**
 
@@ -212,7 +212,7 @@ consumer through this one path:
 | **SPEC-0013 metrics** | the run feed, for `harness_runs_total{outcome}`, durations, tokens and cost; and `harness_scheduled_runs_total`, which moves off the lifecycle bus | counted from committed records only |
 | **ADR-0027 budgets** | running totals maintained by the journal itself, synchronously, and rebuilt from the ledger at boot | the admission decision and the `opened` append share one lock |
 | **`harness runs`, `jobs`, `trigger --wait`, `logs --run`** | the ledger (recent records from memory, older from files) | it is the ledger |
-| **Telemetry export** (ADR-0022, #408) | the run feed, as one OTLP log record per closed run | optional and lossy by design, and says so |
+| **Telemetry export** (ADR-0022) | the run feed, as one OTLP log record per closed run | optional and lossy by design, and says so |
 | **Lossless consumers** (ADR-0025's lease completion, a sweep) | replay by `seq` from the ledger | durable and replayable |
 
 The lifecycle bus keeps its run events, for the TUI and clients, but **no
@@ -220,7 +220,7 @@ counter reads them**.
 
 The observer stays what it is: the stream of agent activity. The ledger does not
 copy it. Instead a **usage accumulator** subscribes to the observer and folds
-what it delivers (usage items from stump.wtf/agent-trace#105, error marks, tool
+what it delivers (agent-trace's per-message usage items, error marks, tool
 calls, session ids) into the harness's open run: tokens, cost, served models,
 calls and errors by class. It checkpoints them into the ledger as `updated`
 lines, and writes a final total at `closed`. So SPEC-0013's model-reachability
@@ -240,7 +240,7 @@ Residents get no per-run log files; their record points at the durable log
 (ADR-0007), which already holds the output.
 
 Sessions (3B) are the wrong unit because they are not a supervisor fact: a
-resident crush resumes one session across many restarts (#347), so a session
+resident crush resumes one session across many restarts, so a session
 record would merge unrelated process lifetimes. Session ids are recorded *on*
 the run instead.
 
@@ -306,8 +306,8 @@ harness runs [NAME...] [--harness NAME]... [--since DUR|TIME] [--until TIME]
   host-side record of each attempt, and the two join on `todo_id`. Harness still
   never calls Switchboard on its own initiative (ADR-0021).
 * **Cairn.** A run's `trace_url` points at wherever its trace went. That will be
-  Cairn once Cairn can receive OTLP traces (Cairn ADR-0015, cairn#138), and
-  Harness's telemetry export (#408) sends them. A receipt (Cairn ADR-0027) can
+  Cairn once Cairn can receive OTLP traces (Cairn ADR-0015), and
+  Harness's telemetry export sends them. A receipt (Cairn ADR-0027) can
   cite a run's ledger fields, and a daily sweep can publish
   `harness runs --json --since 24h` as a Cairn artifact. Harness does not push
   the ledger to Cairn.
@@ -332,7 +332,7 @@ harness runs [NAME...] [--harness NAME]... [--since DUR|TIME] [--until TIME]
   a daemon downgraded past this ADR starts with none. That is the pre-1.0
   trade: one history, no projection to keep in step, and an upgrade note
   rather than a rollback path.
-* Bad, because usage fields depend on agent-trace#105; until it lands, records
+* Bad, because usage fields depend on agent-trace's usage items; until they land, records
   carry outcomes, times, codes, sessions and error counts, but no tokens, cost
   or served model.
 * Neutral, because resident records are short and numerous in a crash loop. The
@@ -420,7 +420,7 @@ reconciliation, feed, retention and CLI as testable requirements. Acceptance:
 
 ### 3B — An agent session
 
-* Bad, because a resumed session spans unrelated process lifetimes (#347), and
+* Bad, because a resumed session spans unrelated process lifetimes, and
   a harness without a trace reader has no sessions.
 
 ### 3C — No resident records
@@ -482,9 +482,10 @@ flowchart LR
   `template_unresolved` skip) and
   [ADR-0024](adr-0024-stack-installer-and-central-management.md) (the
   installer's self-test asserts a run record).
-* **Related, not yet on `main`**: ADR-0022 (telemetry export, #408) is not on
-  `main` yet, so it stays cited by number. The SPEC-0013 implementation
-  (#407), whose `harness_scheduled_runs_total` this re-sources, is also still
+* **Related, not yet on `main`**: ADR-0022 (telemetry export) is not on
+  `main` yet, so it stays cited by number. The SPEC-0013 implementation,
+  whose `harness_scheduled_runs_total` this re-sources, is also still
   open.
-* **Depends on** stump.wtf/agent-trace#105 for tokens, cost and served model.
+* **Depends on** agent-trace's per-message usage items for tokens, cost and
+  served model.
 * **SPEC-0022** (`run-ledger`) holds the requirements.

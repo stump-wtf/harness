@@ -55,7 +55,7 @@ than one that refuses to start with a clear message.
 
 ## Implementation decisions
 
-Recorded 2026-09-21 with the implementation (#356), where the spec left a
+Recorded 2026-09-21 with the implementation, where the spec left a
 choice open.
 
 ### Seven supervisor states onto four
@@ -82,14 +82,14 @@ enum.
 
 ### Where model reachability comes from
 
-The observer (`internal/observe`, #390) reads each agent's own transcript. A
+The observer (`internal/observe`) reads each agent's own transcript. A
 tool call is a successful model call and an agent error mark a failed one; the
 last-success timestamp is the item's own time and never moves backwards. Only
 harnesses whose adapter writes a readable transcript (`claude-code`, `crush`,
 `codex`) and that have a workdir get model series; for any other the values
 cannot be computed and are omitted (REQ-6). At this agent-trace version
 crush and Claude Code provider errors reach the observer (Claude Code's since
-stump.wtf/agent-trace#104, picked up with the v0.4.0 bump), so those harnesses
+the agent-trace v0.4.0 bump, which carries claude-code API error marks), so those harnesses
 get the error side (the `error` outcome, the classes and the unclassified
 control); codex omits it rather than report a zero no error could move
 (`ErrorsObservable`, pinned to the parser by a test that fails when an

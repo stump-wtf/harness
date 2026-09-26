@@ -172,7 +172,7 @@ the next spawn, and never persisted.
 
 **Alternatives considered**:
 - A new lifecycle state (`waiting`): rejected. It would ripple through the
-  state machine, the restart policy, metrics state mapping (#407) and operating
+  state machine, the restart policy, metrics state mapping and operating
   hours for a condition that does not change lifecycle behaviour.
 
 ### The persisted firing record
