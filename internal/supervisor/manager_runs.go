@@ -77,8 +77,14 @@ type runRef struct {
 // OpenRun implements RunJournal: it allocates the next run id and appends the
 // record's `opened` line, synced, before returning, so the line is on disk
 // before the process the caller is about to spawn (SPEC-0022 REQ-6).
+//
+// A resident's record names its durable log, which the caller sets, and it
+// gets no per-run log: the returned path is empty (SPEC-0022 REQ-4).
 func (m *Manager) OpenRun(name string, rec RunRecord) (RunRecord, string, error) {
 	rec, err := m.appendNew(name, ledger.TypeOpened, rec)
+	if rec.Kind == KindResident {
+		return rec, "", err
+	}
 	m.pruneRunLogs(name, rec.RunID)
 	return rec, rec.Log, err
 }
@@ -103,7 +109,7 @@ func (m *Manager) appendNew(name string, typ ledger.Type, rec RunRecord) (RunRec
 	h.LastRunID++
 	rec.RunID = h.LastRunID
 	m.mu.Unlock()
-	if typ == ledger.TypeOpened {
+	if typ == ledger.TypeOpened && rec.Kind != KindResident {
 		rec.Log = m.RunLogPath(name, rec.RunID)
 	}
 	_, wait, err := m.ledger.Enqueue(ledger.Line{
@@ -240,18 +246,19 @@ func (m *Manager) LogLifecycle(name, msg string, kv ...any) bool {
 	return true
 }
 
-// ConsecutiveFailures counts runs, newest first, that failed or timed out, back
-// to the latest success. Records that pass no verdict on the harness — running,
-// skipped, missed, replaced, cancelled, interrupted — neither count nor break
-// the streak: an operator stop or a skipped firing says nothing about whether
-// the job works.
+// ConsecutiveFailures counts runs, newest first, whose outcome is a failure
+// (RunOutcome.Verdict: failed, timed_out, budget_exceeded, model_mismatch,
+// model_unattested), back to the latest success. Records that pass no verdict
+// on the harness — running, skipped, missed, replaced, cancelled, interrupted,
+// quota_parked — neither count nor break the streak: an operator stop or a
+// provider quota says nothing about whether the job works (SPEC-0022 REQ-5).
 func ConsecutiveFailures(runs []RunRecord) int {
 	n := 0
 	for i := len(runs) - 1; i >= 0; i-- {
-		switch runs[i].Outcome {
-		case OutcomeSuccess:
+		switch runs[i].Outcome.Verdict() {
+		case 1:
 			return n
-		case OutcomeFailed, OutcomeTimedOut:
+		case -1:
 			n++
 		}
 	}
@@ -650,8 +657,12 @@ func (m *Manager) persistedRunsLocked() json.RawMessage {
 
 // toLedger projects a run record onto the ledger's record fields.
 func toLedger(r RunRecord) ledger.Record {
+	kind := string(r.Kind)
+	if kind == "" {
+		kind = ledger.KindOneshot
+	}
 	rec := ledger.Record{
-		Kind:        ledger.KindOneshot,
+		Kind:        kind,
 		Trigger:     string(r.Trigger),
 		Source:      r.Source,
 		EventID:     r.EventID,
@@ -669,6 +680,9 @@ func toLedger(r RunRecord) ledger.Record {
 	if !r.StartedAt.IsZero() {
 		t := r.StartedAt
 		rec.StartedAt = &t
+	}
+	if r.Mismatch != nil {
+		rec.Mismatch = &ledger.Mismatch{Kind: r.Mismatch.Kind, ServedModel: r.Mismatch.ServedModel, ServedProvider: r.Mismatch.ServedProvider, At: r.Mismatch.At}
 	}
 	if r.EndedAt != nil {
 		rec.DurationMs = r.EndedAt.Sub(r.StartedAt).Milliseconds()
@@ -694,6 +708,10 @@ func fromLedger(f ledger.Folded) RunRecord {
 		EventID:     f.EventID,
 		Log:         f.Log,
 		LogPruned:   f.LogPruned,
+		Kind:        RunKind(f.Kind),
+	}
+	if f.Mismatch != nil {
+		r.Mismatch = &RunMismatch{Kind: f.Mismatch.Kind, ServedModel: f.Mismatch.ServedModel, ServedProvider: f.Mismatch.ServedProvider, At: f.Mismatch.At}
 	}
 	if f.StartedAt != nil {
 		r.StartedAt = *f.StartedAt
