@@ -32,9 +32,11 @@ Read these in order the first time; each one assumes the previous.
 | 4 | [Scheduled sweeps](./scheduled-sweeps) | an unattended agent run on a cron, with outcomes you can trust |
 | 5 | [Push events with MCP channels](./push-events) | an always-on agent that wakes on a Switchboard todo |
 | 6 | [Observability](./observability) | post-mortems with `harness logs`, the chatroom, `doctor`, and the SSH cockpit |
-| 7 | [How Harness, Switchboard and Cairn fit together](./harness-switchboard-cairn) | the whole loop, end to end |
+| 7 | [The stack: Harness, Switchboard and Cairn](./harness-switchboard-cairn) | the whole loop end to end: roles, what each tool is and is not, a worked team example |
 | 8 | [Run the merge train](./merge-train) | approved PRs landing one at a time, each tested as the exact tree that merges |
 | — | [Troubleshooting](./troubleshooting) | answers for the usual "it's green but nothing happens" moments |
+| — | [Onboarding path](./onboarding) | Cairn, Switchboard and Harness set up one layer at a time, each with a gate that proves it works |
+| — | [Glossary](./glossary) | every Harness, Switchboard and Cairn term on one page, with an anchor to link |
 
 The [Usage](/usage) section is the reference behind these guides: every verb,
 every config key, every flag.
@@ -46,9 +48,12 @@ every config key, every flag.
 - **At least one agent CLI**, installed and logged in as the same user that will
   run Harness: [Claude Code](https://claude.com/claude-code),
   [Crush](https://github.com/charmbracelet/crush), or Codex.
-- **Credentials for that agent**, such as `$ANTHROPIC_API_KEY` or a prior
-  interactive login. Harness never asks for them. It just starts the CLI with
-  the environment you give it.
+- **Credentials for that agent.** Harness never asks for them; it starts the
+  CLI with the environment you give it. For Claude Code that is your Keychain
+  login on macOS, or a `claude setup-token` subscription token
+  (`CLAUDE_CODE_OAUTH_TOKEN`) on Linux and headless boxes.
+  `ANTHROPIC_API_KEY` works too, but bills the API rather than your
+  subscription. See [Claude Code authentication](./first-agent#claude-code-authentication).
 
 :::note Version
 

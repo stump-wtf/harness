@@ -53,7 +53,7 @@ function writeFixture() {
   );
   fs.writeFileSync(
     path.join(adrs, 'ADR-0003-backtick.md'),
-    '---\nstatus: accepted\ndate: 2026-01-01\nrelated: [ADR-0001]\n---\n\n# ADR-0003: `prompt_file` — issue #42; source\n\n## Context\n\nSomething.\n'
+    '---\nstatus: accepted\ndate: 2026-01-01\nrelated: [ADR-0001]\n---\n\n# ADR-0003: `prompt_file` — issue #42; source\n\n## Context\n\nSomething.\n\n## More Information\n\n* **Related [ADR-0001](ADR-0001-example.md)** — shares the example.\n'
   );
 
   const body = (id, title, text) =>
@@ -85,6 +85,9 @@ function writeFixture() {
   // /specs/delta, so references to SPEC-0004 must not be sent to
   // /specs/delta/spec, which nothing writes.
   domain('delta', 'SPEC-0004', 'Delta', 'Delta stands alone.', { design: false });
+  // Carries the number the SDD plugin's own artifact-graph spec has upstream,
+  // but is something else entirely — as SPEC-0018 is in harness.
+  domain('zeta', 'SPEC-0018', 'Stack Installer', 'Unrelated to the graph.', { design: false });
   // Every shape the linkifier must leave alone, alongside bare mentions of the
   // same IDs on the same lines that it must still resolve.
   domain(
@@ -101,6 +104,22 @@ function writeFixture() {
       'Prior art: <a href="/harness/decisions/ADR-0001-example" className="rfc-ref">ADR-0001</a> covers it.',
       '',
       'Compare `SPEC-0002` against bare SPEC-0001, and `ADR-0001` against bare ADR-0001.',
+      '',
+      // Linked IDs (transformLinkedArtifactIds): each shape it must chip, and
+      // each it must leave as the author wrote it.
+      'Wrapped: [the beta spec, SPEC-0002](/specs/beta/spec) keeps its text.',
+      '',
+      '* **Extends [ADR-0001](../../adrs/ADR-0001-example.md)** — bold outside the link.',
+      '',
+      'Bold inside: [**SPEC-0001**](/specs/alpha/spec) here.',
+      '',
+      'External: [ADR-0001](https://example.com/adr-0001) stays external.',
+      '',
+      'Fragment: [ADR-0001](../../adrs/ADR-0001-example.md#context) keeps its anchor.',
+      '',
+      'Unknown: [ADR-0099](../../adrs/ADR-0099-missing.md) stays a link.',
+      '',
+      'Literal: `[ADR-0001](../../adrs/ADR-0001-example.md)` is code.',
     ].join('\n')
   );
 
@@ -198,13 +217,81 @@ test('a reference inside inline code is left alone', async (t) => {
   assert.match(epsilon, /`ADR-0001`/);
 });
 
-test('a reference inside a markdown link is left alone', async (t) => {
+test('a markdown link with other text around an ID is left alone', async (t) => {
   const { read } = await build(t);
 
   const epsilon = read('specs/epsilon/spec.mdx');
-  // The label keeps its original text; only the .md suffix is stripped.
-  assert.match(epsilon, /\[SPEC-0002\]\(\/specs\/beta\/spec\)/);
-  assert.match(epsilon, /\[ADR-0001\]\(\.\.\/\.\.\/adrs\/ADR-0001-example\)/);
+  // Only a link whose whole text is the ID becomes a chip; this one keeps its
+  // label and target, and the ID inside it is not linkified a second time.
+  assert.match(epsilon, /Wrapped: \[the beta spec, SPEC-0002\]\(\/specs\/beta\/spec\) keeps its text\./);
+});
+
+// --- Linked IDs become chips -------------------------------------------------
+//
+// `[ADR-0006](adr-0006-configuration-and-profiles.md)` used to render as a
+// plain link while a bare `ADR-0006` rendered as a chip, so the same reference
+// looked two different ways depending on how its author typed it.
+
+const chip = (href, label) =>
+  `<a href="${href}" className="rfc-ref">${label}</a>`;
+
+test('a link whose text is exactly an artifact ID renders as a chip', async (t) => {
+  const { read } = await build(t);
+
+  const epsilon = read('specs/epsilon/spec.mdx');
+  // The ID picks the page, whatever relative path the author linked.
+  assert.ok(
+    epsilon.includes(
+      `Epsilon cites ${chip('/harness/specs/beta/spec', 'SPEC-0002')} and ${chip('/harness/decisions/ADR-0001-example', '📝 ADR-0001')}.`
+    ),
+    'plain linked IDs are not chips'
+  );
+  assert.doesNotMatch(epsilon, /<a [^>]*><a /);
+});
+
+test('bold around or inside a linked ID is kept around the chip', async (t) => {
+  const { read } = await build(t);
+
+  const epsilon = read('specs/epsilon/spec.mdx');
+  assert.ok(
+    epsilon.includes(`* **Extends ${chip('/harness/decisions/ADR-0001-example', '📝 ADR-0001')}** — bold outside the link.`),
+    'bold-outside link is not a chip'
+  );
+  assert.ok(
+    epsilon.includes(`Bold inside: **${chip('/harness/specs/alpha/spec', 'SPEC-0001')}** here.`),
+    'bold-inside link is not a chip'
+  );
+});
+
+test('a linked ID keeps its fragment', async (t) => {
+  const { read } = await build(t);
+
+  assert.ok(
+    read('specs/epsilon/spec.mdx').includes(
+      `Fragment: ${chip('/harness/decisions/ADR-0001-example#context', '📝 ADR-0001')} keeps its anchor.`
+    )
+  );
+});
+
+test('external, unknown, and code-span linked IDs are left alone', async (t) => {
+  const { read } = await build(t);
+
+  const epsilon = read('specs/epsilon/spec.mdx');
+  assert.match(epsilon, /External: \[ADR-0001\]\(https:\/\/example\.com\/adr-0001\) stays external\./);
+  assert.match(epsilon, /Unknown: \[ADR-0099\]\(\.\.\/\.\.\/adrs\/ADR-0099-missing\) stays a link\./);
+  assert.match(epsilon, /Literal: `\[ADR-0001\]\(\.\.\/\.\.\/adrs\/ADR-0001-example\)` is code\./);
+});
+
+test('linked IDs in an ADR body render as chips too', async (t) => {
+  const { read } = await build(t);
+
+  // ADR-0003's body links ADR-0001 the way the repo's More Information
+  // sections do; the ADR transform runs the same pass as the spec one.
+  assert.ok(
+    read('decisions/ADR-0003-backtick.mdx').includes(
+      `* **Related ${chip('/harness/decisions/ADR-0001-example', '📝 ADR-0001')}** — shares the example.`
+    )
+  );
 });
 
 test('a reference inside an emitted anchor is left alone', async (t) => {
@@ -272,4 +359,17 @@ test('titles Mermaid cannot quote verbatim are entity-escaped in node labels', a
     for (const label of want) assert.ok(labels.includes(label), `${rel}: no node labelled ${label}`);
     for (const label of labels) assert.doesNotMatch(label, /["`]/, `${rel}: unescaped ${label}`);
   }
+});
+
+// --- Graph convention citation -----------------------------------------------
+
+test('Related Artifacts cites the graph convention by what it is, not its number', async (t) => {
+  const { read } = await build(t);
+
+  const page = read('decisions/ADR-0001-example.mdx');
+  const line = page.split('\n').find((l) => l.startsWith('Direct relationships declared'));
+  assert.ok(line, 'no Related Artifacts section');
+  // SPEC-0018 exists here but is not the graph spec, and there is no graph ADR.
+  assert.doesNotMatch(line, /SPEC-0018|ADR-0023|stack/i);
+  assert.match(line, /artifact-graph convention/);
 });

@@ -1,5 +1,5 @@
 ---
-status: active
+status: approved
 date: 2026-07-26
 implements: [ADR-0013]
 extends: [SPEC-0003]

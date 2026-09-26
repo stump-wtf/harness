@@ -152,6 +152,26 @@ func (a *ClaudeCode) PromptCommand(prompt string, opts core.AgentOpts) (string, 
 	if opts.MaxTurns > 0 {
 		args = append(args, "--max-turns", strconv.Itoa(opts.MaxTurns))
 	}
+	// SPEC-0018 REQ-11 persona keys, after the scalar flags and before
+	// --verbose, so every variadic flag (--mcp-config, --allowedTools) is
+	// followed by a flag. Validation keeps these claude-code-one-shot-only,
+	// so the other adapters never see them set.
+	if opts.SystemPromptFile != "" {
+		// --append-system-prompt-file APPENDS to Claude Code's own system
+		// prompt; it never replaces it.
+		args = append(args, "--append-system-prompt-file", opts.SystemPromptFile)
+	}
+	if opts.MCPConfig != "" {
+		// --strict-mcp-config means ONLY this file's servers run: the one-shot
+		// does not inherit every MCP server the user has configured.
+		args = append(args, "--mcp-config", opts.MCPConfig, "--strict-mcp-config")
+	}
+	if len(opts.AllowedTools) > 0 {
+		args = append(args, "--allowedTools")
+		// Each tool its own argv element: "Bash(git log:*)" stays one token,
+		// so a shell never sees a comma list.
+		args = append(args, opts.AllowedTools...)
+	}
 	// --verbose is REQUIRED alongside --output-format stream-json under -p:
 	// claude rejects the pair outright with "When using --print,
 	// --output-format=stream-json requires --verbose" and exits 1 before it

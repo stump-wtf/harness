@@ -234,11 +234,30 @@ type Harness struct {
 	// Governing: ADR-0011; issue #59 (add `max_turns` field for budget
 	// capping).
 	MaxTurns int
+	// SystemPromptFile is a claude-code one-shot persona file appended to the
+	// model's system prompt (SPEC-0018 REQ-11). Config truth only, valid only
+	// on a claude-code harness WITH a prompt source (validation enforces
+	// both); the supervisor folds it into the synthesized argv at spawn as
+	// --append-system-prompt-file, never desugared into Args. The value is a
+	// PATH resolved against the declaring file (ADR-0018), never contents.
+	// Governing: SPEC-0018 REQ-11.
+	SystemPromptFile string
+	// MCPConfig names an MCP servers file for a claude-code one-shot
+	// (SPEC-0018 REQ-11), emitted as --mcp-config <path> --strict-mcp-config
+	// so the run sees exactly the servers the persona needs and nothing from
+	// the user's own configuration. PATH, resolved like PromptFile.
+	MCPConfig string
+	// AllowedTools caps a claude-code one-shot's tool access
+	// (SPEC-0018 REQ-11), each entry its own argv element after
+	// --allowedTools. Entries never start with "-" (validation enforces it).
+	AllowedTools []string
 	// Workdir is the process working directory (may contain a leading ~).
 	Workdir string
-	// EnvFile is a file of KEY=VALUE pairs sourced before launch (ADR-0008;
-	// secrets stay here, out of the config).
-	EnvFile string
+	// EnvFiles are files of KEY=VALUE pairs sourced before launch, in order,
+	// a later file winning a key collision (ADR-0008; secrets stay here, out
+	// of the config; SPEC-0018 REQ-12 accepts a list of env_file). Nil and a
+	// blank-only list both mean "no extra environment".
+	EnvFiles []string
 	// RestartDelay is the base delay between a crash and a respawn.
 	RestartDelay time.Duration
 	// Restart controls whether the harness is automatically restarted after it
@@ -481,6 +500,15 @@ type AgentOpts struct {
 	AutoAccept bool
 	// MaxTurns caps agent iterations, emitted as --max-turns when > 0.
 	MaxTurns int
+	// SystemPromptFile appends a persona file to the model's system prompt
+	// (claude-code only), emitted as --append-system-prompt-file when set.
+	SystemPromptFile string
+	// MCPConfig scopes the run's MCP servers to one file (claude-code only),
+	// emitted as --mcp-config <path> --strict-mcp-config when set.
+	MCPConfig string
+	// AllowedTools lists tool permissions, each entry its own argv element
+	// after --allowedTools (claude-code only).
+	AllowedTools []string
 }
 
 // QualifiedName returns the daemon-wide name a project-local harness registers

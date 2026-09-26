@@ -48,12 +48,29 @@ const ctxErr = `["{\"type\":\"finish\",\"data\":{\"reason\":\"error\",\"message\
 const okTurn = `["{\"type\":\"text\",\"text\":\"done\"}"]`
 
 func TestStorePath(t *testing.T) {
-	if got := StorePath(filepath.Join(t.TempDir(), "nope")); got != "" {
+	if got := StorePath("", filepath.Join(t.TempDir(), "nope")); got != "" {
 		t.Fatalf("missing store: got %q, want empty", got)
 	}
 	db := newStore(t)
-	if got := StorePath(filepath.Dir(filepath.Dir(db))); got != db {
-		t.Fatalf("got %q, want %q", got, db)
+	work := filepath.Dir(filepath.Dir(db))
+	if got := StorePath("", work); got != db {
+		t.Fatalf("workdir fallback: got %q, want %q", got, db)
+	}
+
+	// A configured data directory wins over the workdir store, even when the
+	// workdir has one: that is the store the harness actually writes.
+	dataDir := t.TempDir()
+	want := filepath.Join(dataDir, "crush.db")
+	if err := os.WriteFile(want, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := StorePath(dataDir, work); got != want {
+		t.Fatalf("data dir: got %q, want %q", got, want)
+	}
+	// A configured data directory with no database yet is skipped, never
+	// answered with the workdir store.
+	if got := StorePath(t.TempDir(), work); got != "" {
+		t.Fatalf("empty data dir: got %q, want empty", got)
 	}
 }
 

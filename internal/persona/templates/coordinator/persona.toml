@@ -1,0 +1,7 @@
+description = "Resident team lead: reads todos, hands work to the one-shot chain, verifies and reports"
+mode = "resident"
+client = "claude-code"
+queues = ["coordinator"]
+triggers = ["server:switchboard"]
+mcp_servers = ["switchboard", "cairn"]
+allowed_tools = ["Read", "Grep", "Glob", "mcp__switchboard__claim_next", "mcp__switchboard__complete", "mcp__switchboard__fail", "mcp__cairn__artifact_create"]

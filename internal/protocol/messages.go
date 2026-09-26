@@ -83,7 +83,20 @@ const (
 	// than 12 refuses a project_up or scratchpad definition naming "command"
 	// as an unknown harness kind, so the new field is never silently dropped
 	// into a harness that runs something else.
-	ProtoMinor = 12
+	// ProtoMinor 13 added the claude-code one-shot persona keys (SPEC-0018
+	// REQ-11): SystemPromptFile, MCPConfig and AllowedTools on ProjectHarness
+	// and HarnessInfo — additive only. A daemon older than 13 ignores them,
+	// and two of them are restrictions (allowed_tools, --strict-mcp-config),
+	// so the client refuses to send them to one rather than run a persona
+	// with more authority than it declared (see client.ProjectUp).
+	// ProtoMinor 14 added EnvFiles on ProjectHarness, the env_file list form
+	// (SPEC-0018 REQ-12) — additive only. The single-path EnvFile stays and
+	// an older daemon that ignores env_files still serves a one-element list
+	// through it, because the client sets both for that case. A longer list
+	// has no single-path spelling, so the client refuses to send one to a
+	// daemon older than 14 rather than start the harness with no env file
+	// (see client.ProjectUp).
+	ProtoMinor = 14
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -246,6 +259,14 @@ type ProjectHarness struct {
 	// --max-turns into the synthesized argv at spawn (ADR-0011, issue #59).
 	// 0 means unset/unlimited.
 	MaxTurns int `json:"max_turns,omitempty"`
+	// SPEC-0018 REQ-11: the claude-code one-shot persona keys, additive and
+	// omitempty under ProtoMinor 13. Config validation keeps them
+	// claude-code-one-shot-only. An older daemon would ignore the unknown
+	// fields and run the one-shot WITHOUT its tool and MCP restrictions, so
+	// the client refuses to send them to a daemon older than 13.
+	SystemPromptFile string   `json:"system_prompt_file,omitempty"`
+	MCPConfig        string   `json:"mcp_config,omitempty"`
+	AllowedTools     []string `json:"allowed_tools,omitempty"`
 	// Quiet mirrors the schema's agent `quiet` headless switch: a *bool so an
 	// omitted key (nil = the headless one-shot default) is distinguishable from
 	// an explicit false (stream output to an attach). Set only alongside prompt
@@ -255,10 +276,17 @@ type ProjectHarness struct {
 	// PromptFile mirrors the schema's `prompt_file`: the PATH to the file
 	// holding the instruction, never its contents (ADR-0018). Clients show
 	// and round-trip the path; the daemon reads the file at spawn.
-	PromptFile     string `json:"prompt_file,omitempty"`
-	Workdir        string `json:"workdir,omitempty"`
-	EnvFile        string `json:"env_file,omitempty"`
-	RestartDelayMs int64  `json:"restart_delay_ms,omitempty"`
+	PromptFile string `json:"prompt_file,omitempty"`
+	Workdir    string `json:"workdir,omitempty"`
+	// EnvFile is the single-path form; a daemon honors it when EnvFiles is
+	// absent, so an older client that sends only a string still works.
+	EnvFile string `json:"env_file,omitempty"`
+	// EnvFiles is the env_file list in order, later file winning a key
+	// collision (SPEC-0018 REQ-12). Additive and omitempty: an older daemon
+	// ignores it (the client refuses a multi-file list to a daemon older than
+	// 14), and an absent list falls back to EnvFile.
+	EnvFiles       []string `json:"env_files,omitempty"`
+	RestartDelayMs int64    `json:"restart_delay_ms,omitempty"`
 	// Restart mirrors the schema's `restart` policy (core.RestartPolicy);
 	// empty means the always-restart default, matching an omitted key.
 	Restart     string `json:"restart,omitempty"`
@@ -351,6 +379,11 @@ type HarnessInfo struct {
 	// MaxTurns is the agent turn budget for a prompt harness, folded into the
 	// synthesized argv at spawn (issue #59). Always 0 for cmd harnesses.
 	MaxTurns int `json:"max_turns,omitempty"`
+	// SPEC-0018 REQ-11: the claude-code one-shot persona keys, additive and
+	// omitempty. Always empty for cmd harnesses.
+	SystemPromptFile string   `json:"system_prompt_file,omitempty"`
+	MCPConfig        string   `json:"mcp_config,omitempty"`
+	AllowedTools     []string `json:"allowed_tools,omitempty"`
 	// Quiet is the agent headless switch for a prompt harness, folded into the
 	// synthesized argv at spawn (issue #60). Always true for prompt harnesses
 	// unless the config set quiet = false.

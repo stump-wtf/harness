@@ -103,9 +103,12 @@ type HarnessForm struct {
 	// argvErr is why the argv input did not parse (toForm), reported by
 	// Validate. Unlike args, a malformed argv is not silently dropped: saving
 	// would then write a command harness with no argv at all.
-	argvErr      error
-	Workdir      string
-	EnvFile      string
+	argvErr error
+	Workdir string
+	// EnvFile is the harness's env_file list in order (SPEC-0018 REQ-12).
+	// A one-element list round-trips as the historical string form; a longer
+	// one is written as a TOML list.
+	EnvFile      []string
 	RestartDelay int    // seconds
 	Restart      string // core.RestartPolicy; empty = the parse default
 	Backend      string
@@ -121,6 +124,13 @@ type HarnessForm struct {
 	// through the MCP facade (ADR-0008: opt-in, a trajectory may contain
 	// secrets). Round-trip field (issue #161).
 	HarvestTrajectory bool
+	// SystemPromptFile/MCPConfig/AllowedTools are the claude-code one-shot
+	// persona keys (SPEC-0018 REQ-11). Round-trip fields (issue #161): the
+	// save path rewrites the whole table, so a dropped key silently strips a
+	// reviewer one-shot of its persona.
+	SystemPromptFile string
+	MCPConfig        string
+	AllowedTools     []string
 	// MCPAllow is the per-harness MCP capability scope (SPEC-0005), defaulting
 	// to ["read"] in the parser. Round-trip field (issue #161): dropping it
 	// silently revokes a harness's write authority — or, worse on the way back,
@@ -506,8 +516,14 @@ func (f HarnessForm) TOML() string {
 	if f.Workdir != "" {
 		fmt.Fprintf(&b, "workdir = %s\n", strconv.Quote(f.Workdir))
 	}
-	if f.EnvFile != "" {
-		fmt.Fprintf(&b, "env_file = %s\n", strconv.Quote(f.EnvFile))
+	if len(f.EnvFile) == 1 {
+		fmt.Fprintf(&b, "env_file = %s\n", strconv.Quote(f.EnvFile[0]))
+	} else if len(f.EnvFile) > 1 {
+		parts := make([]string, len(f.EnvFile))
+		for i, e := range f.EnvFile {
+			parts[i] = strconv.Quote(e)
+		}
+		fmt.Fprintf(&b, "env_file = [%s]\n", strings.Join(parts, ", "))
 	}
 	if f.RestartDelay > 0 {
 		fmt.Fprintf(&b, "restart_delay = %d\n", f.RestartDelay)
@@ -555,6 +571,20 @@ func (f HarnessForm) TOML() string {
 			parts[i] = strconv.Quote(a)
 		}
 		fmt.Fprintf(&b, "mcp_allow = [%s]\n", strings.Join(parts, ", "))
+	}
+	// SPEC-0018 REQ-11: the claude-code one-shot persona keys.
+	if f.SystemPromptFile != "" {
+		fmt.Fprintf(&b, "system_prompt_file = %s\n", strconv.Quote(f.SystemPromptFile))
+	}
+	if f.MCPConfig != "" {
+		fmt.Fprintf(&b, "mcp_config = %s\n", strconv.Quote(f.MCPConfig))
+	}
+	if len(f.AllowedTools) > 0 {
+		parts := make([]string, len(f.AllowedTools))
+		for i, a := range f.AllowedTools {
+			parts[i] = strconv.Quote(a)
+		}
+		fmt.Fprintf(&b, "allowed_tools = [%s]\n", strings.Join(parts, ", "))
 	}
 	if operatingHours := strings.TrimSpace(f.OperatingHours); operatingHours != "" {
 		// A resident harness's weekly time gate (ADR-0019). Unlike schedule's
@@ -653,6 +683,11 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.harness = h.Adapter
 	fi.prompt = h.Prompt
 	fi.promptFile = h.PromptFile
+	fi.systemPromptFile = h.SystemPromptFile
+	fi.mcpConfig = h.MCPConfig
+	// Shell-quoted like args: a tool pattern such as "Bash(git log:*)"
+	// carries a space, so a plain space join would split it on save.
+	fi.allowedTools = shellQuoteJoin(h.AllowedTools)
 	fi.model = h.Model
 	fi.autoAccept = h.AutoAccept
 	fi.quiet = h.Quiet
@@ -683,7 +718,7 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.args = shellQuoteJoin(h.Args)
 	fi.argv = formatArgvInput(h.Argv)
 	fi.workdir = h.Workdir
-	fi.envFile = h.EnvFile
+	fi.envFile = strings.Join(h.EnvFiles, ", ")
 	if h.RestartDelay > 0 {
 		fi.delay = strconv.Itoa(int(h.RestartDelay / time.Second))
 	}
@@ -711,29 +746,44 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	return fi
 }
 
+// splitEnvFileInput parses the form's comma-separated env_file field into the
+// list the harness carries (SPEC-0018 REQ-12). Blank entries are dropped, so
+// an untouched single-path edit round-trips as the same one-element list.
+func splitEnvFileInput(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
 // toForm converts the Huh string-bound inputs into a typed HarnessForm, parsing
 // space-separated args and the integer restart_delay.
 func (fi formInputs) toForm() HarnessForm {
 	f := HarnessForm{
-		Name:        strings.TrimSpace(fi.name),
-		Harness:     strings.TrimSpace(fi.harness),
-		Prompt:      strings.TrimSpace(fi.prompt),
-		PromptFile:  strings.TrimSpace(fi.promptFile),
-		Model:       strings.TrimSpace(fi.model),
-		AutoAccept:  fi.autoAccept,
-		Quiet:       fi.quiet,
-		Schedule:    strings.TrimSpace(fi.schedule),
-		CatchUp:     fi.catchUp,
-		Triggers:    strings.Fields(fi.triggers),
-		Timeout:     strings.TrimSpace(fi.timeout),
-		OnOverlap:   strings.TrimSpace(fi.onOverlap),
-		Workdir:     strings.TrimSpace(fi.workdir),
-		EnvFile:     strings.TrimSpace(fi.envFile),
-		Restart:     strings.TrimSpace(fi.restart),
-		Backend:     strings.TrimSpace(fi.backend),
-		TmuxSocket:  strings.TrimSpace(fi.tmuxSocket),
-		Description: strings.TrimSpace(fi.description),
-		Enabled:     fi.enabled,
+		Name:             strings.TrimSpace(fi.name),
+		Harness:          strings.TrimSpace(fi.harness),
+		Prompt:           strings.TrimSpace(fi.prompt),
+		PromptFile:       strings.TrimSpace(fi.promptFile),
+		SystemPromptFile: strings.TrimSpace(fi.systemPromptFile),
+		MCPConfig:        strings.TrimSpace(fi.mcpConfig),
+		Model:            strings.TrimSpace(fi.model),
+		AutoAccept:       fi.autoAccept,
+		Quiet:            fi.quiet,
+		Schedule:         strings.TrimSpace(fi.schedule),
+		CatchUp:          fi.catchUp,
+		Triggers:         strings.Fields(fi.triggers),
+		Timeout:          strings.TrimSpace(fi.timeout),
+		OnOverlap:        strings.TrimSpace(fi.onOverlap),
+		Workdir:          strings.TrimSpace(fi.workdir),
+		EnvFile:          splitEnvFileInput(fi.envFile),
+		Restart:          strings.TrimSpace(fi.restart),
+		Backend:          strings.TrimSpace(fi.backend),
+		TmuxSocket:       strings.TrimSpace(fi.tmuxSocket),
+		Description:      strings.TrimSpace(fi.description),
+		Enabled:          fi.enabled,
 
 		HarvestTrajectory:    fi.harvestTrajectory,
 		OperatingHours:       strings.TrimSpace(fi.operatingHours),
@@ -743,6 +793,9 @@ func (fi formInputs) toForm() HarnessForm {
 	}
 	if args, err := shlex.Split(fi.args, true); err == nil && len(args) > 0 {
 		f.Args = args
+	}
+	if tools, err := shlex.Split(fi.allowedTools, true); err == nil && len(tools) > 0 {
+		f.AllowedTools = tools
 	}
 	f.Argv, f.argvErr = parseArgvInput(fi.argv)
 	// Unconditional, unlike args above: strings.Fields returns a non-nil empty

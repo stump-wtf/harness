@@ -5,6 +5,18 @@ sidebar_position: 5
 
 # Push events with MCP channels
 
+:::tip Paste this to your agent
+
+```text
+Read https://stump-wtf.github.io/harness/llms.txt and
+https://stump-wtf.github.io/harness/guides/push-events. Configure this session
+to receive Switchboard doorbells, then prove it by claiming a real todo: fire
+a webhook at the endpoint's ingest URL and show me the todo reach state
+`done`. A "delivered" log line does not count.
+```
+
+:::
+
 A scheduled sweep wakes on a clock. Much of the work worth automating wakes on an
 **event** instead: a pull request opened, CI went red, someone published a
 handoff. Polling for events wastes model turns, because an agent that asks
@@ -149,6 +161,12 @@ harness's `env_file`:
 SWITCHBOARD_TOKEN=sbk_...
 ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+`ANTHROPIC_API_KEY` here is the Crush worker's model provider key. For a
+**Claude Code** worker on Linux or a headless box, use a subscription token
+from `claude setup-token` (`CLAUDE_CODE_OAUTH_TOKEN=...`) instead: an API key
+bills the API, not your subscription. See
+[Claude Code authentication](./first-agent#claude-code-authentication).
 
 ### 3. Supervise it
 

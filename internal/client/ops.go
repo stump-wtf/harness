@@ -7,6 +7,7 @@ package client
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/stump-wtf/harness/internal/protocol"
@@ -160,6 +161,12 @@ func (c *Client) Reload() ([]protocol.HarnessInfo, error) {
 // "Project Control Operations". Failures come back as *protocol.ErrorMsg with
 // code project_collision / invalid_project.
 func (c *Client) ProjectUp(project string, harnesses []protocol.ProjectHarness) (protocol.ProjectUpData, error) {
+	if err := c.checkPersonaKeys(harnesses); err != nil {
+		return protocol.ProjectUpData{}, err
+	}
+	if err := c.checkEnvFileList(harnesses); err != nil {
+		return protocol.ProjectUpData{}, err
+	}
 	resp, err := c.call(protocol.ControlReq{Op: protocol.OpProjectUp, Name: project, Harnesses: harnesses})
 	if err != nil {
 		return protocol.ProjectUpData{}, err
@@ -196,6 +203,12 @@ func (c *Client) Remove(name string) (protocol.RemoveData, error) {
 // daemon-minted random name (SPEC-0011; ADR-0017). def carries the definition
 // (name is the optional slug override); the reply holds the minted name.
 func (c *Client) ScratchRun(def protocol.ProjectHarness, slug string) (protocol.ScratchRunData, error) {
+	if err := c.checkPersonaKeys([]protocol.ProjectHarness{def}); err != nil {
+		return protocol.ScratchRunData{}, err
+	}
+	if err := c.checkEnvFileList([]protocol.ProjectHarness{def}); err != nil {
+		return protocol.ScratchRunData{}, err
+	}
 	resp, err := c.call(protocol.ControlReq{Op: protocol.OpScratchRun, Name: slug, Harnesses: []protocol.ProjectHarness{def}})
 	if err != nil {
 		return protocol.ScratchRunData{}, err
@@ -246,4 +259,51 @@ func (c *Client) AttachResize(sessionID uint32, cols, rows int) error {
 // AttachClose tears down one attach session.
 func (c *Client) AttachClose(sessionID uint32) error {
 	return c.pc.WriteFrame(protocol.TypeAttachClose, protocol.EncodeAttach(sessionID, nil))
+}
+
+// personaKeysMinor is the ProtoMinor that added the claude-code one-shot
+// persona keys (SPEC-0018 REQ-11) to ProjectHarness.
+const personaKeysMinor = 13
+
+// checkPersonaKeys refuses to send persona keys to a daemon older than
+// personaKeysMinor. Such a daemon ignores the unknown fields, and two of them
+// are restrictions — allowed_tools and mcp_config's --strict-mcp-config — so
+// the one-shot would run with every tool and every MCP server the user has,
+// not the persona it declared. Same shape as TriggerWithEvent's guard.
+func (c *Client) checkPersonaKeys(harnesses []protocol.ProjectHarness) error {
+	for _, h := range harnesses {
+		if h.SystemPromptFile == "" && h.MCPConfig == "" && len(h.AllowedTools) == 0 {
+			continue
+		}
+		if minor, ok := protoMinor(c.daemon.ProtoVersion); !ok || minor < personaKeysMinor {
+			return fmt.Errorf(
+				"client: daemon proto %q predates system_prompt_file/mcp_config/allowed_tools (needs 1.%d); restart the daemon on this version before harness %q can run",
+				c.daemon.ProtoVersion, personaKeysMinor, h.Name)
+		}
+	}
+	return nil
+}
+
+// envFileListMinor is the ProtoMinor that added ProjectHarness.EnvFiles, the
+// env_file list form (SPEC-0018 REQ-12).
+const envFileListMinor = 14
+
+// checkEnvFileList refuses to send a multi-file env_file list to a daemon
+// older than envFileListMinor. Such a daemon ignores env_files, and a longer
+// list has no single-path spelling to fall back on, so the harness would
+// start with no env file at all — no subscription token, no forge token. A
+// one-element list still reaches it through EnvFile, so only a longer list is
+// refused.
+func (c *Client) checkEnvFileList(harnesses []protocol.ProjectHarness) error {
+	for _, h := range harnesses {
+		if len(h.EnvFiles) <= 1 {
+			continue
+		}
+		if minor, ok := protoMinor(c.daemon.ProtoVersion); !ok || minor < envFileListMinor {
+			return fmt.Errorf(
+				"client: daemon proto %q predates env_file lists (needs 1.%d); restart the daemon on this version before harness %q can load %d env files",
+				c.daemon.ProtoVersion, envFileListMinor, h.Name, len(h.EnvFiles))
+		}
+	}
+	return nil
 }

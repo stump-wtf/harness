@@ -68,10 +68,38 @@ Usual causes, most likely first:
   confirmation at every startup until someone attaches and answers. See
   [the Claude Code status](./push-events#claude-code-verified-with-one-obstacle).
 
+## The harness bills my API account, or starts at a login prompt
+
+Both come from Claude Code picking a different credential than you meant. It
+takes the first one it finds, in this order: `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_API_KEY`, an `apiKeyHelper`, `CLAUDE_CODE_OAUTH_TOKEN`, then your
+`/login`.
+
+- **API charges for runs you expected on your subscription.** An
+  `ANTHROPIC_API_KEY` is set somewhere the harness inherits it: its `env_file`,
+  the daemon's unit or plist, or the shell that started the daemon. It outranks
+  a subscription token and your login, and a one-shot (`claude -p`) uses it
+  without asking. Remove it, put `CLAUDE_CODE_OAUTH_TOKEN` in the `env_file`
+  instead (or rely on the Keychain on macOS), and `harness restart NAME`.
+- **A login prompt nobody answers.** The harness has no credential it can reach:
+  on Linux or a headless box there is no Keychain, and on macOS a daemon outside
+  your GUI session cannot read it. Put a `claude setup-token` token in the
+  `env_file`.
+
+Check what a harness actually got, as the daemon's user:
+
+```sh
+claude auth status --text
+```
+
+or run `/status` in `harness attach NAME`. See
+[Claude Code authentication](./first-agent#claude-code-authentication) for the
+three modes.
+
 ## It keeps restarting
 
 `harness list` shows `◐ degraded` or `◌ restarting`, and the restart count
-keeps climbing.
+keeps climbing, or it has already stopped at `✖ failed`.
 
 ```sh
 harness logs NAME --raw --lines 40
@@ -110,9 +138,10 @@ What to do right away:
   harness stop NAME
   ```
 
-  The supervisor is designed to give up and park a harness in `failed` after
-  repeated failures, but current builds don't apply that limit. A broken harness
-  keeps retrying until you stop it.
+  The daemon stops on its own eventually: after more than 5 consecutive
+  failures (non-zero exits from runs shorter than 5 minutes) it parks the
+  harness in `failed` (`✖ failed` in `harness list`, an error in
+  `harness doctor`). Stopping it yourself saves those last attempts.
 
 - **Once it's fixed, clear the state:** `harness restart NAME`. That also clears
   a `failed` state.

@@ -31,7 +31,7 @@ enabled = false
 | `args` | argument list appended after the adapter's executable. Not accepted on `command`, which takes `argv` instead |
 | `argv` | `command` only: the whole process, `argv[0]` first, exec'd **without a shell**. See [The `command` kind](#the-command-kind) |
 | `workdir` | working directory (**required** for most commands) |
-| `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config) |
+| `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config). Also accepts a **list** of files loaded in order, a later file winning a key collision — `env_file = ["claude.env", "reviewer.env"]` — so a shared credential file and a per-persona one compose without copying. A missing file is tolerated, exactly as a missing string is; an empty list is a load error |
 | `description` | free-text shown in the dashboard |
 | `enabled` | autostart on daemon boot / after a daemon restart (`true`) |
 | `restart` | restart policy on exit — see [Restart policy](#restart-policy) |
@@ -73,6 +73,9 @@ workdir = "~/src/my-project"
 | `model` | which model the agent runs, e.g. `claude-opus-5`. Requires `prompt`; folded into the synthesized argv |
 | `auto_accept` | run unattended, bypassing the agent's permission prompts (the vendor's yolo flag). Requires `prompt`; fold into the synthesized argv |
 | `max_turns` | cap on how many iterations the agent may run before stopping. Requires `prompt`; 0 or omitted means unlimited |
+| `system_prompt_file` | **claude-code one-shots only.** Path to a persona file appended to Claude Code's system prompt — it appends, it never replaces. Requires `prompt`/`prompt_file`; the path resolves against the declaring file, and a missing file fails the load |
+| `mcp_config` | **claude-code one-shots only.** Path to an MCP servers file, emitted as `--mcp-config <path> --strict-mcp-config`, so the run sees exactly the servers the persona names and nothing from your own configuration |
+| `allowed_tools` | **claude-code one-shots only.** List of tool permissions, each entry its own argv element after `--allowedTools` — `["Read", "Bash(git log:*)"]`. An entry that is blank or starts with `-` is a config error |
 | `quiet` | run headless (suppress the agent's interactive output). Defaults to `true` for a prompt one-shot; set `false` to stream output to whoever attaches |
 
 These agent fields are **config truth only** — they are never written into
@@ -87,7 +90,7 @@ is dropped, not emulated:
 | `harness` | Synthesized command | Ignored fields |
 |-----------|---------------------|----------------|
 | `crush` | `crush [--yolo] run [--quiet] [--model M] <prompt>` | `max_turns` (Crush has no turn cap) |
-| `claude-code` | `claude -p [--dangerously-skip-permissions] [--model M] [--max-turns N] --verbose --output-format stream-json <prompt>` | `quiet` (`-p` is already headless) |
+| `claude-code` | `claude -p [--dangerously-skip-permissions] [--model M] [--max-turns N] [--append-system-prompt-file F] [--mcp-config F --strict-mcp-config] [--allowedTools T…] --verbose --output-format stream-json <prompt>` | `quiet` (`-p` is already headless) |
 | `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
 | `generic` | none — a `prompt` or `prompt_file` on `generic` is a config error | — |
 
@@ -278,6 +281,16 @@ Rules:
   it, never overwrite it: a held harness stays `enabled = true`, and
   `harness stop` always stops the harness and clears `enabled`, whatever
   state it is in.
+- The gate only ever starts what it held. A harness with `enabled = false`,
+  or one you `harness stop`ped, stays down when the next window opens
+  (`harness doctor` warns about the first case).
+- Outside its hours a harness shows **`off-hours`**, never `stopped` or
+  `failed`, so a closed window never reads as a fault
+  ([CLI → Operating hours](./cli#operating-hours)).
+- `operating_hours` on a harness with `triggers` loads, but gating its
+  firings is **coming**
+  ([SPEC-0014](/specs/event-triggers/spec)); today a trigger fires it at any
+  hour.
 
 ### On a triggered harness: hours gate firings
 
@@ -324,10 +337,28 @@ when omitted), then one or more `;`-separated windows of
 | `Mon-Fri 09:00-12:00; Mon-Fri 13:00-17:00` | a lunch break |
 | `Sat,Sun 10:00-12:00` | a day list |
 | `Sun-Thu 22:00-02:00` | overnight — an end at or before its start runs into the next day |
+| `Fri-Mon 18:00-23:00` | a day range wraps the week: Fri, Sat, Sun and Mon |
+| `CRON_TZ=Europe/Berlin Mon-Fri 08:30-18:00` | pinned to a zone other than the daemon's |
 | `Mon-Sun 00:00-24:00` | always in hours (valid, and `harness doctor` warns that it gates nothing) |
 
-A blank value, an unknown day or zone, or a window whose start equals its end
-fails config load with an error naming the harness and the key.
+`24:00` is accepted only as an end, meaning the end of the day.
+
+### Validation errors
+
+A bad value fails config load with the file, line, harness and key, so
+`harness doctor` (or the daemon's reload) shows exactly what to fix:
+
+| Mistake | Error |
+| --- | --- |
+| `operating_hours = " "` | `"operating_hours" must not be blank` |
+| `Mon-Fry 09:00-17:00` | `window "Mon-Fry 09:00-17:00": unknown day "Fry" (want Mon, Tue, Wed, Thu, Fri, Sat, or Sun)` |
+| `9-5` | `window "9-5": start time "9": malformed (want "HH:MM")` |
+| `09:00-09:00` | `window "09:00-09:00": start and end must not be equal` |
+| `TZ=Mars/Olympus 09:00-17:00` | `unknown time zone "Mars/Olympus"` |
+| `operating_hours` with `schedule` | `"schedule" and "operating_hours" are mutually exclusive (a scheduled one-shot is already time-gated by its cron expression)` |
+| `hours_shutdown` without `operating_hours` | `"hours_shutdown" requires "operating_hours" (a shutdown mode with no hours to close does nothing)` |
+| `hours_shutdown = "later"` | `invalid "hours_shutdown" "later" (want "graceful" or "immediate")` |
+| `hours_shutdown_timeout = "0s"` | `invalid "hours_shutdown_timeout" "0s" (want a positive duration such as "15m")` |
 
 ### Closing: graceful by default
 

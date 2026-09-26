@@ -24,7 +24,7 @@ func TestHarnessFormRoundTrip(t *testing.T) {
 		Harness:      "crush",
 		Args:         []string{"--yolo", "--data-dir", "/tmp/x"},
 		Workdir:      "~/.local/share/reduit",
-		EnvFile:      "~/.config/vault/secrets.env",
+		EnvFile:      []string{"~/.config/vault/secrets.env"},
 		RestartDelay: 5,
 		Restart:      "on-failure",
 		Backend:      "native",
@@ -612,8 +612,8 @@ func TestEditPreservesOmittedFields(t *testing.T) {
 	if h.Workdir != "~/.local/share/reduit" {
 		t.Errorf("workdir wiped by edit: %q", h.Workdir)
 	}
-	if h.EnvFile != "~/.config/vault/secrets.env" {
-		t.Errorf("env_file wiped by edit: %q", h.EnvFile)
+	if !slices.Equal(h.EnvFiles, []string{"~/.config/vault/secrets.env"}) {
+		t.Errorf("env_file wiped by edit: %q", h.EnvFiles)
 	}
 	if h.RestartDelay.Seconds() != 5 {
 		t.Errorf("restart_delay wiped by edit: %v", h.RestartDelay)
@@ -937,7 +937,8 @@ func TestTOMLKeepsTmuxSocketOnNativeBackend(t *testing.T) {
 // is carried implicitly by the header the rewrite emits.
 var harnessFormFields = []string{
 	"Name", "Adapter", "Args", "Argv", "Prompt", "PromptFile", "Model", "AutoAccept",
-	"Quiet", "MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart",
+	"Quiet", "MaxTurns", "Workdir", "EnvFiles", "RestartDelay", "Restart",
+	"SystemPromptFile", "MCPConfig", "AllowedTools",
 	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule", "CatchUp",
 	"Timeout", "OnOverlap", "KeepRuns", "HarvestTrajectory", "MCPAllow",
 	"OperatingHours", "HoursShutdown", "HoursShutdownTimeout",
@@ -1339,5 +1340,99 @@ func TestShellQuoteJoinCannotCarryAnEmptyArg(t *testing.T) {
 	}
 	if want := []string{"--empty"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q — if the empty arg now survives, see the note above", got, want)
+	}
+}
+
+// TestEditPersonaKeysRoundTrip: an unchanged edit of a claude-code one-shot
+// keeps allowed_tools entries whole. "Bash(git log:*)" carries a space, and
+// a space-joined pre-fill split it into two broken tools on save (review of
+// #718).
+func TestEditPersonaKeysRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.toml")
+	for _, f := range []string{"system.md", "mcp.json"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	original := "[harness.reviewer]\nharness = \"claude-code\"\nprompt = \"review\"\n" +
+		"system_prompt_file = \"" + filepath.Join(dir, "system.md") + "\"\n" +
+		"mcp_config = \"" + filepath.Join(dir, "mcp.json") + "\"\n" +
+		"allowed_tools = [\"Read\", \"Bash(git log:*)\"]\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fi := editInputsFor(path, protocol.HarnessInfo{Name: "reviewer", Prompt: "review"})
+	form := fi.toForm()
+	if err := form.Validate(); err != nil {
+		t.Fatalf("unchanged edit failed validation: %v", err)
+	}
+	if want := []string{"Read", "Bash(git log:*)"}; !reflect.DeepEqual(form.AllowedTools, want) {
+		t.Fatalf("allowed_tools after edit = %q, want %q", form.AllowedTools, want)
+	}
+	body := AppendHarness([]byte(removeHarnessTOML(original, form.Name)), form)
+	cfg, err := config.Parse(body, path)
+	if err != nil {
+		t.Fatalf("edited config did not parse: %v\n%s", err, body)
+	}
+	before, err := config.Parse([]byte(original), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Harnesses["reviewer"], before.Harnesses["reviewer"]) {
+		t.Errorf("unchanged edit not lossless:\n got %+v\nwant %+v", cfg.Harnesses["reviewer"], before.Harnesses["reviewer"])
+	}
+}
+
+// SPEC-0018 REQ-12: the edit form round-trips an env_file LIST — both as
+// parsed config and as the rewritten table, which must carry the list form a
+// longer list needs. A one-element list keeps the historical string form.
+func TestHarnessFormRoundTripsEnvFileList(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.toml")
+	original := "[harness.reviewer]\nharness = \"claude-code\"\nprompt = \"review\"\nenv_file = [\"claude.env\", \"reviewer.env\"]\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sel := protocol.HarnessInfo{Name: "reviewer", Prompt: "review"}
+	fi := editInputsFor(path, sel)
+	if fi.envFile != "claude.env, reviewer.env" {
+		t.Fatalf("env_file list not pre-filled: %q", fi.envFile)
+	}
+
+	form := fi.toForm()
+	if err := form.Validate(); err != nil {
+		t.Fatalf("unchanged edit failed validation: %v", err)
+	}
+	body := []byte(removeHarnessTOML(original, form.Name))
+	body = AppendHarness(body, form)
+	if !strings.Contains(string(body), `env_file = ["claude.env", "reviewer.env"]`) {
+		t.Fatalf("rewritten table lost the list form:\n%s", body)
+	}
+
+	cfg, err := config.Parse(body, "harness.toml")
+	if err != nil {
+		t.Fatalf("edited config did not parse: %v\n%s", err, body)
+	}
+	want := []string{"claude.env", "reviewer.env"}
+	if !slices.Equal(cfg.Harnesses["reviewer"].EnvFiles, want) {
+		t.Errorf("EnvFiles = %q, want %q", cfg.Harnesses["reviewer"].EnvFiles, want)
+	}
+
+	// A one-element list round-trips as the historical string form.
+	before := "[harness.solo]\nharness = \"claude-code\"\nprompt = \"review\"\nenv_file = \"secrets.env\"\n"
+	sel2 := protocol.HarnessInfo{Name: "solo", Prompt: "review"}
+	fi2 := editInputsFor(path, sel2)
+	fi2.envFile = "secrets.env"
+	form2 := fi2.toForm()
+	form2.Name, form2.Harness, form2.Prompt = "solo", "claude-code", "review"
+	if err := form2.Validate(); err != nil {
+		t.Fatalf("single-path edit failed validation: %v", err)
+	}
+	body2 := []byte(removeHarnessTOML(before, form2.Name))
+	body2 = AppendHarness(body2, form2)
+	if !strings.Contains(string(body2), `env_file = "secrets.env"`) {
+		t.Errorf("one-element list did not stay a string:\n%s", body2)
 	}
 }

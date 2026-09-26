@@ -1,0 +1,7 @@
+description = "Breaks a goal into a trackable plan of small, verifiable steps"
+mode = "one-shot"
+client = "claude-code"
+queues = ["planning"]
+mcp_servers = ["switchboard"]
+allowed_tools = ["Read", "Grep", "Glob"]
+max_runs_per_day = 20

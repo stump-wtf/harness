@@ -90,6 +90,23 @@ func parseEnvFile(path string) ([]string, error) {
 	return out, nil
 }
 
+// parseEnvFiles reads each env file in order and concatenates the results.
+// exec.Cmd.Env's later-duplicate-wins rule does the merging, so a later
+// file's value wins a key collision exactly by position (SPEC-0018 REQ-12).
+// A missing file in the list is tolerated, as a missing string env_file is;
+// the first read error is surfaced.
+func parseEnvFiles(paths []string) ([]string, error) {
+	var out []string
+	for _, path := range paths {
+		kvs, err := parseEnvFile(path)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, kvs...)
+	}
+	return out, nil
+}
+
 // DiscoveryEnv returns the values h's process sees for keys — its env_file
 // layered over the daemon's own environment, the same composition buildEnv
 // gives the child — and nothing else. It exists so trajectory discovery can
@@ -106,7 +123,7 @@ func DiscoveryEnv(h core.Harness, keys []string) (map[string]string, error) {
 			out[k] = v
 		}
 	}
-	extra, err := parseEnvFile(h.EnvFile)
+	extra, err := parseEnvFiles(h.EnvFiles)
 	for _, kv := range extra {
 		k, v, _ := strings.Cut(kv, "=")
 		for _, want := range keys {
@@ -212,7 +229,7 @@ func (r RunEnv) vars() []string {
 // sane terminal defaults — a color-capable TERM and COLORTERM=truecolor —
 // for any key neither the daemon's environment nor the env_file already set.
 func buildEnv(h core.Harness, run RunEnv) ([]string, error) {
-	extra, err := parseEnvFile(h.EnvFile)
+	extra, err := parseEnvFiles(h.EnvFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -404,10 +421,13 @@ func execArgvWithRegistry(h core.Harness, workdir string, reg *adapter.Registry)
 	}
 	if h.Prompt != "" {
 		opts := core.AgentOpts{
-			Model:      h.Model,
-			AutoAccept: h.AutoAccept,
-			MaxTurns:   h.MaxTurns,
-			Quiet:      h.Quiet,
+			Model:            h.Model,
+			AutoAccept:       h.AutoAccept,
+			MaxTurns:         h.MaxTurns,
+			Quiet:            h.Quiet,
+			SystemPromptFile: h.SystemPromptFile,
+			MCPConfig:        h.MCPConfig,
+			AllowedTools:     h.AllowedTools,
 		}
 		cmd, args := reg.Resolve(h).PromptCommand(h.Prompt, opts)
 		if cmd == "" {

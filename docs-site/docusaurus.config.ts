@@ -54,11 +54,35 @@ const config: Config = {
 
   themes: ['@docusaurus/theme-mermaid'],
 
+  // Retries a failed lazy chunk (the Mermaid bundle is the big one) before
+  // giving up, then offers a reload instead of leaving a half-broken page.
+  clientModules: ['./src/clientModules/chunkLoadRetry.ts'],
+
   plugins: [
     ['./plugins/sdd-content', {
       adrsDir: '../docs/adrs',
       specsDir: '../docs/openspec/specs',
       outputDir: '../docs-generated',
+    }],
+    // build/llms.txt and build/llms-full.txt for agents. Always the public
+    // GitHub Pages URL, never SITE_URL: the Gitea Pages twin of this build is
+    // LAN-only, and the plugin fails the build on a private host.
+    ['./plugins/llms-txt', {
+      publicUrl: 'https://stump-wtf.github.io/harness/',
+      summary:
+        'Harness is systemctl for your agents: a daemon that supervises agent CLIs ' +
+        '(Claude Code, Crush, Codex) and other long-running processes, restarts them, ' +
+        'runs them on a schedule or on an event, and lets you attach to any of them. ' +
+        'It is the supervision layer of a three-tool stack with Switchboard (dispatch) ' +
+        'and Cairn (evidence).',
+      startHere: [
+        'guides/harness-switchboard-cairn',
+        'guides/onboarding',
+        'guides/glossary',
+        'guides/install',
+        'guides/first-agent',
+        'guides/push-events',
+      ],
     }],
   ],
 
@@ -106,6 +130,12 @@ const config: Config = {
         },
         {
           type: 'docSidebar',
+          sidebarId: 'patternsSidebar',
+          position: 'left',
+          label: 'Patterns',
+        },
+        {
+          type: 'docSidebar',
           sidebarId: 'decisionsSidebar',
           position: 'left',
           label: 'ADRs',
@@ -138,6 +168,10 @@ const config: Config = {
               to: '/usage',
             },
             {
+              label: 'Patterns',
+              to: '/patterns',
+            },
+            {
               label: 'Architecture Decisions',
               to: '/decisions',
             },
@@ -167,10 +201,31 @@ const config: Config = {
       ],
       copyright: `Copyright ${new Date().getFullYear()}. Built with Docusaurus.`,
     },
+    // Mermaid picks a base theme per color mode; the site colors come from
+    // src/css/custom.css ("Mermaid diagrams"), which reads the same tokens as
+    // the rest of the site and so flips with data-theme on its own. Role
+    // colors are CSS classes (`A["x"]:::daemon`), never classDef — see
+    // docs-site/DIAGRAMS.md.
+    mermaid: {
+      theme: {light: 'neutral', dark: 'dark'},
+      options: {
+        // Layout measures labels in this face, so it must match the CSS,
+        // or a label is sized for one font and drawn in another and clips.
+        fontFamily: "'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
+        fontSize: 14,
+        flowchart: {curve: 'basis', padding: 12, htmlLabels: true},
+        sequence: {mirrorActors: false, showSequenceNumbers: false, messageAlign: 'center'},
+      },
+    },
     prism: {
       theme: prismThemes.github,
       darkTheme: prismThemes.dracula,
-      additionalLanguages: ['go', 'bash'],
+      // Grammars prism-react-renderer does not bundle, for every fence
+      // language docs/ uses. `sh` is an alias the bash grammar registers.
+      // `go` and `json` ship in the default bundle and are listed anyway so
+      // this list alone says what the docs rely on. `logql` has no Prism
+      // grammar and renders as plain text.
+      additionalLanguages: ['go', 'bash', 'toml', 'ini', 'json', 'diff', 'promql'],
     },
   } satisfies Preset.ThemeConfig,
 };

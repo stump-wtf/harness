@@ -131,6 +131,7 @@ func newRootCmd() *cobra.Command {
 		newRunsCmd(g),
 		newAttachCmd(g),
 		newDoctorCmd(g),
+		newInitCmd(g),
 		newDaemonCmd(g),
 	)
 

@@ -519,7 +519,10 @@ func harnessDefEqual(a, b core.Harness) bool {
 		a.MaxTurns == b.MaxTurns &&
 		a.Quiet == b.Quiet &&
 		a.Workdir == b.Workdir &&
-		a.EnvFile == b.EnvFile &&
+		slices.Equal(a.EnvFiles, b.EnvFiles) &&
+		a.SystemPromptFile == b.SystemPromptFile &&
+		a.MCPConfig == b.MCPConfig &&
+		slices.Equal(a.AllowedTools, b.AllowedTools) &&
 		a.RestartDelay == b.RestartDelay &&
 		a.Restart == b.Restart &&
 		a.Backend == b.Backend &&

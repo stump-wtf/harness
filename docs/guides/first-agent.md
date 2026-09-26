@@ -5,6 +5,19 @@ sidebar_position: 3
 
 # Your first supervised agent
 
+:::tip Paste this to your agent
+
+```text
+Read https://stump-wtf.github.io/harness/llms.txt and
+https://stump-wtf.github.io/harness/guides/first-agent. Put my agent CLI under
+Harness supervision as that page describes, using the Claude Code
+authentication mode that fits this machine. Then prove it: `harness list`
+shows it running, and `harness attach NAME --ro` shows the agent itself, not a
+login or trust prompt.
+```
+
+:::
+
 A **harness** is one supervised process. The daemon starts it in its own
 pseudo-terminal, keeps its scrollback, restarts it according to a policy you
 choose, and lets any client attach to it as if you had launched it in that
@@ -63,30 +76,80 @@ ignored.
 Run each agent once by hand, in the same `workdir` and as the same user, and
 get it fully logged in:
 
-- **Claude Code:** `claude` opens a login flow and a "trust this folder"
-  prompt. Harness can't click through either for you.
-
-  **On macOS you are then done — no `env_file`, no API key.** Claude Code
-  keeps the session it just created in your login Keychain (as the
-  generic-password item `Claude Code-credentials`), not in a file, and a
-  harness inherits it because the daemon spawns the agent as the same user.
-  Copying `ANTHROPIC_API_KEY` into an `env_file` here would move a credential
-  *out* of the Keychain and onto disk in plaintext, which is strictly worse.
-
-  The one condition is that the daemon runs in your GUI login session. The
-  LaunchAgent in [Run the daemon as a service](/guides/run-as-a-service) does
-  (`launchctl bootstrap gui/$(id -u)`), so the normal setup is fine. A
-  *system* LaunchDaemon, a different user, or an SSH session with no login
-  keychain unlocked cannot reach it — use `ANTHROPIC_API_KEY` in the
-  `env_file` there.
-
-  On Linux and on headless boxes there is no Keychain: log in interactively,
-  or put `ANTHROPIC_API_KEY` in the harness's `env_file`.
+- **Claude Code:** `claude` opens a "trust this folder" prompt, and a login
+  flow unless it already has a credential. Harness can't click through either
+  for you. Which credential a supervised Claude Code should use depends on
+  where the daemon runs; see
+  [Claude Code authentication](#claude-code-authentication) below.
 - **Crush:** configure a provider in `crush.json` or its environment, and put
   the API key in the `env_file`.
 
 If you skip this, the harness starts green and sits at a login prompt nobody
 sees. You can always `harness attach` and finish the prompt there.
+
+### Claude Code authentication
+
+Claude Code can authenticate a supervised session three ways. Pick by where the
+daemon runs:
+
+| Mode | Use it when | What goes in the `env_file` | Bills |
+|------|-------------|-----------------------------|-------|
+| **Keychain** | macOS, with the daemon in your GUI login session | nothing | your Claude subscription |
+| **Subscription token** | Linux, headless boxes, containers, SSH-only hosts, a system LaunchDaemon | `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` | your Claude subscription |
+| **API key** | you have only a Claude Console key, or want per-token API billing | `ANTHROPIC_API_KEY` | **the API**, not your subscription |
+
+**Keychain (the macOS default).** Log in once with `claude`, as the same user
+the daemon runs as, and you are done: no `env_file`, no key. Claude Code keeps
+the login in your login Keychain (the generic-password item
+`Claude Code-credentials`), not in a file, and a harness inherits it because the
+daemon spawns the agent as the same user. Copying a key into an `env_file` here
+would move a credential *out* of the Keychain and onto disk, which is strictly
+worse.
+
+The one condition is that the daemon runs in your GUI login session. The
+LaunchAgent in [Run the daemon as a service](/guides/run-as-a-service) does
+(`launchctl bootstrap gui/$(id -u)`), so the normal setup is fine. A *system*
+LaunchDaemon, a different user, or an SSH session with no unlocked login
+keychain cannot reach it: use a subscription token there.
+
+**Subscription token (the headless and Linux default).** On any machine with a
+browser, run once:
+
+```sh
+claude setup-token
+```
+
+It opens the same browser sign-in as `/login` and prints a one-year OAuth token.
+It needs a Pro, Max, Team or Enterprise plan, and it saves the token nowhere, so
+copy it straight into the harness's `env_file` and lock the file down:
+
+```sh
+# ~/.config/harness/env/claude-main.env   (chmod 600)
+CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+```
+
+```sh
+chmod 600 ~/.config/harness/env/claude-main.env
+harness restart claude-main      # env files are read at start
+```
+
+The token can only make model requests, so a session using it cannot open
+Claude Code's Remote Control or fetch claude.ai connectors; MCP servers you
+configure locally still work. Renew it before the year is out.
+
+**API key.** `ANTHROPIC_API_KEY=sk-ant-api...` in the `env_file` works anywhere,
+but it **bills your API account per token, not your subscription**. Claude Code
+ranks it *above* `CLAUDE_CODE_OAUTH_TOKEN` and your login, and a one-shot
+(`claude -p`) uses it without asking whenever it is set. So an
+`ANTHROPIC_API_KEY` left in the daemon's environment moves every scheduled run
+onto API billing. See
+[the harness bills my API account](./troubleshooting#the-harness-bills-my-api-account-or-starts-at-a-login-prompt).
+
+Never put any of these in `harness.toml`, which you may keep in version control:
+credentials belong in the `env_file`, mode `0600`
+([ADR-0008](/decisions/adr-0008-security-and-secrets)). Check which credential a
+session is using with `claude auth status`, run as the daemon's user, or
+`/status` inside an attached session.
 
 ## The verbs
 
@@ -206,15 +269,60 @@ For a metered agent — anything that bills per token or draws on a plan's quota
   fails, and starts again. `restart_delay = 30` or more caps that at about two
   attempts a minute even before crash-loop backoff kicks in.
 
-:::caution Watch for harnesses that never settle
+:::note A harness that never settles ends up `failed`
 
-The supervisor is designed to give up and park a harness in `failed` after
-repeated consecutive failures. Current builds do not apply that limit, so a
-harness that fails every time keeps retrying at its backoff interval
-indefinitely. Check `harness doctor` for `degraded` harnesses, and `harness stop`
-anything that is looping.
+A failing harness does not retry forever. Every non-zero exit from a run that
+lasted less than **5 minutes** counts as a consecutive failure; a clean exit, or
+a run that lasts 5 minutes, resets the count. After **more than 5** consecutive
+failures the daemon gives up and parks the harness in **`failed`**
+(`✖ failed` in `harness list`), however long its `restart_delay` is, so a slow
+failure loop stops too, not just a fast one.
+
+A `failed` harness stays down until you fix the cause and run:
+
+```sh
+harness restart NAME
+```
+
+`harness doctor` reports it as an error with that same hint, and
+`harness describe NAME` shows its last exit code and whether it was flapping.
+The latch lives in the running daemon: a daemon restart starts an `enabled`
+harness again, and a harness that is still broken works its way back to
+`failed`. To keep it down across restarts, `harness stop NAME`.
 
 :::
+
+## Run it only during working hours
+
+An always-on agent draws on your plan's usage around the clock, including the
+hours nobody is looking at what it does. `operating_hours` gives a resident
+harness weekly windows it may run in. Outside them the daemon holds it down, and
+it starts again when the next window opens:
+
+```toml
+[harness.claude-main]
+harness = "claude-code"
+workdir = "~/src/my-project"
+restart = "on-failure"
+restart_delay = 30
+enabled = true
+operating_hours = "TZ=America/New_York Mon-Fri 09:00-18:00"
+```
+
+- Closing is **graceful** by default: the agent finishes its current turn first,
+  for up to 15 minutes (`hours_shutdown_timeout`). Set
+  `hours_shutdown = "immediate"` to stop it at the close instead.
+- Outside hours, `harness list` shows it as `off-hours`, not `stopped`, and its
+  NEXT column says when it opens.
+- Hours never touch `enabled`. `harness stop` still stops it for good, and the
+  next window does not undo that.
+- Working late? `harness start claude-main` out of hours runs it under a
+  one-hour lease; `harness start claude-main --for 3h` asks for longer.
+
+Hours go in the global `harness.toml` only, and cannot be combined with
+`schedule`: a scheduled sweep is already on a clock. The grammar, every rule and
+the error messages are in
+[Configuration → Operating hours](/usage/configuration#operating-hours).
 
 ## Changing a running harness
 

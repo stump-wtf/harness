@@ -236,6 +236,17 @@ func filterProjectHarnesses(hs []protocol.HarnessInfo, project string) []protoco
 	return out
 }
 
+// singleEnvFile renders a one-element env_file list into the wire's
+// single-path field, so a daemon older than the list form still receives the
+// file. A longer list has no single-path spelling — the daemon must
+// understand env_files to honor it.
+func singleEnvFile(files []string) string {
+	if len(files) == 1 {
+		return files[0]
+	}
+	return ""
+}
+
 // wireHarnesses converts the parsed project definitions (in file order) into
 // the protocol's project_up payload. Enabled is carried through faithfully:
 // the wire default is false and the daemon only autostarts enabled harnesses,
@@ -248,16 +259,24 @@ func wireHarnesses(proj *config.Project) []protocol.ProjectHarness {
 	for _, name := range proj.Config.HarnessOrder {
 		h := proj.Config.Harnesses[name]
 		out = append(out, protocol.ProjectHarness{
-			Name:           name,
-			Harness:        h.Adapter,
-			Args:           h.Args,
-			Argv:           h.Argv,
-			Prompt:         h.Prompt,
-			PromptFile:     h.PromptFile,
-			Model:          h.Model,
-			AutoAccept:     h.AutoAccept,
-			Workdir:        h.Workdir,
-			EnvFile:        h.EnvFile,
+			Name:       name,
+			Harness:    h.Adapter,
+			Args:       h.Args,
+			Argv:       h.Argv,
+			Prompt:     h.Prompt,
+			PromptFile: h.PromptFile,
+			Model:      h.Model,
+			AutoAccept: h.AutoAccept,
+			// SPEC-0018 REQ-11: the claude-code one-shot persona keys.
+			SystemPromptFile: h.SystemPromptFile,
+			MCPConfig:        h.MCPConfig,
+			AllowedTools:     h.AllowedTools,
+			Workdir:          h.Workdir,
+			// Both forms go on the wire: the list is authoritative, and a
+			// one-element list is echoed into the single-path field so an
+			// older daemon (which ignores env_files) still gets the file.
+			EnvFile:        singleEnvFile(h.EnvFiles),
+			EnvFiles:       h.EnvFiles,
 			RestartDelayMs: h.RestartDelay.Milliseconds(),
 			Restart:        string(h.Restart),
 			Backend:        string(h.Backend),

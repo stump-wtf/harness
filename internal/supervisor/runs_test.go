@@ -603,7 +603,7 @@ func TestRunHistoryCarriesNoSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := sweep("sweep", `test "$HARNESS_TEST_SECRET" = "`+secret+`"`)
-	h.EnvFile = envFile
+	h.EnvFiles = []string{envFile}
 	m, closeM := e.manager(t, sweepCfg(h), fastPolicy())
 
 	m.StartRun("sweep", RunRequest{Trigger: TriggerSchedule})

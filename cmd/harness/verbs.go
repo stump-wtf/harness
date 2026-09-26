@@ -164,6 +164,16 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	if h.AutoAccept {
 		t.Row("auto_accept", t.faintPlain("true"))
 	}
+	// SPEC-0018 REQ-11: the claude-code one-shot persona keys, shown when set.
+	if h.SystemPromptFile != "" {
+		t.Row("system_prompt_file", t.faintPlain(h.SystemPromptFile))
+	}
+	if h.MCPConfig != "" {
+		t.Row("mcp_config", t.faintPlain(h.MCPConfig))
+	}
+	if len(h.AllowedTools) > 0 {
+		t.Row("allowed_tools", t.faintPlain(strings.Join(h.AllowedTools, ", ")))
+	}
 	t.Row("backend", t.faintPlain(h.Backend))
 	switch {
 	case h.Schedule != "":
