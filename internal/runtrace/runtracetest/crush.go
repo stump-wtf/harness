@@ -11,6 +11,8 @@
 //
 // @joestump-agent 09/23/2026 - ToolCall writes the step's finish part, the
 // shape real crush writes and agent-trace v0.4.0 waits for.
+//
+// @joestump-agent 09/26/2026 - TurnEnd, for agent-trace v0.6.0's turn-end mark.
 package runtracetest
 
 import (
@@ -27,7 +29,7 @@ import (
 )
 
 // CrushMessage is one message row. Parts is the JSON array crush stores; build
-// it with ToolCall, ToolResult or FinishError.
+// it with ToolCall, ToolResult, FinishError or TurnEnd.
 type CrushMessage struct {
 	Role  string
 	At    time.Time
@@ -197,6 +199,16 @@ func FinishError(message, details string) string {
 	return mustParts(map[string]any{"type": "finish", "data": map[string]any{
 		"reason": "error", "message": message, "details": details,
 	}})
+}
+
+// TurnEnd is an assistant row that answers in text and ends the turn: a text
+// part and a finish part with reason end_turn, dated at. From agent-trace
+// v0.6.0 it yields a turn-end mark.
+func TurnEnd(text string, at time.Time) string {
+	return mustParts(
+		map[string]any{"type": "text", "data": map[string]any{"text": text}},
+		map[string]any{"type": "finish", "data": map[string]any{"reason": "end_turn", "time": at.Unix()}},
+	)
 }
 
 func mustParts(parts ...map[string]any) string {
