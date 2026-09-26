@@ -103,6 +103,9 @@ increase(harness_restarts_total[1h]) > 10
 # The error classifier no longer recognises a provider's errors (the wording probably changed).
 increase(harness_model_call_errors_unclassified_total[1h]) > 0
 
+# The [notify] hook stopped reaching anyone: it errors, times out, or its queue overflows.
+increase(harness_notify_deliveries_total{result=~"error|timeout|dropped"}[1h]) > 0
+
 # The daemon's own collection is broken or losing events.
 increase(harness_metrics_collection_errors_total[15m]) > 0
 
@@ -128,6 +131,7 @@ up{job="harness"} == 0
 | `harness_scheduled_next_run_timestamp{harness}` | gauge | Scheduled harnesses only. Absent when there is no next window. |
 | `harness_metrics_collection_errors_total{collector}` | counter | `supervisor`, `schedule`, `observer`, `lifecycle`. `observer` and `lifecycle` also count events the collector lost because it fell behind, so the matching counters read low. |
 | `harness_metrics_harnesses_overflowed` | gauge | How many harnesses were folded into `__other__`. |
+| `harness_notify_deliveries_total{event,result}` | counter | Runs of the [`[notify]` hook](./notify): `ok`, `error`, `timeout`, and notifications that never ran it, `dropped` (queue full) and `suppressed` (inside the cooldown). |
 | `harness_observer_*` | mixed | Health of the transcript reader: delivered and dropped events, ambiguous and unattributed items, parse errors, scan errors, sessions tracked. |
 | `go_*`, `process_*` | | The daemon's own runtime. |
 

@@ -611,6 +611,9 @@ type Config struct {
 	Telemetry TelemetryConfig
 	// MergeTrain is the optional global [mergetrain] table (SPEC-0025 REQ-1).
 	MergeTrain MergeTrainConfig
+	// Notify is the optional global [notify] table (SPEC-0003 REQ "Operator
+	// Notification"); the zero value is off.
+	Notify NotifyConfig
 	// Channels is every [channel.*] trigger source keyed by name, nil when
 	// none are declared. Governing: ADR-0021; SPEC-0014 REQ "Channel Source
 	// Table".

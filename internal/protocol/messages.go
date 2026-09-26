@@ -96,7 +96,13 @@ const (
 	// has no single-path spelling, so the client refuses to send one to a
 	// daemon older than 14 rather than start the harness with no env file
 	// (see client.ProjectUp).
-	ProtoMinor = 14
+	// ProtoMinor 15 added operator notification (SPEC-0003 REQ "Operator
+	// Notification", #725): Notify on DaemonInfo and the notify_test op —
+	// additive only. A daemon older than 15 omits Notify, which a client
+	// reports as "unknown" rather than "off", and would answer notify_test
+	// with unknown_op, so the client refuses to send it (see
+	// client.SupportsNotify).
+	ProtoMinor = 15
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -170,6 +176,11 @@ const (
 	OpJobs    Op = "jobs"
 	OpTrigger Op = "trigger"
 	OpRuns    Op = "runs"
+
+	// OpNotifyTest runs the daemon's [notify] hook once with a `test` event
+	// and answers with the NotifyDelivery. Governing: SPEC-0003 REQ
+	// "Operator Notification".
+	OpNotifyTest Op = "notify_test"
 )
 
 // ControlReq is a control-plane request. ID correlates the response; Name
@@ -714,6 +725,32 @@ type DaemonInfo struct {
 	// allowlist, ADR-0008).
 	SshAddr string `json:"ssh_addr,omitempty"`
 	SshKeys int    `json:"ssh_keys,omitempty"`
+	// Notify is the [notify] hook the daemon is running with, nil when none
+	// is configured (ProtoMinor 15). Governing: SPEC-0003 REQ "Operator
+	// Notification".
+	Notify *NotifyInfo `json:"notify,omitempty"`
+}
+
+// NotifyInfo describes the daemon's notify hook. Only argv[0] is reported:
+// the rest of the argv is the operator's and may carry anything.
+type NotifyInfo struct {
+	Command  string          `json:"command"`
+	Events   []string        `json:"events"`
+	Timeout  string          `json:"timeout"`
+	Cooldown string          `json:"cooldown"`
+	Last     *NotifyDelivery `json:"last,omitempty"`
+}
+
+// NotifyDelivery is one run of the notify hook: the last one in NotifyInfo,
+// or the answer to notify_test. Result is ok, error or timeout.
+type NotifyDelivery struct {
+	Event   string `json:"event"`
+	Harness string `json:"harness,omitempty"`
+	Result  string `json:"result"`
+	Error   string `json:"error,omitempty"`
+	// At is when the event happened, RFC 3339.
+	At         string `json:"at"`
+	DurationMs int64  `json:"duration_ms"`
 }
 
 // ---- Structured errors (SPEC-0002 REQ "Control Operations") --------------

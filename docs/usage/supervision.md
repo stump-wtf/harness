@@ -140,6 +140,11 @@ Two launchd specifics worth knowing:
   with other work between — `make test` after each edit, one queue poll per
   prompt — never counts; nor does calling the same tool with different
   arguments. A loop that alternates between two calls is not caught.
+- **Someone hears about it**: with a [`[notify]` hook](./notify) configured,
+  the daemon runs your program when a harness gives up into `failed`, starts
+  crash-looping, is stopped by the loop guard, or has its session rotated —
+  and again when it recovers. Without one, all of the above reaches only the
+  logs.
 - **State persistence (ADR-0007)**: the daemon persists intent to `state.json`,
   restores it on boot, and re-attaches to intended running set regardless of how
   it restarted.

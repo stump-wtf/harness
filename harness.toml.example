@@ -29,6 +29,20 @@
 # env_file = "/etc/harness/otel.env" # OTEL_EXPORTER_OTLP_* incl. headers
 # export_all = false
 
+# Optional notify hook (SPEC-0003 REQ "Operator Notification"). The daemon
+# runs this program — exec'd without a shell, so argv[0] must be absolute —
+# when a harness gives up into `failed`, starts crash-looping, is stopped by
+# the runaway tool-loop guard, or has its session rotated, and again when it
+# recovers. It gets HARNESS_NOTIFY_EVENT/_HARNESS/_HOST/_STATE/_MESSAGE in
+# its environment and the same facts as JSON on stdin. Test it with
+# `harness doctor --notify-test`. See docs/usage/notify.md.
+#
+# [notify]
+# command  = ["/home/me/.config/harness/notify.sh"]
+# events   = ["failed", "flapping", "loop_stopped", "session_rotated", "recovered"]  # add "run_failed" to hear about failed scheduled runs
+# timeout  = "15s"
+# cooldown = "15m"   # per (harness, event); "0s" alerts on every occurrence
+
 # Each harness is one supervised process. The new-style [harness.<name>]
 # form is preferred; a bare [name] table is supported for backward
 # compatibility (ADR-0006).

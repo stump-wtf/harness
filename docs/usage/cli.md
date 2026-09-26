@@ -183,7 +183,8 @@ is active at a time; `harness list` flags it with `*`. See
 
 ```sh
 harness reload                # re-read config, reconcile running harnesses
-harness doctor                # health check battery (config, daemon, versions, remote SSH, harnesses)
+harness doctor                # health check battery (config, daemon, versions, remote SSH, notify, harnesses)
+harness doctor --notify-test  # also have the daemon run the [notify] hook once with a test event
 ```
 
 `reload` picks up config changes without restarting the daemon. `describe`

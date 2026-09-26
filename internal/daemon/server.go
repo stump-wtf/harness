@@ -48,6 +48,7 @@ type Server struct {
 	mgr        *supervisor.Manager
 	reg        *attach.Registry
 	sched      *scheduler.Scheduler
+	notifier   Notifier
 	socketPath string
 	configPath string
 	version    string
@@ -119,6 +120,11 @@ type Options struct {
 	// the socket path still names this server's listener (socket.go). Zero —
 	// the production case — means defaultSocketWatchInterval.
 	SocketWatchInterval time.Duration
+
+	// Notifier is the [notify] hook's dispatcher, for daemon_info and
+	// notify_test (SPEC-0003 REQ "Operator Notification"). Optional: nil
+	// reports notify as off.
+	Notifier Notifier
 }
 
 // NewServer builds a Server. It does not listen until Listen is called.
@@ -139,6 +145,7 @@ func NewServer(opts Options) *Server {
 		mgr:             opts.Manager,
 		reg:             opts.Registry,
 		sched:           opts.Scheduler,
+		notifier:        opts.Notifier,
 		socketPath:      opts.SocketPath,
 		configPath:      opts.ConfigPath,
 		version:         opts.Version,

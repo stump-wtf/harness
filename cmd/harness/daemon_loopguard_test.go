@@ -69,7 +69,7 @@ func TestDaemonLoopGuardStopsTheRealHarness(t *testing.T) {
 	obsOpts.PollInterval = 10 * time.Millisecond
 	obs := startDaemonObserver(mgr, obsOpts)
 	t.Cleanup(obs.Stop)
-	guard := startDaemonLoopGuard(mgr, obs, loopguard.Options{})
+	guard := startDaemonLoopGuard(mgr, obs, nil, loopguard.Options{})
 	t.Cleanup(guard.Close)
 
 	incident := map[string]any{"method": "add_comment", "owner": "stump.wtf", "repo": "harness", "index": 383, "body": "."}

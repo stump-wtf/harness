@@ -291,7 +291,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 		line    int
 	}
 	var pending []pendingProfile
-	var serverSeen, daemonSeen, telemetrySeen, mergeTrainSeen bool
+	var serverSeen, daemonSeen, telemetrySeen, mergeTrainSeen, notifySeen bool
 	var harnessDPath string
 
 	// Sources and the harnesses that bind them form one config view across
@@ -385,6 +385,22 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 				return nil, err
 			}
 			cfg.MergeTrain = mc
+
+		case len(h.parts) == 1 && h.parts[0] == "notify":
+			// The global notify hook (SPEC-0003 REQ "Operator Notification").
+			if notifySeen {
+				return nil, newError(filename, h.line, "duplicate [notify] table")
+			}
+			notifySeen = true
+			var rn rawNotify
+			if err := md.PrimitiveDecode(top["notify"], &rn); err != nil {
+				return nil, newError(filename, h.line, "[notify]: %v", err)
+			}
+			nc, err := buildNotify(filename, data, h.line, rn)
+			if err != nil {
+				return nil, err
+			}
+			cfg.Notify = nc
 
 		case len(h.parts) == 1 && h.parts[0] == "server":
 			// The optional remote-access front door (ADR-0004/0008).

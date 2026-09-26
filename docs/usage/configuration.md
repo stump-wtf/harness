@@ -730,6 +730,31 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN" # the variable's NAME, required whe
 - **Restart to apply.** A change to `[mergetrain]` takes effect at the next
   daemon restart.
 
+## Notifications (`[notify]`)
+
+One program the daemon runs when a harness needs a person: it gave up into
+`failed`, is crash-looping, was stopped by the loop guard, or had its session
+rotated. See [Notifications](./notify) for the events, the payload and a
+minimal hook.
+
+```toml
+[notify]
+command  = ["/home/me/.config/harness/notify.sh"]  # required; argv[0] absolute, no shell
+events   = ["failed", "flapping", "loop_stopped", "session_rotated", "recovered"]  # default
+timeout  = "15s"                                    # default 15s, 1s–5m
+cooldown = "15m"                                    # default 15m, 0s–24h; per harness and event
+```
+
+- **Validated at load.** A relative `command[0]`, an unknown event, an empty
+  `events` list or an out-of-range duration refuses the config with the
+  offending key's line. `run_failed` is the one event left out of the default
+  set.
+- **Global only.** A project `harness.toml` or a `harness_d` drop-in that
+  contains `[notify]` is refused: a cloned repository does not get to choose a
+  program the daemon runs.
+- **Reload applies it.** Adding, changing or removing the table takes effect at
+  the next `harness reload` (or config-watch reload), no restart needed.
+
 ## Restart policy
 
 The `restart` key mirrors Docker Compose's directive and controls whether a

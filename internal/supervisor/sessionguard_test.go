@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -267,6 +268,9 @@ func TestSessionGuardRotatesSharedStoreOnce(t *testing.T) {
 		mk("crush-qwen-2", "--yolo", "--data-dir="+dataDir),
 	)
 	m, g := startGuarded(t, cfg)
+	var mu sync.Mutex
+	var rots []SessionRotation
+	g.OnRotate(func(r SessionRotation) { mu.Lock(); rots = append(rots, r); mu.Unlock() })
 	before := map[string]time.Time{}
 	for _, n := range cfg.HarnessOrder {
 		s, _ := m.Snapshot(n)
@@ -287,5 +291,31 @@ func TestSessionGuardRotatesSharedStoreOnce(t *testing.T) {
 	}
 	if got := archivesOf(t, wedged); len(got) != 1 {
 		t.Fatalf("shared store archived %d times, want once: %v", len(got), got)
+	}
+	// OnRotate fires once per harness on the shared store, not once for the
+	// store: the notify hook reports harnesses, and a two-worker pool on one
+	// --data-dir must produce two rotations naming the same archive.
+	waitFor(t, 3*time.Second, "OnRotate fired for both harnesses", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(rots) >= 2
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	seen := map[string]bool{}
+	for _, r := range rots {
+		if r.Failed != "" {
+			t.Fatalf("rotation of %s reported failure %q", r.Harness, r.Failed)
+		}
+		if r.Archive == "" {
+			t.Fatalf("rotation of %s carries no archive", r.Harness)
+		}
+		seen[r.Harness] = true
+	}
+	if len(seen) != 2 || !seen["crush-qwen"] || !seen["crush-qwen-2"] {
+		t.Fatalf("OnRotate saw %v, want one rotation each for both harnesses on the shared store", seen)
+	}
+	if len(rots) != 2 {
+		t.Fatalf("OnRotate fired %d times, want exactly once per harness: %+v", len(rots), rots)
 	}
 }

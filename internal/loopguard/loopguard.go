@@ -83,6 +83,13 @@ type Options struct {
 	Threshold int
 	// Logger receives the ERROR line (default log.Default()).
 	Logger *log.Logger
+	// OnTrip, when set, is called once per stop after it is issued and
+	// logged — the daemon's notify hook (SPEC-0003 REQ "Operator
+	// Notification", issue #725). A guard stop clears the harness's enabled
+	// intent, so without it the harness stays down with nothing but a log
+	// line to say so. It runs on the guard's consuming goroutine and must
+	// not block.
+	OnTrip func(Trip)
 }
 
 // Trip is one stop the guard issued.
@@ -105,6 +112,7 @@ type Guard struct {
 	stop      Stopper
 	threshold int
 	log       *log.Logger
+	onTrip    func(Trip)
 
 	// streaks is touched only by the consuming goroutine (or a test driving
 	// handle directly).
@@ -129,6 +137,7 @@ func New(stop Stopper, opts Options) *Guard {
 		stop:      stop,
 		threshold: opts.Threshold,
 		log:       opts.Logger,
+		onTrip:    opts.OnTrip,
 		streaks:   make(map[string]*streak),
 	}
 }
@@ -242,6 +251,9 @@ func (g *Guard) fire(t Trip, ev observe.Event) {
 	}
 	g.log.Error("runaway tool loop: stopping harness", kv...)
 	g.stop.LogLifecycle(t.Harness, "runaway tool loop: stopped by the daemon", kv[2:]...)
+	if g.onTrip != nil {
+		g.onTrip(t)
+	}
 }
 
 // shortDigest is enough of a digest to match log lines against each other.
