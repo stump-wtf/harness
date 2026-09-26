@@ -82,6 +82,11 @@ type SessionGuard struct {
 	mu    sync.Mutex
 	flags map[string]sessionFlag
 
+	// onRotate, when set, is told about each completed rotation — the
+	// daemon's notify hook (SPEC-0003 REQ "Operator Notification", issue
+	// #725). Set before Start.
+	onRotate func(SessionRotation)
+
 	stop chan struct{}
 	done chan struct{}
 }
@@ -105,6 +110,24 @@ func NewSessionGuard(mgr *Manager, interval, lookback time.Duration) *SessionGua
 		done:     make(chan struct{}),
 	}
 }
+
+// SessionRotation describes one completed rotation, for OnRotate.
+type SessionRotation struct {
+	Harness   string
+	Turns     int    // assistant turns inside the lookback window
+	Errors    int    // of those, context-limit failures
+	Archive   string // where the wedged store was moved
+	Rotations int    // rotations of this harness this daemon lifetime
+	// Failed is set when the rotation stopped the harness but could not
+	// finish, leaving it down: the case that most needs a human.
+	Failed string
+}
+
+// OnRotate registers fn to be called, on the guard's goroutine, after each
+// rotation: one that restarted the harness on a fresh session, or one that
+// stopped it and could not finish (Failed set). Call before Start; fn must not
+// block.
+func (g *SessionGuard) OnRotate(fn func(SessionRotation)) { g.onRotate = fn }
 
 // Start launches the sampling loop.
 func (g *SessionGuard) Start() {
@@ -254,22 +277,44 @@ func (g *SessionGuard) rotate(db string, names []string, status sessionguard.Gua
 			for _, stopped := range names[:i] {
 				g.mgr.Start(stopped)
 			}
+			for _, name := range names {
+				rot := SessionRotation{Harness: name, Turns: status.Turns, Errors: status.Errors,
+					Failed: "could not stop the harness for rotation, so the store was left untouched"}
+				g.notifyRotation(rot)
+			}
 			return
 		}
 	}
 	archived, err := sessionguard.Archive(db, time.Now())
 	if err != nil {
 		g.log.Error("could not archive session store; NOT restarting onto the same wedged session", "harnesses", names, "err", err)
+		for _, name := range names {
+			rot := SessionRotation{Harness: name, Turns: status.Turns, Errors: status.Errors,
+				Failed: "could not archive the session store, so the harness was left stopped"}
+			g.notifyRotation(rot)
+		}
 		return
 	}
 	g.log.Info("session store archived", "harnesses", names, "archive", archived)
 
 	for _, name := range names {
+		rot := SessionRotation{Harness: name, Turns: status.Turns, Errors: status.Errors, Archive: archived}
 		if !g.mgr.Start(name) {
 			g.log.Error("could not restart harness after rotation", "harness", name)
+			rot.Failed = "could not restart the harness after archiving its store"
+			g.notifyRotation(rot)
 			continue
 		}
-		_, rotations := g.Flag(name)
-		g.log.Info("harness restarted on a fresh session", "harness", name, "rotations", rotations)
+		_, rot.Rotations = g.Flag(name)
+		g.log.Info("harness restarted on a fresh session", "harness", name, "rotations", rot.Rotations)
+		g.notifyRotation(rot)
+	}
+}
+
+// notifyRotation hands a rotation — completed, or abandoned with the harness
+// left stopped — to the OnRotate hook, if any.
+func (g *SessionGuard) notifyRotation(r SessionRotation) {
+	if g.onRotate != nil {
+		g.onRotate(r)
 	}
 }

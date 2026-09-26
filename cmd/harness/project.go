@@ -101,8 +101,10 @@ func cmdDown(o verbOpts) error {
 		if o.json {
 			return printJSON(data)
 		}
-		fmt.Printf("project %q down — %d harness(es) stopped and deregistered\n",
-			data.Project, len(data.Removed))
+		emit(os.Stdout, fmt.Sprintf("project %q down — %d harness(es) stopped and deregistered\n",
+			data.Project, len(data.Removed)), func(s lifecycleStyle) string {
+			return s.renderDown(data)
+		})
 		return nil
 	})
 }
@@ -135,7 +137,9 @@ func cmdRm(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(data)
 	}
-	fmt.Printf("removed %s (project %s)\n", data.Name, data.Project)
+	emit(os.Stdout, fmt.Sprintf("removed %s (project %s)\n", data.Name, data.Project), func(s lifecycleStyle) string {
+		return s.renderRemove(data)
+	})
 	return nil
 }
 

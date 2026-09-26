@@ -275,7 +275,7 @@ func cmdLogs(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(ld)
 	}
-	printLogText(os.Stdout, ld.Text)
+	writeLogText(newRawWriter(os.Stdout, logStyleFor(os.Stdout)), ld.Text)
 	for _, n := range ld.Notices {
 		fmt.Fprintln(os.Stderr, "note: "+n)
 	}
@@ -284,38 +284,59 @@ func cmdLogs(c *client.Client, o verbOpts) error {
 
 // printLogText prints durable-log text made inert first, so escape payloads
 // (DCS/sixel, OSC, cursor addressing) don't act on the user's terminal (#146 —
-// acceptance criteria require no payload bytes reach `harness logs`).
+// acceptance criteria require no payload bytes reach `harness logs`). It is
+// the plain form, byte for byte what a pipe reads.
 func printLogText(w io.Writer, raw string) {
+	writeLogText(newRawWriter(w, nil), raw)
+}
+
+// writeLogText is printLogText through a raw writer, which styles the
+// daemon's own lines when it is styled.
+func writeLogText(rw *rawWriter, raw string) {
 	text := inertLogText(raw)
-	fmt.Fprint(w, text)
+	rw.write(text)
 	if len(text) > 0 && text[len(text)-1] != '\n' {
-		fmt.Fprintln(w)
+		rw.write("\n")
 	}
 }
 
 // followLogs re-fetches the tail on an interval and prints the new suffix.
 func followLogs(c *client.Client, o verbOpts) error {
-	ld, err := c.Logs(o.name, o.lines)
+	fetch := func(lines int) (string, error) {
+		ld, err := c.Logs(o.name, lines)
+		return ld.Text, err
+	}
+	return followRawLogs(newRawWriter(os.Stdout, logStyleFor(os.Stdout)), fetch, o.lines, func() bool {
+		time.Sleep(time.Second)
+		return true
+	})
+}
+
+// followRawLogs prints the tail, then re-fetches it until wait reports false,
+// printing only the newly appended suffix.
+func followRawLogs(rw *rawWriter, fetch func(lines int) (string, error), lines int, wait func() bool) error {
+	text, err := fetch(lines)
 	if err != nil {
 		return err
 	}
-	prev := inertLogText(ld.Text)
-	fmt.Print(prev)
-	for {
-		time.Sleep(time.Second)
-		ld, err := c.Logs(o.name, o.lines*4)
+	prev := inertLogText(text)
+	rw.write(prev)
+	for wait() {
+		text, err := fetch(lines * 4)
 		if err != nil {
 			return err
 		}
-		cur := inertLogText(ld.Text)
+		cur := inertLogText(text)
 		if len(cur) > len(prev) && hasSuffixOverlap(cur, prev) {
-			fmt.Print(cur[len(prev):])
+			rw.write(cur[len(prev):])
 		} else if cur != prev {
 			// Rotation/truncation broke continuity; reprint the whole tail.
-			fmt.Print(cur)
+			rw.restart()
+			rw.write(cur)
 		}
 		prev = cur
 	}
+	return nil
 }
 
 // inertLogText filters raw PTY bytes from the daemon log through ansifold so
@@ -358,7 +379,9 @@ func cmdUseProfile(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(ps)
 	}
-	fmt.Printf("activated profile %q\n", o.name)
+	emit(os.Stdout, fmt.Sprintf("activated profile %q\n", o.name), func(s lifecycleStyle) string {
+		return s.renderUseProfile(o.name, ps)
+	})
 	return nil
 }
 
@@ -370,7 +393,9 @@ func cmdReload(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(hs)
 	}
-	fmt.Printf("reloaded — %d harnesses\n", len(hs))
+	emit(os.Stdout, fmt.Sprintf("reloaded — %d harnesses\n", len(hs)), func(s lifecycleStyle) string {
+		return s.renderReload(hs)
+	})
 	return nil
 }
 
@@ -430,7 +455,9 @@ func cmdStopDaemon(o verbOpts) error {
 	if err := p.Signal(syscall.SIGTERM); err != nil {
 		return fmt.Errorf("signal daemon %d: %w", di.PID, err)
 	}
-	fmt.Fprintf(os.Stderr, "harness: daemon (pid %d) stopping\n", di.PID)
+	emit(os.Stderr, fmt.Sprintf("harness: daemon (pid %d) stopping\n", di.PID), func(s lifecycleStyle) string {
+		return s.renderDaemonStopping(di.PID)
+	})
 	return nil
 }
 

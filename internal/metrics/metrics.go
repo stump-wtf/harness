@@ -250,6 +250,10 @@ const (
 	outcomeFailure = "failure"
 )
 
+// renderFailureReasons are the `reason` values of
+// harness_template_render_failures_total, in exposition order.
+var renderFailureReasons = []string{supervisor.RenderFailureUnresolved, supervisor.RenderFailureGrammar}
+
 // series is the counted state behind one harness label value.
 type series struct {
 	calls           [2]uint64 // success, error
@@ -260,10 +264,13 @@ type series struct {
 	sessionsStarted uint64
 	transitions     map[core.State]uint64
 	runs            [2]uint64 // success, failure
+	// renderFailures counts template render failures by reason
+	// (supervisor.RenderFailure*), SPEC-0017 REQ-11.
+	renderFailures map[string]uint64
 }
 
 func newSeries() *series {
-	return &series{errors: make(map[Class]uint64), transitions: make(map[core.State]uint64)}
+	return &series{errors: make(map[Class]uint64), transitions: make(map[core.State]uint64), renderFailures: make(map[string]uint64)}
 }
 
 // Metrics owns the registry and the counters behind it. Build it with New,
@@ -480,6 +487,10 @@ func (m *Metrics) lifecycle(ev supervisor.Event) {
 		case supervisor.OutcomeFailed, supervisor.OutcomeTimedOut:
 			m.seriesFor(ev.Name).runs[1]++
 		}
+	case supervisor.EventTemplateRenderFailed:
+		// Governing: SPEC-0017 REQ-11 "Rendering", REQ "Error Handling
+		// Standards" — every render failure is a counter increment.
+		m.seriesFor(ev.Name).renderFailures[ev.RenderFailure]++
 	}
 }
 
@@ -487,10 +498,15 @@ func (m *Metrics) lifecycle(ev supervisor.Event) {
 //
 // A tool call is a model call that succeeded: the model answered with work.
 // An error mark is one that failed. Other marks (user messages, compactions,
-// subagent launches) are activity, not calls. A turn that ends in plain text
-// with no tool call is invisible here — agent-trace records no mark for it —
-// so an agent that only chats reads as idle; the workers this exists for act
-// through tools.
+// subagent launches, turn ends) are activity, not calls.
+//
+// A turn-end mark (agent-trace v0.6.0) is deliberately not counted as a
+// successful call, although a turn that ends in plain text is one:
+// harness_model_calls_total documents success as a tool call, and folding turn
+// ends in would move every existing series and the staleness alert measured
+// from lastSuccess. That is a metric-definition change (SPEC-0013 REQ-3), not
+// a dependency bump. Until it is made, an agent that only chats still reads as
+// idle here; the workers this exists for act through tools.
 func (m *Metrics) item(ev observe.Event) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -528,7 +544,7 @@ func (m *Metrics) item(ev observe.Event) {
 		}
 	case observe.KindMark:
 		if ev.Mark.Type != "error" {
-			return
+			return // turn-end included: see above
 		}
 		s.calls[1]++
 		class, known := Classify(ev.Adapter, ev.Mark.Note)

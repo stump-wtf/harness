@@ -128,6 +128,12 @@ const (
 	ReasonBudget      RunReason = "budget"
 	ReasonConcurrency RunReason = "concurrency"
 	ReasonModelHold   RunReason = "model_hold"
+	// ReasonTemplateUnresolved: a required argv template value was absent
+	// for this run, so nothing was exec'd. The record names the path in
+	// MissingPath, never a value.
+	// Governing: SPEC-0017 REQ-11 "Rendering", REQ-17 (the SPEC-0008 and
+	// SPEC-0014 skip-reason amendment).
+	ReasonTemplateUnresolved RunReason = "template_unresolved"
 )
 
 // RunOutcome is how a run ended — or, for the outcomes that start no process,
@@ -221,6 +227,10 @@ type RunRecord struct {
 	// process, and why an interrupted run was (shutdown, daemon_crash).
 	// Governing: SPEC-0014 REQ "Run Record Fields"; SPEC-0022 REQ-5.
 	Reason RunReason `json:"reason,omitempty"`
+	// MissingPath is the template path whose value was absent, set only when
+	// Reason is ReasonTemplateUnresolved. A path's NAME ("run.source"), never
+	// a value: nothing rendered is persisted (SPEC-0017 REQ-11).
+	MissingPath string `json:"missing_path,omitempty"`
 	// Coalesced counts the firings one skipped record covers. It starts at 1
 	// and increments once per further skip that matches the same open key,
 	// so a burst of 200 firings during one run leaves one record rather than
@@ -549,6 +559,7 @@ func (s *Supervisor) runEnv() RunEnv {
 		Trigger:   s.run.rec.Trigger,
 		Source:    s.run.rec.Source,
 		EventFile: s.run.eventFile,
+		StartedAt: s.run.rec.StartedAt,
 	}
 }
 

@@ -18,7 +18,8 @@
 // identical reads all day (`make test` in an edit-test cycle, a queue poll per
 // doorbell), and those always have other calls or a new prompt between them.
 // The streak resets on any different tool call, on a user message (a new
-// prompt is new work), and on a new session. On the Threshold-th identical
+// prompt is new work), and on a new session — not on a turn-end mark, which
+// is the agent stopping rather than new input. On the Threshold-th identical
 // call in a row the guard stops the harness through the Manager — a stop, not
 // a restart, because a restarted crush resumes the looping session — logs an
 // ERROR naming the harness, the tool and the count to the daemon log and the
@@ -39,6 +40,9 @@
 // summary, targets) — for an MCP tool that is the tool name alone, whatever
 // the arguments — and counted over the session's whole life, so a worker's
 // eighth call to any one MCP tool in a session stopped it.
+//
+// @joestump-agent 09/26/2026 - agent-trace v0.6.0 emits turn-end marks; the
+// guard handles them explicitly as not a reset.
 package loopguard
 
 import (
@@ -83,6 +87,13 @@ type Options struct {
 	Threshold int
 	// Logger receives the ERROR line (default log.Default()).
 	Logger *log.Logger
+	// OnTrip, when set, is called once per stop after it is issued and
+	// logged — the daemon's notify hook (SPEC-0003 REQ "Operator
+	// Notification", issue #725). A guard stop clears the harness's enabled
+	// intent, so without it the harness stays down with nothing but a log
+	// line to say so. It runs on the guard's consuming goroutine and must
+	// not block.
+	OnTrip func(Trip)
 }
 
 // Trip is one stop the guard issued.
@@ -105,6 +116,7 @@ type Guard struct {
 	stop      Stopper
 	threshold int
 	log       *log.Logger
+	onTrip    func(Trip)
 
 	// streaks is touched only by the consuming goroutine (or a test driving
 	// handle directly).
@@ -129,6 +141,7 @@ func New(stop Stopper, opts Options) *Guard {
 		stop:      stop,
 		threshold: opts.Threshold,
 		log:       opts.Logger,
+		onTrip:    opts.OnTrip,
 		streaks:   make(map[string]*streak),
 	}
 }
@@ -197,8 +210,20 @@ func (g *Guard) handle(ev observe.Event) bool {
 	}
 	switch ev.Kind {
 	case observe.KindMark:
-		if ev.Mark.Type == "user-message" {
+		switch ev.Mark.Type {
+		case "user-message":
 			st.key, st.count = "", 0
+		case "turn-end":
+			// Deliberately not a reset (agent-trace v0.6.0 added the mark).
+			// The streak breaks on new input, and a turn ending is the agent
+			// stopping, not new input: a real next turn opens with its own
+			// user-message mark, which resets above. A turn that restarts
+			// with no prompt between (an automatic continuation) and repeats
+			// the same call is exactly the loop this guard exists to stop.
+		default:
+			// error, compaction, subagent and any future type: annotations,
+			// not calls or prompts. Retrying one call through provider errors
+			// is still a streak.
 		}
 		return false
 	case observe.KindTool:
@@ -242,6 +267,9 @@ func (g *Guard) fire(t Trip, ev observe.Event) {
 	}
 	g.log.Error("runaway tool loop: stopping harness", kv...)
 	g.stop.LogLifecycle(t.Harness, "runaway tool loop: stopped by the daemon", kv[2:]...)
+	if g.onTrip != nil {
+		g.onTrip(t)
+	}
 }
 
 // shortDigest is enough of a digest to match log lines against each other.

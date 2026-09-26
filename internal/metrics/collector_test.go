@@ -167,6 +167,36 @@ func TestLastSuccessOmittedUntilFirstSuccess(t *testing.T) {
 	}
 }
 
+// A turn-end mark (agent-trace v0.6.0) is activity, not a model call: it
+// moves neither call counter nor the last-success timestamp, even when it is
+// the newest item. The tool event after it is only a marker to wait on.
+func TestTurnEndIsNotAModelCall(t *testing.T) {
+	src := newFakeSource()
+	src.add(crushHarness("worker"), runningSnap())
+	feed := newFakeFeed()
+	m := newTestMetrics(t, src, Options{Observer: feed})
+
+	turnEnd := errorEvent("worker", "s1", "end_turn", t0.Add(time.Minute))
+	turnEnd.Mark.Type = "turn-end"
+	feed.ch <- turnEnd
+	at := t0.Add(time.Second)
+	feed.ch <- toolEvent("worker", "s1", at)
+	eventually(t, "the marker counted", func() bool {
+		v, _ := scrape(t, m).get("harness_model_calls_total", lbls("harness", "worker", "outcome", "success"))
+		return v >= 1
+	})
+	fams := scrape(t, m)
+	if v := fams.must(t, "harness_model_calls_total", lbls("harness", "worker", "outcome", "success")); v != 1 {
+		t.Errorf("success calls = %v, want 1: a turn-end was counted", v)
+	}
+	if v := fams.must(t, "harness_model_calls_total", lbls("harness", "worker", "outcome", "error")); v != 0 {
+		t.Errorf("error calls = %v, want 0: a turn-end was counted", v)
+	}
+	if v := fams.must(t, "harness_last_successful_call_timestamp", lbls("harness", "worker")); v != float64(at.Unix()) {
+		t.Errorf("last success = %v, want the tool call's %v, not the turn end's", v, at.Unix())
+	}
+}
+
 // REQ-6: a harness the observer cannot read has no model series at all. A
 // zero would read as a healthy, idle agent.
 func TestUnobservableHarnessOmitsModelSeries(t *testing.T) {
@@ -579,5 +609,37 @@ func TestRuntimeCollectorsAndLint(t *testing.T) {
 		if strings.HasPrefix(p.Metric, "harness_") {
 			t.Errorf("promlint: %s: %s", p.Metric, p.Text)
 		}
+	}
+}
+
+// SPEC-0017 REQ-11: every template render failure is a counter increment,
+// labelled by reason. A command harness reports both reasons at zero before
+// any failure (an absent series and a zero one read the same to an alert), a
+// harness with no templates reports neither, and a failure event moves exactly
+// its own reason.
+func TestTemplateRenderFailuresCounted(t *testing.T) {
+	src := newFakeSource()
+	src.add(core.Harness{Name: "report", Adapter: core.AdapterCommand, Argv: []string{"report", "{{run.id}}"}}, supervisor.Snapshot{State: core.StateStopped})
+	src.add(core.Harness{Name: "svc", Adapter: "generic"}, runningSnap())
+	m := newTestMetrics(t, src, Options{})
+
+	fams := scrape(t, m)
+	for _, r := range []string{"unresolved", "grammar"} {
+		if v := fams.must(t, "harness_template_render_failures_total", lbls("harness", "report", "reason", r)); v != 0 {
+			t.Errorf("%s = %v before any failure, want 0", r, v)
+		}
+	}
+	if got := strings.Join(fams.harnessValues("harness_template_render_failures_total"), ","); got != "report" {
+		t.Errorf("render-failure harnesses = %q, want only the command harness", got)
+	}
+
+	src.bus.Publish(supervisor.Event{Kind: supervisor.EventTemplateRenderFailed, Name: "report", RenderFailure: supervisor.RenderFailureUnresolved})
+	src.bus.Publish(supervisor.Event{Kind: supervisor.EventTemplateRenderFailed, Name: "report", RenderFailure: supervisor.RenderFailureUnresolved})
+	eventually(t, "the render failures counted", func() bool {
+		v, _ := scrape(t, m).get("harness_template_render_failures_total", lbls("harness", "report", "reason", "unresolved"))
+		return v == 2
+	})
+	if v := scrape(t, m).must(t, "harness_template_render_failures_total", lbls("harness", "report", "reason", "grammar")); v != 0 {
+		t.Errorf("grammar = %v, want 0 (only unresolved failures happened)", v)
 	}
 }

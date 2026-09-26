@@ -710,11 +710,17 @@ func TestFormValidateCommand(t *testing.T) {
 		{"placeholder argv0", func(f *HarnessForm) { f.Argv[0] = "{{event.repo}}" }, `"argv[0]"`},
 		{"args", func(f *HarnessForm) { f.Args = []string{"-c", "true"} }, "argv"},
 		{"prompt", func(f *HarnessForm) { f.Prompt = "hi" }, "no prompt"},
-		{"model", func(f *HarnessForm) { f.Model = "x/y" }, "model is unused"},
+		{"model", func(f *HarnessForm) { f.Model = "x/y" }, `"model" is unused`},
 		{"auto_accept", func(f *HarnessForm) { f.AutoAccept = true }, "owns its argv"},
 		{"max_turns", func(f *HarnessForm) { f.MaxTurns = 2 }, "owns its argv"},
-		{"schedule", func(f *HarnessForm) { f.Schedule = "0 6 * * *" }, "resident only"},
-		{"triggers", func(f *HarnessForm) { f.Triggers = []string{"webhook.ci"} }, "resident only"},
+		{"schedule and enabled", func(f *HarnessForm) { f.Schedule = "0 6 * * *"; f.Enabled = true }, "mutually exclusive"},
+		{"run.id on a resident", func(f *HarnessForm) { f.Argv = append(f.Argv, "{{run.id}}") }, "no run records"},
+		{"run.source on a schedule", func(f *HarnessForm) {
+			f.Schedule = "0 6 * * *"
+			f.Argv = append(f.Argv, "{{run.source}}")
+		}, "every scheduled firing"},
+		{"untrusted in argv", func(f *HarnessForm) { f.Argv = append(f.Argv, "{{untrusted event.title}}") }, "never permitted in argv"},
+		{"unknown path", func(f *HarnessForm) { f.Argv = append(f.Argv, "{{nope}}") }, "unknown template path"},
 		{"argv on crush", func(f *HarnessForm) { f.Harness = "crush" }, "argv is only accepted"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -726,6 +732,63 @@ func TestFormValidateCommand(t *testing.T) {
 				t.Errorf("Validate = %v, want an error containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestFormCommandOneShotRoundTrips: a scheduled or triggered command harness
+// (SPEC-0017 REQ-3) validates without a prompt, and an unrelated edit writes
+// back its schedule, triggers, model and templated argv — so the form cannot
+// quietly turn a one-shot back into a resident harness, or drop `model` and
+// leave {{model}} unresolvable (REQ-15). The restart default is "no", so an
+// untouched edit does not grow a `restart` key.
+func TestFormCommandOneShotRoundTrips(t *testing.T) {
+	for _, src := range []string{
+		`[harness.report]
+harness = "command"
+argv = ["/usr/local/bin/report", "--run", "{{run.id}}", "--model={{model}}"]
+model = "x/y"
+schedule = "0 6 * * *"
+timeout = "5m"
+`,
+		`[channel.sb]
+url = "https://sb.example.com/mcp/x"
+
+[harness.report]
+harness = "command"
+argv = ["/usr/local/bin/ci", "{{run.source}}"]
+triggers = ["channel.sb"]
+`,
+	} {
+		path := filepath.Join(t.TempDir(), "harness.toml")
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		before, err := config.Parse([]byte(src), "harness.toml")
+		if err != nil {
+			t.Fatalf("fixture does not parse: %v", err)
+		}
+		h := before.Harnesses["report"]
+		f := editInputsFor(path, protocol.HarnessInfo{Name: "report"}).toForm()
+		if err := f.Validate(); err != nil {
+			t.Fatalf("command one-shot form failed validation: %v", err)
+		}
+		body := f.TOML()
+		if strings.Contains(body, "restart") {
+			t.Errorf("an untouched one-shot grew a restart key:\n%s", body)
+		}
+		prefix := ""
+		if len(h.Triggers) > 0 {
+			prefix = "[channel.sb]\nurl = \"https://sb.example.com/mcp/x\"\n\n"
+		}
+		after, err := config.Parse([]byte(prefix+body), "harness.toml")
+		if err != nil {
+			t.Fatalf("rewritten table no longer parses: %v\n---\n%s", err, body)
+		}
+		got := after.Harnesses["report"]
+		if !slices.Equal(got.Argv, h.Argv) || got.Schedule != h.Schedule || !slices.Equal(got.Triggers, h.Triggers) ||
+			got.Model != h.Model || got.Restart != core.RestartNo || got.Timeout != h.Timeout {
+			t.Errorf("round-trip lost keys:\n got %+v\nwant %+v\n---\n%s", got, h, body)
+		}
 	}
 }
 

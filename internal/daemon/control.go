@@ -61,6 +61,8 @@ func (c *conn) handleControl(payload []byte) {
 		c.opTrigger(req)
 	case protocol.OpRuns:
 		c.opRuns(req)
+	case protocol.OpNotifyTest:
+		c.opNotifyTest(req)
 	default:
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownOp, "unknown op %q", req.Op)
 	}
@@ -410,6 +412,7 @@ func (c *conn) opDaemonInfo() protocol.DaemonInfo {
 		res.SshAddr = addr
 		res.SshKeys = keys
 	}
+	res.Notify = c.srv.notifyInfo()
 	return res
 }
 

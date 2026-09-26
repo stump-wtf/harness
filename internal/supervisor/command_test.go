@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/ledger"
 )
 
 // argvProbeEnv, when set in a child's environment, turns this test binary into
@@ -45,6 +46,9 @@ func TestMain(m *testing.M) {
 	if out := os.Getenv(argvProbeEnv); out != "" {
 		os.Exit(writeArgvProbe(out))
 	}
+	// Run history is read back from the ledger; see SkipSyncForTesting for
+	// why these tests must not wait on the runner's disk to see it.
+	ledger.SkipSyncForTesting()
 	os.Exit(m.Run())
 }
 

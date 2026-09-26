@@ -263,6 +263,47 @@ func TestEventsStayInsideTheWindow(t *testing.T) {
 	}
 }
 
+// TestFailedCrushShellCommandIsAnError: crush reports a non-zero exit as an
+// ordinary text result, so until agent-trace v0.6.0 a failing `go test` read
+// as a success in `harness logs`. The entry is an error now, its summary is
+// still the bare command (the tally's " error" is stripped with the rest), a
+// clean command beside it is not, and the turn's text-only end is a turn-end
+// mark that is not an error either.
+func TestFailedCrushShellCommandIsAnError(t *testing.T) {
+	work := filepath.Join(t.TempDir(), "sweeps")
+	at := func(s int) time.Time { return spawn.Add(time.Duration(s) * time.Second) }
+	rt.WriteCrushDB(t, filepath.Join(work, ".crush", "crush.db"),
+		sess("s1", at(2),
+			[]rt.CrushMessage{
+				{Role: "assistant", At: at(3), Parts: rt.ToolCall("c1", "bash", map[string]any{"command": "go test ./..."})},
+				{Role: "tool", At: at(4), Parts: rt.ToolResult("c1", "FAIL\tpkg\n\nExit code 1\n\n<cwd>"+work+"</cwd>")},
+				{Role: "assistant", At: at(5), Parts: rt.ToolCall("c2", "bash", map[string]any{"command": "go build ./..."})},
+				{Role: "tool", At: at(6), Parts: rt.ToolResult("c2", "\n\n<cwd>"+work+"</cwd>")},
+				{Role: "assistant", At: at(7), Parts: rt.TurnEnd("the tests fail", at(7))},
+			},
+		))
+	a := attribute(t, crushHarness(t, "sweep", work, nil), Window{Start: spawn, End: spawn.Add(time.Minute)})
+	entries, errs := Events(context.Background(), a, false, spawn.Add(time.Hour))
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	var got []string
+	for _, e := range entries {
+		if e.Kind == KindSession {
+			continue
+		}
+		got = append(got, fmt.Sprintf("%s:%s:%s:%v", e.Kind, e.Action, e.Summary, e.Error))
+	}
+	want := []string{
+		"tool:verify:go test ./...:true",
+		"tool:exec:go build ./...:false",
+		"mark:turn-end:end_turn:false",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("entries = %q\nwant      %q", got, want)
+	}
+}
+
 // TestEntryDetailIsTheCommandOrThePath: classify's summary ends in a
 // classification tally, and a sweep in a scratch workdir touches nothing
 // "in repo". Rendered as-is, a real tars run was forty lines of

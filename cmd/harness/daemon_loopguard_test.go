@@ -27,6 +27,7 @@ import (
 	"github.com/stump-wtf/harness/internal/loopguard"
 	rt "github.com/stump-wtf/harness/internal/runtrace/runtracetest"
 	"github.com/stump-wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/testwait"
 )
 
 func TestDaemonLoopGuardStopsTheRealHarness(t *testing.T) {
@@ -34,14 +35,7 @@ func TestDaemonLoopGuardStopsTheRealHarness(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("CRUSH_GLOBAL_DATA", "")
 	t.Setenv("XDG_DATA_HOME", "")
-	bin := filepath.Join(tmp, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bin, "crush"), []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeCrushOnPath(t, tmp)
 	work := filepath.Join(tmp, "work")
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
@@ -75,7 +69,7 @@ func TestDaemonLoopGuardStopsTheRealHarness(t *testing.T) {
 	obsOpts.PollInterval = 10 * time.Millisecond
 	obs := startDaemonObserver(mgr, obsOpts)
 	t.Cleanup(obs.Stop)
-	guard := startDaemonLoopGuard(mgr, obs, loopguard.Options{})
+	guard := startDaemonLoopGuard(mgr, obs, nil, loopguard.Options{})
 	t.Cleanup(guard.Close)
 
 	incident := map[string]any{"method": "add_comment", "owner": "stump.wtf", "repo": "harness", "index": 383, "body": "."}
@@ -95,7 +89,7 @@ func TestDaemonLoopGuardStopsTheRealHarness(t *testing.T) {
 	// Not waitFor(): on a timeout the observer's stats say whether the calls
 	// were never read, read but attributed to no harness (Unattributed), or
 	// delivered and dropped by the guard's subscription (Dropped).
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t, 10*time.Second))
 	for d := obs.Stats().Delivered; d < loopguard.DefaultThreshold-1 || guard.Seen() != d; d = obs.Stats().Delivered {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for the guard to read the first calls: seen=%d observer=%+v", guard.Seen(), obs.Stats())
@@ -135,7 +129,7 @@ func TestDaemonLoopGuardStopsTheRealHarness(t *testing.T) {
 
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t, 10*time.Second))
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)

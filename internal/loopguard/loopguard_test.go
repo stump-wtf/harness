@@ -206,6 +206,34 @@ func TestStreakResets(t *testing.T) {
 			t.Fatal("retrying one call through provider errors is still a streak")
 		}
 	})
+	// A turn ending is the agent stopping, not new input: the same call
+	// repeated across turns that restart with no prompt between is a loop.
+	// With a prompt between, the user-message mark resets as usual.
+	t.Run("turn-end marks do not reset", func(t *testing.T) {
+		st := &fakeStopper{}
+		g := New(st, Options{Threshold: n, Logger: quietLogger()})
+		for i := 1; i < n; i++ {
+			g.handle(comment(i))
+			g.handle(mark("pool-worker", "s1", "turn-end"))
+		}
+		if !g.handle(comment(n)) {
+			t.Fatal("the same call across prompt-less turns is still a streak")
+		}
+	})
+	t.Run("turn-end then a prompt resets", func(t *testing.T) {
+		st := &fakeStopper{}
+		g := New(st, Options{Threshold: n, Logger: quietLogger()})
+		for i := 1; i < n; i++ {
+			g.handle(comment(i))
+		}
+		g.handle(mark("pool-worker", "s1", "turn-end"))
+		g.handle(mark("pool-worker", "s1", "user-message"))
+		for i := 1; i < n; i++ {
+			if g.handle(comment(i)) {
+				t.Fatalf("stopped %d calls into a new prompt's turn", i)
+			}
+		}
+	})
 }
 
 // TestStopResetsTheStreak: after a stop, the dying run's last few polled

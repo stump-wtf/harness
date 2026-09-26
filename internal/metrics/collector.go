@@ -74,6 +74,10 @@ var (
 		"Unix time of the scheduled harness's next window. Absent when it has none.",
 		[]string{"harness"}, nil)
 
+	descRenderFailures = prometheus.NewDesc("harness_template_render_failures_total",
+		"Spawns refused because a template could not be rendered, by reason (unresolved|grammar). Each is a skipped run or a failed start; nothing was exec'd.",
+		[]string{"harness", "reason"}, nil)
+
 	descCollectionErrors = prometheus.NewDesc("harness_metrics_collection_errors_total",
 		"Failures to collect a metric family, by collector. Non-zero means some series are missing or undercounted, not zero.",
 		[]string{"collector"}, nil)
@@ -105,6 +109,7 @@ var allDescs = []*prometheus.Desc{
 	descState, descRestarts, descConsecutive, descTransitions,
 	descCalls, descErrors, descUnclassified, descLastSuccess,
 	descSessionsStarted, descSessionActive, descScheduledRuns, descNextRun,
+	descRenderFailures,
 	descCollectionErrors, descOverflowed,
 	descObsDelivered, descObsDropped, descObsAmbiguous, descObsUnattributed,
 	descObsParseErrors, descObsScanErrors, descObsSessions, descObsContested, descObsLastScan,
@@ -140,6 +145,10 @@ type agg struct {
 	errorsObservable bool
 	scheduled        bool
 	next             time.Time
+	// templated: a command harness, whose argv is rendered at spawn, so its
+	// render failures are known (zero until one happens) rather than
+	// meaningless.
+	templated bool
 }
 
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
@@ -193,6 +202,7 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		a.up = a.up || rw.snap.PID != 0
 		a.observable = a.observable || Observable(rw.def)
 		a.errorsObservable = a.errorsObservable || ErrorsObservable(rw.def)
+		a.templated = a.templated || rw.def.Adapter == core.AdapterCommand
 		if rw.snap.Scheduled {
 			a.scheduled = true
 			if rw.nextOK && !rw.next.IsZero() && (a.next.IsZero() || rw.next.Before(a.next)) {
@@ -211,6 +221,10 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			cp.transitions = make(map[core.State]uint64, len(s.transitions))
 			for k, v := range s.transitions {
 				cp.transitions[k] = v
+			}
+			cp.renderFailures = make(map[string]uint64, len(s.renderFailures))
+			for k, v := range s.renderFailures {
+				cp.renderFailures[k] = v
 			}
 			counted[lbl] = cp
 		}
@@ -289,6 +303,16 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			counter(descScheduledRuns, float64(s.runs[1]), lbl, outcomeFailure)
 			if !a.next.IsZero() {
 				gauge(descNextRun, unix(a.next), lbl)
+			}
+		}
+
+		// Both reasons, zero until one happens, for every harness whose
+		// argv is a template — and for any other harness a failure was
+		// somehow counted against, so a count is never hidden.
+		// Governing: SPEC-0017 REQ-11 "Rendering".
+		if a.templated || len(s.renderFailures) > 0 {
+			for _, r := range renderFailureReasons {
+				counter(descRenderFailures, float64(s.renderFailures[r]), lbl, r)
 			}
 		}
 	}

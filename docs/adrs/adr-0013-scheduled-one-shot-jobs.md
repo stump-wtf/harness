@@ -166,7 +166,7 @@ firing that arrives during a run follows the harness's `on_overlap` policy (see
 recorded skipped and cannot resurrect the harness. A fresh scheduled attempt
 clears a failed latch through the ordinary start path.
 
-A firing starts the harness **without persisting `enabled` intent** (see #159).
+A firing starts the harness **without persisting `enabled` intent**.
 A scheduled run that dies, cleanly or in a crash, therefore leaves no
 `enabled = true` behind for the next boot's autostart to act on, and a stale
 `enabled = true` already in `state.json` (from a manual `harness start`, say) is
@@ -333,7 +333,7 @@ PTY semantics agent CLIs generally need.
 * Bad, because consumers branch on `Schedule != ""` rather than on a type. Every
   rendering surface pays it separately: `ls`, `describe` and the cockpit each
   carry their own arm so a scheduled harness does not read as an inert, disabled
-  one-shot (#160, #205). The shared phrasing lives in `internal/schedfmt`; the
+  one-shot. The shared phrasing lives in `internal/schedfmt`; the
   branching does not. SPEC-0008 REQ "Schedule Visibility" holds them to the same
   answer.
 * Bad, because the daemon is now a scheduler, and clock correctness (DST,

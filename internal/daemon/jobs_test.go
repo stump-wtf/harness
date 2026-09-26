@@ -29,6 +29,7 @@ import (
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/scheduler"
 	"github.com/stump-wtf/harness/internal/supervisor"
+	"github.com/stump-wtf/harness/internal/testwait"
 )
 
 // scheduledSh is a scheduled harness running `sh -c script`.
@@ -100,7 +101,7 @@ func newJobsDaemon(t *testing.T, hs ...core.Harness) (*testDaemon, *scheduler.Sc
 // waitRunsOver polls the runs op until pred holds.
 func waitRunsOver(t *testing.T, c *client.Client, name string, pred func([]protocol.RunInfo) bool) []protocol.RunInfo {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testwait.Budget(t, 5*time.Second))
 	for {
 		rd, err := c.Runs(name, 0)
 		if err != nil {

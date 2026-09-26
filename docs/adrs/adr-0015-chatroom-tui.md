@@ -83,7 +83,7 @@ Every session shows under its **tool identity** (`@claude-code`, `@codex`,
 `@crush`, `@opencode`, `@pi`), which is true of any session and claims nothing.
 A session that the SPEC-0006 run-correlation rule attributes to **exactly one**
 harness (same adapter, same workdir, a run whose window covers the session's
-start) shows as `@<harness name>` instead (see #302). Attribution under-reports
+start) shows as `@<harness name>` instead. Attribution under-reports
 rather than misattributes: a session another harness could have written keeps
 its tool identity. Colors come from the `internal/tui/theme` palette, so the
 chatroom degrades through the same color-profile path as the rest of the TUI.

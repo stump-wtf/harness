@@ -96,7 +96,17 @@ const (
 	// has no single-path spelling, so the client refuses to send one to a
 	// daemon older than 14 rather than start the harness with no env file
 	// (see client.ProjectUp).
-	ProtoMinor = 14
+	// ProtoMinor 15 added operator notification (SPEC-0003 REQ "Operator
+	// Notification", #725): Notify on DaemonInfo and the notify_test op —
+	// additive only. A daemon older than 15 omits Notify, which a client
+	// reports as "unknown" rather than "off", and would answer notify_test
+	// with unknown_op, so the client refuses to send it (see
+	// client.SupportsNotify).
+	// ProtoMinor 16 added MissingPath on RunInfo and the template_unresolved
+	// value of Reason (SPEC-0017 REQ-11: a template_unresolved skip names the
+	// path it lacked) — additive only. A daemon older than 16 never sends
+	// either; a client older than 16 shows the reason without the path.
+	ProtoMinor = 16
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -170,6 +180,11 @@ const (
 	OpJobs    Op = "jobs"
 	OpTrigger Op = "trigger"
 	OpRuns    Op = "runs"
+
+	// OpNotifyTest runs the daemon's [notify] hook once with a `test` event
+	// and answers with the NotifyDelivery. Governing: SPEC-0003 REQ
+	// "Operator Notification".
+	OpNotifyTest Op = "notify_test"
 )
 
 // ControlReq is a control-plane request. ID correlates the response; Name
@@ -622,8 +637,9 @@ type RunInfo struct {
 	// LogPruned reports a run whose log keep_runs has deleted; its record
 	// stays in the run ledger (SPEC-0022 REQ-4, REQ-12).
 	LogPruned bool `json:"log_pruned,omitempty"`
-	// Reason qualifies the outcome: why a skip started no process, why an
-	// interrupted run was (shutdown, daemon_crash). SPEC-0022 REQ-5.
+	// Reason qualifies the outcome: why a skip started no process (overlap,
+	// stopping, outside_hours, template_unresolved), why an interrupted run
+	// was (shutdown, daemon_crash). SPEC-0022 REQ-5, SPEC-0017 REQ-11.
 	Reason string `json:"reason,omitempty"`
 	// Source is the trigger source reference behind the run, e.g.
 	// "webhook.gitea-pr" (SPEC-0014 REQ "Run Record Fields").
@@ -632,6 +648,9 @@ type RunInfo struct {
 	// run record carries no byte of an event payload, no header value and no
 	// credential (ADR-0008).
 	EventID string `json:"event_id,omitempty"`
+	// MissingPath names the template path a template_unresolved skip lacked,
+	// e.g. "run.source" — a name, never a value (SPEC-0017 REQ-11).
+	MissingPath string `json:"missing_path,omitempty"`
 }
 
 // JobInfo is one scheduled harness for the jobs op (SPEC-0008 REQ "Protocol
@@ -714,6 +733,32 @@ type DaemonInfo struct {
 	// allowlist, ADR-0008).
 	SshAddr string `json:"ssh_addr,omitempty"`
 	SshKeys int    `json:"ssh_keys,omitempty"`
+	// Notify is the [notify] hook the daemon is running with, nil when none
+	// is configured (ProtoMinor 15). Governing: SPEC-0003 REQ "Operator
+	// Notification".
+	Notify *NotifyInfo `json:"notify,omitempty"`
+}
+
+// NotifyInfo describes the daemon's notify hook. Only argv[0] is reported:
+// the rest of the argv is the operator's and may carry anything.
+type NotifyInfo struct {
+	Command  string          `json:"command"`
+	Events   []string        `json:"events"`
+	Timeout  string          `json:"timeout"`
+	Cooldown string          `json:"cooldown"`
+	Last     *NotifyDelivery `json:"last,omitempty"`
+}
+
+// NotifyDelivery is one run of the notify hook: the last one in NotifyInfo,
+// or the answer to notify_test. Result is ok, error or timeout.
+type NotifyDelivery struct {
+	Event   string `json:"event"`
+	Harness string `json:"harness,omitempty"`
+	Result  string `json:"result"`
+	Error   string `json:"error,omitempty"`
+	// At is when the event happened, RFC 3339.
+	At         string `json:"at"`
+	DurationMs int64  `json:"duration_ms"`
 }
 
 // ---- Structured errors (SPEC-0002 REQ "Control Operations") --------------

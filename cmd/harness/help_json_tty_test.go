@@ -28,6 +28,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/xpty"
 )
 
@@ -36,6 +37,13 @@ import (
 // stderr is a terminal, so a pipe would make every case look plain and the
 // assertions vacuous.
 func runOnPTY(t *testing.T, bin string, args ...string) []byte {
+	t.Helper()
+	return runOnPTYEnv(t, bin, nil, args...)
+}
+
+// runOnPTYEnv is runOnPTY with extra environment appended after the
+// colour-capable defaults, so a case can set NO_COLOR back on.
+func runOnPTYEnv(t *testing.T, bin string, extra []string, args ...string) []byte {
 	t.Helper()
 	pty, err := xpty.NewPty(100, 40)
 	if err != nil {
@@ -48,7 +56,7 @@ func runOnPTY(t *testing.T, bin string, args ...string) []byte {
 	// reachable; without it a "plain" result would prove nothing. NO_COLOR is
 	// dropped rather than overridden — the convention is that any value,
 	// including the empty string, disables color.
-	cmd.Env = append(colorlessEnvStripped(), "TERM=xterm-256color", "CLICOLOR_FORCE=1")
+	cmd.Env = append(append(colorlessEnvStripped(), "TERM=xterm-256color", "CLICOLOR_FORCE=1"), extra...)
 	if err := pty.Start(cmd); err != nil {
 		t.Fatalf("start %s %v on pty: %v", bin, args, err)
 	}
@@ -131,5 +139,39 @@ func TestJSONSuppressesStyledHelp(t *testing.T) {
 				t.Errorf("`harness %v` printed no help at all\noutput: %q", tt.args, out)
 			}
 		})
+	}
+}
+
+// TestLifecycleVerbStyledOnTTY is the TTY half of the one-shot verb contract
+// (verb_render.go): on a real terminal a single-harness restart renders the
+// styled transition record — once, not doubled by the Bubble Tea frame it
+// replaced — and --json on the same terminal stays plain JSON. The piped half
+// is TestCLIOneShotVerbsPlainWhenPiped.
+func TestLifecycleVerbStyledOnTTY(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary; skipped under -short")
+	}
+	bin := buildHarnessBinary(t)
+	env, _ := isolatedEnv(t)
+	socket, _ := startDaemonOnSocket(t, bin, env)
+
+	out := runOnPTY(t, bin, "--socket", socket, "restart", "demo")
+	if countCSI(out) == 0 {
+		t.Fatalf("`harness restart demo` on a TTY emitted no styling:\n%q", out)
+	}
+	text := ansi.Strip(string(out))
+	if !strings.Contains(text, "demo") || !strings.Contains(text, " → ") {
+		t.Errorf("styled record lost the name or the transition:\n%q", text)
+	}
+	if n := strings.Count(text, "restarted"); n != 1 {
+		t.Errorf("the record's context line appears %d times, want exactly once:\n%q", n, text)
+	}
+
+	js := runOnPTY(t, bin, "--socket", socket, "--json", "restart", "demo")
+	if n := countCSI(js); n != 0 {
+		t.Errorf("--json restart on a TTY emitted %d ANSI sequences:\n%q", n, js)
+	}
+	if !bytes.Contains(js, []byte(`"name"`)) {
+		t.Errorf("--json restart on a TTY printed no JSON:\n%q", js)
 	}
 }

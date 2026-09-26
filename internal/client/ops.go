@@ -227,6 +227,38 @@ func (c *Client) DaemonInfo() (protocol.DaemonInfo, error) {
 	return out, json.Unmarshal(resp.Data, &out)
 }
 
+// notifyMinor is the ProtoMinor that added DaemonInfo.Notify and the
+// notify_test op.
+const notifyMinor = 15
+
+// SupportsNotify reports whether the daemon speaks a protocol that carries
+// the [notify] hook (ProtoMinor 15). An older daemon omits DaemonInfo.Notify
+// whether or not it could notify, so a nil Notify from it means "unknown",
+// never "off" (SPEC-0003 REQ "Operator Notification").
+func (c *Client) SupportsNotify() bool {
+	minor, ok := protoMinor(c.daemon.ProtoVersion)
+	return ok && minor >= notifyMinor
+}
+
+// NotifyTest asks the daemon to run its [notify] hook once with a `test`
+// event and returns the outcome (SPEC-0003 REQ "Operator Notification"). It
+// blocks for as long as the hook runs, up to the configured timeout. A daemon
+// older than ProtoMinor 15 is refused here rather than sent an op it would
+// answer with unknown_op.
+func (c *Client) NotifyTest() (protocol.NotifyDelivery, error) {
+	if !c.SupportsNotify() {
+		return protocol.NotifyDelivery{}, fmt.Errorf(
+			"client: daemon proto %q predates notify (needs 1.%d); restart the daemon on this version",
+			c.daemon.ProtoVersion, notifyMinor)
+	}
+	resp, err := c.call(protocol.ControlReq{Op: protocol.OpNotifyTest})
+	if err != nil {
+		return protocol.NotifyDelivery{}, err
+	}
+	var out protocol.NotifyDelivery
+	return out, json.Unmarshal(resp.Data, &out)
+}
+
 // --- attach data plane (SPEC-0002 REQ "Attach Session") -------------------
 
 // AttachOpen sends an ATTACH_OPEN for a session id the caller chose. The daemon

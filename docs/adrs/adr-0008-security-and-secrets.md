@@ -117,7 +117,7 @@ who can attach can drive the agent.** That is inherent to the product.
 * **Nothing the daemon persists carries a secret it was given**: `state.json`,
   the rotating logs, run records, scrollback exports and protocol frames never
   include `env_file` contents.
-* **Secrets a harnessed program prints are masked, best-effort** (see #312).
+* **Secrets a harnessed program prints are masked, best-effort**.
   These are the secrets that actually reach logs: an agent runs `git remote
   set-url` with a token in the URL, or `curl -H "Authorization: …"`, and the
   command text lands in the log verbatim. The daemon cannot stop a program

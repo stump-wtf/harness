@@ -57,7 +57,7 @@ when you save. Run `harness reload` if you'd rather be explicit.
 
 | Key | What it does |
 |-----|--------------|
-| `harness` | **Required.** Which adapter runs this harness: `crush`, `claude-code`, `codex`, or `generic`. The adapter supplies the executable (`crush`, `claude`, `codex`, or `sh` for `generic`). |
+| `harness` | **Required.** Which adapter runs this harness: `crush`, `claude-code`, `codex`, `generic`, or `command`. The adapter supplies the executable (`crush`, `claude`, `codex`, or `sh` for `generic`); a `command` harness names its own in `argv` instead (see [The command kind](/usage/configuration#the-command-kind)). |
 | `args` | Arguments appended after the executable, such as `["--yolo"]` for Crush. For `generic` these are `sh`'s arguments, so an arbitrary command is `args = ["-c", "my-command --flag"]`. |
 | `workdir` | The directory the agent starts in. Set it: agents are project-scoped, and `harness logs` uses it to find the agent's sessions. `~` expands. |
 | `env_file` | A `KEY=VALUE` file layered onto this harness's environment at start. Credentials go here rather than in `harness.toml` — though on macOS a Keychain-backed agent login needs no `env_file` at all (see below). A missing file is silently skipped. |
