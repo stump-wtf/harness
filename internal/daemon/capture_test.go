@@ -60,11 +60,19 @@ func TestCaptureServesScreenWithoutTTY(t *testing.T) {
 
 	var cd protocol.CaptureData
 	waitFor(t, "the prompt to reach the emulator", func() bool {
-		var err error
-		cd, err = c.Capture("stuck", false)
+		got, err := c.Capture("stuck", false)
 		if err != nil {
+			// The guest has not painted yet: between Start and the first
+			// PTY byte the capture legitimately answers no_screen, and on
+			// a loaded runner that window is easily seconds wide. It is
+			// the not-ready answer, so the loop retries it; anything else
+			// is a real failure and fails fast.
+			if e, ok := err.(*protocol.ErrorMsg); ok && e.Code == protocol.ErrNoScreen {
+				return false
+			}
 			t.Fatalf("capture: %v", err)
 		}
+		cd = got
 		return strings.Contains(cd.Text, "Read outside the working directories")
 	})
 	if !strings.Contains(cd.Text, "Proceed? (y/n)") {
