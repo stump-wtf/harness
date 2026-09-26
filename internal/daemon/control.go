@@ -63,6 +63,8 @@ func (c *conn) handleControl(payload []byte) {
 		c.opRuns(req)
 	case protocol.OpNotifyTest:
 		c.opNotifyTest(req)
+	case protocol.OpCapture:
+		c.opCapture(req)
 	default:
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownOp, "unknown op %q", req.Op)
 	}
@@ -159,6 +161,15 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		if until, hasLease := c.srv.mgr.Lease(snap.Name); hasLease {
 			info.LeaseUntil = until.Format(time.RFC3339)
 		}
+	}
+	// Stuck-at-prompt projection (issue #735; ADR-0040). Computed here, on
+	// both list and describe, so the table column and the FIELD row answer
+	// identically; the screen walk it costs is a cell-grid read per running
+	// harness, not an attach session.
+	if hit, idle, waiting := c.waitingFor(snap, time.Now()); waiting {
+		info.Waiting = true
+		info.WaitingFor = hit.Label
+		info.IdleMs = idle.Milliseconds()
 	}
 	return info
 }

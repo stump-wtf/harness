@@ -10,6 +10,7 @@ import (
 	"io"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // Controller is the slice of the supervisor Manager the attach layer needs to
@@ -101,6 +102,33 @@ func (r *Registry) SnapshotFor(name string) (MuxSnapshot, bool) {
 		return MuxSnapshot{}, false
 	}
 	return m.Snapshot(), true
+}
+
+// ScreenFor returns the harness's visible screen and idle age, without
+// creating a Mux: capturing (or judging) a harness nobody has ever teed output
+// for must not materialize emulator state for it (the same discipline
+// SnapshotFor applies for describe). ok is false when no Mux exists.
+func (r *Registry) ScreenFor(name string, now time.Time) (ScreenState, bool) {
+	r.mu.Lock()
+	m, ok := r.muxes[name]
+	r.mu.Unlock()
+	if !ok {
+		return ScreenState{}, false
+	}
+	return m.ScreenState(now), true
+}
+
+// AnsiFor returns the harness's visible screen as an ANSI repaint, the same
+// non-creating discipline as ScreenFor (issue #735). ok is false when no Mux
+// exists.
+func (r *Registry) AnsiFor(name string) ([]byte, bool) {
+	r.mu.Lock()
+	m, ok := r.muxes[name]
+	r.mu.Unlock()
+	if !ok {
+		return nil, false
+	}
+	return m.AnsiScreen(), true
 }
 
 // Remove drops the Mux registered for name, releasing its vt emulator and

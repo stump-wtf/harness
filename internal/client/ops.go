@@ -124,6 +124,18 @@ func (c *Client) Logs(name string, lines int) (protocol.LogsData, error) {
 	return out, json.Unmarshal(resp.Data, &out)
 }
 
+// Capture renders a harness's current terminal screen without an interactive
+// TTY (issue #735; ADR-0040). ansi asks for the styled ANSI repaint in
+// addition to the plain text.
+func (c *Client) Capture(name string, ansi bool) (protocol.CaptureData, error) {
+	resp, err := c.call(protocol.ControlReq{Op: protocol.OpCapture, Name: name, Ansi: ansi})
+	if err != nil {
+		return protocol.CaptureData{}, err
+	}
+	var out protocol.CaptureData
+	return out, json.Unmarshal(resp.Data, &out)
+}
+
 // Profiles returns every profile with the active one flagged.
 func (c *Client) Profiles() ([]protocol.ProfileInfo, error) {
 	resp, err := c.call(protocol.ControlReq{Op: protocol.OpProfiles})

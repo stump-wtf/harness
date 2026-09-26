@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/attach"
+	"github.com/stump-wtf/harness/internal/promptd"
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/scheduler"
 	"github.com/stump-wtf/harness/internal/supervisor"
@@ -66,6 +67,12 @@ type Server struct {
 	// defaultSocketWatchInterval; tests shrink it so a pass runs in
 	// milliseconds.
 	watchInterval time.Duration
+
+	// waitingIdle is how long a running harness's screen must be silent before
+	// a prompt pattern on it is believed (issue #735; ADR-0040). Seeded from
+	// promptd.DefaultIdleThreshold; tests shrink it so a verdict fits in a
+	// test's timeline, exactly like the heartbeat knobs above.
+	waitingIdle time.Duration
 
 	// lnMu guards ln and bound, which the socket watchdog replaces underneath
 	// the accept loop when the socket file is removed out from under a live
@@ -121,6 +128,11 @@ type Options struct {
 	// the production case — means defaultSocketWatchInterval.
 	SocketWatchInterval time.Duration
 
+	// WaitingIdle overrides the stuck-prompt idle threshold (issue #735;
+	// ADR-0040). Zero — the production case — means
+	// promptd.DefaultIdleThreshold; tests shrink it.
+	WaitingIdle time.Duration
+
 	// Notifier is the [notify] hook's dispatcher, for daemon_info and
 	// notify_test (SPEC-0003 REQ "Operator Notification"). Optional: nil
 	// reports notify as off.
@@ -141,6 +153,10 @@ func NewServer(opts Options) *Server {
 	if watch <= 0 {
 		watch = defaultSocketWatchInterval
 	}
+	waitingIdle := opts.WaitingIdle
+	if waitingIdle <= 0 {
+		waitingIdle = promptd.DefaultIdleThreshold
+	}
 	return &Server{
 		mgr:             opts.Manager,
 		reg:             opts.Registry,
@@ -153,6 +169,7 @@ func NewServer(opts Options) *Server {
 		pingInterval:    ping,
 		livenessTimeout: liveness,
 		watchInterval:   watch,
+		waitingIdle:     waitingIdle,
 		done:            make(chan struct{}),
 		subs:            make(map[chan protocol.EventMsg]struct{}),
 		conns:           make(map[*conn]struct{}),

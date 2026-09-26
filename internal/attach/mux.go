@@ -61,6 +61,12 @@ type Mux struct {
 	term     vt.Terminal
 	ring     *ring
 	sessions map[*Session]struct{}
+	// lastWrite is when the emulator last received PTY bytes. It is what
+	// "no output change" means for stuck-prompt detection (issue #735): the
+	// screen itself can look unchanged across a repaint that wrote identical
+	// cells, but a repaint is still activity, and bytes are the only honest
+	// record of it. Zero until the first Write.
+	lastWrite time.Time
 	// bracketedPaste shadows the guest's DECSET ?2004 state, which x/vt tracks
 	// but exposes no reader for (the same reason vtView shadows DECTCEM).
 	// Guarded by mu: written from the EnableMode/DisableMode callbacks, which
@@ -266,6 +272,7 @@ func (m *Mux) Write(p []byte) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	_, _ = m.term.Write(p)
+	m.lastWrite = time.Now()
 	m.ring.Write(p)
 	if len(m.sessions) > 0 {
 		// io.Copy reuses its buffer, so the fan-out slice must be a private

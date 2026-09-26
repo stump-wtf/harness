@@ -61,6 +61,7 @@ type verbOpts struct {
 	eventFile  string // trigger --event: an event envelope to replay (SPEC-0014)
 	limit      int    // runs --limit
 	forDur     string // start --for: after-hours lease length (SPEC-0012)
+	ansi       bool   // capture --ansi: the styled ANSI repaint (issue #735)
 }
 
 // run dispatches one verb. Every verb dials the daemon fresh (thin client,
@@ -126,6 +127,10 @@ func run(verb string, o verbOpts) error {
 		// applying it here is safe for the PTY path — only the name string
 		// handed to the TUI changes (SPEC-0004 project scoping).
 		return cmdAttach(scopeVerbName(o, false))
+	case "capture":
+		// The non-interactive screen dump (issue #735; ADR-0040). Scoped like
+		// every other name-taking verb.
+		return withClient(o, nil, projectScoped(verb, false, cmdCapture))
 	default:
 		// Unreachable via the command tree, which rejects unknown verbs before
 		// dispatch. Kept as a guard so a future command added to the tree but

@@ -42,6 +42,41 @@ func cmdList(c *client.Client, o verbOpts) error {
 	return renderHarnessList(c, o, "")
 }
 
+// waitingCell phrases the stuck-at-prompt marker: what the harness is waiting
+// for (the matched pattern, when one was identified) and how long its screen
+// has been silent — the two facts an operator needs to trust it.
+func waitingCell(h protocol.HarnessInfo) string {
+	idle := ""
+	if h.IdleMs > 0 {
+		idle = " · screen idle " + schedfmt.ShortDuration(time.Duration(h.IdleMs)*time.Millisecond)
+	}
+	if h.WaitingFor != "" {
+		return "waiting for input (" + h.WaitingFor + ")" + idle
+	}
+	return "waiting for input" + idle
+}
+
+// cmdCapture prints a harness's current terminal screen without an interactive
+// TTY (issue #735; ADR-0040). Plain text is the default — one row per line,
+// trailing blank rows trimmed, exactly what a sweep greps. --ansi emits the
+// styled repaint an attach client's first frame carries, for a consumer that
+// writes it to a real terminal. --json is the full CaptureData.
+func cmdCapture(c *client.Client, o verbOpts) error {
+	cd, err := c.Capture(o.name, o.ansi)
+	if err != nil {
+		return err
+	}
+	if o.json {
+		return printJSON(cd)
+	}
+	if o.ansi {
+		_, err = os.Stdout.WriteString(cd.Ansi)
+		return err
+	}
+	_, err = fmt.Fprintln(os.Stdout, cd.Text)
+	return err
+}
+
 // renderHarnessList is the single fetch-and-render tail shared by `list` and
 // `ps` (SPEC-0004: ps is a plain alias for list outside a project), with an
 // optional provenance filter for the project-scoped ps path. One code path
@@ -81,6 +116,13 @@ func printHarnessTable(w io.Writer, hs []protocol.HarnessInfo) error {
 		state := t.stateCell(h.State, h.Schedule, h.Held, h.ClosingUntil != "")
 		if h.SessionStalled {
 			state += " ⚠ session stalled"
+		}
+		// A harness frozen at an interactive prompt also reads healthy —
+		// `running`, CPU quiet, log silent (the prompt never scrolled). The
+		// waiting marker is the one place that truth shows (issue #735;
+		// ADR-0040).
+		if h.Waiting {
+			state += " ⏸ " + waitingCell(h)
 		}
 		t.Row(
 			h.Name,
@@ -130,6 +172,12 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	// same harness `harness list` shows as amber "armed" (#268, #331). schedfmt exists
 	// so the surfaces cannot phrase one harness two ways.
 	t.Row("state", t.stateCell(h.State, h.Schedule, h.Held, h.ClosingUntil != ""))
+	// Stuck-at-prompt projection (issue #735; ADR-0040): a full-screen prompt
+	// never reaches the durable log, so this row is the only truthful answer
+	// to "why has this harness printed nothing for an hour?".
+	if h.Waiting {
+		t.Row("waiting", t.amberBold(waitingCell(h)))
+	}
 	// A scheduled harness is always enabled = false (SPEC-0008 REQ "Schedule
 	// Exclusions"), so printing "enabled no" says nothing true about it: the
 	// schedule is its intent. Show whether it is armed instead (#331).

@@ -201,6 +201,42 @@ harness attach <name> --ro    # read-only: attach but ignore keystrokes
 `attach` reuses the same full-window terminal the dashboard uses, with the
 1-line status bar and tmux-style detach chords. See [Cockpit TUI](./tui).
 
+## Capture (screen dump without a TTY)
+
+```sh
+harness capture <name>        # the harness's current screen, as plain text
+harness capture <name> --ansi # the styled ANSI repaint (as attach's first frame)
+harness capture <name> --json # the full payload: text, ansi, viewport, idle ms
+```
+
+`capture` is the non-interactive `attach`: it renders what is on the harness's
+terminal right now so a script — a monitoring sweep, an alert pipeline — can
+read it. This matters because `harness logs` deliberately records only
+**scrolled-off** lines ([ADR-0007](https://github.com/stump-wtf/harness)): a
+full-screen prompt that repaints in place never scrolls, so it never reaches
+the log. When a screen has never received any output, `capture` answers
+`no screen` rather than pretending it is blank.
+
+## Waiting for input
+
+A harness frozen at an interactive prompt — a permission dialog, a workspace
+trust screen, a consent wall — reports `running` like any healthy harness, and
+its log is silent because the prompt never scrolled. `harness list` and
+`describe` surface this as a distinct marker:
+
+```sh
+NAME    STATE                  ...
+stuck   ● running ⏸ waiting for input (y/n prompt) · screen idle 4m12s
+```
+
+The verdict requires both halves: the screen has produced no output for a
+while (30 seconds by default), AND a known interactive-prompt pattern is
+visible on it. A busy agent repaints constantly and never trips it; an idle
+but prompt-free screen (an idle shell, a finished turn) does not either. The
+process lifecycle state is unchanged — `waiting` says what the **glass** is
+doing, `state` says what the **process** is doing
+([ADR-0040](https://github.com/stump-wtf/harness)).
+
 ## Scratchpads (`harness run`)
 
 ```sh

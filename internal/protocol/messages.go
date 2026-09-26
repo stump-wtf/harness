@@ -102,7 +102,13 @@ const (
 	// reports as "unknown" rather than "off", and would answer notify_test
 	// with unknown_op, so the client refuses to send it (see
 	// client.SupportsNotify).
-	ProtoMinor = 15
+	// ProtoMinor 16 added stuck-prompt observability (issue #735; ADR-0040):
+	// the capture op with its CaptureData reply and the no_screen error code,
+	// and Waiting/WaitingFor/IdleMs on HarnessInfo — additive only. A daemon
+	// older than 16 answers capture with unknown_op and omits the Waiting
+	// fields, which a client reads as "not waiting", exactly like any other
+	// unknown field.
+	ProtoMinor = 16
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -181,6 +187,12 @@ const (
 	// and answers with the NotifyDelivery. Governing: SPEC-0003 REQ
 	// "Operator Notification".
 	OpNotifyTest Op = "notify_test"
+
+	// OpCapture renders a harness's current terminal screen without an
+	// interactive TTY — the observability half the durable log deliberately
+	// does not carry (ADR-0007 as amended for #279 stores scrolled-off rows
+	// only). Governing: issue #735; ADR-0040.
+	OpCapture Op = "capture"
 )
 
 // ControlReq is a control-plane request. ID correlates the response; Name
@@ -234,6 +246,10 @@ type ControlReq struct {
 	// value, and For on an ungated or in-hours harness, with "no lease
 	// applies".
 	For string `json:"for,omitempty"`
+
+	// Ansi asks capture for the styled ANSI repaint in addition to the plain
+	// text (issue #735). Additive; ignored by a daemon older than 16.
+	Ansi bool `json:"ansi,omitempty"`
 }
 
 // ProjectHarness is one project-local harness definition carried by a
@@ -456,6 +472,38 @@ type HarnessInfo struct {
 	// else is visible instead of only discoverable with lsof (#183).
 	// Describe only; list omits it.
 	AttachSessions []AttachSessionInfo `json:"attach_sessions,omitempty"`
+
+	// Stuck-at-prompt projection (issue #735; ADR-0040). Waiting reports the
+	// conjunction that makes "frozen at an unanswerable prompt" distinguishable
+	// from "busy and repaint-heavy": the visible screen has not changed in
+	// DefaultIdleThreshold AND a known interactive-prompt pattern is on it.
+	// It is a projection over the same x/vt screen the attach plane serves, so
+	// it exists only for a harness whose output has ever been teed, and only
+	// while the lifecycle state is running — state stays truthful about the
+	// PROCESS; Waiting is what state says about its GLASS. WaitingFor names the
+	// matched pattern ("y/n prompt"), IdleMs the screen's silence in
+	// milliseconds. A client older than 16 ignores them.
+	Waiting    bool   `json:"waiting"`
+	WaitingFor string `json:"waiting_for,omitempty"`
+	IdleMs     int64  `json:"idle_ms,omitempty"`
+}
+
+// CaptureData is the capture op response payload (issue #735; ADR-0040).
+type CaptureData struct {
+	Name string `json:"name"`
+	// Text is the visible screen as plain text: one row per line, trailing
+	// blank rows trimmed. The default and the sweep-friendly view.
+	Text string `json:"text"`
+	// Ansi is the same screen as a self-contained ANSI repaint — the bytes an
+	// attach client's first frame carries (SPEC-0002 REQ "Attach Session") —
+	// present when the request asked for the styled view. A consumer writing
+	// it to a terminal reproduces the guest's screen, cursor included.
+	Ansi string `json:"ansi,omitempty"`
+	// Cols/Rows are the viewport the screen was rendered at.
+	Cols int `json:"cols,omitempty"`
+	Rows int `json:"rows,omitempty"`
+	// IdleMs is how long the screen has gone without PTY bytes.
+	IdleMs int64 `json:"idle_ms,omitempty"`
 }
 
 // AttachSessionInfo is one live attach session on a harness (#183).
@@ -780,6 +828,9 @@ const (
 	ErrReload ErrCode = "reload_failed"
 	// ErrNoSession: an attach frame referenced an unknown session id.
 	ErrNoSession ErrCode = "no_session"
+	// ErrNoScreen: capture named a harness whose daemon has never teed output,
+	// so there is no emulator screen to render (issue #735).
+	ErrNoScreen ErrCode = "no_screen"
 
 	// Project compose errors (SPEC-0004 REQ "Project Control Operations";
 	// ADR-0009).
