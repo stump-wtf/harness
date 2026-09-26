@@ -24,6 +24,9 @@ const destDir = path.resolve(here, '../../docs-generated');
 const sections = [
   { dir: 'guides', label: 'Getting started', position: 2 },
   { dir: 'usage', label: 'Usage', position: 3 },
+  // The cross-stack patterns cookbook (Operation Stumply D-X6): how Harness,
+  // Switchboard and Cairn combine for one recurring job.
+  { dir: 'patterns', label: 'Patterns', position: 4 },
 ];
 
 for (const { dir, label, position } of sections) {
