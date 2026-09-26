@@ -39,6 +39,13 @@ type rawHarness struct {
 	Prompt     string   `toml:"prompt"`
 	PromptFile string   `toml:"prompt_file"`
 	Model      string   `toml:"model"`
+	// SPEC-0018 REQ-11: claude-code one-shot persona keys. Valid only on
+	// harness = "claude-code" WITH a prompt source; see the validation block
+	// in registerHarness. Paths resolve against the declaring file, exactly
+	// as prompt_file does (ADR-0018).
+	SystemPromptFile string   `toml:"system_prompt_file"`
+	MCPConfig        string   `toml:"mcp_config"`
+	AllowedTools     []string `toml:"allowed_tools"`
 	// AutoAccept is a pointer so a `command` harness can reject the key on
 	// presence (SPEC-0017 REQ-3): `auto_accept = false` there does nothing,
 	// which is still a mistake worth hearing about at load.
@@ -674,6 +681,70 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		maxTurns = *rh.MaxTurns
 	}
 
+	// SPEC-0018 REQ-11: the claude-code one-shot persona keys. All three are
+	// config truth only — stored on the harness and folded into the
+	// synthesized argv at spawn time (ADR-0011), never desugared into args,
+	// the same contract as model/auto_accept/max_turns. They are valid only
+	// on harness = "claude-code" WITH prompt or prompt_file: a resident
+	// claude-code harness passes flags through its own args, and every other
+	// adapter synthesizes a different argv. Paths resolve against the
+	// declaring file exactly as prompt_file does (ADR-0018), and a missing
+	// file fails the load — a reviewer one-shot whose persona file is gone
+	// must fail loudly, not run with the wrong instructions.
+	systemPromptFile := strings.TrimSpace(rh.SystemPromptFile)
+	mcpConfig := strings.TrimSpace(rh.MCPConfig)
+	hasPersonaKeys := systemPromptFile != "" || mcpConfig != "" || len(rh.AllowedTools) > 0
+	if hasPersonaKeys {
+		switch {
+		case adapter != "claude-code":
+			return newError(filename, line,
+				"harness %q: \"system_prompt_file\", \"mcp_config\" and \"allowed_tools\" are claude-code one-shot keys, and harness = %q takes none of them (a resident harness passes flags through its own args)", name, adapter)
+		case !isAgent:
+			return newError(filename, line,
+				"harness %q: \"system_prompt_file\", \"mcp_config\" and \"allowed_tools\" require \"prompt\" or \"prompt_file\" (a long-running harness passes flags through args)", name)
+		}
+	}
+	switch {
+	case rh.SystemPromptFile != "" && systemPromptFile == "":
+		return newError(filename, line, "harness %q: \"system_prompt_file\" must not be blank", name)
+	case rh.MCPConfig != "" && mcpConfig == "":
+		return newError(filename, line, "harness %q: \"mcp_config\" must not be blank", name)
+	}
+	// Stored trimmed: " Read" would pass validation and then reach claude as
+	// an argv element that names no tool.
+	var allowedTools []string
+	for i, tool := range rh.AllowedTools {
+		t := strings.TrimSpace(tool)
+		switch {
+		case t == "":
+			return newError(filename, line, "harness %q: \"allowed_tools\" entry %d must not be blank", name, i)
+		case strings.HasPrefix(t, "-"):
+			return newError(filename, line, "harness %q: \"allowed_tools\" entry %d must not start with \"-\" (a tool name, never a flag)", name, i)
+		}
+		allowedTools = append(allowedTools, t)
+	}
+	resolvePersonaPath := func(p string) string {
+		if p == "" {
+			return ""
+		}
+		if resolve != nil {
+			return resolve(p)
+		}
+		return resolveConfigPath(p, filename)
+	}
+	systemPromptFilePath := resolvePersonaPath(systemPromptFile)
+	mcpConfigPath := resolvePersonaPath(mcpConfig)
+	if systemPromptFilePath != "" {
+		if err := checkPromptFile(systemPromptFilePath); err != nil {
+			return newError(filename, line, "harness %q: \"system_prompt_file\" %s", name, err)
+		}
+	}
+	if mcpConfigPath != "" {
+		if err := checkPromptFile(mcpConfigPath); err != nil {
+			return newError(filename, line, "harness %q: \"mcp_config\" %s", name, err)
+		}
+	}
+
 	// `quiet` is config truth only, same contract as `model`/`auto_accept`: a
 	// prompt one-shot runs headless by default, and this field opts OUT of
 	// that (quiet = false lets the agent stream output to whoever attaches).
@@ -988,29 +1059,32 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	}
 
 	h := core.Harness{
-		Name:         name,
-		Adapter:      adapter,
-		Args:         rh.Args,
-		Argv:         rh.Argv,
-		AutoAccept:   autoAccept,
-		MaxTurns:     maxTurns,
-		Model:        model,
-		Prompt:       prompt,
-		PromptFile:   promptFilePath,
-		Quiet:        quiet,
-		Workdir:      resolve(rh.Workdir),
-		EnvFile:      resolve(rh.EnvFile),
-		RestartDelay: time.Duration(rh.RestartDelay) * time.Second,
-		Restart:      restartPolicy,
-		Backend:      backend,
-		Description:  rh.Description,
-		Enabled:      enabled,
-		TmuxSocket:   rh.TmuxSocket,
-		Schedule:     schedule,
-		CatchUp:      catchUp,
-		Timeout:      timeout,
-		OnOverlap:    overlap,
-		KeepRuns:     keepRuns,
+		Name:             name,
+		Adapter:          adapter,
+		Args:             rh.Args,
+		Argv:             rh.Argv,
+		AutoAccept:       autoAccept,
+		MaxTurns:         maxTurns,
+		Model:            model,
+		Prompt:           prompt,
+		PromptFile:       promptFilePath,
+		Quiet:            quiet,
+		SystemPromptFile: systemPromptFilePath,
+		MCPConfig:        mcpConfigPath,
+		AllowedTools:     allowedTools,
+		Workdir:          resolve(rh.Workdir),
+		EnvFile:          resolve(rh.EnvFile),
+		RestartDelay:     time.Duration(rh.RestartDelay) * time.Second,
+		Restart:          restartPolicy,
+		Backend:          backend,
+		Description:      rh.Description,
+		Enabled:          enabled,
+		TmuxSocket:       rh.TmuxSocket,
+		Schedule:         schedule,
+		CatchUp:          catchUp,
+		Timeout:          timeout,
+		OnOverlap:        overlap,
+		KeepRuns:         keepRuns,
 
 		OperatingHours:       operatingHours,
 		HoursExpr:            hoursExpr,

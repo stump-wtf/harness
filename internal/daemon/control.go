@@ -114,6 +114,9 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		info.Model = h.Model
 		info.AutoAccept = h.AutoAccept
 		info.MaxTurns = h.MaxTurns
+		info.SystemPromptFile = h.SystemPromptFile
+		info.MCPConfig = h.MCPConfig
+		info.AllowedTools = h.AllowedTools
 		info.Quiet = h.Quiet
 		info.Backend = string(h.Backend)
 		info.Description = h.Description

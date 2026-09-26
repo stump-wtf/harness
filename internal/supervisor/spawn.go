@@ -404,10 +404,13 @@ func execArgvWithRegistry(h core.Harness, workdir string, reg *adapter.Registry)
 	}
 	if h.Prompt != "" {
 		opts := core.AgentOpts{
-			Model:      h.Model,
-			AutoAccept: h.AutoAccept,
-			MaxTurns:   h.MaxTurns,
-			Quiet:      h.Quiet,
+			Model:            h.Model,
+			AutoAccept:       h.AutoAccept,
+			MaxTurns:         h.MaxTurns,
+			Quiet:            h.Quiet,
+			SystemPromptFile: h.SystemPromptFile,
+			MCPConfig:        h.MCPConfig,
+			AllowedTools:     h.AllowedTools,
 		}
 		cmd, args := reg.Resolve(h).PromptCommand(h.Prompt, opts)
 		if cmd == "" {

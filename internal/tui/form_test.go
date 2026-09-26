@@ -938,6 +938,7 @@ func TestTOMLKeepsTmuxSocketOnNativeBackend(t *testing.T) {
 var harnessFormFields = []string{
 	"Name", "Adapter", "Args", "Argv", "Prompt", "PromptFile", "Model", "AutoAccept",
 	"Quiet", "MaxTurns", "Workdir", "EnvFile", "RestartDelay", "Restart",
+	"SystemPromptFile", "MCPConfig", "AllowedTools",
 	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule", "CatchUp",
 	"Timeout", "OnOverlap", "KeepRuns", "HarvestTrajectory", "MCPAllow",
 	"OperatingHours", "HoursShutdown", "HoursShutdownTimeout",
@@ -1339,5 +1340,46 @@ func TestShellQuoteJoinCannotCarryAnEmptyArg(t *testing.T) {
 	}
 	if want := []string{"--empty"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q, want %q — if the empty arg now survives, see the note above", got, want)
+	}
+}
+
+// TestEditPersonaKeysRoundTrip: an unchanged edit of a claude-code one-shot
+// keeps allowed_tools entries whole. "Bash(git log:*)" carries a space, and
+// a space-joined pre-fill split it into two broken tools on save (review of
+// #718).
+func TestEditPersonaKeysRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "harness.toml")
+	for _, f := range []string{"system.md", "mcp.json"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("{}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	original := "[harness.reviewer]\nharness = \"claude-code\"\nprompt = \"review\"\n" +
+		"system_prompt_file = \"" + filepath.Join(dir, "system.md") + "\"\n" +
+		"mcp_config = \"" + filepath.Join(dir, "mcp.json") + "\"\n" +
+		"allowed_tools = [\"Read\", \"Bash(git log:*)\"]\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fi := editInputsFor(path, protocol.HarnessInfo{Name: "reviewer", Prompt: "review"})
+	form := fi.toForm()
+	if err := form.Validate(); err != nil {
+		t.Fatalf("unchanged edit failed validation: %v", err)
+	}
+	if want := []string{"Read", "Bash(git log:*)"}; !reflect.DeepEqual(form.AllowedTools, want) {
+		t.Fatalf("allowed_tools after edit = %q, want %q", form.AllowedTools, want)
+	}
+	body := AppendHarness([]byte(removeHarnessTOML(original, form.Name)), form)
+	cfg, err := config.Parse(body, path)
+	if err != nil {
+		t.Fatalf("edited config did not parse: %v\n%s", err, body)
+	}
+	before, err := config.Parse([]byte(original), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Harnesses["reviewer"], before.Harnesses["reviewer"]) {
+		t.Errorf("unchanged edit not lossless:\n got %+v\nwant %+v", cfg.Harnesses["reviewer"], before.Harnesses["reviewer"])
 	}
 }

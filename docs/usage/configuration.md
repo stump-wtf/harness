@@ -73,6 +73,9 @@ workdir = "~/src/my-project"
 | `model` | which model the agent runs, e.g. `claude-opus-5`. Requires `prompt`; folded into the synthesized argv |
 | `auto_accept` | run unattended, bypassing the agent's permission prompts (the vendor's yolo flag). Requires `prompt`; fold into the synthesized argv |
 | `max_turns` | cap on how many iterations the agent may run before stopping. Requires `prompt`; 0 or omitted means unlimited |
+| `system_prompt_file` | **claude-code one-shots only.** Path to a persona file appended to Claude Code's system prompt — it appends, it never replaces. Requires `prompt`/`prompt_file`; the path resolves against the declaring file, and a missing file fails the load |
+| `mcp_config` | **claude-code one-shots only.** Path to an MCP servers file, emitted as `--mcp-config <path> --strict-mcp-config`, so the run sees exactly the servers the persona names and nothing from your own configuration |
+| `allowed_tools` | **claude-code one-shots only.** List of tool permissions, each entry its own argv element after `--allowedTools` — `["Read", "Bash(git log:*)"]`. An entry that is blank or starts with `-` is a config error |
 | `quiet` | run headless (suppress the agent's interactive output). Defaults to `true` for a prompt one-shot; set `false` to stream output to whoever attaches |
 
 These agent fields are **config truth only** — they are never written into
@@ -87,7 +90,7 @@ is dropped, not emulated:
 | `harness` | Synthesized command | Ignored fields |
 |-----------|---------------------|----------------|
 | `crush` | `crush [--yolo] run [--quiet] [--model M] <prompt>` | `max_turns` (Crush has no turn cap) |
-| `claude-code` | `claude -p [--dangerously-skip-permissions] [--model M] [--max-turns N] --verbose --output-format stream-json <prompt>` | `quiet` (`-p` is already headless) |
+| `claude-code` | `claude -p [--dangerously-skip-permissions] [--model M] [--max-turns N] [--append-system-prompt-file F] [--mcp-config F --strict-mcp-config] [--allowedTools T…] --verbose --output-format stream-json <prompt>` | `quiet` (`-p` is already headless) |
 | `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
 | `generic` | none — a `prompt` or `prompt_file` on `generic` is a config error | — |
 

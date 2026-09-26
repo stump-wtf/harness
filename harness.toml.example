@@ -77,6 +77,11 @@ max_turns = 20
 # its output to whatever attaches instead. Requires `prompt`; a long-running harness
 # passes its tool's own tone flag through `args`.
 # quiet = false
+# SPEC-0018 REQ-11: claude-code one-shot persona keys (all require `prompt`/
+# `prompt_file`; paths resolve against this file).
+# system_prompt_file = "personas/reviewer/system.md"  # APPENDS to the model's system prompt
+# mcp_config = "personas/reviewer/mcp.json"           # --mcp-config … --strict-mcp-config
+# allowed_tools = ["Read", "Bash(git log:*)"]         # each entry one argv element
 workdir = "~/src/my-project"
 description = "one-shot agent run"
 enabled = false

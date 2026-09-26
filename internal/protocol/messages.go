@@ -83,7 +83,13 @@ const (
 	// than 12 refuses a project_up or scratchpad definition naming "command"
 	// as an unknown harness kind, so the new field is never silently dropped
 	// into a harness that runs something else.
-	ProtoMinor = 12
+	// ProtoMinor 13 added the claude-code one-shot persona keys (SPEC-0018
+	// REQ-11): SystemPromptFile, MCPConfig and AllowedTools on ProjectHarness
+	// and HarnessInfo — additive only. A daemon older than 13 ignores them,
+	// and two of them are restrictions (allowed_tools, --strict-mcp-config),
+	// so the client refuses to send them to one rather than run a persona
+	// with more authority than it declared (see client.ProjectUp).
+	ProtoMinor = 13
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -246,6 +252,14 @@ type ProjectHarness struct {
 	// --max-turns into the synthesized argv at spawn (ADR-0011, issue #59).
 	// 0 means unset/unlimited.
 	MaxTurns int `json:"max_turns,omitempty"`
+	// SPEC-0018 REQ-11: the claude-code one-shot persona keys, additive and
+	// omitempty under ProtoMinor 13. Config validation keeps them
+	// claude-code-one-shot-only. An older daemon would ignore the unknown
+	// fields and run the one-shot WITHOUT its tool and MCP restrictions, so
+	// the client refuses to send them to a daemon older than 13.
+	SystemPromptFile string   `json:"system_prompt_file,omitempty"`
+	MCPConfig        string   `json:"mcp_config,omitempty"`
+	AllowedTools     []string `json:"allowed_tools,omitempty"`
 	// Quiet mirrors the schema's agent `quiet` headless switch: a *bool so an
 	// omitted key (nil = the headless one-shot default) is distinguishable from
 	// an explicit false (stream output to an attach). Set only alongside prompt
@@ -351,6 +365,11 @@ type HarnessInfo struct {
 	// MaxTurns is the agent turn budget for a prompt harness, folded into the
 	// synthesized argv at spawn (issue #59). Always 0 for cmd harnesses.
 	MaxTurns int `json:"max_turns,omitempty"`
+	// SPEC-0018 REQ-11: the claude-code one-shot persona keys, additive and
+	// omitempty. Always empty for cmd harnesses.
+	SystemPromptFile string   `json:"system_prompt_file,omitempty"`
+	MCPConfig        string   `json:"mcp_config,omitempty"`
+	AllowedTools     []string `json:"allowed_tools,omitempty"`
 	// Quiet is the agent headless switch for a prompt harness, folded into the
 	// synthesized argv at spawn (issue #60). Always true for prompt harnesses
 	// unless the config set quiet = false.
