@@ -165,7 +165,7 @@ func (s *Supervisor) hold(enable bool, mode core.HoursShutdownMode, closeAt time
 	}
 	// (1) cancel any pending respawn; (5) crash-loop bookkeeping reset.
 	s.cancelRestartTimer()
-	s.dropQueued(OutcomeCancelled, "")
+	s.dropQueued(OutcomeCancelled, ReasonHours)
 	s.resetCrashState()
 	s.consecFailures = 0
 	s.held = true
@@ -200,7 +200,7 @@ func (s *Supervisor) hold(enable bool, mode core.HoursShutdownMode, closeAt time
 		// and the restart count is untouched (5); enabled is never
 		// written (4).
 		s.gracefulStop()
-		s.finishRun(OutcomeCancelled, &s.lastExitCode)
+		s.finishRunWith(OutcomeCancelled, &s.lastExitCode, ReasonHours)
 	case s.state != core.StateStopped:
 		// starting / restarting / degraded with no live process: stop at once.
 		s.gracefulStop()
@@ -257,7 +257,7 @@ func (s *Supervisor) closeStep(req *closeStepReq) {
 	s.closing = false
 	s.logEvent("close ended", "reason", reason, "deadline", deadline.Format(time.RFC3339))
 	s.gracefulStop()
-	s.finishRun(OutcomeCancelled, &s.lastExitCode)
+	s.finishRunWith(OutcomeCancelled, &s.lastExitCode, ReasonHours)
 	s.publishSnapshot()
 }
 
@@ -276,6 +276,7 @@ func (s *Supervisor) release() {
 	// alongside close start/hold/lease start/lease end. next is the window's
 	// own close, since the harness is about to be running in hours again.
 	s.logEvent("open", "reason", "operating_hours", "next", s.nextHoursTransition())
+	s.startTrigger = TriggerRelease
 	s.startProcess(RunRequest{Trigger: TriggerManual})
 }
 
