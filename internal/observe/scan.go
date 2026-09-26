@@ -513,7 +513,9 @@ func (o *Observer) fetch(ctx context.Context, st *session, now time.Time) ([]ite
 		// ParseSince's watermark never lands inside an open tool call: it
 		// withholds everything past the last point with no call outstanding,
 		// and returns that point. Storing only what it returns is what makes
-		// the stream complete and duplicate-free.
+		// the stream complete and duplicate-free. ParseSince, not
+		// ParseItemsSince: agent-trace v0.6.0's Usage items are not read, so
+		// no Event carries one until a Kind exists for them.
 		events, marks, meta, wm, err := ip.ParseSince(ctx, st.path, st.watermark, st.nextSeq)
 		if err != nil {
 			return nil, false, err

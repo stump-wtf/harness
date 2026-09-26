@@ -167,6 +167,36 @@ func TestLastSuccessOmittedUntilFirstSuccess(t *testing.T) {
 	}
 }
 
+// A turn-end mark (agent-trace v0.6.0) is activity, not a model call: it
+// moves neither call counter nor the last-success timestamp, even when it is
+// the newest item. The tool event after it is only a marker to wait on.
+func TestTurnEndIsNotAModelCall(t *testing.T) {
+	src := newFakeSource()
+	src.add(crushHarness("worker"), runningSnap())
+	feed := newFakeFeed()
+	m := newTestMetrics(t, src, Options{Observer: feed})
+
+	turnEnd := errorEvent("worker", "s1", "end_turn", t0.Add(time.Minute))
+	turnEnd.Mark.Type = "turn-end"
+	feed.ch <- turnEnd
+	at := t0.Add(time.Second)
+	feed.ch <- toolEvent("worker", "s1", at)
+	eventually(t, "the marker counted", func() bool {
+		v, _ := scrape(t, m).get("harness_model_calls_total", lbls("harness", "worker", "outcome", "success"))
+		return v >= 1
+	})
+	fams := scrape(t, m)
+	if v := fams.must(t, "harness_model_calls_total", lbls("harness", "worker", "outcome", "success")); v != 1 {
+		t.Errorf("success calls = %v, want 1: a turn-end was counted", v)
+	}
+	if v := fams.must(t, "harness_model_calls_total", lbls("harness", "worker", "outcome", "error")); v != 0 {
+		t.Errorf("error calls = %v, want 0: a turn-end was counted", v)
+	}
+	if v := fams.must(t, "harness_last_successful_call_timestamp", lbls("harness", "worker")); v != float64(at.Unix()) {
+		t.Errorf("last success = %v, want the tool call's %v, not the turn end's", v, at.Unix())
+	}
+}
+
 // REQ-6: a harness the observer cannot read has no model series at all. A
 // zero would read as a healthy, idle agent.
 func TestUnobservableHarnessOmitsModelSeries(t *testing.T) {

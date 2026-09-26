@@ -487,10 +487,15 @@ func (m *Metrics) lifecycle(ev supervisor.Event) {
 //
 // A tool call is a model call that succeeded: the model answered with work.
 // An error mark is one that failed. Other marks (user messages, compactions,
-// subagent launches) are activity, not calls. A turn that ends in plain text
-// with no tool call is invisible here — agent-trace records no mark for it —
-// so an agent that only chats reads as idle; the workers this exists for act
-// through tools.
+// subagent launches, turn ends) are activity, not calls.
+//
+// A turn-end mark (agent-trace v0.6.0) is deliberately not counted as a
+// successful call, although a turn that ends in plain text is one:
+// harness_model_calls_total documents success as a tool call, and folding turn
+// ends in would move every existing series and the staleness alert measured
+// from lastSuccess. That is a metric-definition change (SPEC-0013 REQ-3), not
+// a dependency bump. Until it is made, an agent that only chats still reads as
+// idle here; the workers this exists for act through tools.
 func (m *Metrics) item(ev observe.Event) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -528,7 +533,7 @@ func (m *Metrics) item(ev observe.Event) {
 		}
 	case observe.KindMark:
 		if ev.Mark.Type != "error" {
-			return
+			return // turn-end included: see above
 		}
 		s.calls[1]++
 		class, known := Classify(ev.Adapter, ev.Mark.Note)
