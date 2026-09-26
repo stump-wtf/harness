@@ -43,3 +43,60 @@ func TestProtoMinor(t *testing.T) {
 		t.Errorf("this build's own proto %q would refuse its own --event", protocol.ProtoVersion)
 	}
 }
+
+// TestPersonaKeysRefuseAnOlderDaemon: a daemon before ProtoMinor 13 ignores
+// allowed_tools and mcp_config, so the one-shot would run unrestricted. Both
+// project_up and scratch_run must refuse before the wire (no connection here:
+// reaching it would panic).
+func TestPersonaKeysRefuseAnOlderDaemon(t *testing.T) {
+	defs := []protocol.ProjectHarness{
+		{Name: "reviewer", AllowedTools: []string{"Read"}},
+		{Name: "reviewer", MCPConfig: "/p/mcp.json"},
+		{Name: "reviewer", SystemPromptFile: "/p/system.md"},
+	}
+	for _, v := range []string{"1.12", "1", ""} {
+		c := &Client{daemon: protocol.Hello{ProtoVersion: v}}
+		for _, def := range defs {
+			if _, err := c.ProjectUp("p", []protocol.ProjectHarness{{Name: "plain"}, def}); err == nil || !strings.Contains(err.Error(), "predates system_prompt_file") {
+				t.Errorf("project up, proto %q, %+v: err = %v, want a refusal", v, def, err)
+			}
+			if _, err := c.ScratchRun(def, ""); err == nil || !strings.Contains(err.Error(), "predates system_prompt_file") {
+				t.Errorf("scratch run, proto %q, %+v: err = %v, want a refusal", v, def, err)
+			}
+		}
+	}
+	current := &Client{daemon: protocol.Hello{ProtoVersion: protocol.ProtoVersion}}
+	if err := current.checkPersonaKeys(defs); err != nil {
+		t.Errorf("this build's own proto %q refuses its own persona keys: %v", protocol.ProtoVersion, err)
+	}
+	old := &Client{daemon: protocol.Hello{ProtoVersion: "1.12"}}
+	if err := old.checkPersonaKeys([]protocol.ProjectHarness{{Name: "plain"}}); err != nil {
+		t.Errorf("a definition without persona keys must still reach an older daemon: %v", err)
+	}
+}
+
+// TestEnvFileListRefusesAnOlderDaemon: a daemon before ProtoMinor 14 ignores
+// env_files, so a two-file list would start the harness with no env file at
+// all. A one-element list still travels as EnvFile and must go through (review
+// of #719).
+func TestEnvFileListRefusesAnOlderDaemon(t *testing.T) {
+	multi := protocol.ProjectHarness{Name: "reviewer", EnvFiles: []string{"/p/claude.env", "/p/reviewer.env"}}
+	single := protocol.ProjectHarness{Name: "solo", EnvFile: "/p/claude.env", EnvFiles: []string{"/p/claude.env"}}
+	for _, v := range []string{"1.13", "1", ""} {
+		c := &Client{daemon: protocol.Hello{ProtoVersion: v}}
+		if _, err := c.ProjectUp("p", []protocol.ProjectHarness{multi}); err == nil || !strings.Contains(err.Error(), "predates env_file lists") {
+			t.Errorf("project up, proto %q: err = %v, want a refusal", v, err)
+		}
+		if _, err := c.ScratchRun(multi, ""); err == nil || !strings.Contains(err.Error(), "predates env_file lists") {
+			t.Errorf("scratch run, proto %q: err = %v, want a refusal", v, err)
+		}
+	}
+	old := &Client{daemon: protocol.Hello{ProtoVersion: "1.13"}}
+	if err := old.checkEnvFileList([]protocol.ProjectHarness{single}); err != nil {
+		t.Errorf("a one-element list must still reach an older daemon: %v", err)
+	}
+	current := &Client{daemon: protocol.Hello{ProtoVersion: protocol.ProtoVersion}}
+	if err := current.checkEnvFileList([]protocol.ProjectHarness{multi}); err != nil {
+		t.Errorf("this build's own proto %q refuses its own env_file list: %v", protocol.ProtoVersion, err)
+	}
+}

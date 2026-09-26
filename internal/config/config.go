@@ -24,6 +24,7 @@ import (
 
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/hours"
+	"github.com/stump-wtf/harness/internal/tmpl"
 )
 
 // rawHarness mirrors a harness TOML table before validation/normalization.
@@ -39,27 +40,38 @@ type rawHarness struct {
 	Prompt     string   `toml:"prompt"`
 	PromptFile string   `toml:"prompt_file"`
 	Model      string   `toml:"model"`
+	// SPEC-0018 REQ-11: claude-code one-shot persona keys. Valid only on
+	// harness = "claude-code" WITH a prompt source; see the validation block
+	// in registerHarness. Paths resolve against the declaring file, exactly
+	// as prompt_file does (ADR-0018).
+	SystemPromptFile string   `toml:"system_prompt_file"`
+	MCPConfig        string   `toml:"mcp_config"`
+	AllowedTools     []string `toml:"allowed_tools"`
 	// AutoAccept is a pointer so a `command` harness can reject the key on
 	// presence (SPEC-0017 REQ-3): `auto_accept = false` there does nothing,
 	// which is still a mistake worth hearing about at load.
-	AutoAccept        *bool    `toml:"auto_accept"`
-	MaxTurns          *int     `toml:"max_turns"`
-	Quiet             *bool    `toml:"quiet"`
-	Workdir           string   `toml:"workdir"`
-	EnvFile           string   `toml:"env_file"`
-	RestartDelay      int      `toml:"restart_delay"`
-	Restart           string   `toml:"restart"`
-	Backend           string   `toml:"backend"`
-	Description       string   `toml:"description"`
-	Enabled           *bool    `toml:"enabled"`
-	TmuxSocket        string   `toml:"tmux_socket"`
-	Schedule          string   `toml:"schedule"`
-	CatchUp           *bool    `toml:"catch_up"`
-	Timeout           *string  `toml:"timeout"`
-	OnOverlap         *string  `toml:"on_overlap"`
-	KeepRuns          *int     `toml:"keep_runs"`
-	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
-	MCPAllow          []string `toml:"mcp_allow"`
+	AutoAccept *bool  `toml:"auto_accept"`
+	MaxTurns   *int   `toml:"max_turns"`
+	Quiet      *bool  `toml:"quiet"`
+	Workdir    string `toml:"workdir"`
+	// EnvFile decodes as a string (the historical form, byte for byte) or a
+	// list of strings loaded in order (SPEC-0018 REQ-12). Nil means the key
+	// is absent; an explicit empty list is rejected in registerHarness, where
+	// the harness name and source line are known.
+	EnvFile           envFileValue `toml:"env_file"`
+	RestartDelay      int          `toml:"restart_delay"`
+	Restart           string       `toml:"restart"`
+	Backend           string       `toml:"backend"`
+	Description       string       `toml:"description"`
+	Enabled           *bool        `toml:"enabled"`
+	TmuxSocket        string       `toml:"tmux_socket"`
+	Schedule          string       `toml:"schedule"`
+	CatchUp           *bool        `toml:"catch_up"`
+	Timeout           *string      `toml:"timeout"`
+	OnOverlap         *string      `toml:"on_overlap"`
+	KeepRuns          *int         `toml:"keep_runs"`
+	HarvestTrajectory *bool        `toml:"harvest_trajectory"`
+	MCPAllow          []string     `toml:"mcp_allow"`
 	// ExportTelemetry is the per-harness telemetry opt-in; nil follows
 	// [telemetry] export_all (SPEC-0015 REQ-1).
 	ExportTelemetry *bool `toml:"export_telemetry"`
@@ -92,6 +104,35 @@ type rawHarness struct {
 	// Delete-not-deprecate still owes the user a loud failure.
 	RemovedCmd   string `toml:"cmd"`
 	RemovedAgent string `toml:"agent"`
+}
+
+// envFileValue decodes `env_file` as a string or a list of strings. Only the
+// SHAPE is checked here; the empty-list error is raised in registerHarness,
+// which knows the harness name and the declaring line. A bare string becomes
+// a one-element list, so a string keeps its current meaning byte for byte
+// (including a blank one, which the supervisor tolerates like a missing
+// file).
+// Governing: SPEC-0018 REQ-12.
+type envFileValue []string
+
+func (e *envFileValue) UnmarshalTOML(v any) error {
+	switch t := v.(type) {
+	case string:
+		*e = envFileValue{t}
+	case []any:
+		out := make(envFileValue, 0, len(t))
+		for i, item := range t {
+			s, ok := item.(string)
+			if !ok {
+				return fmt.Errorf("env_file: element %d is not a string", i)
+			}
+			out = append(out, s)
+		}
+		*e = out
+	default:
+		return errors.New(`env_file must be a string or a list of strings`)
+	}
+	return nil
 }
 
 // rawProfile mirrors a [profile.*] TOML table before validation.
@@ -251,7 +292,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 		line    int
 	}
 	var pending []pendingProfile
-	var serverSeen, daemonSeen, telemetrySeen, mergeTrainSeen bool
+	var serverSeen, daemonSeen, telemetrySeen, mergeTrainSeen, notifySeen bool
 	var harnessDPath string
 
 	// Sources and the harnesses that bind them form one config view across
@@ -345,6 +386,22 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 				return nil, err
 			}
 			cfg.MergeTrain = mc
+
+		case len(h.parts) == 1 && h.parts[0] == "notify":
+			// The global notify hook (SPEC-0003 REQ "Operator Notification").
+			if notifySeen {
+				return nil, newError(filename, h.line, "duplicate [notify] table")
+			}
+			notifySeen = true
+			var rn rawNotify
+			if err := md.PrimitiveDecode(top["notify"], &rn); err != nil {
+				return nil, newError(filename, h.line, "[notify]: %v", err)
+			}
+			nc, err := buildNotify(filename, data, h.line, rn)
+			if err != nil {
+				return nil, err
+			}
+			cfg.Notify = nc
 
 		case len(h.parts) == 1 && h.parts[0] == "server":
 			// The optional remote-access front door (ADR-0004/0008).
@@ -497,6 +554,25 @@ func addHarness(cfg *core.Config, st *loadState, filename, name string, line int
 // parameters: defaultEnabled (global autostart is opt-in, project bring-up is
 // opt-out) and resolve, applied to workdir/env_file (project files resolve
 // relative paths against the project root; nil stores them verbatim).
+// resolveEnvFiles applies resolve to every env_file entry, preserving order
+// (SPEC-0018 REQ-12: a list loads in order, later file wins). resolve is nil
+// for the global config, where — exactly like workdir — paths stay raw until
+// spawn expands ~; a project file resolves each entry against its root.
+func resolveEnvFiles(files envFileValue, resolve func(string) string) []string {
+	if files == nil {
+		return nil
+	}
+	out := make([]string, len(files))
+	for i, f := range files {
+		if resolve != nil {
+			out[i] = resolve(f)
+		} else {
+			out[i] = f
+		}
+	}
+	return out
+}
+
 func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHarness, defaultEnabled bool, resolve func(string) string) error {
 	if _, exists := cfg.Harnesses[name]; exists {
 		return newError(filename, line, "duplicate harness %q", name)
@@ -557,7 +633,13 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		}
 	}
 	if err := checkCommandKeys(adapter, rh); err != nil {
-		return newError(filename, line, "harness %q: %v", name, err)
+		// A malformed argv template keeps its sentinel through the located
+		// error (SPEC-0017 REQ "Error Handling Standards").
+		var kind error
+		if errors.Is(err, tmpl.ErrGrammar) {
+			kind = tmpl.ErrGrammar
+		}
+		return newSentinelError(filename, line, kind, "harness %q: %v", name, err)
 	}
 	prompt := strings.TrimSpace(rh.Prompt)
 	switch {
@@ -596,6 +678,14 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	// otherwise a prompt_file harness would be rejected for setting `model` or
 	// `schedule` and would inherit the always-restart cmd default.
 	isAgent := prompt != "" || promptFile != ""
+	// A command harness is a one-shot when a clock or an event fires it, with
+	// no prompt: its argv is the whole job. It takes the one-shot restart
+	// default and satisfies the "requires a prompt source" half of the
+	// schedule and triggers exclusions; every other exclusion applies as is.
+	// Governing: ADR-0023, SPEC-0017 REQ-3 "Command Harness Modes And
+	// Exclusions", REQ-17 (the SPEC-0008 and SPEC-0014 amendments).
+	isCommand := adapter == core.AdapterCommand
+	commandOneShot := isCommand && (strings.TrimSpace(rh.Schedule) != "" || len(rh.Triggers) > 0)
 
 	// Resolve prompt_file against the file that declared it, deliberately
 	// NOT through the shared `resolve` (which is nil for the global config, so
@@ -629,7 +719,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	case strings.ContainsFunc(model, unicode.IsSpace):
 		return newError(filename, line,
 			"harness %q: \"model\" must be a single token (model ids carry no whitespace)", name)
-	case model != "" && !isAgent:
+	case model != "" && !isAgent && adapter != core.AdapterCommand:
+		// A command harness passes `model` through {{model}} in its argv;
+		// checkCommandKeys has already refused one that does not.
 		return newError(filename, line,
 			"harness %q: \"model\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes --model through its own args)", name)
 	}
@@ -672,6 +764,70 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 				"harness %q: \"max_turns\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes --max-turns through its own args)", name)
 		}
 		maxTurns = *rh.MaxTurns
+	}
+
+	// SPEC-0018 REQ-11: the claude-code one-shot persona keys. All three are
+	// config truth only — stored on the harness and folded into the
+	// synthesized argv at spawn time (ADR-0011), never desugared into args,
+	// the same contract as model/auto_accept/max_turns. They are valid only
+	// on harness = "claude-code" WITH prompt or prompt_file: a resident
+	// claude-code harness passes flags through its own args, and every other
+	// adapter synthesizes a different argv. Paths resolve against the
+	// declaring file exactly as prompt_file does (ADR-0018), and a missing
+	// file fails the load — a reviewer one-shot whose persona file is gone
+	// must fail loudly, not run with the wrong instructions.
+	systemPromptFile := strings.TrimSpace(rh.SystemPromptFile)
+	mcpConfig := strings.TrimSpace(rh.MCPConfig)
+	hasPersonaKeys := systemPromptFile != "" || mcpConfig != "" || len(rh.AllowedTools) > 0
+	if hasPersonaKeys {
+		switch {
+		case adapter != "claude-code":
+			return newError(filename, line,
+				"harness %q: \"system_prompt_file\", \"mcp_config\" and \"allowed_tools\" are claude-code one-shot keys, and harness = %q takes none of them (a resident harness passes flags through its own args)", name, adapter)
+		case !isAgent:
+			return newError(filename, line,
+				"harness %q: \"system_prompt_file\", \"mcp_config\" and \"allowed_tools\" require \"prompt\" or \"prompt_file\" (a long-running harness passes flags through args)", name)
+		}
+	}
+	switch {
+	case rh.SystemPromptFile != "" && systemPromptFile == "":
+		return newError(filename, line, "harness %q: \"system_prompt_file\" must not be blank", name)
+	case rh.MCPConfig != "" && mcpConfig == "":
+		return newError(filename, line, "harness %q: \"mcp_config\" must not be blank", name)
+	}
+	// Stored trimmed: " Read" would pass validation and then reach claude as
+	// an argv element that names no tool.
+	var allowedTools []string
+	for i, tool := range rh.AllowedTools {
+		t := strings.TrimSpace(tool)
+		switch {
+		case t == "":
+			return newError(filename, line, "harness %q: \"allowed_tools\" entry %d must not be blank", name, i)
+		case strings.HasPrefix(t, "-"):
+			return newError(filename, line, "harness %q: \"allowed_tools\" entry %d must not start with \"-\" (a tool name, never a flag)", name, i)
+		}
+		allowedTools = append(allowedTools, t)
+	}
+	resolvePersonaPath := func(p string) string {
+		if p == "" {
+			return ""
+		}
+		if resolve != nil {
+			return resolve(p)
+		}
+		return resolveConfigPath(p, filename)
+	}
+	systemPromptFilePath := resolvePersonaPath(systemPromptFile)
+	mcpConfigPath := resolvePersonaPath(mcpConfig)
+	if systemPromptFilePath != "" {
+		if err := checkPromptFile(systemPromptFilePath); err != nil {
+			return newError(filename, line, "harness %q: \"system_prompt_file\" %s", name, err)
+		}
+	}
+	if mcpConfigPath != "" {
+		if err := checkPromptFile(mcpConfigPath); err != nil {
+			return newError(filename, line, "harness %q: \"mcp_config\" %s", name, err)
+		}
 	}
 
 	// `quiet` is config truth only, same contract as `model`/`auto_accept`: a
@@ -724,7 +880,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		// harnesses default to "no" instead: a one-shot agent run exiting 0
 		// must not respawn (an explicit `restart = ...` still wins).
 		restartPolicy = core.RestartAlways
-		if isAgent {
+		if isAgent || commandOneShot {
 			restartPolicy = core.RestartNo
 		}
 	}
@@ -745,9 +901,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	case rh.Schedule != "" && schedule == "":
 		return newError(filename, line,
 			"harness %q: \"schedule\" must not be blank", name)
-	case schedule != "" && !isAgent:
+	case schedule != "" && !isAgent && !isCommand:
 		return newError(filename, line,
-			"harness %q: \"schedule\" requires \"prompt\" or \"prompt_file\" (a scheduled harness is a one-shot agent run)", name)
+			"harness %q: \"schedule\" requires \"prompt\" or \"prompt_file\", or harness = \"command\" (a scheduled harness is a one-shot run)", name)
 	case schedule != "" && enabled:
 		return newError(filename, line,
 			"harness %q: \"schedule\" and \"enabled = true\" are mutually exclusive (use one or the other)", name)
@@ -781,9 +937,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		return err
 	}
 	switch {
-	case len(triggers) > 0 && !isAgent:
+	case len(triggers) > 0 && !isAgent && !isCommand:
 		return newError(filename, line,
-			"harness %q: \"triggers\" requires \"prompt\" or \"prompt_file\" (a triggered harness is a one-shot agent run)", name)
+			"harness %q: \"triggers\" requires \"prompt\" or \"prompt_file\", or harness = \"command\" (a triggered harness is a one-shot run)", name)
 	case len(triggers) > 0 && enabled:
 		return newError(filename, line,
 			"harness %q: \"triggers\" and \"enabled = true\" are mutually exclusive (autostart intent and on-demand firing are distinct)", name)
@@ -983,34 +1139,49 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		}
 	}
 
+	// `env_file` is rejected as an explicit empty list (SPEC-0018 REQ-12
+	// scenario "An empty list"): unlike an absent key or even a blank string,
+	// which mean "no extra environment", `env_file = []` can only be a
+	// mistake — almost always a list whose entries were deleted — and a
+	// harness whose secrets silently stopped loading is exactly the
+	// authenticate-later failure mode the missing-file tolerance exists to
+	// avoid hiding.
+	if rh.EnvFile != nil && len(rh.EnvFile) == 0 {
+		return newError(filename, line,
+			"harness %q: \"env_file\" must not be an empty list (name at least one file, or remove the key)", name)
+	}
+
 	if resolve == nil {
 		resolve = func(p string) string { return p }
 	}
 
 	h := core.Harness{
-		Name:         name,
-		Adapter:      adapter,
-		Args:         rh.Args,
-		Argv:         rh.Argv,
-		AutoAccept:   autoAccept,
-		MaxTurns:     maxTurns,
-		Model:        model,
-		Prompt:       prompt,
-		PromptFile:   promptFilePath,
-		Quiet:        quiet,
-		Workdir:      resolve(rh.Workdir),
-		EnvFile:      resolve(rh.EnvFile),
-		RestartDelay: time.Duration(rh.RestartDelay) * time.Second,
-		Restart:      restartPolicy,
-		Backend:      backend,
-		Description:  rh.Description,
-		Enabled:      enabled,
-		TmuxSocket:   rh.TmuxSocket,
-		Schedule:     schedule,
-		CatchUp:      catchUp,
-		Timeout:      timeout,
-		OnOverlap:    overlap,
-		KeepRuns:     keepRuns,
+		Name:             name,
+		Adapter:          adapter,
+		Args:             rh.Args,
+		Argv:             rh.Argv,
+		AutoAccept:       autoAccept,
+		MaxTurns:         maxTurns,
+		Model:            model,
+		Prompt:           prompt,
+		PromptFile:       promptFilePath,
+		Quiet:            quiet,
+		SystemPromptFile: systemPromptFilePath,
+		MCPConfig:        mcpConfigPath,
+		AllowedTools:     allowedTools,
+		Workdir:          resolve(rh.Workdir),
+		EnvFiles:         resolveEnvFiles(rh.EnvFile, resolve),
+		RestartDelay:     time.Duration(rh.RestartDelay) * time.Second,
+		Restart:          restartPolicy,
+		Backend:          backend,
+		Description:      rh.Description,
+		Enabled:          enabled,
+		TmuxSocket:       rh.TmuxSocket,
+		Schedule:         schedule,
+		CatchUp:          catchUp,
+		Timeout:          timeout,
+		OnOverlap:        overlap,
+		KeepRuns:         keepRuns,
 
 		OperatingHours:       operatingHours,
 		HoursExpr:            hoursExpr,
@@ -1475,14 +1646,18 @@ func lineOf(headers []tableHeader, want string) int {
 // value — a key that silently does nothing is a mistake the operator should
 // hear about at load.
 //
-// Prompts, `schedule` and `triggers` are refused on `command` for now: this
-// is the resident slice of SPEC-0017. A prompt needs a delivery path
-// (REQ-12) and a one-shot needs the run wiring REQ-3 describes; until they
-// exist, loading such a harness would either drop the instruction or run
-// the argv on a clock nobody asked to be ignored. The refusals name the gap
-// so the error reads as "not yet", not as "wrong".
+// `schedule` and `triggers` make a command harness a one-shot and need no
+// prompt (REQ-3): its argv is the whole job. `model` is accepted only when an
+// argv element references {{model}}; that, and the run-context rules that
+// depend on schedule and triggers, are core.CheckCommandTemplateContext,
+// called here with the raw keys so the check sees what the file says.
+//
+// Prompts are still refused on `command`: a prompt needs a delivery path
+// (REQ-12), and until one exists loading such a harness would drop the
+// instruction. The refusal names the gap so the error reads as "not yet",
+// not as "wrong".
 // Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-3
-// "Command Harness Modes And Exclusions".
+// "Command Harness Modes And Exclusions", REQ-7 "Template Context".
 func checkCommandKeys(adapter string, rh rawHarness) error {
 	if adapter != core.AdapterCommand {
 		if rh.Argv != nil {
@@ -1504,19 +1679,12 @@ func checkCommandKeys(adapter string, rh rawHarness) error {
 			return fmt.Errorf("%q is not accepted on a command harness: a command harness owns its argv, so put the tool's own flag there", k.key)
 		}
 	}
-	if rh.Model != "" {
-		return errors.New("\"model\" is unused: no argv element references {{model}}, so nothing would pass it to the program")
-	}
 	for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}} {
 		if k.val != "" {
 			return fmt.Errorf("%q is not supported on a command harness yet: nothing delivers a prompt to its argv; use harness = \"crush\"|\"claude-code\"|\"codex\" for a prompt one-shot", k.key)
 		}
 	}
-	switch {
-	case rh.Schedule != "":
-		return errors.New("\"schedule\" is not supported on a command harness yet: a command harness is resident only (use a prompt harness for a scheduled one-shot)")
-	case rh.Triggers != nil:
-		return errors.New("\"triggers\" is not supported on a command harness yet: a command harness is resident only (use a prompt harness for a triggered one-shot)")
-	}
-	return nil
+	scheduled := strings.TrimSpace(rh.Schedule) != ""
+	triggered := scheduled || len(rh.Triggers) > 0
+	return core.CheckCommandTemplateContext(rh.Argv, strings.TrimSpace(rh.Model), scheduled, triggered)
 }

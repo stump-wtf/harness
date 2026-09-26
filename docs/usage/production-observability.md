@@ -244,10 +244,11 @@ become `[prompt omitted]`.
 The resource is `service.name=harness`, `service.version`, `host.name`, plus
 anything in `OTEL_RESOURCE_ATTRIBUTES`.
 
-A caveat on outages: Crush records a provider failure as an error mark, so it
-shows up as `ERROR` records. Claude Code does not surface API errors in its
-transcript at the pinned agent-trace version; there an outage shows as that
-harness's records stopping.
+A caveat on outages: Crush records a provider failure as an error mark, and
+Claude Code's flagged API-error records (`rate_limit (429): …`,
+`server_error: …`) are read as error marks too, so both show up as `ERROR`
+records. Codex does not surface provider errors yet; there an outage shows as
+that harness's records stopping.
 
 ## When the collector is down
 

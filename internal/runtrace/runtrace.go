@@ -557,7 +557,8 @@ const (
 	// other).
 	KindTool EntryKind = "tool"
 	// KindMark is a non-tool annotation: a user message, a compaction, a
-	// subagent launch, or an agent error.
+	// subagent launch, an agent error, or (agent-trace v0.6.0) a turn end.
+	// Only an agent error sets Entry.Error.
 	KindMark EntryKind = "mark"
 )
 

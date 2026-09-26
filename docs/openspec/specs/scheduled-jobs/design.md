@@ -74,7 +74,7 @@ time.
 table would carry a lifecycle distinction that `restart` and the prompt harness
 already supply, and its ability to reject nonsense is achieved by validation on
 one table at a fraction of the downstream cost. What a table kind would still
-buy is type-based dispatch in consumers; that is the accepted cost (#160).
+buy is type-based dispatch in consumers; that is the accepted cost.
 
 The exclusions are the load-bearing part of this choice and are enumerated in
 SPEC-0008 REQ "Schedule Exclusions". `enabled` is **not** redefined to mean
@@ -163,7 +163,7 @@ converted in `cmd/harness/daemon.go`, so neither package imports the other.
 ### A firing never persists `enabled`
 
 **Choice**: A firing starts the harness transiently: the process comes up
-without `enabled` being set or persisted (#159). At restore and autostart, a
+without `enabled` being set or persisted. At restore and autostart, a
 triggered harness's persisted `enabled = true` (left by a manual `harness start`,
 or by an older daemon) is ignored: for a scheduled harness the schedule is the
 intent.
@@ -373,12 +373,12 @@ during shutdown ahead of `srv.Close()` and `mgr.Close()`.
   logged; a crash before the next successful write could then repeat or lose a
   window.
 - **Consumers branch on a key.** Every surface that renders a scheduled harness
-  distinctly (`ls`, `describe`, the cockpit) tests `Schedule != ""` itself
-  (#160, #205). `internal/schedfmt` shares the phrasing; SPEC-0008 REQ "Schedule
+  distinctly (`ls`, `describe`, the cockpit) tests `Schedule != ""`
+  itself. `internal/schedfmt` shares the phrasing; SPEC-0008 REQ "Schedule
   Visibility" holds them to one answer.
 - **Config writers must carry every key.** The TUI form rewrites a whole
   `[harness.*]` table, so any schema key it does not carry would be deleted on
-  save (#161). A census test walks every `core.Harness` field and a round-trip
+  save. A census test walks every `core.Harness` field and a round-trip
   test asserts each survives an edit, so adding a field fails the suite until
   someone decides whether the form carries it.
 

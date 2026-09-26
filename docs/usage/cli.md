@@ -29,6 +29,25 @@ harness start --all           # start/stop/restart every harness at once
 render live per-harness progress with a Bubble Tea animation so a large fleet
 start/stop is visible as it converges.
 
+On a terminal, a single-harness verb shows a spinner while the daemon works,
+then records the transition in the state's colour, with a faint context line:
+
+```text
+● claude-rc  failed → running
+  restarted · pid 48211 · 3 restarts · remote-control claude
+```
+
+A harness that comes out `failed` or `degraded` adds a
+`→ see why: harness logs <name>` hint. The other mutating verbs (`use-profile`,
+`reload`, `down`, `rm`, `run`, `trigger`, `daemon stop`) get the same styled
+treatment on a terminal.
+
+Piped or redirected output stays exactly one plain line per result, e.g.
+`● claude-rc → running` or `reloaded — 12 harnesses`, so scripts are
+unaffected. `--json` is unchanged. Colour follows your terminal's
+capabilities and `NO_COLOR`; the glyph and state words carry the meaning
+without it.
+
 The client warns when its own build is older or newer than the daemon's
 (client/daemon skew) — after upgrading, restart the daemon so both sides speak
 the same protocol version.
@@ -83,6 +102,14 @@ harness logs <name> --run 3     # what run 3 did (--raw for its own log)
 out, and `75` when it was skipped because a run was already in flight — so a job
 scripts like the command it wraps. The verb is `trigger` because `harness run`
 starts a throwaway [scratchpad](#scratchpads-harness-run).
+
+A `command` harness whose `argv` template needs a value the run does not have
+(a required `{{run.source}}` on a manual trigger, say) runs nothing: the run is
+recorded `skipped`, and `harness runs` prints a line under the table naming the
+missing path (`run #4 skipped: template_unresolved ({{run.source}} has no value
+for a manual run)`). `--json` carries it as `"reason": "template_unresolved"`
+and `"missing_path": "run.source"`, and `trigger --wait` exits `75`. See
+[Argv templates](./configuration#argv-templates).
 
 `--wait` polls the run history rather than consuming events, because history is
 authoritative even when an event is dropped. When the trigger was queued behind
@@ -164,7 +191,8 @@ is active at a time; `harness list` flags it with `*`. See
 
 ```sh
 harness reload                # re-read config, reconcile running harnesses
-harness doctor                # health check battery (config, daemon, versions, remote SSH, harnesses)
+harness doctor                # health check battery (config, daemon, versions, remote SSH, notify, harnesses)
+harness doctor --notify-test  # also have the daemon run the [notify] hook once with a test event
 ```
 
 `reload` picks up config changes without restarting the daemon. `describe`

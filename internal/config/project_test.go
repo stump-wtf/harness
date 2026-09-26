@@ -240,8 +240,8 @@ env_file = "secrets.env"
 		t.Fatalf("ParseProject: %v", err)
 	}
 	h := proj.Config.Harnesses["agent"]
-	if h.EnvFile != "/tmp/repo/secrets.env" {
-		t.Errorf("EnvFile = %q, want %q", h.EnvFile, "/tmp/repo/secrets.env")
+	if h.EnvFiles[0] != "/tmp/repo/secrets.env" {
+		t.Errorf("EnvFiles = %q, want %q", h.EnvFiles, "/tmp/repo/secrets.env")
 	}
 }
 

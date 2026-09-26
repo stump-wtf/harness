@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func TestParseZshHarnessdExample(t *testing.T) {
 		Adapter:      "crush",
 		Args:         []string{"--yolo", "--data-dir", "{workdir}", "--channels", "server:signal"},
 		Workdir:      "~/.local/share/crush-signal-channel",
-		EnvFile:      "~/.config/vault/secrets-static.env",
+		EnvFiles:     []string{"~/.config/vault/secrets-static.env"},
 		RestartDelay: 5 * time.Second,
 		Restart:      core.RestartAlways, // defaulted, not present in the file
 		Backend:      core.BackendNative, // defaulted, not present in the file
@@ -1471,5 +1472,59 @@ harness_d = %q
 	}
 	if !strings.Contains(err.Error(), "unrecognized table [[harness.dropin]]") {
 		t.Errorf("error %q does not name the array table", err.Error())
+	}
+}
+
+// SPEC-0018 REQ-12: env_file accepts a list, loaded in order.
+func TestParseHarness_EnvFileList(t *testing.T) {
+	data := []byte(`
+[harness.reviewer]
+harness = "claude-code"
+env_file = ["claude.env", "reviewer.env"]
+`)
+	cfg, err := Parse(data, "harness.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := cfg.Harnesses["reviewer"]
+	want := []string{"claude.env", "reviewer.env"}
+	if !slices.Equal(h.EnvFiles, want) {
+		t.Errorf("EnvFiles = %q, want %q", h.EnvFiles, want)
+	}
+}
+
+// REQ-12: a string keeps its current meaning, byte for byte.
+func TestParseHarness_EnvFileStringStaysOneElementList(t *testing.T) {
+	data := []byte(`
+[harness.solo]
+harness = "claude-code"
+env_file = "~/.config/vault/secrets.env"
+`)
+	cfg, err := Parse(data, "harness.toml")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	h := cfg.Harnesses["solo"]
+	want := []string{"~/.config/vault/secrets.env"}
+	if !slices.Equal(h.EnvFiles, want) {
+		t.Errorf("EnvFiles = %q, want %q", h.EnvFiles, want)
+	}
+}
+
+// REQ-12 scenario "An empty list": a located parse error naming the harness.
+func TestParseHarness_EnvFileEmptyListIsError(t *testing.T) {
+	data := []byte(`
+[harness.broken]
+harness = "claude-code"
+env_file = []
+`)
+	_, err := Parse(data, "harness.toml")
+	if err == nil {
+		t.Fatal("env_file = [] parsed; want a located error")
+	}
+	for _, want := range []string{"broken", "env_file"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
 	}
 }

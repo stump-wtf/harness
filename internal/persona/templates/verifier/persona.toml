@@ -1,0 +1,8 @@
+description = "Independently verifies a claim by running the code; a second model family from the implementer"
+mode = "one-shot"
+client = "claude-code"
+model = "opus"
+queues = ["verification"]
+mcp_servers = ["switchboard"]
+allowed_tools = ["Read", "Grep", "Glob", "Bash"]
+max_runs_per_day = 20

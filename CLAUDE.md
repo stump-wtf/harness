@@ -7,6 +7,11 @@ Successor to `zsh-harnessd`. See `README.md`.
 - Origin of truth: https://gitea.stump.rocks/stump.wtf/harness (Gitea). GitHub
   (https://github.com/stump-wtf/harness) is a read-only push mirror — issues,
   PRs, and pushes go to Gitea.
+- **Reading this on GitHub, from outside the project?** The Gitea host above is
+  private and these instructions are for the maintainers' own agents. To report
+  a bug or propose a change, open a GitHub issue
+  (https://github.com/stump-wtf/harness/issues/new/choose) instead; see
+  "Development" in `README.md`.
 - Harness is bound to agent-trace (ADR-0033). It supervises only agents whose
   adapter agent-trace can read, and every run is recorded as that agent's
   normalized trace. It is not a general process manager: an unsupported agent
@@ -43,8 +48,10 @@ Traps in this repo specifically, each of which has already cost a wrong
   it keeps its old argv until it restarts. Read the process, not the file.
 - **CI.** `GET /actions/runs` (the list) requires auth even on this public
   repo — it 401s anonymously — while `GET /actions/runs/<id>` does not —
-  so an anonymous list poll is indistinguishable from "no CI ran". Use
-  `$GITEA_TOKEN`, and read `conclusion`, never an exit code.
+  so an anonymous list poll is indistinguishable from "no CI ran". Poll with
+  `tea api --login gitea.stump.rocks 'repos/stump.wtf/harness/actions/runs?limit=5'`
+  (never curl with `$GITEA_TOKEN`, which agent shells do not have), and read
+  `conclusion`, never an exit code: `tea api` exits 0 on a 404 too.
 - **Tests.** A test that builds its own fixture where production builds the
   real thing passes against broken code too. `TestDaemonManagerOptionsEnableGiveUp`
   exists because every give-up test constructed its own `Policy`, so none of

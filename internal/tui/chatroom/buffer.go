@@ -74,6 +74,11 @@ func MarkBadge(markType string) string {
 		return "[COMPACTION]"
 	case "subagent":
 		return "[SUBAGENT]"
+	case "turn-end":
+		// agent-trace v0.6.0. Like every mark it rides the session's next
+		// event, so it appears with the next turn's first line, stamped
+		// with the time the turn ended.
+		return "[TURN-END]"
 	default:
 		return "[" + strings.ToUpper(markType) + "]"
 	}

@@ -170,7 +170,9 @@ func (st *session) note(items []item) {
 	}
 }
 
-// marksAfter reports a mark timestamped strictly after t. Second resolution
+// marksAfter reports a mark timestamped strictly after t. Every type counts,
+// turn-end (agent-trace v0.6.0) included: an agent that ended its turn is no
+// longer waiting on a call still open before it. Second resolution
 // makes a mark in the same second as the newest item read invisible here; the
 // session's next write brings it back.
 func marksAfter(marks []classify.Mark, t time.Time) bool {

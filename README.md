@@ -99,7 +99,8 @@ The `generic` kind, which ran an arbitrary `sh` command, is deprecated and is
 being removed (ADR-0033); a harness must be an agent agent-trace can read.
 `command` is what replaces it for a program that is not an agent —
 `harness.toml.example` has the details, including why a `command` harness has
-no `args` and is resident-only for now.
+no `args`, and how it runs on a `schedule` or `triggers` with its argv
+templated over the run.
 
 Then `harness doctor` verifies config, daemon, and state. The full config
 reference and every verb are in the docs above.
@@ -112,10 +113,21 @@ but the TOML schema and daemon protocol can still change before v1.
 
 ## Development
 
-Development happens on a private Gitea instance, which is the origin of truth.
-[github.com/stump-wtf/harness](https://github.com/stump-wtf/harness) is a
-read-only mirror of it, so issues and pull requests opened on GitHub are not
-seen.
+Development happens on a private Gitea instance, which is the origin of truth;
+[github.com/stump-wtf/harness](https://github.com/stump-wtf/harness) is its
+public copy, updated on every push.
+
+- **Found a bug or want something?**
+  [Open a GitHub issue](https://github.com/stump-wtf/harness/issues/new/choose).
+  Issues there are read and triaged onto the canonical tracker. The bug form
+  asks for what we need to reproduce it: `harness --version`, how you
+  installed it, your OS and agent CLI, the relevant `harness.toml` table, and
+  `harness doctor` output.
+- **Have a fix?** Open an issue describing it and link your branch or fork.
+  Pull requests can't be merged on GitHub, because each sync from the canonical
+  repository overwrites it, so a maintainer carries the change across and
+  credits you.
+- **Security issue?** Don't open a public issue; see [SECURITY.md](SECURITY.md).
 
 ```sh
 make check       # fmt + vet + test + race + fuzz (the CI gate)

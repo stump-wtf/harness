@@ -145,7 +145,7 @@ func TestDiscoveryEnvReturnsOnlyTheKeysAsked(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := shHarness("agent", "true", 0)
-	h.EnvFile = envFile
+	h.EnvFiles = []string{envFile}
 
 	got, err := DiscoveryEnv(h, []string{"HOME", "XDG_DATA_HOME", "CRUSH_GLOBAL_DATA"})
 	if err != nil {
