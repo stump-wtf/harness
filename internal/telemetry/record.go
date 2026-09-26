@@ -114,7 +114,9 @@ func ContentKey(ev observe.Event, omitPrompts bool) string {
 
 // mapsToSpan reports whether otel.BuildTrace produces a span for ev at the
 // pinned agent-trace version: every tool call, and user-message, compaction
-// and subagent marks. TestMapsToSpanMatchesBuildTrace fails if that changes.
+// and subagent marks. A turn-end mark (v0.6.0) is not one: BuildTrace uses it
+// only to end its turn's last tool span. TestMapsToSpanMatchesBuildTrace fails
+// if that changes.
 func mapsToSpan(ev observe.Event) bool {
 	if ev.Kind == observe.KindTool {
 		return true

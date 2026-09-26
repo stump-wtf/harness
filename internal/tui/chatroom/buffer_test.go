@@ -272,6 +272,22 @@ func TestLastAction(t *testing.T) {
 	}
 }
 
+// TestMarkBadge pins a badge for every mark type agent-trace emits, turn-end
+// (v0.6.0) included, so a new type is a decision rather than a fall-through.
+func TestMarkBadge(t *testing.T) {
+	for typ, want := range map[string]string{
+		"user":       "[USER]",
+		"compaction": "[COMPACTION]",
+		"subagent":   "[SUBAGENT]",
+		"turn-end":   "[TURN-END]",
+		"error":      "[ERROR]",
+	} {
+		if got := MarkBadge(typ); got != want {
+			t.Errorf("MarkBadge(%q) = %q, want %q", typ, got, want)
+		}
+	}
+}
+
 func TestTruncateShort(t *testing.T) {
 	tests := []struct {
 		input string
