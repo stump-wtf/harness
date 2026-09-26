@@ -102,7 +102,11 @@ const (
 	// reports as "unknown" rather than "off", and would answer notify_test
 	// with unknown_op, so the client refuses to send it (see
 	// client.SupportsNotify).
-	ProtoMinor = 15
+	// ProtoMinor 16 added MissingPath on RunInfo and the template_unresolved
+	// value of Reason (SPEC-0017 REQ-11: a template_unresolved skip names the
+	// path it lacked) — additive only. A daemon older than 16 never sends
+	// either; a client older than 16 shows the reason without the path.
+	ProtoMinor = 16
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -633,8 +637,9 @@ type RunInfo struct {
 	// LogPruned reports a run whose log keep_runs has deleted; its record
 	// stays in the run ledger (SPEC-0022 REQ-4, REQ-12).
 	LogPruned bool `json:"log_pruned,omitempty"`
-	// Reason qualifies the outcome: why a skip started no process, why an
-	// interrupted run was (shutdown, daemon_crash). SPEC-0022 REQ-5.
+	// Reason qualifies the outcome: why a skip started no process (overlap,
+	// stopping, outside_hours, template_unresolved), why an interrupted run
+	// was (shutdown, daemon_crash). SPEC-0022 REQ-5, SPEC-0017 REQ-11.
 	Reason string `json:"reason,omitempty"`
 	// Source is the trigger source reference behind the run, e.g.
 	// "webhook.gitea-pr" (SPEC-0014 REQ "Run Record Fields").
@@ -643,6 +648,9 @@ type RunInfo struct {
 	// run record carries no byte of an event payload, no header value and no
 	// credential (ADR-0008).
 	EventID string `json:"event_id,omitempty"`
+	// MissingPath names the template path a template_unresolved skip lacked,
+	// e.g. "run.source" — a name, never a value (SPEC-0017 REQ-11).
+	MissingPath string `json:"missing_path,omitempty"`
 }
 
 // JobInfo is one scheduled harness for the jobs op (SPEC-0008 REQ "Protocol

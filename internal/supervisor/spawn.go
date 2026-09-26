@@ -17,11 +17,14 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/charmbracelet/x/xpty"
+	"github.com/robfig/cron/v3"
 
 	"github.com/stump-wtf/harness/internal/adapter"
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/tmpl"
 )
 
 // defaultPTYCols/Rows size a freshly spawned PTY when no client viewport is
@@ -193,6 +196,11 @@ type RunEnv struct {
 	// EventFile is the absolute path of the run's 0600 event file, empty
 	// when the run carries no event.
 	EventFile string
+	// StartedAt is when the run's record says it started, zero for a start
+	// with no record. It is not an environment variable: it feeds the argv
+	// template context's run.started_at and run.date (SPEC-0017 REQ-7), so a
+	// respawn of the same run renders the same values.
+	StartedAt time.Time
 }
 
 // vars renders r as KEY=VALUE pairs, omitting the two that are meaningful only
@@ -386,8 +394,74 @@ var ErrCommandPrompt = errors.New(`a "command" harness has no way to deliver a p
 // instruction text, not a placeholder. The cmd path ignores Model, AutoAccept,
 // and MaxTurns entirely (config validation forbids the combinations; a wire
 // def carrying them spawns on its configured argv alone).
-func execArgv(h core.Harness, workdir string) (string, []string, error) {
-	return execArgvWithRegistry(h, workdir, adapter.NewRegistryWithDefaults())
+func execArgv(h core.Harness, workdir string, run RunEnv) (spawnPlan, error) {
+	return execArgvWithRegistry(h, workdir, run, adapter.NewRegistryWithDefaults())
+}
+
+// spawnPlan is what spawn execs: the executable and its arguments, already
+// rendered. It is built once per spawn and never stored, so a rendered value
+// lives only in the child's argv (SPEC-0017 REQ-11). Prompt delivery (REQ-12)
+// will add its stdin reader and prompt file here.
+// Governing: SPEC-0017 design.md § "Where rendering happens in spawn".
+type spawnPlan struct {
+	name string
+	args []string
+}
+
+// renderContext is the template context a command harness's argv renders
+// against: the operator tier (harness.name, harness.workdir, model) and the
+// daemon tier (run.*), and nothing else (SPEC-0017 REQ-7). A path is absent,
+// not empty, when the run does not have it — no record means no run.id or
+// run.trigger, no source means no run.source — so a required reference fails
+// the render instead of passing an empty argument.
+//
+// It holds no untrusted values at all: argv may never reference free text
+// (REQ-10), and an empty untrusted namespace makes that true at render time
+// too, not only at load.
+// Governing: ADR-0023, SPEC-0017 REQ-7 "Template Context".
+func renderContext(h core.Harness, workdir string, run RunEnv, now time.Time) tmpl.Map {
+	started := run.StartedAt
+	if started.IsZero() {
+		started = now
+	}
+	v := map[string]string{
+		core.PathHarnessName:    h.Name,
+		core.PathHarnessWorkdir: workdir,
+		core.PathRunStartedAt:   started.UTC().Format(time.RFC3339),
+		core.PathRunDate:        started.In(scheduleZone(h.Schedule)).Format(time.DateOnly),
+	}
+	if h.Model != "" {
+		v[core.PathModel] = h.Model
+	}
+	if run.RunID > 0 {
+		v[core.PathRunID] = strconv.Itoa(run.RunID)
+	}
+	if run.Trigger != "" {
+		v[core.PathRunTrigger] = string(run.Trigger)
+	}
+	if run.Source != "" {
+		v[core.PathRunSource] = run.Source
+	}
+	return tmpl.Map{Values: v}
+}
+
+// scheduleZone is the zone run.date is written in: the schedule's
+// CRON_TZ=/TZ= prefix when it has one, else the daemon's local zone — the same
+// zone the scheduler reads the expression in, so a run fired at 00:30 by
+// `CRON_TZ=Asia/Tokyo 30 0 * * *` is dated the Tokyo day it was due.
+// Governing: SPEC-0017 REQ-7 (`run.date`), SPEC-0008 REQ "Schedule Time Zone".
+func scheduleZone(schedule string) *time.Location {
+	if schedule == "" {
+		return time.Local
+	}
+	sch, err := cron.ParseStandard(schedule)
+	if err != nil {
+		return time.Local
+	}
+	if spec, ok := sch.(*cron.SpecSchedule); ok && spec.Location != nil {
+		return spec.Location
+	}
+	return time.Local
 }
 
 // execArgvWithRegistry is the adapter-aware version of execArgv. For a prompt
@@ -401,23 +475,31 @@ func execArgv(h core.Harness, workdir string) (string, []string, error) {
 // the adapter's executable with the configured args, {workdir}-expanded.
 //
 // A `command` harness (an adapter.ArgvOwner) is answered first and from its
-// own Argv alone: argv[0] and argv[1:] exactly as configured, no shell, no
+// own Argv alone: argv[0] exactly as configured, and each argv[1:] element
+// rendered to exactly one argument against run's context — no shell, no
 // {workdir} expansion, and neither Executable nor PromptCommand consulted.
 // The argv is re-checked here with the same rule every front door applies, so
 // a definition that bypassed them fails the start instead of exec'ing an
-// empty or placeholder executable.
+// empty or placeholder executable. A required value the run does not have
+// returns an error wrapping *tmpl.UnresolvedError, and nothing is exec'd;
+// beginStart turns that into a recorded skip or a failed start.
 // Governing: issue #74 (adapter-aware prompt synthesis), SPEC-0017 REQ
-// "Generic Kind Rejects Prompts", REQ-2 "Command Harness Kind".
-func execArgvWithRegistry(h core.Harness, workdir string, reg *adapter.Registry) (string, []string, error) {
+// "Generic Kind Rejects Prompts", REQ-2 "Command Harness Kind", REQ-11
+// "Rendering".
+func execArgvWithRegistry(h core.Harness, workdir string, run RunEnv, reg *adapter.Registry) (spawnPlan, error) {
 	if owner, ok := reg.Resolve(h).(adapter.ArgvOwner); ok {
 		if h.Prompt != "" {
-			return "", nil, fmt.Errorf("supervisor: harness %q: %w", h.Name, ErrCommandPrompt)
+			return spawnPlan{}, fmt.Errorf("supervisor: harness %q: %w", h.Name, ErrCommandPrompt)
 		}
 		if err := core.CheckCommandArgv(h.Argv); err != nil {
-			return "", nil, fmt.Errorf("supervisor: harness %q: %w", h.Name, err)
+			return spawnPlan{}, fmt.Errorf("supervisor: harness %q: %w", h.Name, err)
 		}
 		name, args := owner.Argv(h, workdir)
-		return name, args, nil
+		rendered, err := core.RenderCommandArgs(args, renderContext(h, workdir, run, time.Now()))
+		if err != nil {
+			return spawnPlan{}, fmt.Errorf("supervisor: harness %q: %w", h.Name, err)
+		}
+		return spawnPlan{name: name, args: rendered}, nil
 	}
 	if h.Prompt != "" {
 		opts := core.AgentOpts{
@@ -431,13 +513,13 @@ func execArgvWithRegistry(h core.Harness, workdir string, reg *adapter.Registry)
 		}
 		cmd, args := reg.Resolve(h).PromptCommand(h.Prompt, opts)
 		if cmd == "" {
-			return "", nil, fmt.Errorf("supervisor: harness %q: %w", h.Name, ErrGenericPrompt)
+			return spawnPlan{}, fmt.Errorf("supervisor: harness %q: %w", h.Name, ErrGenericPrompt)
 		}
-		return cmd, args, nil
+		return spawnPlan{name: cmd, args: args}, nil
 	}
 	// Long-running harness: the adapter owns the executable (the `harness`
 	// enum key); configured args are appended after it.
-	return reg.Resolve(h).Executable(), expandArgs(h.Args, workdir), nil
+	return spawnPlan{name: reg.Resolve(h).Executable(), args: expandArgs(h.Args, workdir)}, nil
 }
 
 // process is a live spawned harness: its PTY, the command handle (for signals
@@ -480,12 +562,14 @@ func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
 	// Resolve the argv before the environment and the PTY, for the same
 	// reason: a harness spawn refuses (a `generic` carrying a prompt, SPEC-0017
 	// REQ "Generic Kind Rejects Prompts"; a `command` harness with a malformed
-	// argv or a prompt it cannot deliver, REQ-2) fails here, having allocated
-	// and exec'd nothing.
-	name, args, err := execArgv(h, workdir)
+	// argv or a prompt it cannot deliver, REQ-2; an argv template with a
+	// required value this run lacks, REQ-11) fails here, having allocated and
+	// exec'd nothing.
+	plan, err := execArgv(h, workdir, run)
 	if err != nil {
 		return nil, err
 	}
+	name, args := plan.name, plan.args
 	env, err := buildEnv(h, run)
 	if err != nil {
 		return nil, err

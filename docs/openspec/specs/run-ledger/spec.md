@@ -157,6 +157,7 @@ A folded record SHALL expose these fields, each omitted when it does not apply:
 | `override` | boolean | admitted with `--over-budget` (SPEC-0021 REQ-15) |
 | `mismatch` | `{kind, served_model, served_provider, at}` | the first mismatching call of a `model_mismatch` record (SPEC-0020); `kind` is `model` or `provider` |
 | `window`, `first_window`, `windows`, `coalesced` | as SPEC-0008 and SPEC-0014 | |
+| `missing_path` | string | the argv template path a `template_unresolved` skip lacked — a name, never a value (SPEC-0017 REQ-11) |
 
 Every string field SHALL be capped at 256 bytes, `models` and `sessions` at 16
 entries each.

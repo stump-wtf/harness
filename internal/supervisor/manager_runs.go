@@ -151,10 +151,11 @@ func (m *Manager) CoalesceRun(name string, id int) (RunRecord, error) {
 // hold (SPEC-0022 REQ-6).
 func (m *Manager) CloseRun(name string, rec RunRecord) error {
 	fields := ledger.Record{
-		Outcome:  string(rec.Outcome),
-		Reason:   string(rec.Reason),
-		EndedAt:  rec.EndedAt,
-		ExitCode: rec.ExitCode,
+		Outcome:     string(rec.Outcome),
+		Reason:      string(rec.Reason),
+		MissingPath: rec.MissingPath,
+		EndedAt:     rec.EndedAt,
+		ExitCode:    rec.ExitCode,
 	}
 	at := time.Now()
 	if rec.EndedAt != nil {
@@ -658,6 +659,7 @@ func toLedger(r RunRecord) ledger.Record {
 		ExitCode:    r.ExitCode,
 		Outcome:     string(r.Outcome),
 		Reason:      string(r.Reason),
+		MissingPath: r.MissingPath,
 		Log:         r.Log,
 		Window:      r.Window,
 		FirstWindow: r.FirstWindow,
@@ -686,6 +688,7 @@ func fromLedger(f ledger.Folded) RunRecord {
 		FirstWindow: f.FirstWindow,
 		Windows:     f.Windows,
 		Reason:      RunReason(f.Reason),
+		MissingPath: f.MissingPath,
 		Coalesced:   f.Coalesced,
 		Source:      f.Source,
 		EventID:     f.EventID,

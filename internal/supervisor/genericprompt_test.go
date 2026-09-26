@@ -122,9 +122,9 @@ func mustExecArgv(t *testing.T, h core.Harness, workdir string) (string, []strin
 // mustExecArgvReg is mustExecArgv against a caller-supplied registry.
 func mustExecArgvReg(t *testing.T, h core.Harness, workdir string, reg *adapter.Registry) (string, []string) {
 	t.Helper()
-	name, args, err := execArgvWithRegistry(h, workdir, reg)
+	plan, err := execArgvWithRegistry(h, workdir, RunEnv{}, reg)
 	if err != nil {
 		t.Fatalf("execArgv(%q): %v", h.Name, err)
 	}
-	return name, args
+	return plan.name, plan.args
 }

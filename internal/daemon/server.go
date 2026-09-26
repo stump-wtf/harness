@@ -325,7 +325,9 @@ func (s *Server) relayLoop() {
 			if !ok {
 				return
 			}
-			s.broadcast(toEventMsg(ev))
+			if m := toEventMsg(ev); m.Kind != "" {
+				s.broadcast(m)
+			}
 		case <-s.done:
 			return
 		}
@@ -364,6 +366,8 @@ func (s *Server) unsubscribe(ch chan protocol.EventMsg) {
 
 // toEventMsg projects a supervisor.Event onto the wire EventMsg. The three
 // supervisor kinds map 1:1 to the first three protocol event kinds (SPEC-0002).
+// A kind with no wire form (EventTemplateRenderFailed, which only feeds
+// metrics) projects to an empty Kind, and the relay drops it.
 func toEventMsg(ev supervisor.Event) protocol.EventMsg {
 	m := protocol.EventMsg{Name: ev.Name}
 	switch ev.Kind {

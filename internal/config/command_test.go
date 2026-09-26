@@ -84,7 +84,8 @@ operating_hours = "Mon-Fri 09:00-17:00"
 // TestCommandHarnessRejections covers REQ-2's "A placeholder cannot choose the
 // executable", "args on a command harness", "argv on another kind" and
 // "Missing argv", and REQ-3's "Adapter flags are rejected" and "model without
-// a placeholder", plus the keys this resident slice does not accept yet.
+// a placeholder", plus the prompt keys a command harness does not accept yet.
+// The template and one-shot rules are command_oneshot_test.go.
 func TestCommandHarnessRejections(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
@@ -96,8 +97,6 @@ argv = ["{{event.repo}}", "x"]`, []string{`"argv[0]"`, "placeholder cannot choos
 argv = ["{{ model }}"]`, []string{`"argv[0]"`}},
 		{"blank argv0", `harness = "command"
 argv = ["  ", "x"]`, []string{`"argv[0]" must not be blank`}},
-		{"template in argv1 before templates exist", `harness = "command"
-argv = ["/usr/local/bin/report", "--run", "{{run.id}}"]`, []string{`"argv[2]"`, "not supported yet"}},
 		{"missing argv", `harness = "command"`, []string{`requires "argv"`}},
 		{"empty argv", `harness = "command"
 argv = []`, []string{`requires "argv"`}},
@@ -128,12 +127,6 @@ model = "x/y"`, []string{`"model" is unused`, "{{model}}"}},
 		{"prompt", `harness = "command"
 argv = ["x"]
 prompt = "triage"`, []string{`"prompt" is not supported on a command harness yet`}},
-		{"schedule", `harness = "command"
-argv = ["x"]
-schedule = "0 6 * * *"`, []string{`"schedule" is not supported on a command harness yet`}},
-		{"triggers", `harness = "command"
-argv = ["x"]
-triggers = ["webhook.ci"]`, []string{`"triggers" is not supported on a command harness yet`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// A valid harness first, so the refusal's line proves it is

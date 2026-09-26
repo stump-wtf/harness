@@ -659,6 +659,11 @@ func (s *Supervisor) beginStart() {
 	// that's watching it (ADR-0003; see spawn's note).
 	cols, rows := s.spawnSize()
 	proc, err := spawn(s.harness, cols, rows, s.runEnv())
+	if err != nil && s.onRenderFailure(err) {
+		// A recorded run whose argv template lacked a required value:
+		// recorded skipped, nothing exec'd, not a crash (render.go).
+		return
+	}
 	if err != nil {
 		// Treat a spawn failure like an immediate crash. It is still the
 		// latest run, so it gets a start: onProcessGone stamps LastExitAt,

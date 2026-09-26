@@ -24,6 +24,7 @@ import (
 
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/hours"
+	"github.com/stump-wtf/harness/internal/tmpl"
 )
 
 // rawHarness mirrors a harness TOML table before validation/normalization.
@@ -632,7 +633,13 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		}
 	}
 	if err := checkCommandKeys(adapter, rh); err != nil {
-		return newError(filename, line, "harness %q: %v", name, err)
+		// A malformed argv template keeps its sentinel through the located
+		// error (SPEC-0017 REQ "Error Handling Standards").
+		var kind error
+		if errors.Is(err, tmpl.ErrGrammar) {
+			kind = tmpl.ErrGrammar
+		}
+		return newSentinelError(filename, line, kind, "harness %q: %v", name, err)
 	}
 	prompt := strings.TrimSpace(rh.Prompt)
 	switch {
@@ -671,6 +678,14 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	// otherwise a prompt_file harness would be rejected for setting `model` or
 	// `schedule` and would inherit the always-restart cmd default.
 	isAgent := prompt != "" || promptFile != ""
+	// A command harness is a one-shot when a clock or an event fires it, with
+	// no prompt: its argv is the whole job. It takes the one-shot restart
+	// default and satisfies the "requires a prompt source" half of the
+	// schedule and triggers exclusions; every other exclusion applies as is.
+	// Governing: ADR-0023, SPEC-0017 REQ-3 "Command Harness Modes And
+	// Exclusions", REQ-17 (the SPEC-0008 and SPEC-0014 amendments).
+	isCommand := adapter == core.AdapterCommand
+	commandOneShot := isCommand && (strings.TrimSpace(rh.Schedule) != "" || len(rh.Triggers) > 0)
 
 	// Resolve prompt_file against the file that declared it, deliberately
 	// NOT through the shared `resolve` (which is nil for the global config, so
@@ -704,7 +719,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	case strings.ContainsFunc(model, unicode.IsSpace):
 		return newError(filename, line,
 			"harness %q: \"model\" must be a single token (model ids carry no whitespace)", name)
-	case model != "" && !isAgent:
+	case model != "" && !isAgent && adapter != core.AdapterCommand:
+		// A command harness passes `model` through {{model}} in its argv;
+		// checkCommandKeys has already refused one that does not.
 		return newError(filename, line,
 			"harness %q: \"model\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes --model through its own args)", name)
 	}
@@ -863,7 +880,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		// harnesses default to "no" instead: a one-shot agent run exiting 0
 		// must not respawn (an explicit `restart = ...` still wins).
 		restartPolicy = core.RestartAlways
-		if isAgent {
+		if isAgent || commandOneShot {
 			restartPolicy = core.RestartNo
 		}
 	}
@@ -884,9 +901,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	case rh.Schedule != "" && schedule == "":
 		return newError(filename, line,
 			"harness %q: \"schedule\" must not be blank", name)
-	case schedule != "" && !isAgent:
+	case schedule != "" && !isAgent && !isCommand:
 		return newError(filename, line,
-			"harness %q: \"schedule\" requires \"prompt\" or \"prompt_file\" (a scheduled harness is a one-shot agent run)", name)
+			"harness %q: \"schedule\" requires \"prompt\" or \"prompt_file\", or harness = \"command\" (a scheduled harness is a one-shot run)", name)
 	case schedule != "" && enabled:
 		return newError(filename, line,
 			"harness %q: \"schedule\" and \"enabled = true\" are mutually exclusive (use one or the other)", name)
@@ -920,9 +937,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		return err
 	}
 	switch {
-	case len(triggers) > 0 && !isAgent:
+	case len(triggers) > 0 && !isAgent && !isCommand:
 		return newError(filename, line,
-			"harness %q: \"triggers\" requires \"prompt\" or \"prompt_file\" (a triggered harness is a one-shot agent run)", name)
+			"harness %q: \"triggers\" requires \"prompt\" or \"prompt_file\", or harness = \"command\" (a triggered harness is a one-shot run)", name)
 	case len(triggers) > 0 && enabled:
 		return newError(filename, line,
 			"harness %q: \"triggers\" and \"enabled = true\" are mutually exclusive (autostart intent and on-demand firing are distinct)", name)
@@ -1629,14 +1646,18 @@ func lineOf(headers []tableHeader, want string) int {
 // value — a key that silently does nothing is a mistake the operator should
 // hear about at load.
 //
-// Prompts, `schedule` and `triggers` are refused on `command` for now: this
-// is the resident slice of SPEC-0017. A prompt needs a delivery path
-// (REQ-12) and a one-shot needs the run wiring REQ-3 describes; until they
-// exist, loading such a harness would either drop the instruction or run
-// the argv on a clock nobody asked to be ignored. The refusals name the gap
-// so the error reads as "not yet", not as "wrong".
+// `schedule` and `triggers` make a command harness a one-shot and need no
+// prompt (REQ-3): its argv is the whole job. `model` is accepted only when an
+// argv element references {{model}}; that, and the run-context rules that
+// depend on schedule and triggers, are core.CheckCommandTemplateContext,
+// called here with the raw keys so the check sees what the file says.
+//
+// Prompts are still refused on `command`: a prompt needs a delivery path
+// (REQ-12), and until one exists loading such a harness would drop the
+// instruction. The refusal names the gap so the error reads as "not yet",
+// not as "wrong".
 // Governing: ADR-0023, SPEC-0017 REQ-2 "Command Harness Kind", REQ-3
-// "Command Harness Modes And Exclusions".
+// "Command Harness Modes And Exclusions", REQ-7 "Template Context".
 func checkCommandKeys(adapter string, rh rawHarness) error {
 	if adapter != core.AdapterCommand {
 		if rh.Argv != nil {
@@ -1658,19 +1679,12 @@ func checkCommandKeys(adapter string, rh rawHarness) error {
 			return fmt.Errorf("%q is not accepted on a command harness: a command harness owns its argv, so put the tool's own flag there", k.key)
 		}
 	}
-	if rh.Model != "" {
-		return errors.New("\"model\" is unused: no argv element references {{model}}, so nothing would pass it to the program")
-	}
 	for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}} {
 		if k.val != "" {
 			return fmt.Errorf("%q is not supported on a command harness yet: nothing delivers a prompt to its argv; use harness = \"crush\"|\"claude-code\"|\"codex\" for a prompt one-shot", k.key)
 		}
 	}
-	switch {
-	case rh.Schedule != "":
-		return errors.New("\"schedule\" is not supported on a command harness yet: a command harness is resident only (use a prompt harness for a scheduled one-shot)")
-	case rh.Triggers != nil:
-		return errors.New("\"triggers\" is not supported on a command harness yet: a command harness is resident only (use a prompt harness for a triggered one-shot)")
-	}
-	return nil
+	scheduled := strings.TrimSpace(rh.Schedule) != ""
+	triggered := scheduled || len(rh.Triggers) > 0
+	return core.CheckCommandTemplateContext(rh.Argv, strings.TrimSpace(rh.Model), scheduled, triggered)
 }
