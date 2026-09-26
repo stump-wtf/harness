@@ -358,7 +358,9 @@ func cmdUseProfile(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(ps)
 	}
-	fmt.Printf("activated profile %q\n", o.name)
+	emit(os.Stdout, fmt.Sprintf("activated profile %q\n", o.name), func(s lifecycleStyle) string {
+		return s.renderUseProfile(o.name, ps)
+	})
 	return nil
 }
 
@@ -370,7 +372,9 @@ func cmdReload(c *client.Client, o verbOpts) error {
 	if o.json {
 		return printJSON(hs)
 	}
-	fmt.Printf("reloaded — %d harnesses\n", len(hs))
+	emit(os.Stdout, fmt.Sprintf("reloaded — %d harnesses\n", len(hs)), func(s lifecycleStyle) string {
+		return s.renderReload(hs)
+	})
 	return nil
 }
 
@@ -430,7 +434,9 @@ func cmdStopDaemon(o verbOpts) error {
 	if err := p.Signal(syscall.SIGTERM); err != nil {
 		return fmt.Errorf("signal daemon %d: %w", di.PID, err)
 	}
-	fmt.Fprintf(os.Stderr, "harness: daemon (pid %d) stopping\n", di.PID)
+	emit(os.Stderr, fmt.Sprintf("harness: daemon (pid %d) stopping\n", di.PID), func(s lifecycleStyle) string {
+		return s.renderDaemonStopping(di.PID)
+	})
 	return nil
 }
 

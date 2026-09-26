@@ -313,12 +313,12 @@ func cmdTrigger(c *client.Client, o verbOpts) error {
 		if o.json {
 			return printJSON(td)
 		}
-		fmt.Println(triggerLine(td))
+		emit(os.Stdout, triggerLine(td)+"\n", func(s lifecycleStyle) string { return s.renderTrigger(td) })
 		return nil
 	}
 
 	if !o.json {
-		fmt.Fprintln(os.Stderr, triggerLine(td))
+		emit(os.Stderr, triggerLine(td)+"\n", func(s lifecycleStyle) string { return s.renderTrigger(td) })
 	}
 	if td.Decision == protocol.TriggerSkipped {
 		if o.json {
@@ -341,7 +341,7 @@ func cmdTrigger(c *client.Client, o verbOpts) error {
 			return err
 		}
 	} else {
-		fmt.Fprintln(os.Stderr, finishLine(o.name, final))
+		emit(os.Stderr, finishLine(o.name, final)+"\n", func(s lifecycleStyle) string { return s.renderFinish(o.name, final) })
 	}
 	if code := waitExitCode(final); code != 0 {
 		return exitCodeError{code: code}

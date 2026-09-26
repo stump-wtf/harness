@@ -28,6 +28,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/xpty"
 )
 
@@ -131,5 +132,39 @@ func TestJSONSuppressesStyledHelp(t *testing.T) {
 				t.Errorf("`harness %v` printed no help at all\noutput: %q", tt.args, out)
 			}
 		})
+	}
+}
+
+// TestLifecycleVerbStyledOnTTY is the TTY half of the one-shot verb contract
+// (verb_render.go): on a real terminal a single-harness restart renders the
+// styled transition record — once, not doubled by the Bubble Tea frame it
+// replaced — and --json on the same terminal stays plain JSON. The piped half
+// is TestCLIOneShotVerbsPlainWhenPiped.
+func TestLifecycleVerbStyledOnTTY(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary; skipped under -short")
+	}
+	bin := buildHarnessBinary(t)
+	env, _ := isolatedEnv(t)
+	socket, _ := startDaemonOnSocket(t, bin, env)
+
+	out := runOnPTY(t, bin, "--socket", socket, "restart", "demo")
+	if countCSI(out) == 0 {
+		t.Fatalf("`harness restart demo` on a TTY emitted no styling:\n%q", out)
+	}
+	text := ansi.Strip(string(out))
+	if !strings.Contains(text, "demo") || !strings.Contains(text, " → ") {
+		t.Errorf("styled record lost the name or the transition:\n%q", text)
+	}
+	if n := strings.Count(text, "restarted"); n != 1 {
+		t.Errorf("the record's context line appears %d times, want exactly once:\n%q", n, text)
+	}
+
+	js := runOnPTY(t, bin, "--socket", socket, "--json", "restart", "demo")
+	if n := countCSI(js); n != 0 {
+		t.Errorf("--json restart on a TTY emitted %d ANSI sequences:\n%q", n, js)
+	}
+	if !bytes.Contains(js, []byte(`"name"`)) {
+		t.Errorf("--json restart on a TTY printed no JSON:\n%q", js)
 	}
 }

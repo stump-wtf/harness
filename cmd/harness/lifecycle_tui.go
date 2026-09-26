@@ -36,6 +36,9 @@ import (
 // the same visual language. State coloring goes through the theme's own
 // StateStyle (SPEC-0001 mapping) so "running" is mint here exactly as it is
 // in `harness list`.
+//
+// The one-shot verb renderer (verb_render.go) shares it, so a single
+// `harness restart` and a `restart --all` row are the same colours.
 type lifecycleStyle struct {
 	th     *theme.Theme
 	title  lipgloss.Style
@@ -44,10 +47,16 @@ type lifecycleStyle struct {
 	done   lipgloss.Style
 	failed lipgloss.Style
 	spin   lipgloss.Style
+	warn   lipgloss.Style
+	accent lipgloss.Style
 }
 
-func newLifecycleStyle() lifecycleStyle {
-	th := theme.Default()
+func newLifecycleStyle() lifecycleStyle { return newLifecycleStyleFor(theme.Default()) }
+
+// newLifecycleStyleFor builds the styles from an explicit theme. Tests pin a
+// colour profile through it; everything else goes through newLifecycleStyle,
+// whose detected theme honours NO_COLOR and the terminal's real profile.
+func newLifecycleStyleFor(th *theme.Theme) lifecycleStyle {
 	col := th.Colors()
 	return lifecycleStyle{
 		th:     th,
@@ -57,6 +66,8 @@ func newLifecycleStyle() lifecycleStyle {
 		done:   lipgloss.NewStyle().Foreground(col.Mint),
 		failed: lipgloss.NewStyle().Foreground(col.Coral),
 		spin:   lipgloss.NewStyle().Foreground(col.Cyan),
+		warn:   lipgloss.NewStyle().Foreground(col.Amber),
+		accent: lipgloss.NewStyle().Bold(true).Foreground(col.Accent),
 	}
 }
 
@@ -126,18 +137,7 @@ func newRows(names []string) []rowState {
 func (m *lifecycleModel) runOp(i int) tea.Cmd {
 	name, verb, c := m.names[i], m.verb, m.client
 	return func() tea.Msg {
-		var (
-			info protocol.HarnessInfo
-			err  error
-		)
-		switch verb {
-		case "start":
-			info, err = c.Start(name)
-		case "stop":
-			info, err = c.Stop(name)
-		case "restart":
-			info, err = c.Restart(name)
-		}
+		info, err := callLifecycle(c, verb, name, "")
 		return opDoneMsg{idx: i, info: info, err: err}
 	}
 }

@@ -29,6 +29,25 @@ harness start --all           # start/stop/restart every harness at once
 render live per-harness progress with a Bubble Tea animation so a large fleet
 start/stop is visible as it converges.
 
+On a terminal, a single-harness verb shows a spinner while the daemon works,
+then records the transition in the state's colour, with a faint context line:
+
+```text
+● claude-rc  failed → running
+  restarted · pid 48211 · 3 restarts · remote-control claude
+```
+
+A harness that comes out `failed` or `degraded` adds a
+`→ see why: harness logs <name>` hint. The other mutating verbs (`use-profile`,
+`reload`, `down`, `rm`, `run`, `trigger`, `daemon stop`) get the same styled
+treatment on a terminal.
+
+Piped or redirected output stays exactly one plain line per result, e.g.
+`● claude-rc → running` or `reloaded — 12 harnesses`, so scripts are
+unaffected. `--json` is unchanged. Colour follows your terminal's
+capabilities and `NO_COLOR`; the glyph and state words carry the meaning
+without it.
+
 The client warns when its own build is older or newer than the daemon's
 (client/daemon skew) — after upgrading, restart the daemon so both sides speak
 the same protocol version.

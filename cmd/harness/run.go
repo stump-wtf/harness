@@ -147,7 +147,13 @@ func cmdRun(c *client.Client, o verbOpts, def protocol.ProjectHarness, detach bo
 	if o.json {
 		return printJSON(data)
 	}
-	fmt.Fprintf(os.Stdout, "%s %s → %s\n", stateGlyph(data.Info.State), data.Name, data.Info.State)
+	// data.Name, not data.Info.Name: the minted scratchpad name is what the
+	// plain line has always printed, and the one the user types next.
+	plainInfo := data.Info
+	plainInfo.Name = data.Name
+	emit(os.Stdout, plainLifecycleLine(plainInfo), func(s lifecycleStyle) string {
+		return s.renderOutcome(lifecycleOutcome{action: "scratchpad started", info: plainInfo})
+	})
 	if detach || !runIsInteractive() {
 		return nil
 	}
