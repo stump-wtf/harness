@@ -94,8 +94,9 @@ func (m *Manager) Release(name string, reason core.HoldReason) bool {
 // reset instant is reached, and budget when the budget day rolls over or the
 // spent cap is raised by a reload"). The pass releases each one. Hours are
 // the pass's own to judge, from the expression, and never appear here. With
-// no clearer configured it reports nothing without reading a snapshot, so
-// the hook costs nothing per tick until a story feeds it.
+// no clearer configured it reports nothing without reading a snapshot. The
+// Manager always configures budget's (budgetHoldCleared), so each tick reads
+// every harness's snapshot and asks only for the reasons it is held for.
 func (m *Manager) HoldsCleared(now time.Time) map[string]core.HoldSet {
 	if len(m.holdClearers) == 0 {
 		return nil
