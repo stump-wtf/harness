@@ -42,6 +42,12 @@ type fakeGate struct {
 	// skipped is what HoursSkipped answers; OpenFirings clears it, as the
 	// real loop does.
 	skipped map[string]bool
+	// due and settle are what BudgetDue answers, level-triggered like the
+	// Manager's: AddHolds moves due into other, and SettleBudget clears
+	// settle. asked is every clock BudgetDue was asked at (SPEC-0021 REQ-3).
+	due    map[string]core.HoldSet
+	settle map[string]bool
+	asked  []time.Time
 }
 
 func newFakeGate() *fakeGate {
@@ -50,6 +56,7 @@ func newFakeGate() *fakeGate {
 		other: map[string]core.HoldSet{}, cleared: map[string]core.HoldSet{},
 		lease: map[string]time.Time{}, closeAt: map[string]time.Time{},
 		skipped: map[string]bool{},
+		due:     map[string]core.HoldSet{}, settle: map[string]bool{},
 	}
 }
 
@@ -146,6 +153,47 @@ func (g *fakeGate) OpenFirings(name string) {
 	defer g.mu.Unlock()
 	g.calls = append(g.calls, "open "+name)
 	g.skipped[name] = false
+}
+
+func (g *fakeGate) BudgetDue(now time.Time) (map[string]core.HoldSet, []string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.asked = append(g.asked, now)
+	holds := make(map[string]core.HoldSet)
+	for name, rs := range g.due {
+		if !rs.Empty() {
+			holds[name] = rs
+		}
+	}
+	var settle []string
+	for name, owed := range g.settle {
+		if owed {
+			settle = append(settle, name)
+		}
+	}
+	slices.Sort(settle)
+	return holds, settle
+}
+
+// AddHolds records "budget-hold name reasons" and, like the real loop, holds
+// the harness: down, with the reasons in its set.
+func (g *fakeGate) AddHolds(name string, reasons core.HoldSet) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.calls = append(g.calls, "budget-hold "+name+" "+reasons.String())
+	g.up[name] = false
+	for _, r := range reasons.Reasons() {
+		g.other[name] = g.other[name].With(r)
+	}
+	delete(g.due, name)
+}
+
+// SettleBudget records "settle name" and clears what was owed.
+func (g *fakeGate) SettleBudget(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.calls = append(g.calls, "settle "+name)
+	delete(g.settle, name)
 }
 
 func (g *fakeGate) set(name string, up, held bool) {
