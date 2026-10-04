@@ -1038,7 +1038,7 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 	park, parked := s.quotaExit(code, spawnFailed)
 	// The structured record of what "exited code=N" says (SPEC-0022 REQ-3).
 	if parked && !s.harness.Triggered() {
-		s.closeResident(OutcomeQuotaParked, &code, "")
+		s.closeResidentFor(OutcomeQuotaParked, &code, "", true)
 	} else {
 		s.residentExit(code, spawnFailed)
 	}
