@@ -181,9 +181,15 @@ A `quota.Detector` per harness, owned by the Manager and fed from two places:
 1. An observer subscription (`Subscribe("budget", 4096)`): for each error mark,
    `modelerr.Classify`; for each tool event, a success. It keeps a ring of the
    last 10 minutes of (time, class, success) per harness.
-2. The run exit path (`finishRun`): for a non-zero one-shot exit with no
-   classified error in its run, read the last 4 KiB of the run log and classify
-   it (the fallback).
+2. The run exit path (`onProcessGone`): before it consults the detector, the
+   exit has the observer scan now (`Observer.Sync`, on the exiting harness's
+   own loop, bounded) and the feed drain its buffer, so the detector holds
+   every mark the agent wrote before it exited. A one-shot that writes crush's
+   402 and exits two seconds after it starts is judged on that 402, however
+   far away the next poll is. The run-log fallback this item first described
+   was never built: agent-trace v0.7.1 surfaces Claude Code's API errors as
+   marks, and pipe runs still write the transcript the observer reads
+   (stump.wtf/harness#477).
 
 It answers `Park(harness, now) (until time.Time, rule string, ok bool)`
 according to SPEC-0021 REQ-12. Observer drops (full buffer) are counted in
@@ -290,7 +296,8 @@ sequenceDiagram
     A->>M: fold cost/tokens into run + dayTotals
     M->>S: cap crossed → stop (budget_exceeded)
     O->>D: error marks → modelerr.Classify
-    S->>D: non-zero exit → run log tail (fallback)
+    S->>O: exit → scan now (Sync)
+    O->>D: the run's own error marks
     D->>M: park(until, rule)
     M->>M: persist park → hold(quota) → no restart
 ```
@@ -315,9 +322,10 @@ stateDiagram-v2
 - **agent-trace's usage items are a hard dependency for token and cost caps** → the
   meter-free half (run counts, concurrency, parking) ships first and does not
   wait on it.
-- **The run-log fallback matches text** → scoped to non-zero one-shot exits and
-  4 KiB, clamped, and retired when claude-code API errors arrive as marks. A test pins that a zero
-  exit is never classified.
+- **An exit waits on the observer** → the scan at an exit runs on that
+  harness's own loop, bounded at 5 seconds, so no other harness waits on it; a
+  scan that runs out decides on what arrived and says so in the daemon log. A
+  zero exit never asks, and is never parked.
 - **A false park stops useful work** → loud in every surface, bounded by the
   backoff or the parsed reset, and cleared by one `harness start`.
 - **Holds generalization touches the operating-hours display work in flight** → SPEC-0021's
@@ -356,6 +364,10 @@ left open.
   stays until claude-code API errors arrive as marks, then it is removed.
   agent-trace's claude-code reader gained those marks on 2026-09-22, but
   Harness still pins an agent-trace from 2026-08-10, so the fallback retires
-  with the dependency bump that picks the marks up.
+  with the dependency bump that picks the marks up. That bump landed first
+  (v0.7.1), so the fallback was never built: the park story confirmed end to
+  end that a claude-code one-shot on pipes reaches the detector through its
+  transcript's error mark, and REQ-11 now names the mark path only
+  (stump.wtf/harness#477).
 - **Should `--over-budget` on a resident default to the remaining operating
   window instead of 1h?** No; it stays 1h.

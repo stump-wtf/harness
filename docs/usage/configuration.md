@@ -497,13 +497,14 @@ columns carry it.
 :::note Partly enforced
 
 `max_runs_per_day` and `day_starts` are enforced: every start passes
-admission, and a spent run budget refuses it (below). The other keys load,
-are checked, and survive a TUI edit, but nothing acts on them yet: no cost is
-metered, no harness is parked, and `max_concurrent` queues nothing. Quota
-parking, concurrency and the cost caps land in later releases
-([SPEC-0021](/specs/run-budgets/spec), ADR-0027). Setting them now is safe,
-and a bad value fails today with the same located error it will fail with
-then.
+admission, and a spent run budget refuses it (below). So is quota parking:
+`quota_group`, `quota_backoff` and `quota_backoff_max` act as described under
+[When a provider's quota runs out](#when-a-providers-quota-runs-out). The other
+keys load, are checked, and survive a TUI edit, but nothing acts on them yet:
+no cost is metered, and `max_concurrent` queues nothing. Concurrency and the
+cost caps land in later releases ([SPEC-0021](/specs/run-budgets/spec),
+ADR-0027). Setting them now is safe, and a bad value fails today with the
+same located error it will fail with then.
 
 :::
 
@@ -598,6 +599,44 @@ If the run ledger cannot be written, a harness with any budget key is refused
 with `ledger_unavailable` rather than run uncounted, and one with none starts
 anyway; `harness doctor` reports both, and any records boot found missing
 from the ledger.
+
+### When a provider's quota runs out
+
+A provider that refuses every call for an exhausted quota (a rate limit, a
+spent weekly allowance, an empty credit balance) is not fixed by restarting the
+agent. The daemon **parks** the harness instead: no process starts until the
+quota is expected back, and nothing about the refusal counts toward `failed`.
+It reads the refusal from the agent's own transcript, the same error marks the
+`harness_model_call_errors_total` metric counts, never from the run's output.
+
+- **When.** A quota error that names a reset time (`resets 3pm
+  (America/Los_Angeles)`, `try again in 2h13m`, `|1790000000`, a relayed
+  `Retry-After`) parks until then, clamped to 8 days. Without one, a one-shot
+  run that exits non-zero on a quota error parks, and so does a resident that
+  meets three quota errors within ten minutes with no successful call between
+  them. A run that exits 0 never parks.
+- **How long, with no reset time.** `quota_backoff` (default `15m`), doubled
+  for each park in a row without a successful call between, up to
+  `quota_backoff_max` (default `6h`). A successful call starts it over.
+- **A one-shot.** The run that hit the quota reads `quota_parked` in `harness
+  runs`, the harness is left `stopped` (never `failed`), and every firing
+  until the reset is recorded `skipped` with reason `quota_parked`, coalesced,
+  without starting the agent. With `catch_up = true`, one `catch_up` run starts
+  when the park clears.
+- **A resident.** It stops at once, with no restart, `enabled` unchanged, and
+  starts again by itself at the reset, through admission (so a harness out of
+  hours by then waits for its window).
+- **`quota_group`.** A park on one member parks every harness with the same
+  `quota_group` until the same instant: one account-level limit stops the whole
+  pipeline at once, and it all comes back together.
+- **Restarts.** A park is kept in `state.json` (the reset, the matched rule's
+  name, never the error text), so a daemon restarted mid-park boots the harness
+  parked.
+
+Each park writes a `parked` line to the harness's durable log naming the rule,
+the reset and that no restart happens, and `harness list --json` carries
+`hold_reasons: ["quota"]` while it lasts. `harness start` on a parked harness
+fails with `parked until …` (error code `parked`).
 
 A bad value fails the load (or a reload, which keeps the previous config) with
 the file, line, harness and key:
