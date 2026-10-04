@@ -13,6 +13,9 @@
 // shape real crush writes and agent-trace v0.4.0 waits for.
 //
 // @joestump-agent 09/26/2026 - TurnEnd, for agent-trace v0.6.0's turn-end mark.
+//
+// @joestump 10/04/2026 - WriteCrushStore, for a stand-in agent process that
+// writes its own store before it exits (stump.wtf/harness#477).
 package runtracetest
 
 import (
@@ -48,12 +51,21 @@ type CrushSession struct {
 // stored as whole Unix seconds, which is what crush actually writes.
 func WriteCrushDB(tb testing.TB, path string, sessions ...CrushSession) {
 	tb.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := WriteCrushStore(path, sessions...); err != nil {
 		tb.Fatal(err)
+	}
+}
+
+// WriteCrushStore is WriteCrushDB for a caller with no testing.TB: a stand-in
+// agent process writing its own session store, as crush does, before it
+// exits.
+func WriteCrushStore(path string, sessions ...CrushSession) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
 	}
 	db, err := sql.Open("sqlite", writerDSN(path))
 	if err != nil {
-		tb.Fatal(err)
+		return err
 	}
 	defer db.Close()
 	ctx := context.Background()
@@ -81,7 +93,7 @@ func WriteCrushDB(tb testing.TB, path string, sessions ...CrushSession) {
 		)`,
 	} {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			tb.Fatal(err)
+			return err
 		}
 	}
 	for _, s := range sessions {
@@ -92,16 +104,17 @@ func WriteCrushDB(tb testing.TB, path string, sessions ...CrushSession) {
 		if _, err := db.ExecContext(ctx,
 			`INSERT INTO sessions (id, title, message_count, created_at, updated_at) VALUES (?, 'Untitled Session', ?, ?, ?)`,
 			s.ID, len(s.Messages), s.Created.Unix(), updated.Unix()); err != nil {
-			tb.Fatal(err)
+			return err
 		}
 		for i, m := range s.Messages {
 			if _, err := db.ExecContext(ctx,
 				`INSERT INTO messages (id, session_id, role, parts, model, created_at, updated_at) VALUES (?, ?, ?, ?, 'test/model', ?, ?)`,
 				fmt.Sprintf("%s-%d", s.ID, i), s.ID, m.Role, m.Parts, m.At.Unix(), m.At.Unix()); err != nil {
-				tb.Fatal(err)
+				return err
 			}
 		}
 	}
+	return nil
 }
 
 // AppendCrushMessages adds messages to an existing session the way a live

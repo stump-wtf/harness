@@ -35,6 +35,7 @@ import (
 	"github.com/stump-wtf/harness/internal/loopguard"
 	"github.com/stump-wtf/harness/internal/notify"
 	"github.com/stump-wtf/harness/internal/observe"
+	"github.com/stump-wtf/harness/internal/quota/feed"
 	"github.com/stump-wtf/harness/internal/remote"
 	"github.com/stump-wtf/harness/internal/runusage"
 	"github.com/stump-wtf/harness/internal/scheduler"
@@ -145,6 +146,27 @@ func startDaemonRunUsage(obs *observe.Observer, mgr *supervisor.Manager) *runusa
 		acc.SetTraceURL(mgr.Config().Ledger.TraceURL)
 	})
 	return runusage.Start(obs, acc, runusage.Options{})
+}
+
+// startDaemonQuota feeds the observer into the Manager's quota park detector
+// (SPEC-0021 REQ-11 to REQ-13) and installs the feed's Sync as the Manager's
+// quota sync seam, so an exit is judged on everything its agent wrote, not on
+// whatever the last poll saw. A function, like startDaemonRunUsage, so the
+// wiring test drives the feed the daemon builds. The daemon removes the seam
+// and stops the feed on shutdown, before the observer stops.
+//
+// Governing: ADR-0027; SPEC-0021 REQ-11, REQ-13; stump.wtf/harness#477.
+func startDaemonQuota(obs *observe.Observer, mgr *supervisor.Manager) *feed.Feed {
+	f := feed.Start(obs, mgr, feed.Options{})
+	mgr.SetQuotaSync(f.Sync)
+	return f
+}
+
+// stopDaemonQuota removes the quota sync seam and stops the feed: an exit
+// after this decides on what the detector already has.
+func stopDaemonQuota(f *feed.Feed, mgr *supervisor.Manager) {
+	mgr.SetQuotaSync(nil)
+	f.Stop()
 }
 
 // resolveDaemonTelemetry resolves the [telemetry] table against the daemon's
@@ -518,6 +540,11 @@ func runDaemon(o daemonOpts) {
 	// their trace links.
 	runUsage := startDaemonRunUsage(observer, mgr)
 
+	// stump.wtf/harness#477: park a harness whose provider refuses it for an
+	// exhausted quota until the reset, instead of restarting it into the
+	// same refusal (SPEC-0021 REQ-12, REQ-13).
+	quotaFeed := startDaemonQuota(observer, mgr)
+
 	// Issue #391: export that stream, only when [telemetry] names a
 	// destination and only for opted-in harnesses (SPEC-0015 REQ-1).
 	telemetryPipeline := startDaemonTelemetry(telemetryRes, observer, mgr, telemetry.Options{})
@@ -580,6 +607,9 @@ func runDaemon(o daemonOpts) {
 	// Before the observer too: the runs still open keep what runUsage
 	// folded into them, and their closes, in mgr.Close below, carry it.
 	runUsage.Stop()
+	// Before the observer as well: an exit from here on decides on what the
+	// park detector already has, rather than asking a stopped observer.
+	stopDaemonQuota(quotaFeed, mgr)
 	// Before the Manager closes: the observer reads its snapshots.
 	observer.Stop()
 	sessionGuard.Close()
