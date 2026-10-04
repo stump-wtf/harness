@@ -606,3 +606,37 @@ func TestStartReportsTheRefusal(t *testing.T) {
 		t.Errorf("unknown harness: ok=%v err=%v", ok, err)
 	}
 }
+
+// TestDayStartsChangeWaitsForTheRollover is REQ-20's day_starts rule: a
+// reload that moves day_starts takes effect at the next rollover, and does
+// not start a new day (or refund today's runs) the moment it lands.
+func TestDayStartsChangeWaitsForTheRollover(t *testing.T) {
+	e := newRunsEnv(t)
+	at := func(day, hh int) time.Time { return time.Date(2026, 10, day, hh, 0, 0, 0, time.UTC) }
+	clock := newTestClock(at(4, 10))
+	h := budgetSweep("sweep", filepath.Join(e.dir, "marker"), 5)
+	cfg := sweepCfg(h)
+	cfg.Budget.DayStarts = mustDaily(t, "TZ=UTC 00:00")
+	m, _ := budgetManager(t, e, cfg, clock.Now)
+	m.Admit("sweep", budget.AdmitRequest{Trigger: string(TriggerManual)}, RunRecord{Trigger: TriggerManual, Outcome: OutcomeRunning})
+
+	moved := sweepCfg(h)
+	moved.Budget.DayStarts = mustDaily(t, "TZ=UTC 12:00")
+	m.Reload(moved)
+	clock.Set(at(4, 13)) // past the new 12:00, before the old day ends
+	m.BudgetDue(clock.Now())
+	if start, next := m.BudgetDay(); !start.Equal(at(4, 0)) || !next.Equal(at(5, 0)) || m.RunsToday("sweep") != 1 {
+		t.Fatalf("after the reload, mid-day: day [%v, %v) with %d runs, want the old day [Oct 4 00:00, Oct 5 00:00) and 1 run", start, next, m.RunsToday("sweep"))
+	}
+
+	clock.Set(at(5, 0).Add(time.Second)) // the old day's end: the next rollover
+	m.BudgetDue(clock.Now())
+	if start, next := m.BudgetDay(); !start.Equal(at(5, 0)) || !next.Equal(at(5, 12)) || m.RunsToday("sweep") != 0 {
+		t.Fatalf("at the rollover: day [%v, %v) with %d runs, want [Oct 5 00:00, Oct 5 12:00) and 0", start, next, m.RunsToday("sweep"))
+	}
+	clock.Set(at(5, 12))
+	m.BudgetDue(clock.Now())
+	if start, next := m.BudgetDay(); !start.Equal(at(5, 12)) || !next.Equal(at(6, 12)) {
+		t.Fatalf("from then on: day [%v, %v), want [Oct 5 12:00, Oct 6 12:00)", start, next)
+	}
+}
