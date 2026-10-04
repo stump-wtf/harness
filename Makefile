@@ -83,8 +83,10 @@ race:
 # model (ADR-0007), https://github.com/stump-wtf/harness/issues/18.
 # internal/modelerr FuzzResetAfter: an untrusted error note never yields a
 # reset outside (now, now+8d] (SPEC-0021 REQ-12, issue #473).
+# internal/budget FuzzDay: the budget day bounds every instant across DST and
+# odd zones (SPEC-0021 REQ-3, stump.wtf/harness#470).
 FUZZTIME    ?= 30s
-FUZZ_TARGETS := ./internal/tmpl:FuzzParse ./internal/attach:FuzzRing ./internal/modelerr:FuzzResetAfter
+FUZZ_TARGETS := ./internal/tmpl:FuzzParse ./internal/attach:FuzzRing ./internal/modelerr:FuzzResetAfter ./internal/budget:FuzzDay
 
 fuzz:
 	@set -e; for t in $(FUZZ_TARGETS); do \
