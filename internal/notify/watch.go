@@ -21,16 +21,24 @@ package notify
 // latched until a human cleared it, every ten minutes for ten hours, while the
 // schedule kept firing it and each next start announced `recovered`.
 //
+// A park is announced from harness_hold_changed, the one signal every kind of
+// park raises — a one-shot's run that ended on a quota error, a resident's
+// exit or live refusal, a quota group's members: once when `quota` joins the
+// harness's hold reasons, and not again until it has left them. A parked run
+// ends quota_parked, not failed, so without this the park that stopped a lane
+// would be the one thing the operator never heard about.
+//
 // The bus is lossy by design (ADR-0007), and so is this subscriber: a
 // notification lost to a full buffer is a missed alert, never a false one.
 // The per-harness log read that finds the cause happens here, on the
 // watcher's goroutine, never on a supervisor's.
 //
 // Governing: SPEC-0003 REQ "Operator Notification", REQ "Lifecycle Events";
-// issue #725.
+// issue #725; SPEC-0021 REQ-13, REQ-19 (parked).
 //
 // @joestump 10/04/2026 - A triggered harness's `failed` is not a give-up;
 //   run_failed quotes the run-ledger streak.
+// @joestump 10/04/2026 - parked, from harness_hold_changed.
 
 import (
 	"fmt"
@@ -53,6 +61,8 @@ type Source interface {
 	RunLogPath(name string, id int) string
 	// Runs is name's run ledger, oldest first: run_failed's streak.
 	Runs(name string) []supervisor.RunRecord
+	// ParkOf is name's quota park: its reset, rule and group.
+	ParkOf(name string) (supervisor.ParkInfo, bool)
 }
 
 // Watcher feeds a Dispatcher from the lifecycle bus and the guards.
@@ -64,6 +74,8 @@ type Watcher struct {
 	// open holds harnesses with an alert out — failed or loop-stopped — so
 	// their next transition to running can say `recovered`.
 	open map[string]string
+	// parked holds harnesses whose park was announced, until it clears.
+	parked map[string]bool
 
 	cancel func()
 	done   chan struct{}
@@ -73,7 +85,7 @@ type Watcher struct {
 // Autostart, so a harness that fails during boot is seen.
 func Watch(src Source, d *Dispatcher) *Watcher {
 	events, cancel := src.Events()
-	w := &Watcher{src: src, d: d, open: make(map[string]string), cancel: cancel, done: make(chan struct{})}
+	w := &Watcher{src: src, d: d, open: make(map[string]string), parked: make(map[string]bool), cancel: cancel, done: make(chan struct{})}
 	go func() {
 		defer close(w.done)
 		for ev := range events {
@@ -108,7 +120,55 @@ func (w *Watcher) handle(ev supervisor.Event) {
 		w.flapping(ev)
 	case supervisor.EventRunFinished:
 		w.runFinished(ev)
+	case supervisor.EventHoldChanged:
+		w.holdChanged(ev)
 	}
+}
+
+// holdChanged announces a park once: when quota joins name's hold reasons.
+// Its leaving re-arms the announcement for the next park.
+func (w *Watcher) holdChanged(ev supervisor.Event) {
+	parked := ev.Holds.Has(core.HoldQuota)
+	w.mu.Lock()
+	was := w.parked[ev.Name]
+	if parked {
+		w.parked[ev.Name] = true
+	} else {
+		delete(w.parked, ev.Name)
+	}
+	w.mu.Unlock()
+	if !parked || was {
+		return
+	}
+	p, ok := w.src.ParkOf(ev.Name)
+	until := p.Until
+	if !ok || until.IsZero() {
+		until = ev.HoldNext
+	}
+	msg := ev.Name + " parked"
+	if !until.IsZero() {
+		msg += " until " + until.Local().Format("Jan 2 15:04 MST")
+	}
+	msg += ": its provider refused it for quota"
+	if p.Rule != "" {
+		msg += " (" + p.Rule + ")"
+	}
+	if p.Group != "" {
+		msg += fmt.Sprintf(", which parks quota group %s", p.Group)
+		if p.By != "" && p.By != ev.Name {
+			msg += " after " + p.By + " was refused"
+		}
+	}
+	msg += ". Its runs are skipped until then and it is released by itself — see `harness logs " + ev.Name + "`"
+	snap, _ := w.src.Snapshot(ev.Name)
+	w.send(Notification{
+		Event: core.NotifyParked, Harness: ev.Name, State: string(snap.State),
+		Message: msg,
+		Cause:   p.Rule,
+		Hint:    "harness logs " + ev.Name,
+		Time:    ev.Time,
+		Until:   until,
+	}, false)
 }
 
 func (w *Watcher) failed(ev supervisor.Event) {

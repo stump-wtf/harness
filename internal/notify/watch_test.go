@@ -24,6 +24,7 @@ type fakeSource struct {
 	snap supervisor.Snapshot
 	dir  string
 	runs []supervisor.RunRecord
+	park supervisor.ParkInfo
 }
 
 func (f *fakeSource) Events() (<-chan supervisor.Event, func()) {
@@ -38,6 +39,9 @@ func (f *fakeSource) RunLogPath(name string, id int) string {
 	return filepath.Join(f.dir, name, "run.log")
 }
 func (f *fakeSource) Runs(string) []supervisor.RunRecord { return f.runs }
+func (f *fakeSource) ParkOf(string) (supervisor.ParkInfo, bool) {
+	return f.park, !f.park.Until.IsZero()
+}
 
 func newWatcherRig(t *testing.T, events []string) (*fakeSource, *Watcher, string) {
 	t.Helper()
@@ -75,6 +79,71 @@ func TestWatcherRunFailedQuotesTheRunLog(t *testing.T) {
 	if p.Event != core.NotifyRunFailed || p.RunID != 42 || p.Cause != "fatal: repository not found" ||
 		p.Hint != "harness logs nightly --run 42" || !strings.Contains(p.Message, "run #42 failed (exit 128)") {
 		t.Fatalf("payload = %+v", p)
+	}
+}
+
+// A park is announced once — when quota joins the hold reasons — with its
+// reset and rule, and not again while it holds (another reason joining or
+// leaving changes nothing). Its clearing re-arms the announcement, so the
+// next park is heard.
+func TestWatcherParkedOncePerPark(t *testing.T) {
+	argv, out := NewRecorder(t)
+	cfg := testConfig(t, argv)
+	cfg.Cooldown = 0 // the second park is a new alert, not a repeat
+	d := newTestDispatcher(t, cfg, Options{})
+	until := time.Date(2026, 10, 4, 10, 20, 0, 0, time.UTC)
+	src := &fakeSource{
+		ch:   make(chan supervisor.Event, 16),
+		dir:  t.TempDir(),
+		snap: supervisor.Snapshot{Name: "review", State: core.StateStopped},
+		park: supervisor.ParkInfo{Until: until, Rule: "common/payment required"},
+	}
+	w := Watch(src, d)
+	t.Cleanup(w.Close)
+	quota := core.HoldSetOf(core.HoldQuota)
+	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "review", Holds: quota, HoldNext: until}
+	p := WaitReceived(t, w.d, out, 1)[0].Payload
+	want := "review parked until " + until.Local().Format("Jan 2 15:04 MST") +
+		": its provider refused it for quota (common/payment required). Its runs are skipped until then and it is released by itself — see `harness logs review`"
+	if p.Event != core.NotifyParked || p.Message != want || p.Cause != "common/payment required" ||
+		p.Until != "2026-10-04T10:20:00Z" || p.State != string(core.StateStopped) || p.Hint != "harness logs review" {
+		t.Fatalf("payload = %+v\nwant message %q", p, want)
+	}
+
+	// Still parked, hours joining and leaving: no new alert.
+	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "review", Holds: quota.With(core.HoldHours)}
+	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "review", Holds: quota}
+	// Released, then parked again: one more.
+	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "review"}
+	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "review", Holds: quota}
+	WaitReceived(t, w.d, out, 2)
+	time.Sleep(100 * time.Millisecond)
+	if n := len(ReadReceived(t, out)); n != 2 {
+		t.Fatalf("%d deliveries, want 2 (one per park)", n)
+	}
+}
+
+// A hold that is not quota is not a park.
+func TestWatcherHoursHoldIsNotAPark(t *testing.T) {
+	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "rc", Holds: core.HoldSetOf(core.HoldHours)}
+	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "rc", Holds: core.HoldSetOf(core.HoldBudget)}
+	src.ch <- supervisor.Event{Kind: supervisor.EventFlapping, Name: "sentinel", Restarts: 2}
+	WaitReceived(t, w.d, out, 1)
+	time.Sleep(100 * time.Millisecond)
+	if got := ReadReceived(t, out); len(got) != 1 || got[0].Payload.Event != core.NotifyFlapping {
+		t.Fatalf("deliveries = %+v, want the sentinel only", got)
+	}
+}
+
+// A group park says which group, and whose refusal parked it.
+func TestWatcherParkedGroupNamesTheTrigger(t *testing.T) {
+	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src.park = supervisor.ParkInfo{Until: time.Date(2026, 10, 4, 15, 0, 0, 0, time.UTC), Rule: "crush/litellm.ratelimiterror", Group: "hyper", By: "review"}
+	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "glm-review", Holds: core.HoldSetOf(core.HoldQuota)}
+	p := WaitReceived(t, w.d, out, 1)[0].Payload
+	if !strings.Contains(p.Message, "(crush/litellm.ratelimiterror), which parks quota group hyper after review was refused.") {
+		t.Fatalf("message = %q", p.Message)
 	}
 }
 
