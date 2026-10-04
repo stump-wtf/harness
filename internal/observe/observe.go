@@ -37,6 +37,10 @@
 // @joestump-agent 09/21/2026 - Orphaned-tool-call fallback (stall.go), and a
 // forgotten session now resumes from its read cursor, so a tool call open
 // longer than the listing window plus ForgetAfter is delivered, not dropped.
+//
+// @joestump 10/04/2026 - Sync: a caller that must decide on what an agent
+// wrote up to now (the quota park at a run's exit, SPEC-0021 REQ-13) runs a
+// scan itself instead of waiting for the next poll (stump.wtf/harness#477).
 package observe
 
 import (
@@ -244,8 +248,10 @@ type Observer struct {
 	opts Options
 	log  *log.Logger
 
-	// Scan state, touched only by the loop goroutine (or by a test driving
-	// scan directly without Start).
+	// scanMu serializes scans: the loop's own, one per PollInterval, and
+	// Sync's. The scan state below is touched only under it (or by a test
+	// driving scan directly without Start).
+	scanMu     sync.Mutex
 	sessions   map[string]*session
 	tombstones map[string]tombstone
 	summaries  *tail.SummaryCache
@@ -330,13 +336,44 @@ func (o *Observer) loop() {
 	t := time.NewTicker(o.opts.PollInterval)
 	defer t.Stop()
 	for {
+		o.scanMu.Lock()
 		o.scan(o.ctx)
+		o.scanMu.Unlock()
 		select {
 		case <-o.ctx.Done():
 			return
 		case <-t.C:
 		}
 	}
+}
+
+// Sync scans now, on the caller's goroutine, and returns once every item the
+// scan read has been published to the subscribers: what an agent wrote to its
+// transcript before Sync was called is in their buffers when it returns
+// (unless a full buffer dropped it, which is counted as always). It waits for
+// a scan already in progress to finish first, so the two never share the
+// scan state. ctx bounds the scan, and Stop cancels it; after Stop, Sync
+// returns at once.
+//
+// It exists for a decision that must not race the poll: a run that exits two
+// seconds after it starts has written its last error mark before the exit,
+// but the next poll may be seconds away, and the park detector decides at the
+// exit (SPEC-0021 REQ-13). Nothing else should call it; the poll is the
+// observer's cadence.
+func (o *Observer) Sync(ctx context.Context) {
+	o.scanMu.Lock()
+	defer o.scanMu.Unlock()
+	o.mu.Lock()
+	stopped := o.stopped
+	o.mu.Unlock()
+	if stopped {
+		return
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(o.ctx, cancel)
+	defer stop()
+	o.scan(ctx)
 }
 
 // Subscribe registers a consumer. Events are delivered to the returned channel
