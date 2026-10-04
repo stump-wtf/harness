@@ -223,6 +223,10 @@ func TestARealParkExpiresOutOfHours(t *testing.T) {
 	r := &rig{clock: newFakeClock(mon30(13, 0)), store: newMemStore()}
 	dir := t.TempDir()
 	m := supervisor.NewManager(cfg, supervisor.ManagerOptions{
+		// A short stop grace: the park stops the harness at once, and a
+		// loaded runner can leave the shell's `sleep` behind as a zombie
+		// that only the grace's end clears (killStragglers).
+		Policy:    supervisor.Policy{StopGrace: 200 * time.Millisecond},
 		StatePath: filepath.Join(dir, "state.json"),
 		LogDir:    filepath.Join(dir, "logs"),
 		Watch:     &countingBridge{},
