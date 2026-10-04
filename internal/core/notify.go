@@ -43,6 +43,12 @@ const (
 	// flipped at some point without notice, and a later restart made the
 	// change stick.
 	NotifyIntentLost = "intent_lost"
+	// NotifyParked fires once per park, when a harness is parked on an
+	// exhausted provider quota (SPEC-0021 REQ-13): its runs are refused
+	// until the reset, and it is released by itself then. A parked run ends
+	// quota_parked rather than failed, so neither `failed` nor `run_failed`
+	// would ever say so.
+	NotifyParked = "parked"
 	// NotifyRecovered fires when a harness that was reported failed or
 	// loop-stopped is running again, so the alert thread can close.
 	NotifyRecovered = "recovered"
@@ -53,15 +59,17 @@ const (
 
 // NotifyEvents is every event `events` may name, in documentation order.
 var NotifyEvents = []string{
-	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyRunFailed, NotifyIntentLost, NotifyRecovered,
+	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyRunFailed, NotifyIntentLost, NotifyParked, NotifyRecovered,
 }
 
 // DefaultNotifyEvents is `events` when the table omits it: everything that
 // means a harness needs a human, plus the recovery that closes it. run_failed
 // is left out because a scheduled job's failure already lands in `harness
-// jobs`, and some jobs fail as their normal "nothing to do" answer.
+// jobs`, and some jobs fail as their normal "nothing to do" answer. parked is
+// in: a provider refusing an account for quota or credits is usually
+// something only a person can top up.
 var DefaultNotifyEvents = []string{
-	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyIntentLost, NotifyRecovered,
+	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyIntentLost, NotifyParked, NotifyRecovered,
 }
 
 // Notify defaults and bounds.

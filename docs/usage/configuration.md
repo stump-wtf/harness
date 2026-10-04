@@ -1307,7 +1307,7 @@ minimal hook.
 ```toml
 [notify]
 command  = ["/home/me/.config/harness/notify.sh"]  # required; argv[0] absolute, no shell
-events   = ["failed", "flapping", "loop_stopped", "session_rotated", "recovered"]  # default
+events   = ["failed", "flapping", "loop_stopped", "session_rotated", "intent_lost", "parked", "recovered"]  # default
 timeout  = "15s"                                    # default 15s, 1s–5m
 cooldown = "15m"                                    # default 15m, 0s–24h; per harness and event
 ```

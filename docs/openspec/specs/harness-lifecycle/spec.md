@@ -231,7 +231,10 @@ When a harness needs a person, the daemon SHALL tell one: if the global
 `failed` (give-up), on crash-loop escalation (`flapping`), when the runaway
 tool-loop guard stops a harness (`loop_stopped`), when the session guard rotates
 a wedged session or fails to (`session_rotated`), on a failed or timed-out
-scheduled or triggered run (`run_failed`, opt-in), and when a harness it
+scheduled or triggered run (`run_failed`, opt-in), once per park when a
+harness is parked on an exhausted provider quota (`parked`, SPEC-0021 REQ-13:
+its message SHALL name the reset and the classifier rule, never the error
+text), and when a harness it
 reported `failed` or `loop_stopped` is running again (`recovered`). A
 triggered harness never gives up — a failed run lands it in `failed` and its
 next firing is the retry (SPEC-0008 REQ "Firing And Overlap") — so that
@@ -276,6 +279,13 @@ run it once with a `test` event.
 - **WHEN** two firings run and fail
 - **THEN** the hook receives `run_failed` for each, the second saying
   `2 in a row`, and never `failed` or `recovered`
+
+#### Scenario: A park is heard once
+
+- **GIVEN** a scheduled one-shot whose provider refuses it with a 402
+- **WHEN** its run parks it until 00:20 and the 00:15 firing is skipped by the park
+- **THEN** the hook receives one `parked` naming 00:20 and the rule, and no
+  `failed` or `run_failed`
 
 #### Scenario: A loop-guard stop is not silent
 

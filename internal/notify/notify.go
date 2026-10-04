@@ -120,6 +120,8 @@ type Notification struct {
 	Count int
 	// RunID names the run of a run_failed event.
 	RunID int
+	// Until is when a parked harness is released; zero when unknown.
+	Until time.Time
 }
 
 // Payload is the JSON the hook reads on stdin.
@@ -138,6 +140,7 @@ type Payload struct {
 	Tool     string `json:"tool,omitempty"`
 	Count    int    `json:"count,omitempty"`
 	RunID    int    `json:"run_id,omitempty"`
+	Until    string `json:"until,omitempty"`
 }
 
 // Delivery is the outcome of one notification.
@@ -444,7 +447,16 @@ func (d *Dispatcher) payload(n Notification) Payload {
 		Tool:     n.Tool,
 		Count:    n.Count,
 		RunID:    n.RunID,
+		Until:    rfc3339(n.Until),
 	}
+}
+
+// rfc3339 renders t in UTC, or "" for the zero time.
+func rfc3339(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // env is the daemon's environment with any inherited HARNESS_NOTIFY_* removed
