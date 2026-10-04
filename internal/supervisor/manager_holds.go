@@ -9,10 +9,9 @@ package supervisor
 // admitRelease is the admission a harness whose last reason clears passes
 // through before it starts again.
 //
-// Admission is a pass-through here. SPEC-0021 REQ-4 puts a fixed series of
-// checks in front of every start, a released one included; the admission
-// story (stump.wtf/harness#470) fills admitRelease in, and nothing else needs
-// to change for a release to honour it.
+// SPEC-0021 REQ-4 puts a fixed series of checks in front of every start, a
+// released one included: admitRelease (manager_admit.go) is that check for a
+// release, and the funnel admits the start that follows it.
 //
 // Governing: ADR-0027, SPEC-0021 REQ-4, REQ-14 "Release and hold reasons";
 // design.md § "Holds become a reason set", § "Admission is a funnel on the
@@ -21,6 +20,9 @@ package supervisor
 //
 // @joestump 10/04/2026 - Added for stump.wtf/harness#468; Hold moved here
 // from manager_hours.go and Release from manager.go, both taking a reason.
+//
+// @joestump 10/04/2026 - admitRelease filled in and moved to
+// manager_admit.go (stump.wtf/harness#470).
 
 import (
 	"time"
@@ -114,16 +116,3 @@ func (m *Manager) HoldsCleared(now time.Time) map[string]core.HoldSet {
 	}
 	return out
 }
-
-// admitRelease is the admission a harness passes through when its last hold
-// reason clears (SPEC-0021 REQ-14: it "SHALL go back through admission"),
-// handed to every supervisor as Options.Admit and asked on its actor loop.
-// It answers the reasons that still hold the harness; empty admits.
-//
-// A pass-through until the admission story (stump.wtf/harness#470) lands
-// REQ-4's checks here. Operating hours, REQ-4's first check, need no answer
-// from it even then: the gate pass keeps a held harness's hours reason
-// current on every tick, so a harness out of hours never reaches an empty
-// set. Whatever fills this in runs on the loop, so it must not take a lock
-// that a Manager path holds while it waits on a supervisor.
-func (m *Manager) admitRelease(string) core.HoldSet { return 0 }

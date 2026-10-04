@@ -122,7 +122,7 @@ func readProbe(t *testing.T, out string) argvProbe {
 // spawnAndReap spawns h and waits for it to exit, closing its PTY.
 func spawnAndReap(t *testing.T, h core.Harness) {
 	t.Helper()
-	proc, err := spawn(h, 80, 24, RunEnv{})
+	proc, err := spawn(&admission{}, h, 80, 24, RunEnv{})
 	if err != nil {
 		t.Fatalf("spawn %q: %v", h.Name, err)
 	}
@@ -236,7 +236,7 @@ func TestSpawnRefusesMalformedCommand(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, out := probeHarness(t, "bad-"+strings.ReplaceAll(tc.name, " ", "-"), testBinary(t))
 			tc.mutate(&h)
-			proc, err := spawn(h, 80, 24, RunEnv{})
+			proc, err := spawn(&admission{}, h, 80, 24, RunEnv{})
 			if proc != nil {
 				_ = proc.cmd.Wait()
 				_ = proc.pty.Close()

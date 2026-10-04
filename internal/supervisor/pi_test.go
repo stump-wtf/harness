@@ -44,7 +44,7 @@ func spawnedArgv(t *testing.T, exe, toml string) []string {
 		t.Fatalf("config does not load: %v\n%s", err, toml)
 	}
 	h := cfg.Harnesses[cfg.HarnessOrder[0]]
-	proc, err := spawn(h, 80, 24, RunEnv{})
+	proc, err := spawn(&admission{}, h, 80, 24, RunEnv{})
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
 	}

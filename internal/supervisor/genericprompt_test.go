@@ -51,7 +51,7 @@ func TestSpawnRefusesGenericPrompt(t *testing.T) {
 	marker := fakeCrushOnPath(t)
 
 	// Positive control: the probe can see crush run.
-	proc, err := spawn(core.Harness{Name: "control", Adapter: "crush", Prompt: "x"}, 80, 24, RunEnv{})
+	proc, err := spawn(&admission{}, core.Harness{Name: "control", Adapter: "crush", Prompt: "x"}, 80, 24, RunEnv{})
 	if err != nil {
 		t.Fatalf("control spawn of a crush prompt harness: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestSpawnRefusesGenericPrompt(t *testing.T) {
 		{Name: "bad-kind", Adapter: "nope", Prompt: "x"},
 	} {
 		t.Run(h.Name, func(t *testing.T) {
-			proc, err := spawn(h, 80, 24, RunEnv{})
+			proc, err := spawn(&admission{}, h, 80, 24, RunEnv{})
 			if proc != nil {
 				_ = proc.cmd.Wait()
 				_ = proc.pty.Close()

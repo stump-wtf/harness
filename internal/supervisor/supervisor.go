@@ -57,6 +57,9 @@ const (
 	cmdSkipRun          // record a firing skipped before it reached the overlap decision
 	cmdOpenFirings      // hours opened: settle the outside_hours skips, catching up once
 	cmdSeedHoursSkipped // boot: a persisted outside_hours skip is still owed its catch-up
+	// The budget day rolled over: close the budget skips, catching up once
+	// (admit.go; SPEC-0021 REQ-5).
+	cmdSettleBudget
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -99,7 +102,10 @@ type command struct {
 	rows    int            // cmdResize
 	sig     syscall.Signal // cmdSignal payload (delivered to the process group)
 	run     *RunRequest    // cmdStartRun / cmdSkipRun payload
-	decided *RunDecision   // cmdStartRun / cmdSkipRun / cmdOpenFirings result, written before done closes
+	// decided is the result of cmdStartRun, cmdSkipRun, cmdOpenFirings and
+	// cmdSettleBudget, and of cmdStart and cmdRestart for a caller that asks
+	// whether admission refused the start; written before done closes.
+	decided *RunDecision
 	// reason is why the firing was skipped for cmdSkipRun; for cmdShutdown it
 	// is empty for a daemon shutdown, or why the harness is being removed
 	// (reload, operator) (SPEC-0022 REQ-5).
@@ -282,6 +288,10 @@ type Supervisor struct {
 	// admit is the Manager's admission seam, asked on the loop when the last
 	// hold reason clears (holds.go). Nil admits.
 	admit AdmitFunc
+	// admitter is the Manager's admission funnel, which every start passes
+	// before it spawns (admit.go; SPEC-0021 REQ-4). Nil: a supervisor built
+	// outside a Manager, with nothing budgeted.
+	admitter Admitter
 	// closing marks a graceful close in flight: held and still up, waiting on
 	// the agent's turn state or the deadline (hours.go). closeAt is the
 	// instant the harness went out of hours, which anchors the deadline.
@@ -350,6 +360,10 @@ type Options struct {
 	// is started again (SPEC-0021 REQ-14: it "SHALL go back through
 	// admission"). The Manager passes its admission seam; nil admits.
 	Admit AdmitFunc
+	// Admission, if set, is the funnel every start passes before it spawns
+	// (SPEC-0021 REQ-4; admit.go). The Manager passes itself; nil admits
+	// every start, and opens its record through Runs.
+	Admission Admitter
 }
 
 // New creates a Supervisor for h and starts its actor loop. The harness begins
@@ -370,6 +384,7 @@ func New(h core.Harness, opts Options) *Supervisor {
 		timeoutCh:    make(chan uint64),
 		journal:      opts.Runs,
 		admit:        opts.Admit,
+		admitter:     opts.Admission,
 		done:         make(chan struct{}),
 		harness:      h,
 		state:        core.StateStopped,
@@ -430,6 +445,16 @@ func (s *Supervisor) StartWithPeer(trigger RunTrigger, peer string) {
 	s.send(command{kind: cmdStart, trigger: trigger, source: intentSourceFor(trigger), peer: peer})
 }
 
+// startChecked is StartWithPeer reporting what the start decided: a refusal
+// carries the admission's error in Refused (SPEC-0021 REQ-21), which the
+// control op turns into a structured error. A harness already up decides
+// nothing, and the zero RunDecision says so.
+func (s *Supervisor) startChecked(trigger RunTrigger, peer string) RunDecision {
+	var d RunDecision
+	s.send(command{kind: cmdStart, trigger: trigger, source: intentSourceFor(trigger), peer: peer, decided: &d})
+	return d
+}
+
 // intentSourceFor maps a start path to the intent-change source it logs under
 // (issue #835). Everything that is not boot autostart is an operator verb.
 func intentSourceFor(trigger RunTrigger) string {
@@ -480,6 +505,13 @@ func (s *Supervisor) Restart() { s.RestartBy("verb:restart", "") }
 // RestartBy is Restart naming the socket peer of a socket verb (issue #835).
 func (s *Supervisor) RestartBy(source, peer string) {
 	s.send(command{kind: cmdRestart, source: source, peer: peer})
+}
+
+// restartChecked is RestartBy reporting what the start decided (startChecked).
+func (s *Supervisor) restartChecked(source, peer string) RunDecision {
+	var d RunDecision
+	s.send(command{kind: cmdRestart, source: source, peer: peer, decided: &d})
+	return d
 }
 
 // LogEvent writes msg as a durable-log lifecycle line (ADR-0007), with the
@@ -574,7 +606,10 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		if !s.hasProcess() && s.state != core.StateStopping {
 			s.clearFailLatch()
 			s.startTrigger = c.trigger
-			s.startProcess(RunRequest{Trigger: TriggerManual})
+			d := s.startProcess(RunRequest{Trigger: TriggerManual})
+			if c.decided != nil {
+				*c.decided = d
+			}
 		}
 	case cmdStartTransient:
 		// Bring the process up without setting enabled=true or persisting
@@ -641,7 +676,10 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 			s.finishRunWith(OutcomeReplaced, &s.lastExitCode, ReasonOperator)
 		}
 		s.startTrigger = TriggerManual
-		s.startProcess(RunRequest{Trigger: TriggerManual})
+		d := s.startProcess(RunRequest{Trigger: TriggerManual})
+		if c.decided != nil {
+			*c.decided = d
+		}
 	case cmdApplyConfig:
 		s.applyConfig(*c.cfg)
 	case cmdRestore:
@@ -697,6 +735,15 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 	case cmdSeedHoursSkipped:
 		s.hoursSkipped = true
 		s.publishSnapshot()
+	case cmdSettleBudget:
+		// The catch-up it starts is a firing: StartRun's intent handling
+		// (#159), as cmdOpenFirings has.
+		s.suppressPersist = true
+		d := s.settleBudget()
+		s.suppressPersist = false
+		if c.decided != nil {
+			*c.decided = d
+		}
 	case cmdSignal:
 		// Governing: stump.wtf/harness#182 — the kernel only raises SIGWINCH on
 		// an actual dimension change, so a resize applied while the guest was
@@ -769,7 +816,12 @@ func (s *Supervisor) transition(next core.State) {
 
 // beginStart spawns the process and moves stopped/failed/restarting/degraded →
 // starting → running. On spawn failure it routes into the restart/give-up path.
-func (s *Supervisor) beginStart() {
+//
+// adm is the start's admission (admit.go): the only thing spawn accepts, and
+// what carries the run's record the funnel opened. A caller has admitted the
+// start before it gets here; TestEveryStartPathIsAdmitted holds every caller
+// to that (SPEC-0021 REQ-4).
+func (s *Supervisor) beginStart(adm *admission) {
 	// Adopt any staged config change now (SPEC-0003 REQ "Config Change
 	// Application": applies on next (re)start).
 	if s.pending != nil {
@@ -781,15 +833,16 @@ func (s *Supervisor) beginStart() {
 	// reason (SPEC-0012 "Held", SPEC-0021 REQ-14).
 	s.holds = 0
 	s.transition(core.StateStarting)
-	// A resident's process lifetime is a run: open its record before the
-	// spawn (SPEC-0022 REQ-3, REQ-6). A one-shot's was opened by beginRun.
-	s.openResident()
+	// A resident's process lifetime is a run: its record, opened by
+	// admission before the spawn, becomes the open resident run (SPEC-0022
+	// REQ-3, REQ-6). A one-shot's is the run beginRun opened.
+	s.openResident(adm)
 
 	// Born at the attached viewport, not 80×24: a restart (manual, crash, or
 	// `^b s` from attached mode) must land in a PTY the size of the client
 	// that's watching it (ADR-0003; see spawn's note).
 	cols, rows := s.spawnSize()
-	proc, err := spawn(s.harness, cols, rows, s.runEnv())
+	proc, err := spawn(adm, s.harness, cols, rows, s.runEnv())
 	if err != nil && s.onRenderFailure(err) {
 		// A recorded run whose argv template lacked a required value:
 		// recorded skipped, nothing exec'd, not a crash (render.go).
@@ -1175,8 +1228,11 @@ func (s *Supervisor) handleRestartTimer() {
 	if s.state == core.StateDegraded {
 		s.transition(core.StateRestarting)
 	}
+	// The respawn passes admission like every other start (SPEC-0021 REQ-4):
+	// that is how max_runs_per_day bounds a crash loop. A refusal holds the
+	// harness instead of starting it, never a step toward give-up.
 	s.startTrigger = TriggerRestart
-	s.beginStart()
+	s.startResident()
 }
 
 // handleSurvival resets crash-loop state once a run outlives the crash window.
