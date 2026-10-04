@@ -126,7 +126,14 @@ const (
 	// it is upgraded, nothing worse; a major bump would refuse every older
 	// client to save that. A daemon older than 24 sends `held` and no
 	// hold_reasons, so a newer client shows a held harness as stopped.
-	ProtoMinor = 24
+	// ProtoMinor 25 added the admission error codes over_budget, parked and
+	// ledger_unavailable, which start, restart, enable and trigger answer
+	// when SPEC-0021 REQ-4's admission refuses the start (REQ-21; issue
+	// #470), and RunLedger on DaemonInfo (REQ-4, REQ-7: the ledger failures
+	// admission met and the record gaps boot found) — additive only. An older
+	// client prints an unknown code's message as it prints any error; an
+	// older daemon starts an over-budget harness, having no budgets.
+	ProtoMinor = 25
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -1050,6 +1057,33 @@ type DaemonInfo struct {
 	// is configured (ProtoMinor 15). Governing: SPEC-0003 REQ "Operator
 	// Notification".
 	Notify *NotifyInfo `json:"notify,omitempty"`
+	// RunLedger is what admission met of the run ledger, nil when it met
+	// nothing (ProtoMinor 25): doctor warns on it. Governing: SPEC-0021 REQ-4
+	// Scenario "The ledger cannot be written", REQ-7 Scenario "A lost ledger
+	// file".
+	RunLedger *RunLedgerInfo `json:"run_ledger,omitempty"`
+}
+
+// RunLedgerInfo is what SPEC-0021's admission met of the run ledger.
+type RunLedgerInfo struct {
+	// Refused counts budgeted starts refused with ledger_unavailable;
+	// Unrecorded counts unbudgeted starts that went ahead with their record
+	// still queued for retry (REQ-4).
+	Refused    int `json:"refused,omitempty"`
+	Unrecorded int `json:"unrecorded,omitempty"`
+	// LastError is the newest of those failures, and LastAt (RFC 3339) when.
+	LastError string `json:"last_error,omitempty"`
+	LastAt    string `json:"last_at,omitempty"`
+	// Gaps are harnesses whose run records the ledger lost, found at boot
+	// (REQ-7): today's counters were rebuilt without them.
+	Gaps []RunLedgerGap `json:"gaps,omitempty"`
+}
+
+// RunLedgerGap is a run id range a harness's ledger records are missing.
+type RunLedgerGap struct {
+	Harness      string `json:"harness"`
+	FirstMissing int    `json:"first_missing"`
+	LastMissing  int    `json:"last_missing"`
 }
 
 // NotifyInfo describes the daemon's notify hook. Only argv[0] is reported:
@@ -1136,6 +1170,21 @@ const (
 	// ErrUnknownRun: a run selector named a run id the harness's history does
 	// not hold — never run, or pruned past keep_runs.
 	ErrUnknownRun ErrCode = "unknown_run"
+
+	// Admission errors (SPEC-0021 REQ-4, REQ-21): start, restart, enable or
+	// trigger asked for a start that admission refused. The message is the
+	// refusal's detail ("over budget: 40/40 runs today"). A refused resident
+	// is held, its intent recorded; a refused firing is recorded skipped.
+
+	// ErrOverBudget: a daily cap the harness is subject to is spent.
+	ErrOverBudget ErrCode = "over_budget"
+	// ErrParked: the harness, or its quota group, is parked on an exhausted
+	// provider quota.
+	ErrParked ErrCode = "parked"
+	// ErrLedgerUnavailable: the run ledger could not record the start of a
+	// harness subject to a budget, so it was refused rather than run
+	// uncounted.
+	ErrLedgerUnavailable ErrCode = "ledger_unavailable"
 )
 
 // ErrorMsg is a structured error frame body. ID echoes the request it answers

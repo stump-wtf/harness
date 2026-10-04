@@ -23,6 +23,7 @@ import (
 
 	"github.com/stump-wtf/harness/internal/adapter"
 	"github.com/stump-wtf/harness/internal/agentpkg"
+	"github.com/stump-wtf/harness/internal/budget"
 	"github.com/stump-wtf/harness/internal/config"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/protocol"
@@ -342,6 +343,7 @@ func (c *conn) attachInfoFor(info *protocol.HarnessInfo) {
 // before.
 func (c *conn) opLifecycle(req protocol.ControlReq) {
 	var ok bool
+	var refused error // admission's refusal of a start (SPEC-0021 REQ-21)
 	switch req.Op {
 	case protocol.OpStart:
 		forDur := time.Duration(0)
@@ -366,6 +368,7 @@ func (c *conn) opLifecycle(req protocol.ControlReq) {
 					_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
 				case errors.Is(err, supervisor.ErrNoLease):
 					_ = c.pc.WriteError(req.ID, protocol.ErrBadRequest, "%v", err)
+				case c.writeRefusal(req, err):
 				default:
 					_ = c.pc.WriteError(req.ID, protocol.ErrInternal, "leased start: %v", err)
 				}
@@ -383,14 +386,17 @@ func (c *conn) opLifecycle(req protocol.ControlReq) {
 			ok = true
 			break
 		}
-		ok = c.srv.mgr.StartPeer(req.Name, c.peer)
+		ok, refused = c.srv.mgr.StartChecked(req.Name, c.peer)
 	case protocol.OpStop:
 		ok = c.srv.mgr.StopPeer(req.Name, c.peer)
 	case protocol.OpRestart:
-		ok = c.srv.mgr.RestartPeer(req.Name, c.peer)
+		ok, refused = c.srv.mgr.RestartChecked(req.Name, c.peer)
 	}
 	if !ok {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
+		return
+	}
+	if c.writeRefusal(req, refused) {
 		return
 	}
 	// Reply with the fresh snapshot so the client can render the new state.
@@ -398,19 +404,55 @@ func (c *conn) opLifecycle(req protocol.ControlReq) {
 	c.respond(req, c.infoFor(snap))
 }
 
+// writeRefusal answers req with the structured error a start admission
+// refused carries, when err wraps one of SPEC-0021's sentinels, and reports
+// whether it did (REQ-21: the control op distinguishes them, and the CLI
+// prints the message, the refusal's detail, verbatim). A refusal with no
+// sentinel of its own (out of hours: the harness is held for its hours,
+// exactly as a gated start out of hours always was) is not an error, and
+// neither is nil: the caller answers as usual.
+func (c *conn) writeRefusal(req protocol.ControlReq, err error) bool {
+	code, ok := admissionErrCode(err)
+	if ok {
+		_ = c.pc.WriteError(req.ID, code, "%s: %v", req.Name, err)
+	}
+	return ok
+}
+
+// admissionErrCode maps an admission refusal to its protocol error code by
+// its sentinel; ok is false for nil and for a refusal with none.
+func admissionErrCode(err error) (protocol.ErrCode, bool) {
+	switch {
+	case err == nil:
+		return "", false
+	case errors.Is(err, budget.ErrOverBudget):
+		return protocol.ErrOverBudget, true
+	case errors.Is(err, budget.ErrParked):
+		return protocol.ErrParked, true
+	case errors.Is(err, budget.ErrLedgerUnavailable):
+		return protocol.ErrLedgerUnavailable, true
+	}
+	return "", false
+}
+
 // opEnableDisable handles enable/disable. Enable sets intent + starts; disable
 // clears intent + stops. Both are idempotent; an unknown harness is a structured
 // ERROR.
 func (c *conn) opEnableDisable(req protocol.ControlReq) {
 	var ok bool
+	var refused error
 	switch req.Op {
 	case protocol.OpEnable:
-		ok = c.srv.mgr.EnablePeer(req.Name, c.peer)
+		// Enable is start (Manager.Enable): it passes admission too.
+		ok, refused = c.srv.mgr.StartChecked(req.Name, c.peer)
 	case protocol.OpDisable:
 		ok = c.srv.mgr.DisablePeer(req.Name, c.peer)
 	}
 	if !ok {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
+		return
+	}
+	if c.writeRefusal(req, refused) {
 		return
 	}
 	snap, _ := c.srv.mgr.Snapshot(req.Name)
@@ -545,7 +587,24 @@ func (c *conn) opDaemonInfo() protocol.DaemonInfo {
 	// The webhook listener, likewise only when it actually bound (SPEC-0014
 	// REQ "Webhook Listener"), so doctor judges the live bind.
 	res.WebhookAddr, res.WebhookTLS = c.srv.webhook()
+	res.RunLedger = runLedgerInfo(c.srv.mgr.AdmissionLedgerStats(), c.srv.mgr.LedgerGaps())
 	return res
+}
+
+// runLedgerInfo projects what admission met of the run ledger (SPEC-0021
+// REQ-4, REQ-7) for doctor; nil when it met nothing.
+func runLedgerInfo(st supervisor.AdmissionLedger, gaps []supervisor.LedgerGap) *protocol.RunLedgerInfo {
+	if st.Refused == 0 && st.Unrecorded == 0 && len(gaps) == 0 {
+		return nil
+	}
+	out := &protocol.RunLedgerInfo{Refused: st.Refused, Unrecorded: st.Unrecorded, LastError: st.LastError}
+	if !st.LastAt.IsZero() {
+		out.LastAt = st.LastAt.Format(time.RFC3339)
+	}
+	for _, g := range gaps {
+		out.Gaps = append(out.Gaps, protocol.RunLedgerGap{Harness: g.Harness, FirstMissing: g.Max + 1, LastMissing: g.Last})
+	}
+	return out
 }
 
 // timeSince returns whole seconds elapsed since t.
