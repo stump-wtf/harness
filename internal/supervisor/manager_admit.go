@@ -119,7 +119,14 @@ func (m *Manager) Admit(name string, req budget.AdmitRequest, rec RunRecord) Adm
 			m.bud.skips[name] = req.Now
 		}
 		m.budgetMu.Unlock()
-		log.Info("start refused", "harness", name, "trigger", req.Trigger, "reason", string(d.Reason), "detail", d.Detail)
+		// A refused firing is a coalesced skip record and, the first time, a
+		// line on its durable log; a burst of them is not worth a daemon log
+		// line each. A refused resident is rare and is held: say so.
+		logf := log.Debug
+		if req.Resident {
+			logf = log.Info
+		}
+		logf("start refused", "harness", name, "trigger", req.Trigger, "reason", string(d.Reason), "detail", d.Detail)
 		return AdmitResult{Decision: d}
 	}
 	budgeted := subjectToBudget(h, db, req.Resident)
