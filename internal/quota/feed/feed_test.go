@@ -136,7 +136,8 @@ func TestFoldPassesOnlyModelOutcomes(t *testing.T) {
 	}
 }
 
-// A Sync after Stop, or with a context that has run out, returns at once.
+// A Sync after Stop returns at once: an exit during shutdown decides on what
+// the detector already has.
 func TestSyncAfterStopReturns(t *testing.T) {
 	f := Start(&fakeObserver{burst: 1}, &countingSink{}, Options{})
 	f.Stop()
