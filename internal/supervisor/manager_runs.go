@@ -38,6 +38,9 @@ package supervisor
 //
 // @joestump-agent 09/28/2026 - Sealed run artifacts are compressed, for
 // https://github.com/stump-wtf/harness/issues/18.
+//
+// @joestump 10/04/2026 - A resident subject to no budget no longer waits on
+// its `closed` line's sync (SPEC-0021 REQ-21; stump.wtf/harness#477).
 
 import (
 	"encoding/json"
@@ -186,9 +189,18 @@ func (m *Manager) CloseRun(name string, rec RunRecord) error {
 		at = *rec.EndedAt
 		fields.DurationMs = rec.EndedAt.Sub(rec.StartedAt).Milliseconds()
 	}
-	_, err := m.ledger.Append(ledger.Line{
+	_, wait, err := m.ledger.Enqueue(ledger.Line{
 		Type: ledger.TypeClosed, At: at, Harness: name, RunID: rec.RunID, Record: fields,
 	}, true)
+	if err == nil {
+		if m.awaitsLedger(name, rec.Kind) {
+			err = wait()
+		} else {
+			// A resident subject to no budget does not wait on its close
+			// either: its restart must not (SPEC-0021 REQ-21).
+			go m.awaitUnbudgeted(name, rec.RunID, "exit", wait)
+		}
+	}
 	if rec.Kind != KindResident {
 		m.sealRun(name, rec)
 	}

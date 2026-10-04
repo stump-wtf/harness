@@ -315,14 +315,16 @@ type RunRequest struct {
 //
 // An error from OpenRun, CloseRun or AppendRun means the ledger has not synced
 // the line yet: it stays queued and is retried in order, and the run goes on
-// (SPEC-0022 REQ-6).
+// (SPEC-0022 REQ-6). A resident subject to no budget does not wait for its
+// lines at all (SPEC-0021 REQ-21): CloseRun queues its `closed` line and
+// returns, and a late sync is logged and counted by the Manager.
 type RunJournal interface {
 	// OpenRun allocates rec's run id and records it, on disk before it
 	// returns, and returns the record with its id and the path its log
 	// should be written to.
 	OpenRun(name string, rec RunRecord) (RunRecord, string, error)
 	// CloseRun records the end of the run with rec's run id, on disk before
-	// it returns.
+	// it returns (queued, for a resident subject to no budget).
 	CloseRun(name string, rec RunRecord) error
 	// AppendRun records a decision that started no process, on disk before
 	// it returns.
