@@ -23,6 +23,9 @@ package supervisor
 //
 // @joestump 10/04/2026 - admitRelease filled in and moved to
 // manager_admit.go (stump.wtf/harness#470).
+//
+// @joestump 10/04/2026 - The park store feeds the quota reason, and its
+// clearer is the Manager's own (manager_quota.go, stump.wtf/harness#477).
 
 import (
 	"time"
@@ -95,8 +98,9 @@ func (m *Manager) Release(name string, reason core.HoldReason) bool {
 // spent cap is raised by a reload"). The pass releases each one. Hours are
 // the pass's own to judge, from the expression, and never appear here. With
 // no clearer configured it reports nothing without reading a snapshot. The
-// Manager always configures budget's (budgetHoldCleared), so each tick reads
-// every harness's snapshot and asks only for the reasons it is held for.
+// Manager always configures quota's (quotaHoldCleared) and budget's
+// (budgetHoldCleared), so each tick reads every harness's snapshot and asks
+// only for the reasons it is held for.
 func (m *Manager) HoldsCleared(now time.Time) map[string]core.HoldSet {
 	if len(m.holdClearers) == 0 {
 		return nil

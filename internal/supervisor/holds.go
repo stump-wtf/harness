@@ -33,8 +33,9 @@ package supervisor
 // once: a parked provider refuses every call, so there is no turn to finish
 // (SPEC-0021 REQ-13).
 //
-// Governing: ADR-0027, SPEC-0021 REQ-4, REQ-14 "Release and hold reasons",
-// REQ-19; design.md § "Holds become a reason set"; ADR-0019, SPEC-0012 REQ
+// Governing: ADR-0027, SPEC-0021 REQ-4, REQ-13 "Park effects", REQ-14
+// "Release and hold reasons", REQ-19; design.md § "Holds become a reason
+// set", § "The park detector"; ADR-0019, SPEC-0012 REQ
 // "Gate Enforcement", REQ "Graceful Shutdown", REQ "Operating Hours
 // Visibility"; SPEC-0003 REQ "Graceful Stop", REQ "Restart On Exit".
 //
@@ -42,6 +43,11 @@ package supervisor
 //
 // @joestump 10/04/2026 - Moved out of hours.go and generalized from a held
 // flag to a set of reasons with one release path (stump.wtf/harness#468).
+//
+// @joestump 10/04/2026 - A quota hold carries its park (Park, parkSelf): the
+// durable log names the rule, the reset and that no restart happens, the
+// reset is harness_hold_changed's next, and a one-shot's park clearing
+// settles its quota_parked skips with one catch_up run (stump.wtf/harness#477).
 
 import (
 	"time"
@@ -69,6 +75,14 @@ type AdmitFunc func(name string) core.HoldSet
 // determine it and the close is capped from now.
 func (s *Supervisor) Hold(reason core.HoldReason, mode core.HoursShutdownMode, closeAt time.Time) {
 	s.send(command{kind: cmdHold, holdReason: reason, mode: mode, closeAt: closeAt})
+}
+
+// Park holds the harness for quota under park p (SPEC-0021 REQ-13): a harness
+// that is up stops at once, with no restart, no crash-loop count and its
+// backoff reset; `enabled` is left alone. The Manager writes p to state.json
+// first. A failed harness is not held (it stays failed).
+func (s *Supervisor) Park(p ParkInfo) {
+	s.send(command{kind: cmdHold, holdReason: core.HoldQuota, mode: core.HoursShutdownImmediate, park: &p})
 }
 
 // EnableHeld records enabled intent (persisted, as Start does) and holds the
@@ -112,15 +126,36 @@ func (s *Supervisor) holdable(reason core.HoldReason) bool {
 	return true
 }
 
-// hold is cmdHold on the actor loop.
-func (s *Supervisor) hold(reason core.HoldReason, enable bool, mode core.HoursShutdownMode, closeAt time.Time, source string) {
+// hold is cmdHold on the actor loop. park is the quota park a quota hold
+// applies, nil when it is not known.
+func (s *Supervisor) hold(reason core.HoldReason, enable bool, mode core.HoursShutdownMode, closeAt time.Time, source string, park *ParkInfo) {
 	if enable && s.setIntent(true, source, "") {
 		s.publishChangeUnchanged() // persist the recorded intent, as cmdStart does
 	}
 	if !s.holdable(reason) {
 		return
 	}
+	if reason == core.HoldQuota && park != nil && s.quota != nil {
+		// A park reaches the loop by command, and the gate may have
+		// released it on the way (a live park racing the exit that parked
+		// the harness, then its reset): apply the park in force now, or
+		// none, never one that has ended.
+		cur, ok := s.quota.ParkOf(s.harness.Name)
+		if !ok {
+			return
+		}
+		park = &cur
+	}
 	wasHeld := s.holds.Has(reason)
+	if reason == core.HoldQuota && (park != nil || !wasHeld) {
+		// The park this hold enforces, for the log line and the hold's
+		// next transition; a quota hold with none is unknown, never a
+		// previous park's.
+		s.park = ParkInfo{}
+		if park != nil {
+			s.park = *park
+		}
+	}
 	// nextHoursTransition scans up to eight days of the expression
 	// (internal/hours) — cheap in absolute terms, but not free, and every
 	// call below that makes new state visible (publishSnapshot, gracefulStop)
@@ -197,9 +232,70 @@ func (s *Supervisor) hold(reason core.HoldReason, enable bool, mode core.HoursSh
 	default:
 		s.publishSnapshot()
 	}
-	if !wasHeld {
+	switch {
+	case wasHeld:
+	case reason == core.HoldQuota && park != nil:
+		s.logParked(*park)
+	default:
 		s.logEvent("held", logKV...)
 	}
+}
+
+// quotaExit consults the park detector about the exit in hand (SPEC-0021
+// REQ-13), before anything counts it. It asks only about an exit a park
+// could change: a one-shot's non-zero exit (a zero exit never parks, REQ-11
+// Scenario "The phrase in a successful run"), and a resident's exit the
+// restart policy would act on — not one a hold owns, not one of a disabled
+// harness, and not one `restart` says is final, since nothing would restart
+// that harness for a park to prevent. A process that never spawned made no
+// model call.
+func (s *Supervisor) quotaExit(code int, spawnFailed bool) (ParkInfo, bool) {
+	if s.quota == nil || spawnFailed {
+		return ParkInfo{}, false
+	}
+	oneShot := s.harness.Triggered()
+	switch {
+	case oneShot && code == 0:
+		return ParkInfo{}, false
+	case !oneShot && (!s.holds.Empty() || !s.enabled || !s.harness.Restart.ShouldRestart(code)):
+		return ParkInfo{}, false
+	}
+	return s.quota.ParkOnExit(s.harness.Name, QuotaExit{OneShot: oneShot, Started: s.startedAt, Code: code})
+}
+
+// parkSelf holds the harness for quota on its own loop: the exit path's park
+// (SPEC-0021 REQ-13), already on disk. The reason is in the set before the
+// caller's transition publishes a snapshot, so no reader sees the harness
+// stopped and not held.
+func (s *Supervisor) parkSelf(p ParkInfo) {
+	wasHeld := s.holds.Has(core.HoldQuota)
+	s.park = p
+	s.closing = false
+	s.holds = s.holds.With(core.HoldQuota)
+	if !wasHeld {
+		s.logParked(p)
+	}
+}
+
+// logParked is a park's durable-log line (SPEC-0021 REQ-19 Scenario "A park
+// is logged"): the rule, the reset, and that nothing restarts the harness
+// before it. A member parked by its group also names the member whose
+// refusal parked it. Never the error text (ADR-0008).
+func (s *Supervisor) logParked(p ParkInfo) {
+	kv := []any{"reason", "quota", "rule", p.Rule, "until", nextText(p.Until), "restart", "none before the reset"}
+	if p.Clamped {
+		kv = append(kv, "clamped", true)
+	}
+	if p.Group != "" {
+		kv = append(kv, "quota_group", p.Group)
+	}
+	if p.By != "" && p.By != s.harness.Name {
+		kv = append(kv, "by", p.By)
+	}
+	if len(s.holds.Reasons()) > 1 {
+		kv = append(kv, "hold_reasons", s.holds.String())
+	}
+	s.logEvent("parked", kv...)
 }
 
 // release is cmdRelease on the actor loop: clear one reason, and start the
@@ -210,6 +306,9 @@ func (s *Supervisor) release(reason core.HoldReason) {
 		return
 	}
 	s.holds = s.holds.Without(reason)
+	if reason == core.HoldQuota {
+		s.park = ParkInfo{}
+	}
 	if !s.holds.Empty() {
 		// Another reason still holds it: clearing this one starts nothing
 		// (SPEC-0021 REQ-14 Scenario "A park expires out of hours"), and a
@@ -219,6 +318,15 @@ func (s *Supervisor) release(reason core.HoldReason) {
 		return
 	}
 	s.closing = false // the last reason clearing cancels a close in flight
+	if reason == core.HoldQuota && s.harness.Triggered() {
+		// A one-shot's firings are its only starters, so its park clearing
+		// starts nothing by itself: the firings it skipped are settled,
+		// with one catch_up run if they earned it (SPEC-0021 REQ-13).
+		s.logEvent("hold cleared", "reason", holdLogReason(reason))
+		s.publishSnapshot()
+		s.settleQuotaSkips()
+		return
+	}
 	if !s.enabled || s.hasProcess() || s.state != core.StateStopped {
 		// Nothing to start: a disabled harness stays down (SPEC-0021 REQ-14
 		// Scenario "A disabled parked harness"), a failed one stays failed,
@@ -254,6 +362,33 @@ func (s *Supervisor) release(reason core.HoldReason) {
 	s.startProcess(RunRequest{Trigger: TriggerManual})
 }
 
+// settleQuotaSkips closes a one-shot's quota_parked skip records now that its
+// park has cleared, so the next refusal opens a fresh one, and with
+// `catch_up = true` starts the one catch_up run the skipped firings earned,
+// through admission like any firing (SPEC-0021 REQ-13: "catch_up gets one run
+// after release"; the rule SPEC-0021 REQ-5 gives budget skips).
+func (s *Supervisor) settleQuotaSkips() {
+	skipped := s.quotaSkipped
+	s.quotaSkipped = false
+	for k := range s.openSkips {
+		if k.reason == ReasonQuotaParked {
+			delete(s.openSkips, k)
+		}
+	}
+	if !skipped {
+		return
+	}
+	if !s.harness.CatchUp {
+		s.logEvent("quota park cleared; firings skipped while parked are not caught up", "catch_up", false)
+		return
+	}
+	s.logEvent("quota park cleared; catching up firings skipped while parked")
+	// A firing like any other: StartRun's intent handling (#159).
+	s.suppressPersist = true
+	s.startRun(RunRequest{Trigger: TriggerCatchUp})
+	s.suppressPersist = false
+}
+
 // holdLogReason is the reason= value a hold's durable-log lines carry. Hours
 // keep the wording SPEC-0012 shipped, "operating_hours" (design.md § "Holds
 // become a reason set": "the log line keeps that wording for hours"); every
@@ -282,22 +417,28 @@ func holdRunReason(hs core.HoldSet) RunReason {
 }
 
 // holdNextText renders when a hold for reason next clears, for a durable-log
-// line: the next operating-hours open for hours. A park's reset and a budget
-// day's rollover are not known to the loop until the stories that add those
-// reasons carry them, so they read "unknown" — a line still worth writing.
+// line: the next operating-hours open for hours, the park's reset for quota.
+// A budget day's rollover is not known to the loop, so it reads "unknown" —
+// a line still worth writing.
 func (s *Supervisor) holdNextText(reason core.HoldReason) string {
-	if reason == core.HoldHours {
+	switch reason {
+	case core.HoldHours:
 		return s.nextHoursTransition()
+	case core.HoldQuota:
+		return nextText(s.park.Until)
 	}
 	return "unknown"
 }
 
 // holdNext is the `next` of a harness_hold_changed event (SPEC-0021 REQ-19):
-// when the current hold is expected to clear. It is known only when hours
-// are the sole reason; with any reason whose clearing instant the loop does
-// not know, a time would understate the hold, so it is zero (unknown), as it
-// is when the harness is not held.
+// when the current hold is expected to clear. It is known when hours are the
+// sole reason, and when quota is, from its park's reset; with any reason
+// whose clearing instant the loop does not know, a time would understate the
+// hold, so it is zero (unknown), as it is when the harness is not held.
 func (s *Supervisor) holdNext() time.Time {
+	if s.holds == core.HoldSetOf(core.HoldQuota) {
+		return s.park.Until
+	}
 	if s.holds != core.HoldSetOf(core.HoldHours) {
 		return time.Time{}
 	}

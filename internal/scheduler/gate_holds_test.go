@@ -8,12 +8,17 @@ package scheduler
 // non-hours reason the clearing hook reports is released, one harness action
 // per tick. The fake gate tests pin the decisions; TestParkExpiresOutOfHours
 // drives the real Manager through REQ-14's scenario on the fake clock, with
-// the park injected the way the park story (#477) will add it.
+// a quota hold injected, and TestARealParkExpiresOutOfHours does it again
+// with a real park: a provider error with a reset time, the Manager's park
+// store, and its own quota clearer.
 //
 // Governing: ADR-0027, SPEC-0021 REQ-4, REQ-14 "Release and hold reasons";
 // ADR-0019, SPEC-0012 REQ "Gate Enforcement".
 //
 // @joestump 10/04/2026 - Added for stump.wtf/harness#468.
+//
+// @joestump 10/04/2026 - TestARealParkExpiresOutOfHours, on the park store
+// (stump.wtf/harness#477).
 
 import (
 	"path/filepath"
@@ -195,6 +200,73 @@ func TestParkExpiresOutOfHours(t *testing.T) {
 
 	// 09:00 the next day: the window opens, the last reason clears, and it
 	// starts.
+	r.at(mon30(9, 0).AddDate(0, 0, 1))
+	waitSnap(t, m, "running at the next window", func(s supervisor.Snapshot) bool {
+		return s.State == core.StateRunning && s.Holds.Empty()
+	})
+}
+
+// SPEC-0021 REQ-14 Scenario "A park expires out of hours" with a real park: at
+// 13:30 the running harness's provider refuses it with a quota error that
+// names 15:00 as its reset, and the Manager parks it there (state.json, a
+// quota hold, an immediate stop). Hours close at 14:00; at 15:00 the Manager's
+// own clearer releases the park on the gate tick and the harness stays held
+// for its hours, starting at the next window.
+func TestARealParkExpiresOutOfHours(t *testing.T) {
+	cfg := gatedCfg(t, "w", "TZ=UTC 09:00-14:00", core.HoursShutdownImmediate)
+	h := cfg.Harnesses["w"]
+	h.Adapter, h.Backend = "generic", core.BackendNative
+	h.Args = []string{"-c", "while true; do sleep 0.02; done"}
+	h.Restart = core.RestartAlways
+	cfg.Harnesses["w"] = h
+	parkUntil := mon30(15, 0)
+	r := &rig{clock: newFakeClock(mon30(13, 0)), store: newMemStore()}
+	dir := t.TempDir()
+	m := supervisor.NewManager(cfg, supervisor.ManagerOptions{
+		StatePath: filepath.Join(dir, "state.json"),
+		LogDir:    filepath.Join(dir, "logs"),
+		Watch:     &countingBridge{},
+		Now:       r.clock.Now, // admission, the park and the clearer on the tick's clock
+	})
+	t.Cleanup(m.Close)
+	m.Start("w")
+	waitRunning(t, m)
+	r.s = New(Options{Start: r.start, Clock: r.clock, Location: time.UTC, Store: r.store, Recorder: r, Gate: gateManager{m}})
+	t.Cleanup(r.s.Close)
+	r.s.Apply(cfg)
+
+	r.at(mon30(13, 30))
+	m.QuotaObserve("w", "crush", time.Now(), false, "429 Too Many Requests: quota resets at 2030-09-23T15:00:00Z")
+	parked := waitSnap(t, m, "parked", func(s supervisor.Snapshot) bool {
+		return s.State == core.StateStopped && s.Holds == core.HoldSetOf(core.HoldQuota)
+	})
+	if p, ok := m.ParkOf("w"); !ok || !p.Until.Equal(parkUntil) {
+		t.Fatalf("park = %+v ok=%v, want until 15:00", p, ok)
+	}
+
+	r.at(mon30(14, 0))
+	waitSnap(t, m, "held for hours and quota", func(s supervisor.Snapshot) bool {
+		return s.Holds == core.HoldSetOf(core.HoldHours, core.HoldQuota)
+	})
+	r.at(mon30(14, 59))
+	r.tick()
+	if snap, _ := m.Snapshot("w"); !snap.Holds.Has(core.HoldQuota) {
+		t.Fatalf("14:59: the park cleared early: holds=%s", snap.Holds)
+	}
+
+	r.at(mon30(15, 0))
+	waitSnap(t, m, "the park cleared, held for hours", func(s supervisor.Snapshot) bool {
+		return s.Holds == core.HoldSetOf(core.HoldHours)
+	})
+	r.runUntil(mon30(15, 5), time.Minute)
+	if snap, _ := m.Snapshot("w"); snap.State != core.StateStopped || snap.LastStarted != parked.LastStarted || !snap.Enabled {
+		t.Fatalf("out of hours after the park: state=%s started %v → %v enabled=%v, want stopped, never restarted, enabled",
+			snap.State, parked.LastStarted, snap.LastStarted, snap.Enabled)
+	}
+	if _, ok := m.ParkOf("w"); ok {
+		t.Fatal("the park is still in force after its reset")
+	}
+
 	r.at(mon30(9, 0).AddDate(0, 0, 1))
 	waitSnap(t, m, "running at the next window", func(s supervisor.Snapshot) bool {
 		return s.State == core.StateRunning && s.Holds.Empty()

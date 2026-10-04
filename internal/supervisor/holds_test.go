@@ -11,13 +11,16 @@ package supervisor
 // SPEC-0012 behaviour itself is pinned by hours_test.go, hours_close_test.go
 // and hours_lease_test.go, unchanged but for reading Holds instead of Held.
 //
-// Quota and budget have no producer yet (the park and budget stories add
-// them), so these tests inject the reasons through Manager.Hold directly.
+// These tests inject the reasons through Manager.Hold directly, to pin the
+// hold machinery on its own; quota_test.go drives real parks through it.
 //
 // Governing: ADR-0027, SPEC-0021 REQ-14 "Release and hold reasons", REQ-19;
 // design.md § "Holds become a reason set".
 //
 // @joestump 10/04/2026 - Added for stump.wtf/harness#468.
+//
+// @joestump 10/04/2026 - The Manager now clears quota itself, from its park
+// store (stump.wtf/harness#477).
 
 import (
 	"path/filepath"
@@ -263,8 +266,10 @@ drain:
 }
 
 // HoldsCleared is the gate pass's clearing hook: it reports a non-hours
-// reason once that reason's clearer says it has cleared, never hours, never a
-// reason the harness is not held for, and nothing at all without clearers.
+// reason once that reason's clearer says it has cleared, never hours, and
+// never a reason the harness is not held for. The Manager's own quota clearer
+// answers from the park store, so a quota hold with no park behind it clears
+// at the next tick.
 func TestHoldsClearedAsksTheClearers(t *testing.T) {
 	until := time.Date(2026, 9, 21, 15, 0, 0, 0, time.UTC)
 	var calls atomic.Int32
@@ -297,7 +302,7 @@ func TestHoldsClearedAsksTheClearers(t *testing.T) {
 
 	bare := newTestManager(t, managerCfg(shHarness("x", loopScript, 0)))
 	bare.Hold("x", core.HoldQuota, core.HoursShutdownImmediate, time.Time{})
-	if got := bare.HoldsCleared(until); got != nil {
-		t.Errorf("no clearers: cleared = %v, want nil", got)
+	if got := bare.HoldsCleared(until); len(got) != 1 || got["x"] != core.HoldSetOf(core.HoldQuota) {
+		t.Errorf("the Manager's own quota clearer, no park in force: cleared = %v, want x: quota", got)
 	}
 }

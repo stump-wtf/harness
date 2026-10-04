@@ -25,6 +25,7 @@ import (
 
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/ledger"
+	"github.com/stump-wtf/harness/internal/quota"
 	"github.com/stump-wtf/harness/internal/runtrace"
 	"github.com/stump-wtf/harness/internal/sealedlog"
 )
@@ -86,11 +87,11 @@ type ManagerOptions struct {
 	Watch TurnBridge
 	// HoldClearers are the clearing hooks for hold reasons other than hours
 	// (SPEC-0021 REQ-14), keyed by reason: each answers whether a harness's
-	// hold for that reason has cleared at the gate tick's clock. The park
-	// story feeds quota's (a park's reset instant). Budget's (a rollover, or
-	// a cap a reload raised) is the Manager's own, budgetHoldCleared, and an
-	// entry here replaces it only in a test (manager_holds.go,
-	// manager_admit.go).
+	// hold for that reason has cleared at the gate tick's clock. Quota's (a
+	// park's reset instant, quotaHoldCleared) and budget's (a rollover, or a
+	// cap a reload raised, budgetHoldCleared) are the Manager's own, and an
+	// entry here replaces one only in a test (manager_holds.go,
+	// manager_admit.go, manager_quota.go).
 	HoldClearers map[core.HoldReason]HoldClearer
 	// Now is the clock admission decides on when a start path brings no tick
 	// of its own: an operator start, a restart, a firing (SPEC-0021 REQ-4;
@@ -172,6 +173,13 @@ type Manager struct {
 	nowFn    func() time.Time
 	budgetMu sync.Mutex
 	bud      budgetBook
+
+	// quotaMu guards qb: the park detectors, the parks in force and the
+	// quota sync seam (manager_quota.go; SPEC-0021 REQ-12, REQ-13). Lock
+	// order: budgetMu before quotaMu; nothing holding mu or journalMu takes
+	// it.
+	quotaMu sync.Mutex
+	qb      quotaBook
 
 	// runs is each harness's run id allocator, and jobsDir the root of the
 	// per-run logs (manager_runs.go; SPEC-0008 REQ "Run History"). The records
@@ -281,6 +289,7 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 		holdClearers:  maps.Clone(opts.HoldClearers),
 		nowFn:         opts.Now,
 		bud:           budgetBook{runs: make(map[string]int), skips: make(map[string]time.Time)},
+		qb:            quotaBook{det: make(map[string]*quota.Detector), parks: make(map[string]parkRecord), live: make(map[string]bool), exiting: make(map[string]int)},
 		dirty:         make(chan struct{}, 1),
 		closed:        make(chan struct{}),
 	}
@@ -294,6 +303,11 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 			m.holdClearers = make(map[core.HoldReason]HoldClearer)
 		}
 		m.holdClearers[core.HoldBudget] = m.budgetHoldCleared
+	}
+	// A quota hold clears at the gate tick once the park's reset instant has
+	// passed (SPEC-0021 REQ-14); the park store is the Manager's.
+	if _, ok := m.holdClearers[core.HoldQuota]; !ok {
+		m.holdClearers[core.HoldQuota] = m.quotaHoldCleared
 	}
 	for _, name := range cfg.HarnessOrder {
 		m.addSupervisor(cfg.Harnesses[name])
@@ -387,6 +401,9 @@ func (m *Manager) Restore() error {
 		return err
 	}
 	autostart := autostartSet(m.cfg)
+	// Quota parks first, each entry on its own (SPEC-0021 REQ-13): admission
+	// reads them from the first start Autostart asks for.
+	m.restoreParks(ps.Parks)
 
 	m.mu.Lock()
 	m.activeProfile = ps.ActiveProfile
@@ -509,6 +526,9 @@ func (m *Manager) Restore() error {
 			// catch-up after a restart (SPEC-0014 REQ "Operating Hours
 			// On Triggered Harnesses"; firing_hours.go).
 			m.seedHoursSkipped(name, s)
+			// Likewise firings a quota park skipped, owed theirs when the
+			// park clears (SPEC-0021 REQ-13; manager_quota.go).
+			m.seedQuotaSkipped(name, s)
 		case unresolved && hasAutostartProfile && autostart[name]:
 			// The persisted profile is gone, so the persisted per-harness
 			// intent it produced cannot be trusted either — a member recorded
@@ -539,6 +559,9 @@ func (m *Manager) Restore() error {
 	// counters from it (SPEC-0021 REQ-7).
 	m.bootLedger()
 	m.bootBudget()
+	// Every harness a restored park covers boots held for quota, until its
+	// reset (SPEC-0021 REQ-13 Scenario "A restart during a park").
+	m.bootParks()
 	return nil
 }
 
@@ -1203,6 +1226,7 @@ func (m *Manager) addSupervisorLocked(h core.Harness) {
 		Runs:        m,
 		Admit:       m.admitRelease,
 		Admission:   m,
+		Quota:       m,
 	})
 	m.supervisors[h.Name] = s
 }
@@ -1235,6 +1259,9 @@ func (m *Manager) Close() {
 		for _, s := range m.snapshotSupervisors() {
 			s.Shutdown()
 		}
+		// After the supervisors: a park still being applied finds its
+		// supervisor gone and returns at once.
+		m.closeQuota()
 		close(m.closed)
 		m.wg.Wait()
 		_ = m.Save() // final durable flush
@@ -1320,6 +1347,8 @@ func (m *Manager) Save() error {
 		Projects:      projects,
 		Schedules:     schedules,
 		Runs:          runs,
+		// Quota parks, under their own lock (SPEC-0021 REQ-13).
+		Parks: m.persistedParks(),
 	}
 	for _, s := range sups {
 		snap := s.Snapshot()

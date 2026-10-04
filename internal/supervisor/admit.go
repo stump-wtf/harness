@@ -175,6 +175,10 @@ func (s *Supervisor) refuseResident(res AdmitResult) RunDecision {
 	s.consecFailures = 0
 	wasHeld := s.holds.Has(reason)
 	s.holds = s.holds.With(reason)
+	if reason == core.HoldQuota {
+		// Refused for a park: its reset is the hold's next transition.
+		s.park = ParkInfo{Until: d.Next}
+	}
 	switch s.state {
 	case core.StateStopped:
 	case core.StateFailed:
@@ -211,6 +215,10 @@ func (s *Supervisor) refuseRun(req RunRequest, res AdmitResult) RunDecision {
 		// nothing feeds Decide a concurrency cap, so this branch is not
 		// reached by a Wait.
 		rec = s.recordSkip(req, skipReasonFor(d.Reason))
+		if d.Reason == budget.ReasonQuotaParked {
+			// Owed a catch_up run when the park clears (holds.go).
+			s.quotaSkipped = true
+		}
 		if rec.Coalesced <= 1 && d.Detail != "" {
 			// The first refusal of a class says why on the durable log; the
 			// coalesced ones after it stay quiet, as every coalesced skip
