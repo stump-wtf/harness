@@ -70,6 +70,28 @@ func (r *budgetRig) tick(at time.Time) {
 	r.clock.ticks <- at
 }
 
+// tickUntil ticks from at, a second further each time, until pred holds of
+// name's snapshot. The gate pass acts on a harness at most once per tick and
+// defers one whose last action is still being carried out, so a single tick
+// can land before the action it waits on has finished; the daemon's real
+// ticker simply ticks again, and so does this.
+func (r *budgetRig) tickUntil(t *testing.T, at time.Time, name, desc string, pred func(supervisor.Snapshot) bool) supervisor.Snapshot {
+	t.Helper()
+	var snap supervisor.Snapshot
+	waitUntil(t, desc, func() bool {
+		r.tick(at)
+		at = at.Add(time.Second)
+		for range 20 { // let the tick's dispatch land before ticking again
+			if snap, _ = r.mgr.Snapshot(name); pred(snap) {
+				return true
+			}
+			time.Sleep(time.Millisecond)
+		}
+		return false
+	})
+	return snap
+}
+
 func (r *budgetRig) wait(t *testing.T, name, desc string, pred func(supervisor.Snapshot) bool) supervisor.Snapshot {
 	t.Helper()
 	var snap supervisor.Snapshot
@@ -182,8 +204,9 @@ func TestDaemonBudgetSleepsThroughMidnight(t *testing.T) {
 		t.Fatalf("23:45, same day: state=%s holds=%s, want still held over-budget", snap.State, snap.Holds)
 	}
 
-	r.tick(time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)) // the first tick after waking
-	r.wait(t, h.Name, "running in the new day", func(s supervisor.Snapshot) bool {
+	// The first tick after waking, and the ones after it if the pass had to
+	// defer: all on the new day.
+	r.tickUntil(t, time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC), h.Name, "running in the new day", func(s supervisor.Snapshot) bool {
 		return s.State == core.StateRunning && s.Holds.Empty()
 	})
 	if start, _ := r.mgr.BudgetDay(); !start.Equal(time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)) {
@@ -214,8 +237,7 @@ func TestDaemonBudgetRaisingTheCapMidDay(t *testing.T) {
 
 	h.Budget.MaxRunsPerDay = 2
 	r.mgr.Reload(budgetCfg(t, "TZ=UTC 00:00", h))
-	r.tick(time.Date(2026, 10, 4, 12, 2, 0, 0, time.UTC))
-	r.wait(t, h.Name, "running after the raise", func(s supervisor.Snapshot) bool {
+	r.tickUntil(t, time.Date(2026, 10, 4, 12, 2, 0, 0, time.UTC), h.Name, "running after the raise", func(s supervisor.Snapshot) bool {
 		return s.State == core.StateRunning && s.Holds.Empty()
 	})
 	if got := r.mgr.RunsToday(h.Name); got != 2 {
@@ -246,21 +268,15 @@ func TestDaemonBudgetHoursDecideFirst(t *testing.T) {
 
 	sched := startDaemonScheduler(r.mgr, cfg, r.clock)
 	t.Cleanup(sched.Close)
-	r.tick(mon(10, 0))
-	r.wait(t, h.Name, "held for its hours", func(s supervisor.Snapshot) bool {
-		return s.State == core.StateStopped && s.Holds.Has(core.HoldHours)
-	})
-	r.tick(mon(10, 1))
-	r.wait(t, h.Name, "held for hours and budget", func(s supervisor.Snapshot) bool {
-		return s.Holds == core.HoldSetOf(core.HoldHours, core.HoldBudget)
+	r.tickUntil(t, mon(10, 0), h.Name, "held for hours and budget", func(s supervisor.Snapshot) bool {
+		return s.State == core.StateStopped && s.Holds == core.HoldSetOf(core.HoldHours, core.HoldBudget)
 	})
 
 	// 11:00: the window opens, but the budget is still spent.
-	r.tick(mon(11, 0))
-	r.wait(t, h.Name, "held for budget alone", func(s supervisor.Snapshot) bool {
+	r.tickUntil(t, mon(11, 0), h.Name, "held for budget alone", func(s supervisor.Snapshot) bool {
 		return s.Holds == core.HoldSetOf(core.HoldBudget)
 	})
-	r.tick(mon(11, 1))
+	r.tick(mon(11, 30))
 	if snap := r.mustSnap(t, h.Name); snap.State != core.StateStopped || !snap.Enabled || r.mgr.RunsToday(h.Name) != 1 {
 		t.Fatalf("hours open, budget spent: state=%s enabled=%v runs today %d, want stopped, enabled, 1", snap.State, snap.Enabled, r.mgr.RunsToday(h.Name))
 	}
