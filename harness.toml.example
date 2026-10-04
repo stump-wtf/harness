@@ -177,11 +177,14 @@ enabled = false
 # show a leased harness's NEXT column as "lease until <time>", distinct from
 # both "off-hours" (held) and "closing" (a graceful close in flight).
 
-# Run budgets (ADR-0027 / SPEC-0021). NOT ENFORCED YET: these keys are parsed
-# and validated at load (a bad value fails with its line) and survive a TUI
-# edit, but nothing counts runs, meters cost or parks a harness until the
-# enforcement releases land. Global config only: a project harness.toml or a
-# harness_d drop-in that sets any of them, or contains [budget], is refused.
+# Run budgets (ADR-0027 / SPEC-0021). PARTLY ENFORCED: max_runs_per_day and
+# day_starts are (every start passes admission; a spent budget skips a
+# one-shot's firing, or holds a resident over-budget, until the budget day
+# rolls over). The other keys are parsed and validated at load (a bad value
+# fails with its line) and survive a TUI edit, but nothing meters cost, parks
+# a harness or queues on max_concurrent until the later releases land. Global
+# config only: a project harness.toml or a harness_d drop-in that sets any of
+# them, or contains [budget], is refused.
 #
 # Per harness:
 #   max_runs_per_day   admissions per budget day (a resident counts every

@@ -494,14 +494,16 @@ columns carry it.
 
 ## Run budgets
 
-:::note Validated, not yet enforced
+:::note Partly enforced
 
-The keys below load, are checked, and survive a TUI edit, but nothing acts on
-them yet: no run is counted or refused, no cost is metered, and no harness is
-parked. Admission, quota parking, concurrency and the cost caps land in later
-releases ([SPEC-0021](/specs/run-budgets/spec), ADR-0027). Setting them now is
-safe, and a bad value fails today with the same located error it will fail
-with then.
+`max_runs_per_day` and `day_starts` are enforced: every start passes
+admission, and a spent run budget refuses it (below). The other keys load,
+are checked, and survive a TUI edit, but nothing acts on them yet: no cost is
+metered, no harness is parked, and `max_concurrent` queues nothing. Quota
+parking, concurrency and the cost caps land in later releases
+([SPEC-0021](/specs/run-budgets/spec), ADR-0027). Setting them now is safe,
+and a bad value fails today with the same located error it will fail with
+then.
 
 :::
 
@@ -564,6 +566,38 @@ max_concurrent = 2
 - **Dollars** may be written as integers (`daily_cost_usd = 20`); `inf` and
   `nan` are refused.
 - A `[budget.group.<name>]` that no harness's `quota_group` names still loads.
+
+### When a run budget is spent
+
+Every process start passes **admission** first: a firing, `harness trigger`,
+`harness start`, autostart, a reload, a lease, a hold's release, and the
+supervisor restarting a harness after it exits. Admission counts the start in
+the run ledger as it admits it, so two firings racing for the last run of the
+day cannot both get it. With `max_runs_per_day = N`, the start after the Nth
+of the budget day is refused:
+
+- **A one-shot** firing is recorded `skipped` with reason `budget` in
+  `harness runs`, and a burst of them is one coalesced record. With
+  `catch_up = true`, the first tick of the next budget day starts one
+  `catch_up` run, which counts toward the new day.
+- **A resident** is held `over-budget`, `enabled` unchanged, until the day
+  rolls over. A crash loop therefore spends its budget and stops there,
+  held rather than `failed`.
+- `harness start` and `harness trigger` on a spent harness fail with
+  `over budget: 40/40 runs today` (error code `over_budget`).
+
+The budget day runs from one `day_starts` to the next, as long as the wall
+clock makes it across a DST change, and rolls over on the scheduler's tick: a
+laptop that slept through it starts a fresh day on the first tick after it
+wakes. "Runs today" is read from the run ledger, so a daemon restart does not
+refund it. A reload applies on the next tick: raising a spent cap releases the
+hold, lowering one below today's count holds a running resident, and a new
+`day_starts` takes effect at the next rollover.
+
+If the run ledger cannot be written, a harness with any budget key is refused
+with `ledger_unavailable` rather than run uncounted, and one with none starts
+anyway; `harness doctor` reports both, and any records boot found missing
+from the ledger.
 
 A bad value fails the load (or a reload, which keeps the previous config) with
 the file, line, harness and key:
