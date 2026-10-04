@@ -328,13 +328,26 @@ func TestAParkIsLogged(t *testing.T) {
 		t.Fatalf("after the park: state=%s started %v→%v, want still parked, never restarted", after.State, snap.LastStarted, after.LastStarted)
 	}
 
-	// 15:00: the gate tick clears the park, and it starts by itself.
+	// 15:00: the gate tick clears the park, and it starts by itself; the
+	// clear is a harness_hold_changed too, with no reason left.
 	r.clock.Set(until)
 	r.gate()
 	waitSnapshot(t, r.m, h.Name, "running after the reset", func(s Snapshot) bool { return s.State == core.StateRunning && s.Holds.Empty() })
 	if logText := waitLogContains(t, r.env.logs, h.Name, " released reason=quota"); !strings.Contains(logText, "reason=quota") {
 		t.Errorf("no release line for quota:\n%s", logText)
 	}
+	waitFor(t, 3*time.Second, "harness_hold_changed for the clear", func() bool {
+		for {
+			select {
+			case ev := <-events:
+				if ev.Kind == EventHoldChanged && ev.Name == h.Name && ev.Holds.Empty() {
+					return true
+				}
+			default:
+				return false
+			}
+		}
+	})
 }
 
 // SPEC-0021 REQ-13 Scenario "A group parks together": three harnesses with
