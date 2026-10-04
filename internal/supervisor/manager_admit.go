@@ -351,10 +351,11 @@ func (m *Manager) rebuildLocked() {
 }
 
 // admittedRecord reports a record of a start admission let through: one that
-// opened (it ran, or tried to and failed to spawn, which still counts, REQ-5)
-// and is not a start a ledger failure refused after opening it.
+// opened (it ran, or was admitted and then failed to spawn or to render its
+// argv, which still counts, REQ-5) and is not a start a ledger failure refused
+// after opening it (refuseOpened).
 func admittedRecord(f ledger.Folded) bool {
-	return f.HasOpened && f.Outcome != string(OutcomeSkipped)
+	return f.HasOpened && (f.Outcome != string(OutcomeSkipped) || f.Reason != string(ReasonLedgerUnavailable))
 }
 
 // bootBudget readies admission at boot, after the ledger is reconciled and

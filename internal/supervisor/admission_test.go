@@ -453,11 +453,17 @@ func TestLedgerCannotBeWritten(t *testing.T) {
 		t.Errorf("refused starts counted: %d runs today, want 0", got)
 	}
 
-	// The disk recovers before shutdown, so the queue drains.
+	// The disk recovers before shutdown, so the queue drains: the refused
+	// start's record lands closed as refused, and a rebuild does not count
+	// it, while the unbudgeted start that ran does count.
 	if err := os.Remove(dir); err != nil {
 		t.Fatal(err)
 	}
 	closeM()
+	m2, _ := budgetManager(t, e, cfg, nil)
+	if b, f := m2.RunsToday("budgeted"), m2.RunsToday("free"); b != 0 || f != 1 {
+		t.Fatalf("rebuilt after the outage: budgeted %d, free %d runs today, want 0 and 1", b, f)
+	}
 }
 
 // TestFallBackDayIsOneDay is REQ-3 Scenario "Fall-back day" at the counters:
