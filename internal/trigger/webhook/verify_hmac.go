@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
 )
@@ -42,7 +43,7 @@ type hmacVerifier struct {
 // signature_header and signature_prefix. The parser already requires the
 // header; a source without one is refused here too rather than read from a
 // header named "".
-func newHMACVerifier(src core.WebhookSource) (Verifier, error) {
+func newHMACVerifier(src core.WebhookSource, _ func() time.Time) (Verifier, error) {
 	header := strings.TrimSpace(src.SignatureHeader)
 	if header == "" {
 		return nil, fmt.Errorf("%w: [webhook.%s] verify = %q has no signature_header", ErrSchemeUnavailable, src.Name, src.Verify)

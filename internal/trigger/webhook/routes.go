@@ -23,6 +23,8 @@ package webhook
 // @joestump 09/24/2026 - A route keeps its limits across a reload (#460).
 
 import (
+	"time"
+
 	"charm.land/log/v2"
 
 	"github.com/stump-wtf/harness/internal/core"
@@ -56,13 +58,14 @@ func (t *table) lookup(name string) *route {
 }
 
 // buildTable builds the route table cfg describes. newVerifier is the scheme
-// registry (NewVerifier in production; a test substitutes a spy).
+// registry (NewVerifier in production; a test substitutes a spy), now the
+// server's clock, handed to the constructors that read the time.
 //
 // A source whose verifier cannot be built still gets a route, answering 401 to
 // everything, and a warning here. Leaving it out would answer 404 — which
 // tells an operator debugging a GitHub hook "you have the URL wrong", when the
 // truth is "this scheme is not implemented yet".
-func buildTable(cfg *core.Config, newVerifier NewVerifierFunc, logger *log.Logger) *table {
+func buildTable(cfg *core.Config, newVerifier NewVerifierFunc, now func() time.Time, logger *log.Logger) *table {
 	t := &table{routes: map[string]*route{}}
 	if cfg == nil {
 		return t
@@ -72,7 +75,7 @@ func buildTable(cfg *core.Config, newVerifier NewVerifierFunc, logger *log.Logge
 		if !src.Enabled || len(cfg.BoundHarnesses(ref)) == 0 {
 			continue
 		}
-		v, err := newVerifier(src)
+		v, err := newVerifier(src, now)
 		if err != nil || v == nil {
 			if err == nil {
 				err = ErrSchemeUnavailable

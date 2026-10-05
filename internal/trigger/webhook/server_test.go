@@ -42,7 +42,7 @@ import (
 // case, the token matches exactly, and anything else is refused without the
 // error echoing what was presented.
 func TestBearerVerifier(t *testing.T) {
-	v, err := NewVerifier(bearerSource("ci"))
+	v, err := NewVerifier(bearerSource("ci"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,30 +86,24 @@ func TestBearerVerifier(t *testing.T) {
 	}
 }
 
-// TestUnimplementedSchemeRefusesEveryDelivery pins fail-closed: the parser
-// accepts `standard-webhooks` today, the verifier does not exist yet (#466),
-// and a delivery to such a route must be a 401 — never a firing.
-func TestUnimplementedSchemeRefusesEveryDelivery(t *testing.T) {
-	src := bearerSource("gh")
-	src.Verify = core.VerifyStandardWebhooks
-	if _, err := NewVerifier(src); !errors.Is(err, ErrSchemeUnavailable) {
-		t.Fatalf("NewVerifier(standard-webhooks) = %v, want ErrSchemeUnavailable", err)
-	}
+// TestSecretlessRouteRefusesEveryDelivery pins fail-closed: a route whose
+// secret resolves to nothing is built refusing, and a delivery to it is a
+// 401 — never a firing. This is the second lock behind the parser's refusal
+// of an empty secret (SPEC-0014 REQ "Webhook Verification").
+func TestSecretlessRouteRefusesEveryDelivery(t *testing.T) {
 	empty := bearerSource("nosecret")
 	empty.Secret = ""
-	if _, err := NewVerifier(empty); !errors.Is(err, ErrSchemeUnavailable) {
+	if _, err := NewVerifier(empty, nil); !errors.Is(err, ErrSchemeUnavailable) {
 		t.Fatalf("NewVerifier(empty secret) = %v, want ErrSchemeUnavailable", err)
 	}
 
 	f := &fakeFirer{}
-	srv, logs := startServer(t, Options{Firer: f}, testConfig([]core.WebhookSource{src, empty}, "gh", "nosecret"))
-	for _, name := range []string{"gh", "nosecret"} {
-		// Even an empty Authorization, and even the "right" bearer token.
-		for _, hdr := range []map[string]string{nil, bearer(), {"webhook-signature": "v1,AAAA"}} {
-			resp, _ := do(t, "POST", "http://"+srv.Addr()+"/hooks/"+name, hdr, `{}`)
-			if resp.StatusCode != http.StatusUnauthorized {
-				t.Errorf("%s: status %d, want 401", name, resp.StatusCode)
-			}
+	srv, logs := startServer(t, Options{Firer: f}, testConfig([]core.WebhookSource{empty}, "nosecret"))
+	// Even an empty Authorization, and even the "right" bearer token.
+	for _, hdr := range []map[string]string{nil, bearer(), {"webhook-signature": "v1,AAAA"}} {
+		resp, _ := do(t, "POST", "http://"+srv.Addr()+"/hooks/nosecret", hdr, `{}`)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("status %d, want 401", resp.StatusCode)
 		}
 	}
 	if n := len(f.fired()); n != 0 {
@@ -377,8 +371,8 @@ func TestBodyOverMaxBodyIs413BeforeVerify(t *testing.T) {
 	src := bearerSource("ci")
 	src.MaxBody = 16
 	var verified atomic.Int64
-	spy := func(s core.WebhookSource) (Verifier, error) {
-		inner, err := NewVerifier(s)
+	spy := func(s core.WebhookSource, now func() time.Time) (Verifier, error) {
+		inner, err := NewVerifier(s, now)
 		if err != nil {
 			return nil, err
 		}

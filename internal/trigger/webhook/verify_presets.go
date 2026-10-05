@@ -28,6 +28,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
 )
@@ -50,7 +51,7 @@ func presetHeader(src core.WebhookSource) (header, prefix string, err error) {
 
 // newHMACPresetVerifier builds `github` or `gitea`: the hmac-sha256 verifier
 // over the preset's own header and prefix.
-func newHMACPresetVerifier(src core.WebhookSource) (Verifier, error) {
+func newHMACPresetVerifier(src core.WebhookSource, _ func() time.Time) (Verifier, error) {
 	header, prefix, err := presetHeader(src)
 	if err != nil {
 		return nil, err
@@ -69,7 +70,7 @@ type tokenVerifier struct {
 }
 
 // newGitLabVerifier builds `gitlab`: X-Gitlab-Token must equal the secret.
-func newGitLabVerifier(src core.WebhookSource) (Verifier, error) {
+func newGitLabVerifier(src core.WebhookSource, _ func() time.Time) (Verifier, error) {
 	header, _, err := presetHeader(src)
 	if err != nil {
 		return nil, err
