@@ -368,7 +368,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 		line    int
 	}
 	var pending []pendingProfile
-	var serverSeen, daemonSeen, telemetrySeen, mergeTrainSeen, ledgerSeen, notifySeen, skillsSeen bool
+	var serverSeen, daemonSeen, telemetrySeen, mergeTrainSeen, modelAPISeen, ledgerSeen, notifySeen, skillsSeen bool
 	var harnessDPath string
 
 	// Sources and the harnesses that bind them form one config view across
@@ -481,6 +481,24 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 				return nil, err
 			}
 			cfg.MergeTrain = mc
+
+		case len(h.parts) == 1 && h.parts[0] == "model_api":
+			// The global model API table (ADR-0036). The api_key reference
+			// is resolved later, by the daemon's load, from the table's own
+			// env_file — a CLI load checks the reference's shape and stops.
+			if modelAPISeen {
+				return nil, newError(filename, h.line, "duplicate [model_api] table")
+			}
+			modelAPISeen = true
+			var rma rawModelAPI
+			if err := md.PrimitiveDecode(top["model_api"], &rma); err != nil {
+				return nil, newError(filename, h.line, "[model_api]: %v", err)
+			}
+			mac, err := buildModelAPI(filename, data, h.line, rma)
+			if err != nil {
+				return nil, err
+			}
+			cfg.ModelAPI = mac
 
 		case len(h.parts) == 1 && h.parts[0] == "notify":
 			// The global notify hook (SPEC-0003 REQ "Operator Notification").

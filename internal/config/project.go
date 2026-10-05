@@ -193,6 +193,12 @@ func ParseProject(data []byte, filename string) (*Project, error) {
 		if len(h.parts) >= 1 && h.parts[0] == "mergetrain" {
 			return nil, forbiddenTableErr(filename, full, h.line)
 		}
+		// The model API is the daemon's endpoint and holds its credential; a
+		// cloned repository does not get to aim the daemon at a model API of
+		// its choosing (ADR-0036).
+		if len(h.parts) >= 1 && h.parts[0] == "model_api" {
+			return nil, forbiddenTableErr(filename, full, h.line)
+		}
 		// One run ledger per daemon (SPEC-0022 REQ-19).
 		if len(h.parts) >= 1 && h.parts[0] == "ledger" {
 			return nil, ledgerGlobalOnlyErr(filename, h.line)

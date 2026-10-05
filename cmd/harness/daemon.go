@@ -319,6 +319,14 @@ func runDaemon(o daemonOpts) {
 	// configWarningsReload below.
 	logConfigWarnings(cfg)
 
+	// The daemon is the one process that holds the [model_api] credential
+	// (ADR-0036): resolving it here, from the table's own env_file, is the
+	// daemon's load step, and a reference the file cannot answer refuses the
+	// start rather than surfacing later as a 401 nobody can reproduce.
+	if err := config.ResolveModelAPIKey(cfg); err != nil {
+		os.Exit(cliui.Fatal(err))
+	}
+
 	// Telemetry export (ADR-0022): resolved before any harness starts, so a
 	// signal that is consented to but cannot be delivered refuses the start.
 	telemetryRes, err := resolveDaemonTelemetry(cfg.Telemetry, telemetry.ProcessEnv(buildinfo.Version))

@@ -722,6 +722,9 @@ type Config struct {
 	Telemetry TelemetryConfig
 	// MergeTrain is the optional global [mergetrain] table (SPEC-0025 REQ-1).
 	MergeTrain MergeTrainConfig
+	// ModelAPI is the optional global [model_api] table (ADR-0036); the zero
+	// value is absent and the daemon makes no model calls.
+	ModelAPI ModelAPIConfig
 	// Ledger is the optional global [ledger] table (SPEC-0022 REQ-19).
 	Ledger LedgerConfig
 	// Notify is the optional global [notify] table (SPEC-0003 REQ "Operator
