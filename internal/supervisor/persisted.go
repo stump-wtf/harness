@@ -80,11 +80,15 @@ type persistedProjectHarness struct {
 	Prompt string   `json:"prompt,omitempty"`
 	// PromptFile is the PATH, never the file's contents (ADR-0018).
 	PromptFile string `json:"prompt_file,omitempty"`
-	Model      string `json:"model,omitempty"`
-	AutoAccept bool   `json:"auto_accept,omitempty"`
-	MaxTurns   int    `json:"max_turns,omitempty"`
-	Quiet      *bool  `json:"quiet,omitempty"`
-	Workdir    string `json:"workdir,omitempty"`
+	// SPEC-0017 REQ-5/REQ-15: the templated prompt sources, round-tripped
+	// verbatim (prompt_template) and as a path (prompt_template_file).
+	PromptTemplate     string `json:"prompt_template,omitempty"`
+	PromptTemplateFile string `json:"prompt_template_file,omitempty"`
+	Model              string `json:"model,omitempty"`
+	AutoAccept         bool   `json:"auto_accept,omitempty"`
+	MaxTurns           int    `json:"max_turns,omitempty"`
+	Quiet              *bool  `json:"quiet,omitempty"`
+	Workdir            string `json:"workdir,omitempty"`
 	// EnvFile is the pre-REQ-12 single-path form, kept so state.json written
 	// by an older daemon still restores. New writes use EnvFiles only; a
 	// zero EnvFile here is expected and means nothing on its own.
@@ -118,26 +122,28 @@ func toPersistedProjectHarness(h core.Harness) persistedProjectHarness {
 		quiet = &q
 	}
 	return persistedProjectHarness{
-		Name:            h.Name,
-		Harness:         h.Adapter,
-		Args:            h.Args,
-		Argv:            h.Argv,
-		Transcripts:     h.Transcripts,
-		Prompt:          h.Prompt,
-		PromptFile:      h.PromptFile,
-		Model:           h.Model,
-		AutoAccept:      h.AutoAccept,
-		MaxTurns:        h.MaxTurns,
-		Quiet:           quiet,
-		Workdir:         h.Workdir,
-		EnvFiles:        h.EnvFiles,
-		RestartDelayMs:  h.RestartDelay.Milliseconds(),
-		Restart:         string(h.Restart),
-		Backend:         string(h.Backend),
-		Description:     h.Description,
-		Enabled:         h.Enabled,
-		TmuxSocket:      h.TmuxSocket,
-		ExportTelemetry: h.ExportTelemetry,
+		Name:               h.Name,
+		Harness:            h.Adapter,
+		Args:               h.Args,
+		Argv:               h.Argv,
+		Transcripts:        h.Transcripts,
+		Prompt:             h.Prompt,
+		PromptFile:         h.PromptFile,
+		PromptTemplate:     h.PromptTemplate,
+		PromptTemplateFile: h.PromptTemplateFile,
+		Model:              h.Model,
+		AutoAccept:         h.AutoAccept,
+		MaxTurns:           h.MaxTurns,
+		Quiet:              quiet,
+		Workdir:            h.Workdir,
+		EnvFiles:           h.EnvFiles,
+		RestartDelayMs:     h.RestartDelay.Milliseconds(),
+		Restart:            string(h.Restart),
+		Backend:            string(h.Backend),
+		Description:        h.Description,
+		Enabled:            h.Enabled,
+		TmuxSocket:         h.TmuxSocket,
+		ExportTelemetry:    h.ExportTelemetry,
 	}
 }
 
@@ -152,7 +158,7 @@ func (p persistedProjectHarness) toCore() core.Harness {
 	restart := core.RestartPolicy(p.Restart)
 	if p.Restart == "" {
 		restart = core.RestartAlways
-		if p.Prompt != "" || p.PromptFile != "" {
+		if p.Prompt != "" || p.PromptFile != "" || p.PromptTemplate != "" || p.PromptTemplateFile != "" {
 			restart = core.RestartNo
 		}
 	}
@@ -161,18 +167,20 @@ func (p persistedProjectHarness) toCore() core.Harness {
 		quiet = *p.Quiet
 	}
 	return core.Harness{
-		Name:        p.Name,
-		Adapter:     p.Harness,
-		Args:        p.Args,
-		Argv:        p.Argv,
-		Transcripts: p.Transcripts,
-		Prompt:      p.Prompt,
-		PromptFile:  p.PromptFile,
-		Model:       p.Model,
-		AutoAccept:  p.AutoAccept,
-		MaxTurns:    p.MaxTurns,
-		Quiet:       quiet,
-		Workdir:     p.Workdir,
+		Name:               p.Name,
+		Adapter:            p.Harness,
+		Args:               p.Args,
+		Argv:               p.Argv,
+		Transcripts:        p.Transcripts,
+		Prompt:             p.Prompt,
+		PromptFile:         p.PromptFile,
+		PromptTemplate:     p.PromptTemplate,
+		PromptTemplateFile: p.PromptTemplateFile,
+		Model:              p.Model,
+		AutoAccept:         p.AutoAccept,
+		MaxTurns:           p.MaxTurns,
+		Quiet:              quiet,
+		Workdir:            p.Workdir,
 		EnvFiles: func() []string {
 			if p.EnvFiles != nil {
 				return p.EnvFiles

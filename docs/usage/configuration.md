@@ -71,6 +71,8 @@ workdir = "~/src/my-project"
 |-------|---------|
 | `prompt` | the agent instruction. Mutually exclusive with `args` and with `prompt_file`, and not accepted on `harness = "generic"`; stored verbatim (never placeholder-expanded) and synthesized into the agent argv at spawn from the same `harness` adapter |
 | `prompt_file` | path to a file whose contents are the instruction — the alternative to an inline `prompt` for anything too long for one TOML line. See below |
+| `prompt_template` | the agent instruction as a SPEC-0017 template: `{{run.id}}`-style placeholders render against the run context at spawn. Mutually exclusive with `prompt`, `prompt_file`, `prompt_template_file` and `args`; the four context paths and the grammar are in [Templated prompts](#templated-prompts) |
+| `prompt_template_file` | `prompt_template`'s file form — the path resolves, is checked and is **parsed at load**; the file is read and re-parsed at each spawn. See below |
 | `model` | which model the agent runs, e.g. `claude-opus-5`. Requires `prompt`; folded into the synthesized argv |
 | `auto_accept` | run unattended, bypassing the agent's permission prompts (the vendor's yolo flag). Requires `prompt`; fold into the synthesized argv |
 | `max_turns` | cap on how many iterations the agent may run before stopping. Requires `prompt`; 0 or omitted means unlimited |
@@ -155,6 +157,44 @@ schedule = "0 9 * * 1"
   error, and is re-checked at spawn. Unlike `env_file`, it is not optional: a
   harness with no instruction has nothing to run, and a scheduled one firing
   into an empty prompt would look like a successful no-op.
+
+### Templated prompts
+
+`prompt_template` (a string) and `prompt_template_file` (a path) are the
+templated counterparts of the verbatim keys. Where `prompt` reaches the agent
+exactly as written, a template's `{{path}}` placeholders render against the
+run's context at spawn:
+
+```toml
+[harness.pr-triage]
+harness = "claude-code"
+prompt_template = "Triage run {{run.id}} on {{harness.name}} ({{run.trigger}})"
+schedule = "0 */4 * * *"
+```
+
+- **Mutually exclusive** with `prompt`, `prompt_file`, `prompt_template_file`
+  and `args` — one prompt source per harness — and either one satisfies the
+  "requires `prompt`" rules for `model`, `auto_accept`, `max_turns`, `quiet`
+  and `schedule`.
+- **The context is the run, not the world**: `harness.name`,
+  `harness.workdir`, `model`, and the run record's `run.id`, `run.trigger`,
+  `run.source`, `run.started_at`, `run.date`. `prompt` and `prompt_file` are
+  never in it — a template referencing them fails the load. Event values
+  (`{{event.*}}`) are not available yet.
+- **Required vs optional**: `{{run.id}}` fails the run when the path is
+  absent; `{{run.id?}}` renders empty. A required path no firing of the
+  harness can ever supply (say `{{run.source}}` on a scheduled harness, or
+  `{{run.id}}` outside any schedule or trigger) fails the config load, so
+  every firing cannot fail one by one.
+- **Grammar**: the only special sequences are `{{path}}`, `{{path?}}` and
+  `{{literal_open}}` (the literal two characters `{{`). No functions, filters
+  or loops. A malformed placeholder fails the load with the line and column —
+  for a file, the file's own line.
+- **`prompt_template_file` follows `prompt_file`'s rules** — resolved path
+  stored, readable and non-empty checked at load, read again at each spawn —
+  plus one: the file is **parsed at load**, and re-parsed at spawn, because
+  the file can change. A template edited into a grammar error after load
+  fails that run's start and spawns nothing.
 
 ## Scheduled one-shots
 

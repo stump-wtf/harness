@@ -44,7 +44,13 @@ type rawHarness struct {
 	Argv       []string `toml:"argv"`
 	Prompt     string   `toml:"prompt"`
 	PromptFile string   `toml:"prompt_file"`
-	Model      string   `toml:"model"`
+	// PromptTemplate and PromptTemplateFile are the templated prompt sources
+	// (SPEC-0017 REQ-5): verbatim prompt's counterparts, rendered against the
+	// run context at spawn. Mutually exclusive with the verbatim keys and with
+	// args, exactly as prompt and prompt_file are.
+	PromptTemplate     string `toml:"prompt_template"`
+	PromptTemplateFile string `toml:"prompt_template_file"`
+	Model              string `toml:"model"`
 	// SPEC-0018 REQ-11: claude-code one-shot persona keys. Valid only on
 	// harness = "claude-code" WITH a prompt source; see the validation block
 	// in registerHarness. Paths resolve against the declaring file, exactly
@@ -820,7 +826,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	// prompt_file is read: whatever those say, this harness cannot run them.
 	// Governing: ADR-0023, SPEC-0017 REQ "Generic Kind Rejects Prompts".
 	if adapter == "generic" {
-		for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}} {
+		for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}, {"prompt_template", rh.PromptTemplate}, {"prompt_template_file", rh.PromptTemplateFile}} {
 			if k.val != "" {
 				return newError(filename, line,
 					"harness %q: \"generic\" runs sh and has no prompt synthesis, so it takes no %q; use harness = \"crush\"|\"claude-code\"|\"codex\"|\"pi\"|\"omp\" for a prompt one-shot, or harness = \"command\" with argv to run another program without a shell",
@@ -875,11 +881,78 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 			"harness %q: \"prompt_file\" and \"args\" are mutually exclusive (args configure a long-running harness; the agent argv is synthesized at spawn)", name)
 	}
 
+	// `prompt_template` and `prompt_template_file` are the templated prompt
+	// sources (SPEC-0017 REQ-5). They obey the verbatim keys' rules: blank is
+	// an error, args is refused beside them, and the four sources exclude one
+	// another (REQ-17's amendment to SPEC-0006 "Prompt Source").
+	// prompt_template_file resolves against the declaring file exactly as
+	// prompt_file does, is checked eagerly (readable, non-empty), and is
+	// PARSED at load so a grammar error names the file and the line; spawn
+	// re-reads and re-parses, because the file can change in between.
+	// Governing: SPEC-0017 REQ-5, REQ-6, REQ-7; ADR-0018 (path resolution).
+	promptTemplate := strings.TrimSpace(rh.PromptTemplate)
+	switch {
+	case rh.PromptTemplate != "" && promptTemplate == "":
+		return newError(filename, line, "harness %q: \"prompt_template\" must not be blank", name)
+	}
+	promptTemplateFile := strings.TrimSpace(rh.PromptTemplateFile)
+	switch {
+	case rh.PromptTemplateFile != "" && promptTemplateFile == "":
+		return newError(filename, line, "harness %q: \"prompt_template_file\" must not be blank", name)
+	}
+	var set []string
+	for _, kv := range []struct{ key, val string }{{"prompt", prompt}, {"prompt_file", promptFile}, {"prompt_template", promptTemplate}, {"prompt_template_file", promptTemplateFile}} {
+		if kv.val != "" {
+			set = append(set, `"`+kv.key+`"`)
+		}
+	}
+	if len(set) > 1 {
+		return newError(filename, line,
+			"harness %q: %s and %s are mutually exclusive (one prompt source per harness: inline the instruction, name a file holding it, or template it — not several)", name, strings.Join(set[:len(set)-1], ", "), set[len(set)-1])
+	}
+	if len(set) == 1 && len(rh.Args) > 0 {
+		return newError(filename, line,
+			"harness %q: %s and \"args\" are mutually exclusive (args configure a long-running harness; the agent argv is synthesized at spawn)", name, set[0])
+	}
+	// A template is validated at load (REQ-5, REQ-6): the grammar with its
+	// located line, the closed allow set of context paths, and the REQ-7
+	// rules that depend on how the harness is fired — {{prompt}} and
+	// {{prompt_file}} are never renderable, and a required path no firing of
+	// this harness can supply fails here rather than failing every run.
+	tmplScheduled := strings.TrimSpace(rh.Schedule) != ""
+	tmplTriggered := tmplScheduled || len(rh.Triggers) > 0
+	if promptTemplate != "" {
+		if err := core.CheckPromptTemplate(promptTemplate); err != nil {
+			return newError(filename, line, "harness %q: \"prompt_template\" %v", name, err)
+		}
+		if err := core.CheckPromptTemplateContext(promptTemplate, tmplScheduled, tmplTriggered); err != nil {
+			return newError(filename, line, "harness %q: \"prompt_template\" %v", name, err)
+		}
+	}
+	promptTemplateFilePath := promptTemplateFile
+	if promptTemplateFile != "" {
+		if resolve != nil {
+			promptTemplateFilePath = resolve(promptTemplateFile)
+		} else {
+			promptTemplateFilePath = resolveConfigPath(promptTemplateFile, filename)
+		}
+		text, err := core.ReadPromptFile(promptTemplateFilePath)
+		if err != nil {
+			return newError(filename, line, "harness %q: \"prompt_template_file\" %s", name, err)
+		}
+		if err := core.CheckPromptTemplate(text); err != nil {
+			return newError(filename, line, "harness %q: \"prompt_template_file\" %q: %v", name, promptTemplateFilePath, err)
+		}
+		if err := core.CheckPromptTemplateContext(text, tmplScheduled, tmplTriggered); err != nil {
+			return newError(filename, line, "harness %q: \"prompt_template_file\" %q: %v", name, promptTemplateFilePath, err)
+		}
+	}
+
 	// Either prompt source makes this an agent one-shot, so every
 	// prompt-dependent key below tests isAgent rather than `prompt` alone —
 	// otherwise a prompt_file harness would be rejected for setting `model` or
 	// `schedule` and would inherit the always-restart cmd default.
-	isAgent := prompt != "" || promptFile != ""
+	isAgent := prompt != "" || promptFile != "" || promptTemplate != "" || promptTemplateFile != ""
 	// A command harness is a one-shot when a clock or an event fires it, with
 	// no prompt: its argv is the whole job. It takes the one-shot restart
 	// default and satisfies the "requires a prompt source" half of the
@@ -925,7 +998,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		// A command harness passes `model` through {{model}} in its argv;
 		// checkCommandKeys has already refused one that does not.
 		return newError(filename, line,
-			"harness %q: \"model\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes --model through its own args)", name)
+			"harness %q: \"model\" requires a prompt source (\"prompt\", \"prompt_file\", \"prompt_template\" or \"prompt_template_file\") (a cmd harness passes --model through its own args)", name)
 	}
 
 	// `auto_accept` is config truth only, same contract as `model`: stored on
@@ -942,7 +1015,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	autoAccept := rh.AutoAccept != nil && *rh.AutoAccept
 	if autoAccept && !isAgent {
 		return newError(filename, line,
-			"harness %q: \"auto_accept\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes its tool's flag through its own args)", name)
+			"harness %q: \"auto_accept\" requires a prompt source (\"prompt\", \"prompt_file\", \"prompt_template\" or \"prompt_template_file\") (a cmd harness passes its tool's flag through its own args)", name)
 	}
 
 	// `max_turns` is config truth only, same contract as `model` and
@@ -963,7 +1036,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		}
 		if !isAgent {
 			return newError(filename, line,
-				"harness %q: \"max_turns\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes --max-turns through its own args)", name)
+				"harness %q: \"max_turns\" requires a prompt source (\"prompt\", \"prompt_file\", \"prompt_template\" or \"prompt_template_file\") (a cmd harness passes --max-turns through its own args)", name)
 		}
 		maxTurns = *rh.MaxTurns
 	}
@@ -988,7 +1061,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 				"harness %q: \"system_prompt_file\", \"mcp_config\" and \"allowed_tools\" are claude-code one-shot keys, and harness = %q takes none of them (a resident harness passes flags through its own args)", name, adapter)
 		case !isAgent:
 			return newError(filename, line,
-				"harness %q: \"system_prompt_file\", \"mcp_config\" and \"allowed_tools\" require \"prompt\" or \"prompt_file\" (a long-running harness passes flags through args)", name)
+				"harness %q: \"system_prompt_file\", \"mcp_config\" and \"allowed_tools\" require a prompt source (\"prompt\", \"prompt_file\", \"prompt_template\" or \"prompt_template_file\") (a long-running harness passes flags through args)", name)
 		}
 	}
 	switch {
@@ -1051,7 +1124,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	if rh.Quiet != nil {
 		if !isAgent {
 			return newError(filename, line,
-				"harness %q: \"quiet\" requires \"prompt\" or \"prompt_file\" (a cmd harness passes its tool's tone flag through its own args)", name)
+				"harness %q: \"quiet\" requires a prompt source (\"prompt\", \"prompt_file\", \"prompt_template\" or \"prompt_template_file\") (a cmd harness passes its tool's tone flag through its own args)", name)
 		}
 		quiet = *rh.Quiet
 	}
@@ -1105,7 +1178,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 			"harness %q: \"schedule\" must not be blank", name)
 	case schedule != "" && !isAgent && !isCommand:
 		return newError(filename, line,
-			"harness %q: \"schedule\" requires \"prompt\" or \"prompt_file\", or harness = \"command\" (a scheduled harness is a one-shot run)", name)
+			"harness %q: \"schedule\" requires a prompt source (\"prompt\", \"prompt_file\", \"prompt_template\" or \"prompt_template_file\"), or harness = \"command\" (a scheduled harness is a one-shot run)", name)
 	case schedule != "" && enabled:
 		return newError(filename, line,
 			"harness %q: \"schedule\" and \"enabled = true\" are mutually exclusive (use one or the other)", name)
@@ -1141,7 +1214,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	switch {
 	case len(triggers) > 0 && !isAgent && !isCommand:
 		return newError(filename, line,
-			"harness %q: \"triggers\" requires \"prompt\" or \"prompt_file\", or harness = \"command\" (a triggered harness is a one-shot run)", name)
+			"harness %q: \"triggers\" requires a prompt source (\"prompt\", \"prompt_file\", \"prompt_template\" or \"prompt_template_file\"), or harness = \"command\" (a triggered harness is a one-shot run)", name)
 	case len(triggers) > 0 && enabled:
 		return newError(filename, line,
 			"harness %q: \"triggers\" and \"enabled = true\" are mutually exclusive (autostart intent and on-demand firing are distinct)", name)
@@ -1396,6 +1469,8 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		Model:                model,
 		Prompt:               prompt,
 		PromptFile:           promptFilePath,
+		PromptTemplate:       promptTemplate,
+		PromptTemplateFile:   promptTemplateFilePath,
 		Quiet:                quiet,
 		SystemPromptFile:     systemPromptFilePath,
 		MCPConfig:            mcpConfigPath,
@@ -1919,7 +1994,7 @@ func checkCommandKeys(adapter string, rh rawHarness) error {
 			return fmt.Errorf("%q is not accepted on a command harness: a command harness owns its argv, so put the tool's own flag there", k.key)
 		}
 	}
-	for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}} {
+	for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}, {"prompt_template", rh.PromptTemplate}, {"prompt_template_file", rh.PromptTemplateFile}} {
 		if k.val != "" {
 			return fmt.Errorf("%q is not supported on a command harness yet: nothing delivers a prompt to its argv; use harness = \"crush\"|\"claude-code\"|\"codex\" for a prompt one-shot", k.key)
 		}

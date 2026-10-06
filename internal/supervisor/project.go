@@ -452,11 +452,14 @@ func validateHarnessDef(src string, h core.Harness) error {
 	// prompt synthesis, so a prompt on it would otherwise reach spawn, which
 	// refuses it there (ErrGenericPrompt) — after it had been registered.
 	// Governing: ADR-0023, SPEC-0017 REQ "Generic Kind Rejects Prompts".
-	case h.Adapter == "generic" && (h.Prompt != "" || h.PromptFile != ""):
+	case h.Adapter == "generic" && (h.Prompt != "" || h.PromptFile != "" || h.PromptTemplate != "" || h.PromptTemplateFile != ""):
 		return fmt.Errorf("%s: harness %q: %w: %q runs sh and has no prompt synthesis, so it takes no prompt; use harness = %q|%q|%q|%q|%q for a prompt one-shot, or harness = %q with argv to run another program without a shell",
 			src, h.Name, ErrInvalidProjectDef, "generic", "crush", "claude-code", "codex", core.AdapterPi, core.AdapterOMP, core.AdapterCommand)
 	case strings.TrimSpace(h.Prompt) != "" && len(h.Args) > 0:
 		return fmt.Errorf("%s: harness %q: %w: prompt and args are mutually exclusive",
+			src, h.Name, ErrInvalidProjectDef)
+	case (strings.TrimSpace(h.PromptFile) != "" || strings.TrimSpace(h.PromptTemplate) != "" || strings.TrimSpace(h.PromptTemplateFile) != "") && len(h.Args) > 0:
+		return fmt.Errorf("%s: harness %q: %w: a prompt source and args are mutually exclusive",
 			src, h.Name, ErrInvalidProjectDef)
 	case !h.Backend.Valid():
 		return fmt.Errorf("%s: harness %q: %w: invalid backend %q",
@@ -499,7 +502,7 @@ func checkCommandDef(h core.Harness) error {
 	switch {
 	case h.Args != nil:
 		return errors.New("args is not accepted on a command harness: put the whole command line in argv (argv[0] is the executable)")
-	case h.Prompt != "" || h.PromptFile != "":
+	case h.Prompt != "" || h.PromptFile != "" || h.PromptTemplate != "" || h.PromptTemplateFile != "":
 		return errors.New("a command harness takes no prompt yet: nothing delivers a prompt to its argv")
 	case h.AutoAccept || h.MaxTurns != 0:
 		return errors.New("auto_accept and max_turns are not accepted on a command harness: it owns its argv")

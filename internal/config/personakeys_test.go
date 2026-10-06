@@ -59,7 +59,7 @@ func TestPersonaKeysValidation(t *testing.T) {
 			name:    "on a resident harness",
 			harness: "claude-code",
 			body:    "system_prompt_file = \"system.md\"\n",
-			wantSub: `require "prompt" or "prompt_file"`,
+			wantSub: `require a prompt source`,
 		},
 		{
 			name:    "on another adapter",

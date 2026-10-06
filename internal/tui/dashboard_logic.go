@@ -133,6 +133,10 @@ func harnessMeta(h protocol.HarnessInfo) (what string, rest []string) {
 	switch {
 	case h.Prompt != "":
 		what = flattenSpace(h.Prompt)
+	case h.PromptTemplate != "":
+		what = flattenSpace(h.PromptTemplate)
+	case h.PromptTemplateFile != "":
+		what = flattenSpace(h.PromptTemplateFile)
 	case h.PromptFile != "":
 		// The path, not the file's contents — the daemon never sends them
 		// (ADR-0018), and a whole specification would not fit this column.

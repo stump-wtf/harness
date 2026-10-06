@@ -70,7 +70,7 @@ type peekActivity struct {
 // nonInteractive reports whether h is a one-shot: a prompt harness, whose run
 // is read afterwards rather than sat in (ADR-0011).
 func nonInteractive(h protocol.HarnessInfo) bool {
-	return h.Prompt != "" || h.PromptFile != ""
+	return h.Prompt != "" || h.PromptFile != "" || h.PromptTemplate != "" || h.PromptTemplateFile != ""
 }
 
 // peekActivityCmd fetches the selected one-shot's activity, at most once per

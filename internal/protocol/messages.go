@@ -347,7 +347,12 @@ type ProjectHarness struct {
 	// holding the instruction, never its contents (ADR-0018). Clients show
 	// and round-trip the path; the daemon reads the file at spawn.
 	PromptFile string `json:"prompt_file,omitempty"`
-	Workdir    string `json:"workdir,omitempty"`
+	// SPEC-0017 REQ-5/REQ-15: the templated prompt sources, additive and
+	// omitempty. prompt_template round-trips verbatim (placeholders intact);
+	// prompt_template_file as its PATH, like prompt_file.
+	PromptTemplate     string `json:"prompt_template,omitempty"`
+	PromptTemplateFile string `json:"prompt_template_file,omitempty"`
+	Workdir            string `json:"workdir,omitempty"`
 	// EnvFile is the single-path form; a daemon honors it when EnvFiles is
 	// absent, so an older client that sends only a string still works.
 	EnvFile string `json:"env_file,omitempty"`
@@ -497,6 +502,10 @@ type HarnessInfo struct {
 	// daemon reads the file at spawn, so the contents never travel on the
 	// wire — a client shows and round-trips the path (ADR-0018).
 	PromptFile string `json:"prompt_file,omitempty"`
+	// SPEC-0017 REQ-5/REQ-15: the templated prompt sources, round-tripped
+	// verbatim (prompt_template) and as a path (prompt_template_file).
+	PromptTemplate     string `json:"prompt_template,omitempty"`
+	PromptTemplateFile string `json:"prompt_template_file,omitempty"`
 	// Model is the agent model selection for a prompt harness, folded into the
 	// synthesized argv at spawn (issue #57). Empty for cmd harnesses.
 	Model string `json:"model,omitempty"`

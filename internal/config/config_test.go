@@ -570,7 +570,7 @@ func TestParseModelErrors(t *testing.T) {
 			name:     "model with cmd points at args",
 			toml:     "[harness.bad]\nharness = \"crush\"\nargs = [\"run\"]\nmodel = \"claude-opus-5\"\n",
 			wantLine: 1,
-			wantSub:  `"model" requires "prompt"`,
+			wantSub:  `"model" requires a prompt source`,
 		},
 		{
 			name:     "whitespace-only model names the blank model",
@@ -588,7 +588,7 @@ func TestParseModelErrors(t *testing.T) {
 			name:     "model requires prompt",
 			toml:     "[harness.bad]\nharness = \"crush\"\nmodel = \"claude-opus-5\"\n",
 			wantLine: 1,
-			wantSub:  `requires "prompt"`,
+			wantSub:  `requires a prompt source`,
 		},
 	}
 	for _, tt := range tests {
@@ -695,13 +695,13 @@ func TestParseAutoAcceptErrors(t *testing.T) {
 			name:     "auto_accept with cmd points at args",
 			toml:     "[harness.bad]\nharness = \"crush\"\nargs = [\"run\"]\nauto_accept = true\n",
 			wantLine: 1,
-			wantSub:  `"auto_accept" requires "prompt"`,
+			wantSub:  `"auto_accept" requires a prompt source`,
 		},
 		{
 			name:     "auto_accept requires prompt",
 			toml:     "[harness.bad]\nharness = \"crush\"\nauto_accept = true\n",
 			wantLine: 1,
-			wantSub:  `requires "prompt"`,
+			wantSub:  `requires a prompt source`,
 		},
 	}
 	for _, tt := range tests {
@@ -793,7 +793,7 @@ func TestParseMaxTurnsErrors(t *testing.T) {
 			name:     "max_turns with cmd points at args",
 			toml:     "[harness.bad]\nharness = \"crush\"\nargs = [\"run\"]\nmax_turns = 5\n",
 			wantLine: 1,
-			wantSub:  `"max_turns" requires "prompt"`,
+			wantSub:  `"max_turns" requires a prompt source`,
 		},
 		{
 			name:     "negative max_turns is rejected",
@@ -884,13 +884,13 @@ func TestParseQuietErrors(t *testing.T) {
 			name:     "quiet=false with cmd points at args",
 			toml:     "[harness.bad]\nharness = \"crush\"\nargs = [\"run\"]\nquiet = false\n",
 			wantLine: 1,
-			wantSub:  `"quiet" requires "prompt"`,
+			wantSub:  `"quiet" requires a prompt source`,
 		},
 		{
 			name:     "explicit quiet=true with cmd also rejected",
 			toml:     "[harness.bad]\nharness = \"generic\"\nquiet = true\n",
 			wantLine: 1,
-			wantSub:  `"quiet" requires "prompt"`,
+			wantSub:  `"quiet" requires a prompt source`,
 		},
 	}
 	for _, tt := range tests {

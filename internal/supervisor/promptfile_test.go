@@ -22,7 +22,7 @@ func TestResolvePromptReadsAtSpawn(t *testing.T) {
 	}
 	h := core.Harness{Name: "sweep", Adapter: "claude-code", PromptFile: path}
 
-	got, err := resolvePrompt(h)
+	got, err := resolvePrompt(h, "/home/x", RunEnv{})
 	if err != nil {
 		t.Fatalf("resolvePrompt: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestResolvePromptLeavesInlineAndCmdHarnessesAlone(t *testing.T) {
 		{Name: "inline", Adapter: "crush", Prompt: "sweep"},
 		{Name: "repl", Adapter: "generic", Args: []string{"-c", "sleep 1"}},
 	} {
-		got, err := resolvePrompt(h)
+		got, err := resolvePrompt(h, "/home/x", RunEnv{})
 		if err != nil {
 			t.Fatalf("%s: resolvePrompt: %v", h.Name, err)
 		}
@@ -76,14 +76,14 @@ func TestResolvePromptFailsWhenFileVanishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := core.Harness{Name: "sweep", Adapter: "claude-code", PromptFile: path}
-	if _, err := resolvePrompt(h); err != nil {
+	if _, err := resolvePrompt(h, "/home/x", RunEnv{}); err != nil {
 		t.Fatalf("resolvePrompt on a present file: %v", err)
 	}
 
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	_, err := resolvePrompt(h)
+	_, err := resolvePrompt(h, "/home/x", RunEnv{})
 	if err == nil {
 		t.Fatal("resolvePrompt succeeded on a deleted file, want an error")
 	}
@@ -100,7 +100,7 @@ func TestResolvePromptRejectsEmptyFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("\n \t\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := resolvePrompt(core.Harness{Name: "sweep", PromptFile: path})
+	_, err := resolvePrompt(core.Harness{Name: "sweep", PromptFile: path}, "/home/x", RunEnv{})
 	if err == nil {
 		t.Fatal("resolvePrompt succeeded on a whitespace-only file, want an error")
 	}
@@ -121,14 +121,14 @@ func TestResolvePromptSeesEditsWithoutReload(t *testing.T) {
 	// One harness value, as the registry would hold it across both runs.
 	h := core.Harness{Name: "sweep", Adapter: "claude-code", PromptFile: path}
 
-	first, err := resolvePrompt(h)
+	first, err := resolvePrompt(h, "/home/x", RunEnv{})
 	if err != nil {
 		t.Fatalf("resolvePrompt: %v", err)
 	}
 	if err := os.WriteFile(path, []byte("second"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	second, err := resolvePrompt(h)
+	second, err := resolvePrompt(h, "/home/x", RunEnv{})
 	if err != nil {
 		t.Fatalf("resolvePrompt after edit: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestResolvePromptExpandsHome(t *testing.T) {
 	got, err := resolvePrompt(core.Harness{
 		Name:       "sweep",
 		PromptFile: filepath.Join("~", filepath.Base(f.Name())),
-	})
+	}, "/home/x", RunEnv{})
 	if err != nil {
 		t.Fatalf("resolvePrompt on a ~ path: %v", err)
 	}

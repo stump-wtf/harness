@@ -342,22 +342,51 @@ func expandArgs(args []string, workdir string) []string {
 }
 
 // resolvePrompt returns h with its prompt text in place: unchanged for an
-// inline prompt or a cmd harness, and — for a prompt_file harness — a copy
-// whose Prompt holds the file's contents and whose PromptFile is cleared.
+// inline prompt or a cmd harness, a copy whose Prompt holds the file's
+// contents for a prompt_file harness, and — for a templated harness — a copy
+// whose Prompt holds the RENDERED text, with the template key cleared.
 //
 // The read happens per spawn, so editing the referenced file changes the next
 // run with no config reload; that is the whole point of naming a file instead
-// of inlining the text (ADR-0018). The copy is local to this spawn and never
-// written back to the registry, so config truth stays the PATH: the wire, the
-// state file, and every config writer keep round-tripping prompt_file rather
-// than inlining the document.
+// of inlining the text (ADR-0018). prompt_template_file re-reads AND re-parses
+// per spawn for the same reason (SPEC-0017 REQ-5): a template edited into a
+// grammar error after load fails the start here, having spawned nothing. The
+// copy is local to this spawn and never written back to the registry, so
+// config truth stays the PATH or the template as written: the wire, the state
+// file, and every config writer keep round-tripping prompt_file,
+// prompt_template and prompt_template_file rather than inlining the resolved
+// text.
 //
-// Config load already validated this path with the same reader, but a file can
-// be deleted between load and spawn, so the failure is handled here too — as a
-// hard error, because an agent launched with an empty instruction is a silent
-// no-op, the exact failure mode this feature removes.
-// Governing: ADR-0018; SPEC-0006 REQ "Prompt Source".
-func resolvePrompt(h core.Harness) (core.Harness, error) {
+// Config load already validated all three with the same readers, but a file
+// can be deleted or corrupted between load and spawn, so the failure is
+// handled here too — as a hard error, because an agent launched with an empty
+// or broken instruction is a silent no-op, the exact failure mode this
+// feature removes.
+// Governing: ADR-0018; SPEC-0006 REQ "Prompt Source"; SPEC-0017 REQ-5
+// "Templated Prompt Keys", REQ-7 "Template Context".
+func resolvePrompt(h core.Harness, workdir string, run RunEnv) (core.Harness, error) {
+	switch {
+	case h.PromptTemplate != "":
+		text, err := core.RenderPrompt(h.PromptTemplate, renderContext(h, workdir, run, time.Now()))
+		if err != nil {
+			return h, fmt.Errorf("supervisor: harness %q: prompt_template %w", h.Name, err)
+		}
+		h.Prompt = text
+		h.PromptTemplate = ""
+		return h, nil
+	case h.PromptTemplateFile != "":
+		src, err := core.ReadPromptFile(expandHome(h.PromptTemplateFile))
+		if err != nil {
+			return h, fmt.Errorf("supervisor: harness %q: prompt_template_file %w", h.Name, err)
+		}
+		text, err := core.RenderPrompt(src, renderContext(h, workdir, run, time.Now()))
+		if err != nil {
+			return h, fmt.Errorf("supervisor: harness %q: prompt_template_file %q: %w", h.Name, h.PromptTemplateFile, err)
+		}
+		h.Prompt = text
+		h.PromptTemplateFile = ""
+		return h, nil
+	}
 	if h.PromptFile == "" {
 		return h, nil
 	}
@@ -564,11 +593,11 @@ func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
 	// Resolve prompt_file to its text BEFORE allocating anything: a missing
 	// instruction file must fail the start outright rather than leak a PTY and
 	// launch an agent with nothing to do (ADR-0018).
-	h, err := resolvePrompt(h)
+	workdir := Workdir(h)
+	h, err := resolvePrompt(h, workdir, run)
 	if err != nil {
 		return nil, err
 	}
-	workdir := Workdir(h)
 	// Resolve the argv before the environment and the PTY, for the same
 	// reason: a harness spawn refuses (a `generic` carrying a prompt, SPEC-0017
 	// REQ "Generic Kind Rejects Prompts"; a `command` harness with a malformed

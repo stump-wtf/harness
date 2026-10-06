@@ -16,7 +16,7 @@ schedule = "0 */6 * * *"
 	if err == nil {
 		t.Fatal("expected error for schedule without prompt")
 	}
-	if !strings.Contains(err.Error(), `"schedule" requires "prompt"`) {
+	if !strings.Contains(err.Error(), `"schedule" requires a prompt source`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

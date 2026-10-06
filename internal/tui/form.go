@@ -80,6 +80,14 @@ type HarnessForm struct {
 	// carries the PATH only — the file's contents are read at spawn and must
 	// never be written back into harness.toml.
 	PromptFile string
+	// PromptTemplate and PromptTemplateFile are the templated prompt sources
+	// (SPEC-0017 REQ-5), mutually exclusive with Prompt and PromptFile.
+	// Round-trip fields like PromptFile: the save path rewrites the whole
+	// table, so a form that dropped them would delete a templated harness's
+	// prompt source on the next unrelated edit. The template is written
+	// verbatim (placeholders intact, REQ-15); the file as its PATH.
+	PromptTemplate     string
+	PromptTemplateFile string
 	// Schedule is the daemon-owned cron expression for a scheduled one-shot
 	// (issue #66): requires Prompt, and is mutually exclusive with Enabled and
 	// with a respawning restart policy (Validate mirrors the parser on all
@@ -221,10 +229,22 @@ func (f HarnessForm) Validate() error {
 		return fmt.Errorf("export_telemetry must be blank, true or false")
 	}
 	// Either prompt source makes this an agent one-shot; the parser's rules
-	// below all key off that, not off an inline prompt alone.
-	promptSet := strings.TrimSpace(f.Prompt) != "" || strings.TrimSpace(f.PromptFile) != ""
-	if strings.TrimSpace(f.Prompt) != "" && strings.TrimSpace(f.PromptFile) != "" {
-		return fmt.Errorf("prompt and prompt_file are mutually exclusive")
+	// below all key off that, not off an inline prompt alone. The four
+	// sources are mutually exclusive (SPEC-0017 REQ-5); the error names every
+	// key set, the way the parser's does.
+	prompt := strings.TrimSpace(f.Prompt)
+	promptFile := strings.TrimSpace(f.PromptFile)
+	promptTemplate := strings.TrimSpace(f.PromptTemplate)
+	promptTemplateFile := strings.TrimSpace(f.PromptTemplateFile)
+	promptSet := prompt != "" || promptFile != "" || promptTemplate != "" || promptTemplateFile != ""
+	var promptKeys []string
+	for _, kv := range []struct{ key, val string }{{"prompt", prompt}, {"prompt_file", promptFile}, {"prompt_template", promptTemplate}, {"prompt_template_file", promptTemplateFile}} {
+		if kv.val != "" {
+			promptKeys = append(promptKeys, kv.key)
+		}
+	}
+	if len(promptKeys) > 1 {
+		return fmt.Errorf("%s and %s are mutually exclusive (one prompt source per harness)", strings.Join(promptKeys[:len(promptKeys)-1], ", "), promptKeys[len(promptKeys)-1])
 	}
 	switch {
 	case f.Harness == "":
@@ -476,19 +496,28 @@ func (f HarnessForm) TOML() string {
 	}
 	prompt := strings.TrimSpace(f.Prompt)
 	promptFile := strings.TrimSpace(f.PromptFile)
+	promptTemplate := strings.TrimSpace(f.PromptTemplate)
+	promptTemplateFile := strings.TrimSpace(f.PromptTemplateFile)
 	isCommand := f.Harness == core.AdapterCommand
-	oneShotKind := prompt != "" || promptFile != "" || isCommand
-	if prompt != "" || promptFile != "" {
-		// Prompt harness: `prompt` replaces args entirely (Validate
+	oneShotKind := prompt != "" || promptFile != "" || promptTemplate != "" || promptTemplateFile != "" || isCommand
+	if prompt != "" || promptFile != "" || promptTemplate != "" || promptTemplateFile != "" {
+		// Prompt harness: a prompt source replaces args entirely (Validate
 		// enforces the exclusivity; the daemon synthesizes the argv at spawn,
 		// ADR-0011). `model`, `auto_accept`, and `max_turns` ride beside it as
 		// config truth — never as synthesized args (issues #57, #58, #59).
 		if prompt != "" {
 			fmt.Fprintf(&b, "prompt = %s\n", strconv.Quote(prompt))
-		} else {
+		} else if promptFile != "" {
 			// The PATH, never the file's contents — inlining the document
 			// here is the round-trip corruption ADR-0018 exists to avoid.
 			fmt.Fprintf(&b, "prompt_file = %s\n", strconv.Quote(promptFile))
+		} else if promptTemplate != "" {
+			// The TEMPLATE as written, placeholders intact (SPEC-0017
+			// REQ-15): never a rendering — the render happens at spawn.
+			fmt.Fprintf(&b, "prompt_template = %s\n", strconv.Quote(promptTemplate))
+		} else {
+			// The PATH, never the contents or a rendering (REQ-15).
+			fmt.Fprintf(&b, "prompt_template_file = %s\n", strconv.Quote(promptTemplateFile))
 		}
 		if model := strings.TrimSpace(f.Model); model != "" {
 			fmt.Fprintf(&b, "model = %s\n", strconv.Quote(model))
@@ -600,7 +629,7 @@ func (f HarnessForm) TOML() string {
 	// round-trips without growing keys.
 	defaultRestart := string(core.RestartAlways)
 	commandOneShot := isCommand && (strings.TrimSpace(f.Schedule) != "" || len(normalizeTriggers(f.Triggers)) > 0)
-	if prompt != "" || promptFile != "" || commandOneShot {
+	if prompt != "" || promptFile != "" || promptTemplate != "" || promptTemplateFile != "" || commandOneShot {
 		defaultRestart = string(core.RestartNo)
 	}
 	if f.Restart != "" && f.Restart != defaultRestart {
@@ -769,17 +798,19 @@ func AppendHarness(existing []byte, f HarnessForm) []byte {
 // harness the daemon knows but that isn't in the file yet).
 func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi := formInputs{
-		name:        sel.Name,
-		harness:     sel.Adapter,
-		prompt:      sel.Prompt,
-		promptFile:  sel.PromptFile,
-		model:       sel.Model,
-		autoAccept:  sel.AutoAccept,
-		quiet:       sel.Quiet,
-		maxTurns:    strconv.Itoa(sel.MaxTurns),
-		backend:     orDefault(sel.Backend, string(core.BackendNative)),
-		description: sel.Description,
-		enabled:     sel.Enabled,
+		name:               sel.Name,
+		harness:            sel.Adapter,
+		prompt:             sel.Prompt,
+		promptFile:         sel.PromptFile,
+		promptTemplate:     sel.PromptTemplate,
+		promptTemplateFile: sel.PromptTemplateFile,
+		model:              sel.Model,
+		autoAccept:         sel.AutoAccept,
+		quiet:              sel.Quiet,
+		maxTurns:           strconv.Itoa(sel.MaxTurns),
+		backend:            orDefault(sel.Backend, string(core.BackendNative)),
+		description:        sel.Description,
+		enabled:            sel.Enabled,
 		// The fallback (file unreadable, or the table isn't there yet) must
 		// match the parser's default scope, not blank — blank now means the
 		// deny-all `mcp_allow = []`.
@@ -802,6 +833,8 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.source = h.PackageSource
 	fi.prompt = h.Prompt
 	fi.promptFile = h.PromptFile
+	fi.promptTemplate = h.PromptTemplate
+	fi.promptTemplateFile = h.PromptTemplateFile
 	fi.systemPromptFile = h.SystemPromptFile
 	fi.mcpConfig = h.MCPConfig
 	// Shell-quoted like args: a tool pattern such as "Bash(git log:*)"
@@ -890,28 +923,30 @@ func splitEnvFileInput(s string) []string {
 // space-separated args and the integer restart_delay.
 func (fi formInputs) toForm() HarnessForm {
 	f := HarnessForm{
-		Name:             strings.TrimSpace(fi.name),
-		PackageSource:    strings.TrimSpace(fi.source),
-		Harness:          strings.TrimSpace(fi.harness),
-		Prompt:           strings.TrimSpace(fi.prompt),
-		PromptFile:       strings.TrimSpace(fi.promptFile),
-		SystemPromptFile: strings.TrimSpace(fi.systemPromptFile),
-		MCPConfig:        strings.TrimSpace(fi.mcpConfig),
-		Model:            strings.TrimSpace(fi.model),
-		AutoAccept:       fi.autoAccept,
-		Quiet:            fi.quiet,
-		Schedule:         strings.TrimSpace(fi.schedule),
-		CatchUp:          fi.catchUp,
-		Triggers:         strings.Fields(fi.triggers),
-		Timeout:          strings.TrimSpace(fi.timeout),
-		OnOverlap:        strings.TrimSpace(fi.onOverlap),
-		Workdir:          strings.TrimSpace(fi.workdir),
-		EnvFile:          splitEnvFileInput(fi.envFile),
-		Restart:          strings.TrimSpace(fi.restart),
-		Backend:          strings.TrimSpace(fi.backend),
-		TmuxSocket:       strings.TrimSpace(fi.tmuxSocket),
-		Description:      strings.TrimSpace(fi.description),
-		Enabled:          fi.enabled,
+		Name:               strings.TrimSpace(fi.name),
+		PackageSource:      strings.TrimSpace(fi.source),
+		Harness:            strings.TrimSpace(fi.harness),
+		Prompt:             strings.TrimSpace(fi.prompt),
+		PromptFile:         strings.TrimSpace(fi.promptFile),
+		PromptTemplate:     strings.TrimSpace(fi.promptTemplate),
+		PromptTemplateFile: strings.TrimSpace(fi.promptTemplateFile),
+		SystemPromptFile:   strings.TrimSpace(fi.systemPromptFile),
+		MCPConfig:          strings.TrimSpace(fi.mcpConfig),
+		Model:              strings.TrimSpace(fi.model),
+		AutoAccept:         fi.autoAccept,
+		Quiet:              fi.quiet,
+		Schedule:           strings.TrimSpace(fi.schedule),
+		CatchUp:            fi.catchUp,
+		Triggers:           strings.Fields(fi.triggers),
+		Timeout:            strings.TrimSpace(fi.timeout),
+		OnOverlap:          strings.TrimSpace(fi.onOverlap),
+		Workdir:            strings.TrimSpace(fi.workdir),
+		EnvFile:            splitEnvFileInput(fi.envFile),
+		Restart:            strings.TrimSpace(fi.restart),
+		Backend:            strings.TrimSpace(fi.backend),
+		TmuxSocket:         strings.TrimSpace(fi.tmuxSocket),
+		Description:        strings.TrimSpace(fi.description),
+		Enabled:            fi.enabled,
 
 		HarvestTrajectory:    fi.harvestTrajectory,
 		OperatingHours:       strings.TrimSpace(fi.operatingHours),

@@ -209,6 +209,21 @@ type Harness struct {
 	// run with an empty instruction is a silent no-op.
 	// Governing: ADR-0018; SPEC-0006 REQ "Prompt Source".
 	PromptFile string
+	// PromptTemplate is the templated one-shot instruction (SPEC-0017
+	// REQ-5): Prompt's counterpart whose {{path}} placeholders render against
+	// the REQ-7 run context at spawn. Mutually exclusive with Prompt,
+	// PromptFile and Args; the rendered text lands in Prompt, never back
+	// here, so config truth stays the template as written (REQ-15 round-trips
+	// it verbatim). The run context holds no prompt or prompt_file path.
+	// Governing: SPEC-0017 REQ-5, REQ-7, REQ-15.
+	PromptTemplate string
+	// PromptTemplateFile is PromptTemplate's file form: a PATH (resolved at
+	// load, exactly as PromptFile is), read and re-parsed per spawn because
+	// the file may have changed since load. A grammar error at load names
+	// the file and the line; one at spawn fails the start with nothing
+	// spawned.
+	// Governing: SPEC-0017 REQ-5.
+	PromptTemplateFile string
 	// Model selects which model the agent CLI runs a prompt harness with.
 	// Config truth only, and it requires Prompt (validation enforces it —
 	// there is no vendor-agnostic place to inject a flag into an arbitrary
@@ -587,7 +602,9 @@ func CheckCommandArgv(argv []string) error {
 // wherever "is this a prompt harness?" is asked, so a prompt_file harness is
 // never mistaken for a cmd harness by a bare Prompt != "" check.
 // Governing: SPEC-0006 REQ "Prompt Source".
-func (h Harness) IsAgent() bool { return h.Prompt != "" || h.PromptFile != "" }
+func (h Harness) IsAgent() bool {
+	return h.Prompt != "" || h.PromptFile != "" || h.PromptTemplate != "" || h.PromptTemplateFile != ""
+}
 
 // AgentOpts carries the config-truth knobs a prompt harness folds into its
 // synthesized agent argv at spawn time. Every field stays verbatim — none are

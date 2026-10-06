@@ -999,7 +999,7 @@ func TestTOMLKeepsTmuxSocketOnNativeBackend(t *testing.T) {
 // issue #161's "audit the rest in the same pass". Name is the table name, and
 // is carried implicitly by the header the rewrite emits.
 var harnessFormFields = []string{
-	"Name", "Adapter", "Args", "Argv", "Transcripts", "Prompt", "PromptFile", "Model", "AutoAccept",
+	"Name", "Adapter", "Args", "Argv", "Transcripts", "Prompt", "PromptFile", "PromptTemplate", "PromptTemplateFile", "Model", "AutoAccept",
 	"Quiet", "MaxTurns", "Workdir", "EnvFiles", "RestartDelay", "Restart",
 	"SystemPromptFile", "MCPConfig", "AllowedTools",
 	"Backend", "Description", "Enabled", "TmuxSocket", "Schedule", "CatchUp",

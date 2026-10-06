@@ -465,7 +465,7 @@ model = "claude-opus-5"
 // files too, with the same located-error contract as the global parser.
 func TestParseProject_ModelErrors(t *testing.T) {
 	tests := []struct{ name, toml, wantSub string }{
-		{"model with cmd", "[harness.bad]\nharness = \"generic\"\nmodel = \"m\"\n", `"model" requires "prompt"`},
+		{"model with cmd", "[harness.bad]\nharness = \"generic\"\nmodel = \"m\"\n", `"model" requires a prompt source`},
 		{"blank model", "[harness.bad]\nharness = \"crush\"\nprompt = \"hi\"\nmodel = \" \"\n", `"model" must not be blank`},
 		{"multi-token model", "[harness.bad]\nharness = \"crush\"\nprompt = \"hi\"\nmodel = \"a b\"\n", `"model" must be a single token`},
 	}
@@ -528,7 +528,7 @@ func TestParseProject_AutoAcceptErrors(t *testing.T) {
 	if !errors.As(err, &cerr) {
 		t.Fatalf("expected *Error, got %T: %v", err, err)
 	}
-	if want := `"auto_accept" requires "prompt"`; !strings.Contains(cerr.Msg, want) {
+	if want := `"auto_accept" requires a prompt source`; !strings.Contains(cerr.Msg, want) {
 		t.Errorf("message %q does not contain %q", cerr.Msg, want)
 	}
 	if cerr.Line <= 0 {
