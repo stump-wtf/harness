@@ -193,7 +193,7 @@ func New(opts Options, cfg *core.Config) *Server {
 		newVerifier: nv,
 		slots:       make(chan struct{}, orDefault(opts.MaxConcurrent, DefaultMaxConcurrent)),
 	}
-	s.routes.Store(buildTable(cfg, nv, logger))
+	s.routes.Store(buildTable(cfg, nv, now, logger))
 	s.hs = &http.Server{
 		Handler:           s,
 		ReadHeaderTimeout: orDefault(opts.ReadHeaderTimeout, DefaultReadHeaderTimeout),
@@ -295,7 +295,7 @@ func (s *Server) Outcomes() *trigger.OutcomeCounters { return s.outcomes }
 // Governing: SPEC-0014 REQ "Webhook Listener", REQ "Source Reconciliation On
 // Reload".
 func (s *Server) Reload(cfg *core.Config, want Settings) (restartRequired bool) {
-	next := buildTable(cfg, s.newVerifier, s.log)
+	next := buildTable(cfg, s.newVerifier, s.now, s.log)
 	next.inherit(s.routes.Load())
 	s.routes.Store(next)
 	if want == s.settings {
@@ -481,6 +481,8 @@ func newEnvelope(rt *route, r *http.Request, body []byte, at time.Time) *trigger
 	}
 	if rt.src.EventHeader != "" {
 		wh.Event = r.Header.Get(rt.src.EventHeader)
+	} else if en, ok := rt.verifier.(eventNamer); ok {
+		wh.Event = en.EventName(body)
 	}
 	if rt.src.DeliveryHeader != "" {
 		wh.Delivery = r.Header.Get(rt.src.DeliveryHeader)

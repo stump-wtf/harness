@@ -12,11 +12,10 @@ package webhook
 //
 // Fail closed, in three places:
 //
-//   - A route whose scheme has no constructor here — today only
-//     `standard-webhooks` (#466) — is built with a verifier that refuses every
-//     delivery. The config parser accepts all six schemes already (#454), and
-//     "accepted but not implemented" must never mean "accepted and
-//     unauthenticated".
+//   - A route whose scheme has no constructor here is built with a verifier
+//     that refuses every delivery. The config parser accepts all six schemes
+//     already (#454), and "accepted but not implemented" must never mean
+//     "accepted and unauthenticated".
 //   - A route with an empty secret gets the same refusing verifier. The parser
 //     rejects an empty secret already; this is the second lock on the door.
 //   - A verifier returns an error for anything short of a match — missing,
@@ -28,6 +27,8 @@ package webhook
 //
 // @joestump 09/23/2026 - Introduced with the SPEC-0014 webhook listener (#458).
 // @joestump 09/24/2026 - Registered hmac-sha256, github, gitea and gitlab (#462).
+// @joestump-agent 10/05/2026 - Registered standard-webhooks (#466); the
+//   registry hands each constructor the server's clock.
 
 import (
 	"crypto/sha256"
@@ -36,6 +37,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
 )
@@ -59,24 +61,39 @@ type Verifier interface {
 	Verify(h http.Header, body []byte) error
 }
 
+// eventNamer is implemented by a verifier that reads the event name from the
+// delivery body rather than a header — standard-webhooks, whose event name is
+// the body's top-level `type` (SPEC-0014 REQ "Webhook Filtering"). The server
+// consults it only after Verify has passed: an unverified body names nothing.
+type eventNamer interface {
+	EventName(body []byte) string
+}
+
 // NewVerifierFunc builds the verifier for one source. It returns an error when
 // the source cannot be verified at all, and the route is then built refusing.
-type NewVerifierFunc func(src core.WebhookSource) (Verifier, error)
+// now is the server's clock (Options.Now); the one scheme that reads the time
+// — standard-webhooks' timestamp tolerance — takes it from here, so a test can
+// pin it and the package keeps one time seam.
+type NewVerifierFunc func(src core.WebhookSource, now func() time.Time) (Verifier, error)
 
-// schemes is the scheme registry. standard-webhooks (#466) is the one scheme
-// the parser accepts that is not here yet, so its routes refuse everything.
+// schemes is the scheme registry. Every scheme the parser accepts has an
+// entry here, so no route is left refusing for want of a verifier.
 var schemes = map[core.VerifyScheme]NewVerifierFunc{
-	core.VerifyBearer:     newBearerVerifier,
-	core.VerifyHMACSHA256: newHMACVerifier,
-	core.VerifyGitHub:     newHMACPresetVerifier,
-	core.VerifyGitea:      newHMACPresetVerifier,
-	core.VerifyGitLab:     newGitLabVerifier,
+	core.VerifyBearer:           newBearerVerifier,
+	core.VerifyHMACSHA256:       newHMACVerifier,
+	core.VerifyGitHub:           newHMACPresetVerifier,
+	core.VerifyGitea:            newHMACPresetVerifier,
+	core.VerifyGitLab:           newGitLabVerifier,
+	core.VerifyStandardWebhooks: newStandardWebhooksVerifier,
 }
 
 // NewVerifier returns the verifier for src, or an error naming why none can be
 // built. Callers that get an error MUST refuse the route's deliveries; see
-// refusing.
-func NewVerifier(src core.WebhookSource) (Verifier, error) {
+// refusing. A nil now means the wall clock.
+func NewVerifier(src core.WebhookSource, now func() time.Time) (Verifier, error) {
+	if now == nil {
+		now = time.Now
+	}
 	if src.Secret.Empty() {
 		return nil, fmt.Errorf("%w: [webhook.%s] has no resolved secret", ErrSchemeUnavailable, src.Name)
 	}
@@ -84,7 +101,7 @@ func NewVerifier(src core.WebhookSource) (Verifier, error) {
 	if !ok {
 		return nil, fmt.Errorf("%w: [webhook.%s] verify = %q is not implemented yet", ErrSchemeUnavailable, src.Name, src.Verify)
 	}
-	return build(src)
+	return build(src, now)
 }
 
 // refusing is the verifier a route gets when no real one could be built. It
@@ -106,7 +123,7 @@ type bearerVerifier struct {
 	want [sha256.Size]byte
 }
 
-func newBearerVerifier(src core.WebhookSource) (Verifier, error) {
+func newBearerVerifier(src core.WebhookSource, _ func() time.Time) (Verifier, error) {
 	return bearerVerifier{want: sha256.Sum256([]byte(src.Secret.Reveal()))}, nil
 }
 

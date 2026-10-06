@@ -1353,7 +1353,7 @@ secret = "${GH_HOOK_SECRET}"
 | `github` | `X-Hub-Signature-256: sha256=<hex HMAC-SHA256>` | `X-GitHub-Event` | `X-GitHub-Delivery` |
 | `gitea` | `X-Gitea-Signature: <hex HMAC-SHA256>` | `X-Gitea-Event` | `X-Gitea-Delivery` |
 | `gitlab` | `X-Gitlab-Token: <secret>` | `X-Gitlab-Event` | `X-Gitlab-Event-UUID` |
-| `standard-webhooks` | not implemented yet; see below | — | — |
+| `standard-webhooks` | `webhook-signature: v1,<base64 HMAC-SHA256>` over `<webhook-id>.<webhook-timestamp>.<body>`, keyed by the decoded secret, with `webhook-timestamp` within 5 minutes of the daemon's clock | none; the body's top-level `type` | `webhook-id` |
 
 For `github` and `gitea`, set the same value as the forge hook's **Secret**;
 for `gitlab`, as its **Secret token**. A missing signature header, two of
@@ -1367,15 +1367,21 @@ A `gitlab` token is a shared password, not a signature: it proves the sender
 knows the secret, but does not cover the body. Prefer `gitea`- or
 `github`-style signing where the sender offers it, and TLS either way.
 
-:::warning standard-webhooks is not verified yet
-A route using `verify = "standard-webhooks"` loads, logs a warning, and
-answers **every** delivery `401` until its verifier lands. It never accepts
-an unverified delivery.
+A `standard-webhooks` route speaks the [Standard Webhooks](https://www.standardwebhooks.com/)
+v1 signature — the scheme Switchboard's notify hooks use. The secret must be
+`whsec_` followed by the padded standard base64 of 24 to 64 bytes, and the
+HMAC is keyed by what that decodes to, never by the string. A delivery passes
+when **any** `v1` entry in the space-separated `webhook-signature` list
+matches, so a sender mid-rotation can sign with its old and its new secret
+side by side. `webhook-timestamp` more than 300 seconds from the daemon's
+clock, in either direction, is a `401`; so is a body or `webhook-id` that was
+not the one signed. The event name `events` matches is the body's top-level
+`type`, and `webhook-id` becomes the run's `event_id`, so re-sending the same
+delivery is a `202 duplicate`, not a second firing.
 
-A non-loopback `webhook_listen` without TLS starts with a warning: bearer and
-GitLab tokens then cross the network in cleartext. Bind loopback behind a
-TLS-terminating proxy, or set both TLS files.
-:::
+A non-loopback `webhook_listen` without TLS starts with a warning: bearer,
+GitLab and Standard Webhooks secrets then cross the network in cleartext.
+Bind loopback behind a TLS-terminating proxy, or set both TLS files.
 
 `harness triggers` shows each source's state — `listening`, or `no_listener`
 when no address is set — and `harness doctor` flags both a non-loopback bind

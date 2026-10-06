@@ -140,7 +140,7 @@ func headerOf(m map[string]string) http.Header {
 func TestKnownAnswerVectors(t *testing.T) {
 	for _, vec := range vectors() {
 		t.Run(vec.scheme+"/"+vec.sig, func(t *testing.T) {
-			v, err := NewVerifier(loadSource(t, "r", vec.scheme, vec.secret, vec.table))
+			v, err := NewVerifier(loadSource(t, "r", vec.scheme, vec.secret, vec.table), nil)
 			if err != nil {
 				t.Fatalf("NewVerifier: %v", err)
 			}
@@ -183,7 +183,7 @@ func TestKnownAnswerVectors(t *testing.T) {
 // TestHMACRefusesMalformedSignatures: every shape short of a correct MAC in
 // the right header is refused, and no refusal echoes what was presented.
 func TestHMACRefusesMalformedSignatures(t *testing.T) {
-	gh, err := NewVerifier(loadSource(t, "gh", "github", githubSecret, ""))
+	gh, err := NewVerifier(loadSource(t, "gh", "github", githubSecret, ""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestHMACRefusesMalformedSignatures(t *testing.T) {
 // TestGitLabTokenIsExact: the token must be the secret, byte for byte, in
 // exactly one X-Gitlab-Token header.
 func TestGitLabTokenIsExact(t *testing.T) {
-	gl, err := NewVerifier(loadSource(t, "gl", "gitlab", gitlabToken, ""))
+	gl, err := NewVerifier(loadSource(t, "gl", "gitlab", gitlabToken, ""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,12 +284,12 @@ func TestGitLabTokenIsExact(t *testing.T) {
 func TestPresetRefusesADisagreeingSource(t *testing.T) {
 	src := loadSource(t, "gh", "github", githubSecret, "")
 	src.SignatureHeader = "X-Other"
-	if _, err := NewVerifier(src); !errors.Is(err, ErrSchemeUnavailable) {
+	if _, err := NewVerifier(src, nil); !errors.Is(err, ErrSchemeUnavailable) {
 		t.Errorf("github with a foreign signature header: %v, want ErrSchemeUnavailable", err)
 	}
 	hm := loadSource(t, "hm", "hmac-sha256", rfcKey, "signature_header = \"X-Signature\"\n")
 	hm.SignatureHeader = ""
-	if _, err := NewVerifier(hm); !errors.Is(err, ErrSchemeUnavailable) {
+	if _, err := NewVerifier(hm, nil); !errors.Is(err, ErrSchemeUnavailable) {
 		t.Errorf("hmac-sha256 without a signature header: %v, want ErrSchemeUnavailable", err)
 	}
 }
