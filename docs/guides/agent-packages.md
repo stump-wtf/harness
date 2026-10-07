@@ -94,7 +94,7 @@ what. Add a schedule (or `triggers`) and a working directory next to the
 
 ```toml
 [harness.pr-reviewer]
-source   = "stump-wtf/pr-reviewer@<sha>"
+source   = "stump-wtf/pr-reviewer@0123456789abcdef0123456789abcdef01234567"
 schedule = "CRON_TZ=UTC 30 9 * * *"
 workdir  = "~/sweeps/pr-reviewer"
 # Run it on another adapter or model than the package picked:
@@ -154,7 +154,7 @@ packages/pr-reviewer/
   skills/<slug>/SKILL.md     # optional; requires [requests] skill_paths = true
 ```
 
-```toml
+```text
 [package]
 name        = "pr-reviewer"            # must match the directory
 version     = "0.1.0"
