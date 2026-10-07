@@ -111,11 +111,24 @@ templated over the run.
 Then `harness doctor` verifies config, daemon, and state. The full config
 reference and every verb are in the docs above.
 
+To run someone else's agent instead of writing one, install it from a
+**stable**, a git repository of agent packages:
+
+```sh
+harness agent stable add stump-wtf https://github.com/stump-wtf/harness-stable.git
+harness agent install stump-wtf/pr-reviewer
+```
+
+Install pins the package at an exact commit, scans it, and asks before it
+writes a `[harness.pr-reviewer]` table. You add the schedule and the workdir.
+See [Install shared agents from a stable](https://stump-wtf.github.io/harness/guides/agent-packages).
+
 ## Status
 
-**Alpha — and self-hosting.** `v0.6.0` is the latest tag, and Harness supervises
-real work daily. Everything in the docs is implemented and exercised on `main`,
-but the TOML schema and daemon protocol can still change before v1.
+**Alpha — and self-hosting.** Harness supervises real work daily; the latest
+version is on the [releases page](https://github.com/stump-wtf/harness/releases).
+Everything in the docs is implemented and exercised on `main`, but the TOML
+schema and daemon protocol can still change before v1.
 
 ## Development
 
