@@ -27,8 +27,9 @@ table may only select an adapter and supply values:
   `prompt_template` or `prompt_template_file`), `system_prompt_file`,
   `mcp_config`, `allowed_tools`, and `skill_paths`.
 - **Forbidden** (any of them fails the install): `schedule`, `triggers`,
-  `enabled`, `restart`, `operating_hours`, `workdir`, `env_file` and
-  `secrets_env`. So is any string containing `${`, and any other table.
+  `enabled`, `restart`, `restart_delay`, `operating_hours`, `workdir`,
+  `env_file` and `secrets_env`. So is any string containing `${`, and any
+  other table.
 - **Paths stay inside the package.** A path a package names must be relative
   to it. An absolute path, a `~` path, or one that climbs out with `..` is
   refused.
