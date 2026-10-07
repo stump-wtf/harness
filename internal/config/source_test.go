@@ -152,3 +152,70 @@ harness = "nonexistent"
 		t.Fatalf("want unknown-adapter error, got %v", err)
 	}
 }
+
+// A package's prompt_file resolves against the pin directory and, together
+// with a schedule set on the operator's table, makes a working one-shot: the
+// package ships the instruction, the machine supplies the wiring.
+func TestSourcePackagePromptFileResolvesInPin(t *testing.T) {
+	path := installTestPin(t, `[package]
+name = "pr-reviewer"
+[harness]
+harness = "claude-code"
+prompt_file = "prompts/review.md"
+`)
+	src := agentpkg.Source{Stable: "stump-wtf", Package: "pr-reviewer", SHA: testSHA}
+	promptPath := filepath.Join(agentpkg.PinDir(src), "prompts", "review.md")
+	if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(promptPath, []byte("Review the open PRs.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, path, "[harness.pr]\nsource = \"stump-wtf/pr-reviewer@"+testSHA+"\"\nschedule = \"@hourly\"\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	h := cfg.Harnesses["pr"]
+	if h.PromptFile != promptPath {
+		t.Errorf("prompt_file = %q, want %q", h.PromptFile, promptPath)
+	}
+	if !containsKey(h.PackageKeys, "prompt_file") {
+		t.Errorf("prompt_file not attributed to the package: %v", h.PackageKeys)
+	}
+}
+
+// The prompt sources override as one group: a table with its own inline
+// prompt drops the package's prompt_template rather than failing the load on
+// the four-way exclusion.
+func TestSourceLocalPromptOverridesPackagePromptGroup(t *testing.T) {
+	path := installTestPin(t, `[package]
+name = "pr-reviewer"
+[harness]
+harness = "claude-code"
+prompt_template = "Package prompt for {{harness.name}}"
+`)
+	writeConfig(t, path, "[harness.pr]\nsource = \"stump-wtf/pr-reviewer@"+testSHA+"\"\nprompt = \"local prompt\"\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	h := cfg.Harnesses["pr"]
+	if h.Prompt != "local prompt" || h.PromptTemplate != "" {
+		t.Errorf("prompt = %q, prompt_template = %q; want the local prompt only", h.Prompt, h.PromptTemplate)
+	}
+	for _, k := range h.PackageKeys {
+		if strings.HasPrefix(k, "prompt") {
+			t.Errorf("package attributed %q though the table overrode the prompt", k)
+		}
+	}
+}
+
+func containsKey(keys []string, want string) bool {
+	for _, k := range keys {
+		if k == want {
+			return true
+		}
+	}
+	return false
+}

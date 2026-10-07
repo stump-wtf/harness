@@ -395,6 +395,7 @@ func runAgentPrune(cmd *cobra.Command, o verbOpts) error {
 		h := cfg.Harnesses[name]
 		for _, f := range []struct{ key, path string }{
 			{"prompt_file", h.PromptFile},
+			{"prompt_template_file", h.PromptTemplateFile},
 			{"system_prompt_file", h.SystemPromptFile},
 			{"mcp_config", h.MCPConfig},
 		} {

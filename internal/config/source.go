@@ -88,6 +88,27 @@ func applySource(filename, name string, line int, rh rawHarness) (rawHarness, er
 		rh.Quiet = hv.Quiet
 		fromPackage("quiet")
 	}
+	// The four prompt sources are one choice, not four keys: they exclude
+	// one another on the table (SPEC-0017 REQ-5), so a table that sets ANY
+	// of them overrides the package's prompt whichever form either side
+	// uses. Merging key by key would hand a table carrying `prompt` the
+	// package's `prompt_file` too, and fail the load on the exclusion.
+	if rh.Prompt == "" && rh.PromptFile == "" && rh.PromptTemplate == "" && rh.PromptTemplateFile == "" {
+		switch {
+		case hv.Prompt != "":
+			rh.Prompt = hv.Prompt
+			fromPackage("prompt")
+		case hv.PromptFile != "":
+			rh.PromptFile = manifestPath(hv.PromptFile)
+			fromPackage("prompt_file")
+		case hv.PromptTemplate != "":
+			rh.PromptTemplate = hv.PromptTemplate
+			fromPackage("prompt_template")
+		case hv.PromptTemplateFile != "":
+			rh.PromptTemplateFile = manifestPath(hv.PromptTemplateFile)
+			fromPackage("prompt_template_file")
+		}
+	}
 	if rh.SystemPromptFile == "" && hv.SystemPromptFile != "" {
 		rh.SystemPromptFile = manifestPath(hv.SystemPromptFile)
 		fromPackage("system_prompt_file")

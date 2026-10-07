@@ -4,6 +4,7 @@ package agentpkg
 
 import (
 	"errors"
+	"github.com/stump-wtf/harness/internal/core"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,6 +150,46 @@ func TestParseManifestViolations(t *testing.T) {
 			wantErr: "[harness]",
 		},
 		{
+			name:    "two prompt sources",
+			src:     "[package]\nname = \"x\"\n[harness]\nharness = \"crush\"\nprompt_file = \"a.md\"\nprompt_template = \"b\"\n",
+			wantErr: "more than one prompt source",
+		},
+		{
+			name:    "prompt_file absolute",
+			src:     "[package]\nname = \"x\"\n[harness]\nharness = \"crush\"\nprompt_file = \"/home/op/.ssh/id_ed25519\"\n",
+			wantErr: "prompt_file",
+		},
+		{
+			name:    "prompt_template_file climbs out",
+			src:     "[package]\nname = \"x\"\n[harness]\nharness = \"crush\"\nprompt_template_file = \"prompts/../../../x.tmpl\"\n",
+			wantErr: "outside the package",
+		},
+		{
+			name:    "system_prompt_file home-relative",
+			src:     "[package]\nname = \"x\"\n[harness]\nharness = \"claude-code\"\nsystem_prompt_file = \"~/notes.md\"\n",
+			wantErr: "system_prompt_file",
+		},
+		{
+			name:    "mcp_config absolute",
+			src:     "[package]\nname = \"x\"\n[harness]\nharness = \"claude-code\"\nmcp_config = \"/etc/mcp.json\"\n",
+			wantErr: "mcp_config",
+		},
+		{
+			name:    "skill_paths climbs out",
+			src:     "[package]\nname = \"x\"\n[harness]\nharness = \"crush\"\nskill_paths = [\"..\"]\n",
+			wantErr: "skill_paths",
+		},
+		{
+			name:    "prompt not a string",
+			src:     "[package]\nname = \"x\"\n[harness]\nharness = \"crush\"\nprompt = 3\n",
+			wantErr: "prompt must be a string",
+		},
+		{
+			name:    "secret reference in inline prompt",
+			src:     "[package]\nname = \"x\"\n[harness]\nharness = \"crush\"\nprompt_template = \"use ${TOKEN}\"\n",
+			wantErr: `"${"`,
+		},
+		{
 			name:    "missing adapter",
 			src:     "[package]\nname = \"x\"\n[harness]\nmodel = \"opus\"\n",
 			wantErr: "harness",
@@ -167,11 +208,65 @@ func TestParseManifestViolations(t *testing.T) {
 	}
 }
 
+// Each prompt source parses into its own field, and a package-relative
+// path inside a subdirectory is accepted.
+func TestParseManifestPromptSources(t *testing.T) {
+	for _, tc := range []struct {
+		key  string
+		val  string
+		read func(HarnessValues) string
+	}{
+		{"prompt", "Review the PR.", func(h HarnessValues) string { return h.Prompt }},
+		{"prompt_file", "prompts/review.md", func(h HarnessValues) string { return h.PromptFile }},
+		{"prompt_template", "Run {{run.id}}", func(h HarnessValues) string { return h.PromptTemplate }},
+		{"prompt_template_file", "./prompts/review.tmpl", func(h HarnessValues) string { return h.PromptTemplateFile }},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			src := "[package]\nname = \"x\"\n[harness]\nharness = \"crush\"\n" + tc.key + " = \"" + tc.val + "\"\n"
+			m, err := ParseManifest([]byte(src), "package.toml")
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got := tc.read(m.Harness); got != tc.val {
+				t.Fatalf("%s = %q, want %q", tc.key, got, tc.val)
+			}
+		})
+	}
+}
+
 // TestLoadManifestMissingFile verifies a read of a nonexistent pin surfaces
 // the fs error config load translates into the missing-pin message.
 func TestLoadManifestMissingFile(t *testing.T) {
 	_, err := LoadManifest(filepath.Join(t.TempDir(), "nope", "package.toml"))
 	if err == nil || !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("want os.ErrNotExist, got %v", err)
+	}
+}
+
+// The upgrade review treats the prompt sources as one choice: an operator
+// whose table carries its own prompt sees no prompt rows however the package
+// moves its prompt, and a package-supplied prompt that changes form reads as
+// the old form dropped and the new one added.
+func TestEffectiveChangesPromptGroup(t *testing.T) {
+	oldMan := &Manifest{Harness: HarnessValues{Harness: "claude-code", PromptFile: "review.md"}}
+	newMan := &Manifest{Harness: HarnessValues{Harness: "claude-code", PromptTemplate: "Review {{harness.name}}"}}
+
+	local := &core.Harness{Adapter: "claude-code", Prompt: "mine", PackageKeys: []string{"harness"}}
+	for _, c := range EffectiveChanges(local, oldMan, newMan) {
+		if promptKeys[c.Key] {
+			t.Errorf("local prompt: unexpected review row %+v", c)
+		}
+	}
+
+	pkg := &core.Harness{Adapter: "claude-code", PromptFile: "/pin/old/review.md", PackageKeys: []string{"harness", "prompt_file"}}
+	rows := map[string]EffectiveChange{}
+	for _, c := range EffectiveChanges(pkg, oldMan, newMan) {
+		rows[c.Key] = c
+	}
+	if c, ok := rows["prompt_file"]; !ok || c.New != nil || c.Old != "/pin/old/review.md" {
+		t.Errorf("prompt_file row = %+v, want the old path dropped", c)
+	}
+	if c, ok := rows["prompt_template"]; !ok || !c.Added {
+		t.Errorf("prompt_template row = %+v, want added", c)
 	}
 }

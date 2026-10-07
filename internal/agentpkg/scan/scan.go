@@ -1,6 +1,6 @@
 // The scan runner: walks one package directory (a stable clone's package
-// checkout or an installed pin), linting the manifest text and every bundled
-// .md/.txt file line by line. Findings carry file, line, pattern id and
+// checkout or an installed pin), linting the manifest text, every bundled
+// .md/.txt file and every prompt file the manifest names, line by line. Findings carry file, line, pattern id and
 // severity, never matched text.
 //
 // Governing: ADR-0044 (agent package stables), SPEC-0026 REQ-5, Error
@@ -25,8 +25,8 @@ import (
 // has exactly one of.
 const ManifestFile = "package.toml"
 
-// Scan lints one package directory's manifest text and every bundled .md or
-// .txt file (SPEC-0026 REQ-5). Manifest string values are covered by
+// Scan lints one package directory's manifest text, every bundled .md or
+// .txt file, and every prompt file the manifest names (SPEC-0026 REQ-5). Manifest string values are covered by
 // scanning package.toml's text; the line numbers are the file's real ones.
 // man supplies the declared homepage for the foreign-domain link check.
 // Files are visited in sorted order so findings are deterministic.
@@ -46,6 +46,17 @@ func Scan(pkgDir string, man *agentpkg.Manifest) ([]agentpkg.Finding, error) {
 		}
 		return nil, fmt.Errorf("scan: read %s: %w", pkgDir, err)
 	}
+	// A file the manifest names as an instruction is natural language the
+	// agent reads, whatever its extension: a prompt_template_file is often
+	// .tmpl, and a system prompt need not end in .md.
+	named := map[string]bool{}
+	if man != nil {
+		for _, p := range []string{man.Harness.PromptFile, man.Harness.PromptTemplateFile, man.Harness.SystemPromptFile} {
+			if p != "" && !filepath.IsAbs(p) {
+				named[filepath.Join(pkgDir, p)] = true
+			}
+		}
+	}
 	var files []string
 	err := filepath.WalkDir(pkgDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -54,7 +65,7 @@ func Scan(pkgDir string, man *agentpkg.Manifest) ([]agentpkg.Finding, error) {
 		if d.IsDir() || path == manPath {
 			return nil
 		}
-		if ext := filepath.Ext(d.Name()); ext == ".md" || ext == ".txt" {
+		if ext := filepath.Ext(d.Name()); ext == ".md" || ext == ".txt" || named[path] {
 			files = append(files, path)
 		}
 		return nil

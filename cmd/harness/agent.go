@@ -488,6 +488,16 @@ func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string) error {
 	if hv.Quiet != nil {
 		fmt.Fprintf(out, "  quiet %t\n", *hv.Quiet)
 	}
+	for _, p := range []struct{ key, val string }{
+		{"prompt", hv.Prompt},
+		{"prompt_file", hv.PromptFile},
+		{"prompt_template", hv.PromptTemplate},
+		{"prompt_template_file", hv.PromptTemplateFile},
+	} {
+		if p.val != "" {
+			fmt.Fprintf(out, "  %s %s\n", p.key, p.val)
+		}
+	}
 	if hv.SystemPromptFile != "" {
 		fmt.Fprintf(out, "  system_prompt_file %s\n", hv.SystemPromptFile)
 	}

@@ -233,7 +233,12 @@ network     = false
   closes over (`argv`* for a `command` kind, `model`/`model_pin`,
   `auto_accept`, `max_turns`, `quiet`, `system_prompt_file`, `mcp_config`,
   `allowed_tools`, `skill_paths`* rewritten to the bundle, `mcp_bridge`,
-  `mcp_exclusive`, `mcp_policy`). It rejects `env_file` and `secrets_env`
+  `mcp_exclusive`, `mcp_policy`), plus at most one one-shot prompt source
+  (`prompt`, `prompt_file`, `prompt_template`, `prompt_template_file`). A
+  package ships the instruction; the `schedule` or `triggers` that fire it
+  stay on the operator's table, so installing a package never makes
+  anything run on its own. Every path it names stays inside the package.
+  It rejects `env_file` and `secrets_env`
   outright — a hard load error, never a silent drop — and any string value
   containing `${`, closing exactly the smuggling path ADR-0038 defined.
 * `[package]`/`[requests]` are metadata; nothing under them is executable.

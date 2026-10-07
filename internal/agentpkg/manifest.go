@@ -10,6 +10,7 @@ package agentpkg
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -33,16 +34,24 @@ type PackageMeta struct {
 // add them to the schema itself — until then they fail as unknown keys, which
 // is the honest error.
 type HarnessValues struct {
-	Harness          string
-	Args             []string
-	Argv             []string
-	Model            string
-	AutoAccept       *bool
-	MaxTurns         *int
-	Quiet            *bool
-	SystemPromptFile string
-	MCPConfig        string
-	AllowedTools     []string
+	Harness    string
+	Args       []string
+	Argv       []string
+	Model      string
+	AutoAccept *bool
+	MaxTurns   *int
+	Quiet      *bool
+	// Prompt, PromptFile, PromptTemplate and PromptTemplateFile are the
+	// one-shot prompt sources (SPEC-0006 REQ "Prompt Source", SPEC-0017
+	// REQ-5). A manifest carries at most one; the two file forms resolve
+	// against the pin directory like system_prompt_file.
+	Prompt             string
+	PromptFile         string
+	PromptTemplate     string
+	PromptTemplateFile string
+	SystemPromptFile   string
+	MCPConfig          string
+	AllowedTools       []string
 	// SkillPaths is the package's additional skill roots (SPEC-0006 REQ
 	// "Skill Path Configuration"), resolved against the pin directory at
 	// config load. Values here point INTO the bundle — the merge tier they
@@ -67,17 +76,21 @@ type Manifest struct {
 // harnessAllowlist is the only set of keys [harness] accepts, matched against
 // the decoded keys in sorted order so errors are deterministic.
 var harnessAllowlist = map[string]bool{
-	"harness":            true,
-	"args":               true,
-	"argv":               true,
-	"model":              true,
-	"auto_accept":        true,
-	"max_turns":          true,
-	"quiet":              true,
-	"system_prompt_file": true,
-	"mcp_config":         true,
-	"allowed_tools":      true,
-	"skill_paths":        true,
+	"harness":              true,
+	"args":                 true,
+	"argv":                 true,
+	"model":                true,
+	"auto_accept":          true,
+	"max_turns":            true,
+	"quiet":                true,
+	"prompt":               true,
+	"prompt_file":          true,
+	"prompt_template":      true,
+	"prompt_template_file": true,
+	"system_prompt_file":   true,
+	"mcp_config":           true,
+	"allowed_tools":        true,
+	"skill_paths":          true,
 }
 
 // harnessForbidden is the explicit denylist SPEC-0026 REQ-3 names, so its
@@ -233,6 +246,32 @@ func decodeHarness(v any, path string, m *Manifest) error {
 		return err
 	}
 	hv.Model = mustStr(t, "model")
+	var prompts []string
+	for _, p := range []struct {
+		key string
+		dst *string
+	}{
+		{"prompt", &hv.Prompt},
+		{"prompt_file", &hv.PromptFile},
+		{"prompt_template", &hv.PromptTemplate},
+		{"prompt_template_file", &hv.PromptTemplateFile},
+	} {
+		if _, present := t[p.key]; !present {
+			continue
+		}
+		s, ok := t[p.key].(string)
+		if !ok {
+			return violation(path, "[harness].%s must be a string", p.key)
+		}
+		*p.dst = s
+		prompts = append(prompts, p.key)
+	}
+	// The four prompt sources exclude one another on any harness table
+	// (SPEC-0017 REQ-5); a manifest that names two could never load, so say
+	// so here, against the manifest, rather than at every install.
+	if len(prompts) > 1 {
+		return violation(path, "[harness] carries more than one prompt source (%s); a package supplies at most one", strings.Join(prompts, ", "))
+	}
 	hv.SystemPromptFile = mustStr(t, "system_prompt_file")
 	hv.MCPConfig = mustStr(t, "mcp_config")
 	if hv.AllowedTools, err = optStrList(t, "allowed_tools", path); err != nil {
@@ -240,6 +279,26 @@ func decodeHarness(v any, path string, m *Manifest) error {
 	}
 	if hv.SkillPaths, err = optStrList(t, "skill_paths", path); err != nil {
 		return err
+	}
+	// Every path a manifest names is read at config load or spawn and fed to
+	// the agent, so it must name a file the package ships: a path that is
+	// absolute or climbs out of the package would hand the agent any file on
+	// the installing machine (a prompt_file of ~/.ssh/id_ed25519 is the
+	// agent's instruction) without the content scan ever seeing it.
+	for _, pv := range []struct{ key, val string }{
+		{"prompt_file", hv.PromptFile},
+		{"prompt_template_file", hv.PromptTemplateFile},
+		{"system_prompt_file", hv.SystemPromptFile},
+		{"mcp_config", hv.MCPConfig},
+	} {
+		if err := checkPackagePath(pv.val, path, "[harness]."+pv.key); err != nil {
+			return err
+		}
+	}
+	for _, sp := range hv.SkillPaths {
+		if err := checkPackagePath(sp, path, "[harness].skill_paths"); err != nil {
+			return err
+		}
 	}
 	if b, ok := t["auto_accept"].(bool); ok {
 		hv.AutoAccept = &b
@@ -314,6 +373,21 @@ func decodeRequests(v any, path string, m *Manifest) error {
 		m.Requests.MCPAllow = out
 	} else if _, present := t["mcp_allow"]; present {
 		return violation(path, "[requests].mcp_allow must be a list of \"read\" and/or \"write\"")
+	}
+	return nil
+}
+
+// checkPackagePath rejects a manifest path that is absolute or resolves
+// outside the package directory (SPEC-0026 REQ-3). Empty means unset.
+func checkPackagePath(v, path, key string) error {
+	if v == "" {
+		return nil
+	}
+	if filepath.IsAbs(v) || strings.HasPrefix(v, "~") {
+		return violation(path, "%s %q must be a path inside the package, relative to package.toml", key, v)
+	}
+	if c := filepath.Clean(v); c == ".." || strings.HasPrefix(c, ".."+string(filepath.Separator)) {
+		return violation(path, "%s %q resolves outside the package directory", key, v)
 	}
 	return nil
 }

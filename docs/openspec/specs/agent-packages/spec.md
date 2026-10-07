@@ -144,16 +144,35 @@ does for a hand-written harness). It MAY carry only the per-harness value
 keys ADR-0039 closes over (`args`, `argv`, `model`, `model_pin`,
 `auto_accept`, `max_turns`, `quiet`, `system_prompt_file`, `mcp_config`,
 `allowed_tools`, `skill_paths`, `use_default_skill_paths`, `mcp_bridge`,
-`mcp_exclusive`, `mcp_policy`). It SHALL NOT carry `env_file`,
+`mcp_exclusive`, `mcp_policy`), plus the one-shot prompt sources (`prompt`,
+`prompt_file`, `prompt_template`, `prompt_template_file`; SPEC-0006 REQ
+"Prompt Source", SPEC-0017 REQ-5). A manifest SHALL carry at most one prompt
+source; two SHALL fail to load, naming both. A packaged prompt template is
+held to SPEC-0017's grammar and context rules at config load exactly as a
+hand-written one is. A package ships the instruction, never the firing: the
+`schedule` and `triggers` that make the harness a one-shot stay on the
+operator's harness table. It SHALL NOT carry `env_file`,
 `secrets_env`, `workdir` as an absolute path outside the package directory,
 `enabled`, `restart`, `restart_delay`, `operating_hours`, `schedule`, or
 `triggers`; each SHALL fail to load, naming the key. Every string value
 under `[harness]` SHALL be rejected if it contains the substring `${`,
 because that is the secret-reference grammar ADR-0038 defines, and a
-package manifest MUST NOT carry one. A relative path value (such as
-`system_prompt_file`) SHALL resolve against the package's own directory
-inside the content-addressed store, never against the installing harness's
-`workdir`.
+package manifest MUST NOT carry one. Every path value (`prompt_file`,
+`prompt_template_file`, `system_prompt_file`, `mcp_config`, each
+`skill_paths` entry) SHALL be relative and SHALL stay inside the package
+directory: an absolute path, a `~` path, or one whose cleaned form climbs
+out through `..` SHALL fail to load, naming the key. Those files are read
+into the agent's context, so a path outside the package would hand the
+agent any file on the installing machine without the content scan (REQ-5)
+ever reading it. A relative path value SHALL resolve against the package's
+own directory inside the content-addressed store, never against the
+installing harness's `workdir`.
+
+At config load the four prompt sources SHALL merge as one group, not key by
+key: when the harness table sets any prompt source, the package's prompt
+source SHALL NOT apply, whichever form either side uses (REQ-7's
+local-override rule applied to the group SPEC-0017 REQ-5 makes mutually
+exclusive).
 
 `[requests]` MAY carry `skill_paths` (boolean), `mcp_allow` (a list whose
 values are `"read"` and/or `"write"`), and `network` (boolean). Any other
@@ -176,6 +195,31 @@ key under `[requests]` SHALL fail to load, naming the key.
 - **WHEN** a manifest declares `system_prompt_file = "${HOME}/prompt.md"`
 - **THEN** the package fails to load, naming the key and stating that `${`
   is not permitted in a package manifest
+
+#### Scenario: A package ships a one-shot prompt
+
+- **WHEN** a manifest declares `prompt_file = "prompts/review.md"` and the
+  operator's table sets `source` to that package and `schedule = "@hourly"`
+- **THEN** the harness loads as a scheduled one-shot whose `prompt_file` is
+  `prompts/review.md` under the pin's directory, attributed to the package
+
+#### Scenario: Two prompt sources in one manifest
+
+- **WHEN** a manifest declares both `prompt_file` and `prompt_template`
+- **THEN** the package fails to load, naming both keys
+
+#### Scenario: A path outside the package is rejected
+
+- **WHEN** a manifest declares `prompt_file = "/home/op/.ssh/id_ed25519"`,
+  or `prompt_template_file = "../../x.tmpl"`
+- **THEN** the package fails to load, naming the key
+
+#### Scenario: A local prompt overrides the package's prompt as a group
+
+- **WHEN** a manifest declares `prompt_template` and the operator's table
+  sets `prompt`
+- **THEN** the harness loads with the table's `prompt` alone, and describe
+  attributes no prompt key to the package
 
 #### Scenario: An unknown request key
 
@@ -222,8 +266,10 @@ applies.
 ### Requirement: REQ-5 — Content Scan And Severity
 
 Before every install and every upgrade, the CLI SHALL run a content scan
-over the manifest's string values and every bundled file with a `.md` or
-`.txt` extension. The scan SHALL classify each finding as `high` or `low`
+over the manifest's string values, every bundled file with a `.md` or
+`.txt` extension, and every file the manifest names as a prompt
+(`prompt_file`, `prompt_template_file`, `system_prompt_file`) whatever its
+extension. The scan SHALL classify each finding as `high` or `low`
 severity and SHALL be documented as a heuristic tripwire, not a
 certification: the CLI output and `harness agent info` SHALL both state
 that a clean scan is not a guarantee of safety.
@@ -422,11 +468,16 @@ present the diff for an explicit per-change choice — keep the current value
 take the new one (removing any local override it replaces, so the new pin
 supplies it). A package-supplied key SHALL be compared manifest to manifest,
 so a pin-relative path the new pin leaves unchanged is not a change. Keeping
-a package-supplied path (`system_prompt_file`, `mcp_config`) pins the old
+a package-supplied path (`prompt_file`, `prompt_template_file`,
+`system_prompt_file`, `mcp_config`) pins the old
 pin's absolute path onto the table; the review SHALL say that this path now
 holds the old pin, which REQ-9's prune keeps while it does. Package
 metadata (version, description) SHALL NOT trigger the review: it changes
-nothing the harness runs.
+nothing the harness runs. The prompt sources are reviewed as REQ-3's one group: when
+the table sets its own prompt source, no prompt-source row SHALL appear,
+because nothing the new pin does to its prompt changes what the harness
+runs; a package prompt that changes form SHALL read as the old key dropped
+and the new key added.
 
 On confirmation, upgrade SHALL update the `source` line's `@<sha>` on the
 affected harness table plus exactly the changes the review's choices
@@ -483,7 +534,8 @@ never touches a hand-written harness).
 `$XDG_STATE_HOME/harness/agents/installed/` that the **global**
 `harness.toml` does not reference. A pin is referenced by a `source` naming
 it, or by a file path config load reads — `prompt_file`,
-`system_prompt_file`, `mcp_config` — whose resolved value lies inside the
+`prompt_template_file`, `system_prompt_file`, `mcp_config` — whose resolved
+value lies inside the
 pin's directory, as a package path kept through REQ-8's review does; for
 each pin that only such a path references, prune SHALL say so in its
 output, naming the harness and the key. It SHALL NOT scan project files (they

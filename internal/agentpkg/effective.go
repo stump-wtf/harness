@@ -103,13 +103,38 @@ func EffectiveChanges(h *core.Harness, oldMan, newMan *Manifest) []EffectiveChan
 		{"auto_accept", h.AutoAccept, h.AutoAccept, boolOrNil(ov.AutoAccept), boolOrNil(nv.AutoAccept), false},
 		{"max_turns", h.MaxTurns, h.MaxTurns != 0, intOrNil(ov.MaxTurns), intOrNil(nv.MaxTurns), 0},
 		{"quiet", h.Quiet, h.Quiet, boolOrNil(ov.Quiet), boolOrNil(nv.Quiet), false},
+		{"prompt", strOrNil(h.Prompt), h.Prompt != "", strOrNil(ov.Prompt), strOrNil(nv.Prompt), nil},
+		{"prompt_file", strOrNil(h.PromptFile), h.PromptFile != "", strOrNil(ov.PromptFile), strOrNil(nv.PromptFile), nil},
+		{"prompt_template", strOrNil(h.PromptTemplate), h.PromptTemplate != "", strOrNil(ov.PromptTemplate), strOrNil(nv.PromptTemplate), nil},
+		{"prompt_template_file", strOrNil(h.PromptTemplateFile), h.PromptTemplateFile != "", strOrNil(ov.PromptTemplateFile), strOrNil(nv.PromptTemplateFile), nil},
 		{"system_prompt_file", strOrNil(h.SystemPromptFile), h.SystemPromptFile != "", strOrNil(ov.SystemPromptFile), strOrNil(nv.SystemPromptFile), nil},
 		{"mcp_config", strOrNil(h.MCPConfig), h.MCPConfig != "", strOrNil(ov.MCPConfig), strOrNil(nv.MCPConfig), nil},
 		{"allowed_tools", strSliceOrNil(h.AllowedTools), h.AllowedTools != nil, strSliceOrNil(ov.AllowedTools), strSliceOrNil(nv.AllowedTools), nil},
 		{"skill_paths", strSliceOrNil(h.SkillPaths), h.SkillPaths != nil, strSliceOrNil(ov.SkillPaths), strSliceOrNil(nv.SkillPaths), nil},
 	}
 
+	// The prompt sources are one choice (applySource): when the operator's
+	// table sets its own, the package's prompt never applies, so nothing
+	// the new pin does to its prompt keys changes what the harness runs.
+	localPrompt := false
+	for _, p := range []struct {
+		key string
+		set bool
+	}{
+		{"prompt", h.Prompt != ""},
+		{"prompt_file", h.PromptFile != ""},
+		{"prompt_template", h.PromptTemplate != ""},
+		{"prompt_template_file", h.PromptTemplateFile != ""},
+	} {
+		if p.set && !packageKey(p.key) {
+			localPrompt = true
+		}
+	}
+
 	for _, f := range fields {
+		if localPrompt && promptKeys[f.key] {
+			continue
+		}
 		fromPackage := packageKey(f.key)
 		local := !fromPackage && (f.set || f.old != nil)
 		switch {
@@ -181,6 +206,14 @@ func EffectiveChanges(h *core.Harness, oldMan, newMan *Manifest) []EffectiveChan
 		}
 	}
 	return out
+}
+
+// promptKeys are the four mutually exclusive prompt sources.
+var promptKeys = map[string]bool{
+	"prompt":               true,
+	"prompt_file":          true,
+	"prompt_template":      true,
+	"prompt_template_file": true,
 }
 
 func strOrNil(s string) any {
