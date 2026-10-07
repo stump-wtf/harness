@@ -16,6 +16,10 @@ package config
 //
 // @joestump 09/24/2026 - Also loads docs/patterns/, the cross-stack patterns
 // cookbook, whose configs are copied as often as the guides'.
+//
+// @joestump-agent 10/07/2026 - loadDocsConfig now materializes a minimal pin
+// for every `source` a block references (agentpkg.Source grammar), so a guide
+// example can show a full 40-character pin without the pin existing on disk.
 
 import (
 	"bufio"
@@ -25,6 +29,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stump-wtf/harness/internal/agentpkg"
 )
 
 var (
@@ -39,6 +45,11 @@ var (
 	// so the fixture cannot drift from what the example asks for.
 	docsEnvFileRe = regexp.MustCompile(`(?m)^\s*env_file\s*=\s*"([^"]+)"`)
 	docsEnvRefRe  = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+	// A source pin resolves from the local install store (SPEC-0026 REQ-7),
+	// so a valid example naming one would otherwise fail the load for a
+	// missing pin rather than for anything about the example. The grammar
+	// mirrors agentpkg.ParseSource: <stable>/<package>@<40-char sha>.
+	docsSourceRe = regexp.MustCompile(`(?m)^\s*source\s*=\s*"([a-z][a-z0-9-]*)/([a-z][a-z0-9-]*)@([0-9a-f]{40})"`)
 )
 
 // docsTOMLBlock is one fenced toml block and the line its fence opens on.
@@ -127,6 +138,25 @@ func loadDocsConfig(t *testing.T, body string) error {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(p, []byte(envBody.String()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One minimal pin per source reference: a manifest whose [package].name
+	// matches the pin and whose [harness] names a real adapter and carries a
+	// prompt_file, the same shape the guide's worked example assumes (a
+	// scheduled table gets its prompt from the package). The prompt file is
+	// created pin-relative, since manifest paths anchor on the pin directory.
+	for _, m := range docsSourceRe.FindAllStringSubmatch(body, -1) {
+		src := agentpkg.Source{Stable: m[1], Package: m[2], SHA: m[3]}
+		dir := agentpkg.PinDir(src)
+		if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		manifest := "[package]\nname = \"" + m[2] + "\"\n\n[harness]\nharness = \"claude-code\"\nprompt_file = \"prompts/review.md\"\n"
+		if err := os.WriteFile(agentpkg.ManifestPath(src), []byte(manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "prompts", "review.md"), []byte("Do the sweep and report.\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
