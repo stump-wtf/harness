@@ -93,8 +93,9 @@ enabled = true
 ```
 
 `harness` is required and names the kind. `crush`, `claude-code`, `codex`,
-`pi` and `omp` are agent CLIs with adapters of their own; agent-trace reads the
-sessions of all but `omp`, which is observed once it can. `command` runs any
+`pi` and `omp` are agent CLIs with adapters of their own, and agent-trace reads
+the sessions of every one of them. agent-trace also reads OpenCode, which has
+no kind here yet. `command` runs any
 other program, with no shell: its `argv` array is the whole process, so each
 element reaches the program as one byte-identical argument. A `command`
 harness that hand-builds an agent's argv can set `transcripts` to that agent's
