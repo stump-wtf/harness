@@ -34,6 +34,7 @@ Read these in order the first time; each one assumes the previous.
 | — | [Claude Code under Harness](./claude-code) | exactly what Harness runs for Claude Code, one-shot limits, and the channels flag |
 | 6 | [Observability](./observability) | post-mortems with `harness logs`, the chatroom, `doctor`, and the SSH cockpit |
 | 7 | [The stack: Harness, Switchboard and Cairn](./harness-switchboard-cairn) | the whole loop end to end: roles, what each tool is and is not, a worked team example |
+| — | [Shared agents (stables)](./agent-packages) | a PR reviewer installed from a stable with `harness agent install`, scheduled on your own table |
 | 8 | [Run the merge train](./merge-train) | approved PRs landing one at a time, each tested as the exact tree that merges |
 | — | [Troubleshooting](./troubleshooting) | answers for the usual "it's green but nothing happens" moments |
 | — | [Onboarding path](./onboarding) | Cairn, Switchboard and Harness set up one layer at a time, each with a gate that proves it works |

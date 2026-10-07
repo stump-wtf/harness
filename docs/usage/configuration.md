@@ -804,6 +804,66 @@ so an `omp` harness claims exactly its own.
 harness = "claude-code"
 ```
 
+## Agent packages and stables
+
+A harness table can take its values from an installed agent package instead of
+spelling them out (ADR-0044, SPEC-0026). `harness agent install` writes both
+tables below; edit the local keys by hand, but leave `[stable.*]` and the
+`source` line to `harness agent`. The walkthrough is
+[Install shared agents from a stable](../guides/agent-packages).
+
+```toml
+[stable.stump-wtf]
+remote = "https://github.com/stump-wtf/harness-stable.git"
+public = true                     # optional; unset means true
+
+[harness.pr-reviewer]
+source   = "stump-wtf/pr-reviewer@0123456789abcdef0123456789abcdef01234567"
+schedule = "CRON_TZ=UTC 30 9 * * *"
+workdir  = "~/sweeps/pr-reviewer"
+```
+
+| Key | Where | Meaning |
+|---|---|---|
+| `remote` | `[stable.<name>]` | the stable's git URL; `<name>` matches `^[a-z][a-z0-9-]*$` |
+| `public` | `[stable.<name>]` | informational; defaults to `true` |
+| `source` | `[harness.<name>]` | `<stable>/<package>@<40-hex sha>`: an installed pin |
+
+**Global only.** `[stable.*]` is refused in a project `harness.toml` and on
+the project-up wire, like `[adapter.*]` and `[skill_repo.*]`: a cloned
+repository must not widen what a machine trusts.
+
+**Resolution at load.** The daemon reads the pinned `package.toml` from
+`$XDG_STATE_HOME/harness/agents/installed/` and never fetches. A missing
+pin fails the load, keeping the daemon on its last good config, and names
+the `harness agent install` to run.
+
+**Merging.** The package's `[harness]` values fill keys the table leaves unset,
+and a key set on the table wins:
+
+- **Prompt sources merge as one group.** `prompt`, `prompt_file`,
+  `prompt_template` and `prompt_template_file` exclude one another. A table
+  that sets any of them drops the package's prompt entirely.
+- **Paths resolve inside the pin.** A package's `prompt_file`,
+  `prompt_template_file`, `system_prompt_file`, `mcp_config` and
+  `skill_paths` resolve against the pin's directory, never against the
+  harness's `workdir`.
+- **Bundled skills.** A package's `skills/` joins the ordered skill merge only
+  when its `[requests].skill_paths` is `true`, at the lowest precedence. An
+  adapter default, global or project skill with the same name shadows it.
+
+**What a package may set.**
+
+- **Allowed:** `harness`, `args`, `argv`, `model`, `auto_accept`,
+  `max_turns`, `quiet`, one prompt source, `system_prompt_file`,
+  `mcp_config`, `allowed_tools` and `skill_paths`.
+- **Rejected by name:** `schedule`, `triggers`, `enabled`, `restart`,
+  `restart_delay`, `operating_hours`, `workdir`, `env_file` and
+  `secrets_env`. The firing, the supervision and the secrets are always the
+  table's.
+- **Also refused:** a string containing `${`, and a path that is absolute,
+  starts with `~`, or climbs out of the package.
+
 ## Model routing and provider failover
 
 When you pin a harness to a single model on a single provider, a quota wall or

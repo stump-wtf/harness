@@ -428,6 +428,52 @@ Anything that should survive a daemon restart, run on a clock, or fire on an
 event belongs in `harness.toml` instead: a resident harness, or a prompt harness
 you fire with `schedule`, `triggers` or [`harness trigger`](#scheduled-jobs).
 
+## Agent packages
+
+`harness agent` installs agent packages from trusted git repositories called
+**stables** (ADR-0044, SPEC-0026). It is a client-only tree that edits your
+global `harness.toml` directly, so most verbs work with no daemon running;
+when one is reachable, the verb asks it to reload. The walkthrough is
+[Install shared agents from a stable](../guides/agent-packages).
+
+```sh
+harness agent stable add NAME REMOTE [--private]   # clone, then write [stable.NAME]
+harness agent stable list                           # trusted stables and their clones
+harness agent stable update [NAME]                  # fetch + fast-forward (the only fetch)
+harness agent stable remove NAME                    # drop the table; names harnesses still sourced
+
+harness agent search [QUERY] [--stable NAME]        # packages in local clones
+harness agent info STABLE/PACKAGE                   # manifest, requests, scan findings, files
+
+harness agent install STABLE/PACKAGE[@VERSION] [--as NAME] [--replace] [--yes] [--force-unsafe]
+harness agent upgrade STABLE/PACKAGE[@VERSION] [--all] [--yes]
+harness agent list [--json]                         # package-sourced harnesses, pins, NEWER
+harness agent uninstall NAME [--yes]                # remove the table; the pin stays
+harness agent prune                                 # remove pins nothing references
+```
+
+- **Only `stable update` fetches.** Every other verb reads the local clone.
+  `agent list`'s `NEWER` column compares against the clone as the last update
+  left it.
+- **`install`** pins the package at an exact commit in the content-addressed
+  store, scans it, and asks before it writes `source = "STABLE/PACKAGE@<sha>"`
+  onto `[harness.NAME]`.
+  - Without a terminal it refuses unless `--yes`.
+  - `--yes` never clears a `high` scan finding or an `mcp_allow = ["write"]`
+    request.
+  - `--force-unsafe` overrides a `high` finding after you retype the package.
+  - `--replace` lets the table switch from another package's source.
+- **`upgrade`** re-pins to a newer commit of the local clone (`--all` for
+  every sourced harness). It shows the manifest diff, any new scan finding,
+  and every change to the harness's effective values. It never applies those
+  changes unattended: `--yes` refuses, naming them.
+- **`prune`** reads only the global `harness.toml`. A pin referenced only by
+  a project file is removed, and that project's next `up` reports it missing.
+
+`harness describe NAME` marks each value a package supplied with
+`(package)`, and `harness doctor` reports a sourced harness whose pin is
+missing.
+
 ## Project verbs
 
 ```sh
