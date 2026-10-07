@@ -15,8 +15,8 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/core"
-	"github.com/stump-wtf/harness/internal/redact"
 	"github.com/stump-wtf/harness/internal/runtrace"
 	rt "github.com/stump-wtf/harness/internal/runtrace/runtracetest"
 	"github.com/stump-wtf/harness/internal/supervisor"

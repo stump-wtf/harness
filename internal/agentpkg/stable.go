@@ -27,8 +27,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/gitcmd"
-	"github.com/stump-wtf/harness/internal/redact"
 )
 
 // PackagesDir is the directory inside a stable's clone holding its packages.
@@ -64,7 +64,7 @@ func CloneStable(name, remote string) (string, error) {
 	if out, err := gitcmd.Run(tmp, "clone", remote, tmp); err != nil {
 		os.RemoveAll(tmp)
 		return "", fmt.Errorf("agentpkg: clone stable %q from %s: %v: %s",
-			name, redact.String(remote), err, redact.String(out))
+			name, redact.Redact(remote), err, redact.Redact(out))
 	}
 	head, err := gitcmd.Output(tmp, "rev-parse", "HEAD")
 	if err != nil {
@@ -112,7 +112,7 @@ func UpdateStable(name string) (UpdateResult, error) {
 	}
 	res.DefaultBranch = def
 	if out, err := gitcmd.Run(dir, "fetch", "origin"); err != nil {
-		return res, fmt.Errorf("agentpkg: fetch stable %q: %v: %s", name, err, redact.String(out))
+		return res, fmt.Errorf("agentpkg: fetch stable %q: %v: %s", name, err, redact.Redact(out))
 	}
 
 	head, err := gitcmd.Output(dir, "rev-parse", "HEAD")
@@ -136,7 +136,7 @@ func UpdateStable(name string) (UpdateResult, error) {
 			return res, fmt.Errorf("%w: stable %q: HEAD %s is not an ancestor of origin/%s %s; the remote history was rewritten",
 				ErrDivergedClone, name, shortSHA(head), def, shortSHA(remote))
 		}
-		return res, fmt.Errorf("agentpkg: stable %q: check divergence: %v: %s", name, err, redact.String(out))
+		return res, fmt.Errorf("agentpkg: stable %q: check divergence: %v: %s", name, err, redact.Redact(out))
 	}
 	if status, err := gitcmd.Output(dir, "status", "--porcelain"); err != nil {
 		return res, fmt.Errorf("agentpkg: stable %q: %w", name, err)
@@ -145,7 +145,7 @@ func UpdateStable(name string) (UpdateResult, error) {
 			ErrDivergedClone, name)
 	}
 	if out, err := gitcmd.Run(dir, "merge", "--ff-only", "origin/"+def); err != nil {
-		return res, fmt.Errorf("agentpkg: fast-forward stable %q: %v: %s", name, err, redact.String(out))
+		return res, fmt.Errorf("agentpkg: fast-forward stable %q: %v: %s", name, err, redact.Redact(out))
 	}
 	res.Head = remote
 	res.FastForwarded = true

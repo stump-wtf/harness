@@ -345,7 +345,7 @@ Always excluded:
 
 The literal `symptoms` come from failing check names, from review text, and,
 once agent-trace grows one, from an opt-in, length-capped `ErrorExcerpt` on
-errored tool results. `internal/redact` runs on all of them, and on every hunk
+errored tool results. agent-trace's `redact` runs on all of them, and on every hunk
 and every piece of review text, before anything is stored or shown to a model.
 
 Two keys are computed by code, and neither is chosen by a model.

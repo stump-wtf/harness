@@ -245,7 +245,7 @@ written asynchronously from a bounded queue so a slow disk never blocks a call:
 | `config_hash` | hash of the harness's effective configuration at spawn, as recorded on its run |
 | `upstream`, `tool`, `tier` | resolved after namespacing; `call_tool` records the real tool |
 | `args_hash` | SHA-256 of the canonical JSON arguments |
-| `args` | per `call_log_args`: redacted by `internal/redact` and capped at 4 KiB, or absent |
+| `args` | per `call_log_args`: redacted by agent-trace's `redact` and capped at 4 KiB, or absent |
 | `outcome` | `ok`, `tool_error`, `upstream_error`, `timeout`, `denied`, `circuit_open`, `cancelled` |
 | `response_bytes`, `response_tokens_est` | response size, and an estimate at 4 bytes per token (the daemon has no tokenizer; exact counts come from the agent's own usage records) |
 | `trace_id`, `span_id` | the run's trace (ADR-0033), so a call appears as a span in the run |

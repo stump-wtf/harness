@@ -19,10 +19,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/stump-wtf/agent-trace/classify"
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/agent-trace/tail"
 	"github.com/stump-wtf/harness/internal/logview"
 	"github.com/stump-wtf/harness/internal/protocol"
-	"github.com/stump-wtf/harness/internal/redact"
 	"github.com/stump-wtf/harness/internal/runtrace"
 	"github.com/stump-wtf/harness/internal/tui/theme"
 )
@@ -176,12 +176,12 @@ func (re *RenderableEvent) Lines(s *Styles) []string {
 //
 // Governing: ADR-0008 (secrets), issue #312.
 func redactEvent(ev tail.Event) tail.Event {
-	ev.Classified.Summary = redact.String(ev.Classified.Summary)
+	ev.Classified.Summary = redact.Redact(ev.Classified.Summary)
 	if len(ev.Marks) > 0 {
 		marks := make([]classify.Mark, len(ev.Marks))
 		copy(marks, ev.Marks)
 		for i := range marks {
-			marks[i].Note = redact.String(marks[i].Note)
+			marks[i].Note = redact.Redact(marks[i].Note)
 		}
 		ev.Marks = marks
 	}
@@ -189,7 +189,7 @@ func redactEvent(ev tail.Event) tail.Event {
 		targets := make([]classify.Target, len(ev.Classified.Targets))
 		copy(targets, ev.Classified.Targets)
 		for i := range targets {
-			targets[i].Path = redact.String(targets[i].Path)
+			targets[i].Path = redact.Redact(targets[i].Path)
 		}
 		ev.Classified.Targets = targets
 	}

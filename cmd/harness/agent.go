@@ -28,12 +28,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/agentpkg"
 	"github.com/stump-wtf/harness/internal/agentpkg/scan"
 	"github.com/stump-wtf/harness/internal/config"
 	"github.com/stump-wtf/harness/internal/config/tomledit"
 	"github.com/stump-wtf/harness/internal/core"
-	"github.com/stump-wtf/harness/internal/redact"
 )
 
 func newAgentCmd(g *globalOpts) *cobra.Command {
@@ -199,7 +199,7 @@ func runAgentStableAdd(cmd *cobra.Command, o verbOpts, name, remote string) erro
 		vis = "private"
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "agent: stable %s added from %s (head %s, %s)\n",
-		name, redact.String(remote), shortSHA(head), vis)
+		name, redact.Redact(remote), shortSHA(head), vis)
 	return nil
 }
 
@@ -313,7 +313,7 @@ func runAgentStableList(cmd *cobra.Command, o verbOpts) error {
 		if err == nil {
 			state = "head " + shortSHA(head)
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "agent: %s  %s  %s  %s\n", s.Name, redact.String(s.Remote), vis, state)
+		fmt.Fprintf(cmd.OutOrStdout(), "agent: %s  %s  %s  %s\n", s.Name, redact.Redact(s.Remote), vis, state)
 	}
 	return nil
 }

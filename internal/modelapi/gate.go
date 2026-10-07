@@ -24,8 +24,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/ledger"
-	"github.com/stump-wtf/harness/internal/redact"
 )
 
 // Entry is the closed set of entry points that may wait on a gate call
@@ -204,7 +204,7 @@ type CallResult struct {
 // Governing: SPEC-0031 REQ-8 "Redacted input".
 func Prepare(text string) (hash, redacted string) {
 	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:]), redact.String(text)
+	return hex.EncodeToString(sum[:]), redact.Redact(text)
 }
 
 // Gate is the daemon-wide gate-call layer: one slot pool and one counter

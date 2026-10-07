@@ -32,7 +32,7 @@ today:
   Both go through `recordSkip` (`internal/supervisor/runs.go`), which
   coalesces by trigger, source and reason, and `decisionRecord` writes no event
   file. A hold needs a skip that does neither.
-* `internal/redact` is the credential redactor every gate call's input passes.
+* agent-trace's `redact` is the credential redactor every gate call's input passes.
 
 Related: SPEC-0014 (firing, event files, manual trigger), SPEC-0017 REQ-9 and
 REQ-10 (trusted actors, untrusted fields), SPEC-0021 REQ-4 (admission),
