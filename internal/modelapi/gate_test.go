@@ -403,6 +403,29 @@ func TestGateSlotWaitCountsAgainstTimeout(t *testing.T) {
 	}
 }
 
+// TestScreenCallsShareOneStart pins what makes the slot-wait test above
+// deterministic: every call in a screen runs its deadline from one instant.
+// When each call took its own start in its goroutine, the third call's
+// deadline trailed the second's by a scheduling delay; on a loaded CI runner
+// the third took the slot the second freed at its deadline and reached the
+// guard anyway (TestGateSlotWaitCountsAgainstTimeout: 3 arrivals, want 2).
+func TestScreenCallsShareOneStart(t *testing.T) {
+	fg := newFakeGuard(t, func() (int, string) {
+		return 200, yesBody("mistralai/Shieldstral-1.0-3B")
+	})
+	g := NewGate(New(fg.srv.URL, ""))
+	s := spec(EntryEvent)
+	results := g.Screen(context.Background(), "text", s, s, s, s)
+	for i, r := range results {
+		if r.Err != nil {
+			t.Fatalf("call %d: %v", i, r.Err)
+		}
+		if !r.StartedAt.Equal(results[0].StartedAt) {
+			t.Fatalf("call %d started at %s, call 0 at %s; a screen's calls share one start", i, r.StartedAt, results[0].StartedAt)
+		}
+	}
+}
+
 // TestGateDurationBeginsAtSlotRequest shows the duration observation starts
 // when the call asks for its slot: the only slot is held by an in-flight
 // probe, so the gate call's whole wait for it is inside its duration.

@@ -338,8 +338,16 @@ func (g *Gate) countersFor(guard string) *guardCounters {
 // once, and returns each spec's result in spec order. A screen therefore
 // ends within the largest timeout among its guards (REQ-8 "Bounded
 // concurrency"), and no call is ever retried within it (REQ-6).
+//
+// Every call's deadline runs from one instant, taken here before any call
+// starts. Taken in each call's goroutine instead, two calls with the same
+// timeout got deadlines a scheduling delay apart: when the earlier one
+// expired and freed the guard's only slot, the later one could take it with
+// that delay still on its clock and reach the guard after the screen's
+// budget was spent.
 func (g *Gate) Screen(ctx context.Context, text string, specs ...CallSpec) []CallResult {
 	hash, redacted := Prepare(text)
+	start := g.now()
 	results := make([]CallResult, len(specs))
 	var wg sync.WaitGroup
 	for i, spec := range specs {
@@ -352,7 +360,7 @@ func (g *Gate) Screen(ctx context.Context, text string, specs ...CallSpec) []Cal
 		wg.Add(1)
 		go func(i int, spec CallSpec) {
 			defer wg.Done()
-			results[i] = g.call(ctx, spec, hash, redacted, true)
+			results[i] = g.call(ctx, spec, hash, redacted, true, start)
 		}(i, spec)
 	}
 	wg.Wait()
@@ -370,14 +378,15 @@ func (g *Gate) Probe(ctx context.Context, spec CallSpec, text string) CallResult
 		}
 	}
 	hash, redacted := Prepare(text)
-	return g.call(ctx, spec, hash, redacted, false)
+	start := g.now()
+	return g.call(ctx, spec, hash, redacted, false, start)
 }
 
 // call performs one model call: slot, request, classification,
 // attestation, counters. gate distinguishes a gate call from a probe for
-// the error wrapper and the counters' result keys.
-func (g *Gate) call(ctx context.Context, spec CallSpec, hash, text string, gate bool) (res CallResult) {
-	start := g.now()
+// the error wrapper and the counters' result keys. start is when the
+// screen or probe asked for its calls; the call's deadline runs from it.
+func (g *Gate) call(ctx context.Context, spec CallSpec, hash, text string, gate bool, start time.Time) (res CallResult) {
 	res = CallResult{Entry: spec.Entry, Guard: spec.Guard, Policy: spec.Policy, Hash: hash}
 	defer func() {
 		res.StartedAt = start
@@ -410,7 +419,8 @@ func (g *Gate) call(ctx context.Context, spec CallSpec, hash, text string, gate 
 
 	// One deadline covers the slot wait, the request and the body read
 	// (REQ-8 "Bounded concurrency").
-	deadlineCtx, deadlineCancel := context.WithTimeout(callCtx, spec.Timeout)
+	deadline := start.Add(spec.Timeout)
+	deadlineCtx, deadlineCancel := context.WithDeadline(callCtx, deadline)
 	defer deadlineCancel()
 
 	pool := g.pool(spec.Guard, spec.MaxConcurrency)
@@ -419,8 +429,11 @@ func (g *Gate) call(ctx context.Context, spec CallSpec, hash, text string, gate 
 		defer func() { <-pool }()
 		// The slot may arrive together with an already-expired deadline
 		// (a wait that consumed the whole budget): abandon the call
-		// before it ever reaches the guard.
-		if err := deadlineCtx.Err(); err != nil {
+		// before it ever reaches the guard. The clock is read as well as
+		// the context, because the context's timer can lag its deadline,
+		// most of all on a loaded machine; the wait on Done is then brief.
+		if err := deadlineCtx.Err(); err != nil || !g.now().Before(deadline) {
+			<-deadlineCtx.Done()
 			res.Err = g.classifyCtx(deadlineCtx, spec)
 			return res
 		}
