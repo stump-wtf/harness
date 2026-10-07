@@ -349,9 +349,9 @@ it departs from the text above:
   secret-named key is masked whole. Plain-text masking breaks a JSON line: the
   rules end a value at a quote, and inside a JSON string that quote is
   escaped. A rule prefilter skips text no rule can match, which makes a 4 MiB
-  tool result take 44 ms to mask instead of 3.5 s. Both stay behind
-  `internal/redact`'s API, so the shared betterleaks redactor below replaces
-  them without touching callers.
+  tool result take tens of milliseconds to mask instead of seconds. Both live
+  in the shared betterleaks redactor below (agent-trace's `redact`, since
+  v0.8.0), which Harness imports directly.
 * **Line cap.** Lines are read with a 64 KiB buffer that grows to hold one line
   at a time, up to 16 MiB. A longer line is read to its end, dropped, and
   replaced by `{"harness":"line_dropped","stream":"stdout","bytes":N,"limit":M}`,
@@ -484,10 +484,11 @@ Harness, agent-trace and Cairn use one redaction package,
   already use.
 * agent-trace uses it as its default `Redact` hook; a caller may still pass its
   own.
-* Harness's `internal/redact` becomes a thin shim over it with the same
-  signatures, so its callers (runtrace, observe, daemon logs, supervisor
-  sanitize, the TUI chatroom, telemetry) change nothing. Once they import the
-  shared package directly, the shim is deleted.
+* Harness's callers (runtrace, observe, daemon logs, supervisor sanitize and
+  pipes, the TUI chatroom, telemetry, notify) import the shared package
+  directly; Harness's own `internal/redact` is gone (#912). Its rule
+  prefilter and JSON-lines masking moved into the shared package first, so
+  nothing got slower or stopped parsing.
 * Cairn imports the package instead of building its own.
   That makes Cairn depend on agent-trace, a trace library, for redaction. That
   is the cost of this placement.

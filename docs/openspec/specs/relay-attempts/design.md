@@ -17,7 +17,7 @@ What exists on `main` today:
 * SPEC-0014 is designed but not yet built: `[channel.*]`, `[webhook.*]`,
   `triggers`, the event file and a purpose-built, listen-only MCP Streamable
   HTTP client.
-* `internal/redact` masks credentials in agent activity and logs.
+* agent-trace's `redact` masks credentials in agent activity and logs.
   `internal/cairnexport` can POST to Cairn, but nothing calls it, and it is
   deleted once ADR-0022's telemetry export lands.
 * Switchboard's drain verbs (`claim`, `claim_next`, `heartbeat`, `complete`,
@@ -144,7 +144,7 @@ a PTY would add screen noise to its tail.
 ### The summary is composed, redacted and capped by the daemon
 
 **Choice**: `internal/relay/summary.go` builds the three-part summary (REQ-11),
-runs `internal/redact` over it, and caps it at 2048 bytes on a rune boundary.
+runs agent-trace's `redact` over it, and caps it at 2048 bytes on a rune boundary.
 Parts 3 and then 2 are trimmed first. The daemon-authored first line always
 survives.
 
@@ -185,7 +185,7 @@ story honest.
 | `internal/supervisor` | changed | run phases, admission-before-claim, lease-loss stop, record fields |
 | `internal/protocol` | changed | record fields, `relay_*` events, `ProtoMinor` bump |
 | `internal/daemon` | changed | lease source reconciliation on reload; `describe` and `doctor` |
-| `internal/redact` | reused | summary and receipt redaction |
+| agent-trace's `redact` | reused | summary and receipt redaction |
 
 ### Config shapes
 

@@ -37,7 +37,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/stump-wtf/harness/internal/redact"
+	"github.com/stump-wtf/agent-trace/redact"
 )
 
 const (

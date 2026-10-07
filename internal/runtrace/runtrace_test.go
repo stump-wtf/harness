@@ -13,7 +13,7 @@ import (
 
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"github.com/stump-wtf/harness/internal/redact"
+	"github.com/stump-wtf/agent-trace/redact"
 	rt "github.com/stump-wtf/harness/internal/runtrace/runtracetest"
 )
 

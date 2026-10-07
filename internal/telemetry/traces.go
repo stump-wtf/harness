@@ -42,9 +42,9 @@ import (
 	"github.com/stump-wtf/agent-trace/otel"
 	"github.com/stump-wtf/agent-trace/tail"
 
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/observe"
-	"github.com/stump-wtf/harness/internal/redact"
 )
 
 // Accumulator bounds (SPEC-0015 REQ-7).
@@ -128,12 +128,12 @@ func (a *traceAccumulator) prepare(ev observe.Event) observe.Event {
 		if !parseableTime(ev.Tool.Timestamp) {
 			ev.Tool.Timestamp = fill
 		}
-		ev.Tool.Summary = redact.String(ev.Tool.Summary)
+		ev.Tool.Summary = redact.Redact(ev.Tool.Summary)
 	case observe.KindMark:
 		if !parseableTime(ev.Mark.Timestamp) {
 			ev.Mark.Timestamp = fill
 		}
-		ev.Mark.Note = redact.String(ev.Mark.Note)
+		ev.Mark.Note = redact.Redact(ev.Mark.Note)
 		if a.omitPrompts && ev.Mark.Type == "user-message" {
 			ev.Mark.Note = PromptOmitted
 		}

@@ -62,7 +62,7 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
-	"github.com/stump-wtf/harness/internal/redact"
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/runtrace"
 	"github.com/stump-wtf/harness/internal/supervisor"
 )
@@ -504,7 +504,7 @@ func (o *Observer) read(ctx context.Context, st *session, scopes []runtrace.Scop
 		cutoff = run
 	}
 	meta := st.meta
-	meta.Title = redact.String(meta.Title)
+	meta.Title = redact.Redact(meta.Title)
 	events := make([]Event, 0, len(cands))
 	for _, c := range cands {
 		if c.when.Before(cutoff) {
@@ -651,12 +651,12 @@ func (o *Observer) forget(now time.Time) {
 // transcript (ADR-0008). Slices are copied: the event reaches several
 // subscribers and none of them may see another's edits.
 func redactTool(ev classify.Event) classify.Event {
-	ev.Summary = redact.String(ev.Summary)
+	ev.Summary = redact.Redact(ev.Summary)
 	if len(ev.Targets) > 0 {
 		ts := make([]classify.Target, len(ev.Targets))
 		copy(ts, ev.Targets)
 		for i := range ts {
-			ts[i].Path = redact.String(ts[i].Path)
+			ts[i].Path = redact.Redact(ts[i].Path)
 			if ts[i].Lines != nil {
 				ts[i].Lines = append([][2]int(nil), ts[i].Lines...)
 			}
@@ -667,7 +667,7 @@ func redactTool(ev classify.Event) classify.Event {
 		out := make([]classify.OutsideTouch, len(ev.Outside))
 		copy(out, ev.Outside)
 		for i := range out {
-			out[i].Path = redact.String(out[i].Path)
+			out[i].Path = redact.Redact(out[i].Path)
 		}
 		ev.Outside = out
 	}
@@ -677,7 +677,7 @@ func redactTool(ev classify.Event) classify.Event {
 // redactMark masks credentials in a mark's note — a user message verbatim, or
 // a provider error that may echo the request.
 func redactMark(m classify.Mark) classify.Mark {
-	m.Note = redact.String(m.Note)
+	m.Note = redact.Redact(m.Note)
 	return m
 }
 

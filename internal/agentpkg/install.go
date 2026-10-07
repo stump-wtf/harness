@@ -22,8 +22,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/gitcmd"
-	"github.com/stump-wtf/harness/internal/redact"
 )
 
 // shaRe matches a full 40-hex commit SHA.
@@ -93,7 +93,7 @@ func Materialize(s Source) (string, error) {
 	tarball, err := gitcmd.Raw(StableDir(s.Stable), "archive", "--format=tar", s.SHA+":packages/"+s.Package)
 	if err != nil {
 		os.RemoveAll(tmp)
-		return "", fmt.Errorf("agentpkg: materialize %s from stable %q: %s", s, s.Stable, redact.String(err.Error()))
+		return "", fmt.Errorf("agentpkg: materialize %s from stable %q: %s", s, s.Stable, redact.Redact(err.Error()))
 	}
 	if err := extractTar(tmp, tarball); err != nil {
 		os.RemoveAll(tmp)

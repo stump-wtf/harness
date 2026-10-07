@@ -214,7 +214,8 @@ SHOULD produce a startup warning that credentials will travel in cleartext.
 
 Every string that any sink emits — a log body, an attribute value, a span name,
 a span status message, a span attribute value, a JSONL field — MUST pass through
-`internal/redact.String` before it is queued. Redaction happens once, at
+agent-trace's `redact.Redact` (Harness's credential redactor, ADR-0033)
+before it is queued. Redaction happens once, at
 conversion, so no unredacted copy sits in a queue, a retry buffer or a file.
 
 Only what agent-trace's classifier retains is exported: tool name, action,

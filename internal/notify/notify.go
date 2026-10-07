@@ -26,7 +26,7 @@
 // failure (ADR-0007). Each delivery execs argv without a shell, feeds the JSON
 // payload on stdin and the same facts in HARNESS_NOTIFY_* variables, and kills
 // the hook's whole process group at the timeout. Every string that leaves the
-// daemon goes through internal/redact first: the payload quotes agent output,
+// daemon goes through agent-trace's redact first: the payload quotes agent output,
 // and agent output is where credentials turn up.
 //
 // Governing: SPEC-0003 REQ "Operator Notification"; ADR-0007 (a slow consumer
@@ -53,8 +53,8 @@ import (
 	"charm.land/log/v2"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/core"
-	"github.com/stump-wtf/harness/internal/redact"
 )
 
 // PayloadVersion is the stdin JSON schema version. Additive changes keep it;
@@ -405,7 +405,7 @@ func (d *Dispatcher) deliver(parent context.Context, n Notification, cfg core.No
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		del.Result, del.Error = ResultTimeout, fmt.Sprintf("killed after %s", cfg.Timeout)
 	default:
-		del.Result, del.Error = ResultError, redact.String(err.Error())
+		del.Result, del.Error = ResultError, redact.Redact(err.Error())
 	}
 
 	d.deliveries.WithLabelValues(n.Event, del.Result).Inc()
@@ -419,7 +419,7 @@ func (d *Dispatcher) deliver(parent context.Context, n Notification, cfg core.No
 		d.opts.Logger.Info("notify: delivered", kv...)
 	} else {
 		kv = append(kv, "err", del.Error, "command", cfg.Command[0])
-		if o := strings.TrimSpace(redact.String(out.String())); o != "" {
+		if o := strings.TrimSpace(redact.Redact(out.String())); o != "" {
 			kv = append(kv, "output", o)
 		}
 		d.opts.Logger.Error("notify: hook failed", kv...)
@@ -435,8 +435,8 @@ func (d *Dispatcher) payload(n Notification) Payload {
 		Harness:  n.Harness,
 		Host:     d.host,
 		State:    n.State,
-		Message:  oneLine(redact.String(n.Message)),
-		Cause:    oneLine(redact.String(n.Cause)),
+		Message:  oneLine(redact.Redact(n.Message)),
+		Cause:    oneLine(redact.Redact(n.Cause)),
 		Hint:     n.Hint,
 		Time:     n.Time.UTC().Format(time.RFC3339),
 		ExitCode: n.ExitCode,

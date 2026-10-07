@@ -46,9 +46,9 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/adapter"
 	"github.com/stump-wtf/harness/internal/core"
-	"github.com/stump-wtf/harness/internal/redact"
 )
 
 // Slack widens a run window at both ends. Crush stores whole seconds, so a
@@ -677,7 +677,7 @@ func sessionEntries(ctx context.Context, s Session, w Window, now time.Time) ([]
 		Seq:     -1,
 		Kind:    KindSession,
 		Action:  string(KindSession),
-		Summary: redact.String(sessionSummary(s.Meta, meta)),
+		Summary: redact.Redact(sessionSummary(s.Meta, meta)),
 	}}
 	for _, ev := range events {
 		t := stamp(ev.Timestamp, s.Started)
@@ -692,8 +692,8 @@ func sessionEntries(ctx context.Context, s Session, w Window, now time.Time) ([]
 			Kind:    KindTool,
 			Action:  ev.Action,
 			Tool:    ev.Tool,
-			Target:  redact.String(PrimaryTarget(ev)),
-			Summary: redact.String(ToolSummary(ev.Summary)),
+			Target:  redact.Redact(PrimaryTarget(ev)),
+			Summary: redact.Redact(ToolSummary(ev.Summary)),
 			Error:   ev.IsError,
 		})
 	}
@@ -709,7 +709,7 @@ func sessionEntries(ctx context.Context, s Session, w Window, now time.Time) ([]
 			Seq:     mk.Seq,
 			Kind:    KindMark,
 			Action:  mk.Type,
-			Summary: redact.String(mk.Note),
+			Summary: redact.Redact(mk.Note),
 			Error:   mk.Type == "error",
 		})
 	}

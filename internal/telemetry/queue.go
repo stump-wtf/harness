@@ -31,7 +31,7 @@ import (
 
 	"charm.land/log/v2"
 
-	"github.com/stump-wtf/harness/internal/redact"
+	"github.com/stump-wtf/agent-trace/redact"
 )
 
 // queue is a bounded FIFO ring that drops its oldest unit when full.
@@ -222,7 +222,7 @@ type signalStats struct {
 
 func (s *signalStats) setError(msg string) {
 	s.mu.Lock()
-	s.lastError = capString(redact.String(msg), attrCap)
+	s.lastError = capString(redact.Redact(msg), attrCap)
 	s.mu.Unlock()
 }
 

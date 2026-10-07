@@ -25,8 +25,8 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/otlpexport"
-	"github.com/stump-wtf/harness/internal/redact"
 )
 
 // Retry policy constants (SPEC-0015 REQ-10).
@@ -87,7 +87,7 @@ func (s *otlpSender[T]) deliver(batch []T, final bool) {
 			s.stats.exported.Add(n - rej)
 			s.stats.lastSuccess.Store(s.now().UnixNano())
 			if rej > 0 {
-				msg := capString(redact.String(res.ErrorMessage), attrCap)
+				msg := capString(redact.Redact(res.ErrorMessage), attrCap)
 				s.stats.setError("partial success: " + msg)
 				s.flog.warn(s.signal, "partial_success", "telemetry collector rejected part of a batch",
 					"rejected", rej, "message", msg)

@@ -63,9 +63,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/adapter"
 	"github.com/stump-wtf/harness/internal/core"
-	"github.com/stump-wtf/harness/internal/redact"
 )
 
 // maxPipeLine is the longest stdout or stderr line a pipe run keeps. A longer

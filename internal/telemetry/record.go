@@ -41,9 +41,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/harness/internal/observe"
 	"github.com/stump-wtf/harness/internal/otlpexport"
-	"github.com/stump-wtf/harness/internal/redact"
 )
 
 // Wire constants (SPEC-0015 REQ-4, REQ-6, REQ-8).
@@ -285,7 +285,7 @@ func (c *converter) record(ev observe.Event) Record {
 
 // clean redacts s and caps it at max bytes.
 func clean(s string, max int) string {
-	return capString(redact.String(s), max)
+	return capString(redact.Redact(s), max)
 }
 
 // capString truncates s to at most max bytes on a UTF-8 boundary, ending in

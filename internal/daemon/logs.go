@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/stump-wtf/harness/internal/redact"
+	"github.com/stump-wtf/agent-trace/redact"
 )
 
 // redactTail masks credentials in a durable-log tail, line by line.

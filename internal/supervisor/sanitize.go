@@ -34,7 +34,7 @@ import (
 
 	clog "github.com/charmbracelet/log"
 
-	"github.com/stump-wtf/harness/internal/redact"
+	"github.com/stump-wtf/agent-trace/redact"
 )
 
 // logLine masks credentials in one history line on its way to disk.
