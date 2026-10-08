@@ -58,12 +58,13 @@ func (o *fakeObserver) publish(ev observe.Event) {
 	}
 }
 
-func (o *fakeObserver) Sync(context.Context) {
+func (o *fakeObserver) Sync(context.Context) error {
 	for range o.burst - 1 {
 		o.publish(observe.Event{Harness: "review", Adapter: "crush", Kind: observe.KindTool, Time: time.Now()})
 	}
 	o.publish(observe.Event{Harness: "review", Adapter: "crush", Kind: observe.KindMark,
 		Mark: classify.Mark{Type: "error", Note: "Payment Required"}, Time: time.Now()})
+	return nil
 }
 
 type countingSink struct {

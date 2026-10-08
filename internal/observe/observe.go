@@ -41,6 +41,9 @@
 // @joestump 10/04/2026 - Sync: a caller that must decide on what an agent
 // wrote up to now (the quota park at a run's exit, SPEC-0021 REQ-13) runs a
 // scan itself instead of waiting for the next poll (stump.wtf/harness#477).
+//
+// @joestump 10/08/2026 - Sync's wait for a scan in progress honors its ctx,
+// so the exit's quota sync is bounded as its caller says it is.
 package observe
 
 import (
@@ -248,10 +251,12 @@ type Observer struct {
 	opts Options
 	log  *log.Logger
 
-	// scanMu serializes scans: the loop's own, one per PollInterval, and
-	// Sync's. The scan state below is touched only under it (or by a test
-	// driving scan directly without Start).
-	scanMu     sync.Mutex
+	// scanSem serializes scans: the loop's own, one per PollInterval, and
+	// Sync's. The scan state below is touched only while holding it (or by
+	// a test driving scan directly without Start). A one-slot channel, not
+	// a mutex, so Sync can give up waiting for a scan in progress when its
+	// ctx ends.
+	scanSem    chan struct{}
 	sessions   map[string]*session
 	tombstones map[string]tombstone
 	summaries  *tail.SummaryCache
@@ -292,9 +297,10 @@ func New(src Source, opts Options) *Observer {
 			Dropped:     make(map[string]uint64),
 			ParseErrors: make(map[string]uint64),
 		},
-		ctx:    ctx,
-		cancel: cancel,
-		done:   make(chan struct{}),
+		ctx:     ctx,
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		scanSem: make(chan struct{}, 1),
 	}
 }
 
@@ -336,9 +342,9 @@ func (o *Observer) loop() {
 	t := time.NewTicker(o.opts.PollInterval)
 	defer t.Stop()
 	for {
-		o.scanMu.Lock()
+		o.scanSem <- struct{}{}
 		o.scan(o.ctx)
-		o.scanMu.Unlock()
+		<-o.scanSem
 		select {
 		case <-o.ctx.Done():
 			return
@@ -352,28 +358,36 @@ func (o *Observer) loop() {
 // transcript before Sync was called is in their buffers when it returns
 // (unless a full buffer dropped it, which is counted as always). It waits for
 // a scan already in progress to finish first, so the two never share the
-// scan state. ctx bounds the scan, and Stop cancels it; after Stop, Sync
-// returns at once.
+// scan state. ctx bounds both that wait and the scan, and Stop cancels them;
+// after Stop, Sync returns at once. It returns ctx's error when ctx ended
+// before the scan finished, so the caller knows it decides on less.
 //
 // It exists for a decision that must not race the poll: a run that exits two
 // seconds after it starts has written its last error mark before the exit,
 // but the next poll may be seconds away, and the park detector decides at the
 // exit (SPEC-0021 REQ-13). Nothing else should call it; the poll is the
 // observer's cadence.
-func (o *Observer) Sync(ctx context.Context) {
-	o.scanMu.Lock()
-	defer o.scanMu.Unlock()
+func (o *Observer) Sync(ctx context.Context) error {
+	select {
+	case o.scanSem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-o.ctx.Done():
+		return nil
+	}
+	defer func() { <-o.scanSem }()
 	o.mu.Lock()
 	stopped := o.stopped
 	o.mu.Unlock()
 	if stopped {
-		return
+		return nil
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(o.ctx, cancel)
 	defer stop()
-	o.scan(ctx)
+	o.scan(sctx)
+	return ctx.Err()
 }
 
 // Subscribe registers a consumer. Events are delivered to the returned channel

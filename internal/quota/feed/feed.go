@@ -51,7 +51,7 @@ const DefaultBuffer = 4096
 // Observer is what the feed needs from the observer.
 type Observer interface {
 	Subscribe(name string, buf int) (<-chan observe.Event, func())
-	Sync(ctx context.Context)
+	Sync(ctx context.Context) error
 }
 
 // Sink receives each model outcome the observer attributes to a harness: a
@@ -101,7 +101,9 @@ func (f *Feed) Stop() {
 // scan (or an earlier one) left buffered. ctx bounds the wait; its error is
 // returned when it ran out first, and the sink then has whatever arrived.
 func (f *Feed) Sync(ctx context.Context) error {
-	f.obs.Sync(ctx)
+	if err := f.obs.Sync(ctx); err != nil {
+		return err
+	}
 	ack := make(chan struct{})
 	select {
 	case f.flush <- ack:

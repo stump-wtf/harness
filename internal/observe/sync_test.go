@@ -13,6 +13,7 @@ package observe
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -90,6 +91,27 @@ func waitScanned(t *testing.T, o *Observer) {
 	}
 	// LastScan is stamped as a scan begins; taking the scan lock (and
 	// nothing else) waits for that scan to end.
-	o.scanMu.Lock()
-	o.scanMu.Unlock()
+	o.scanSem <- struct{}{}
+	<-o.scanSem
+}
+
+// Sync's ctx bounds its wait for a scan already in progress, not only its own
+// scan: the exit's quota sync promises its harness a bound (quotaSyncTimeout),
+// and a poll scan reading a slow store must not stretch it.
+func TestSyncGivesUpWaitingForAScanInProgress(t *testing.T) {
+	f := newFixture(t, func(o *Options) { o.PollInterval = time.Hour })
+	f.obs.scanSem <- struct{}{} // a scan in progress that will not finish
+	defer func() { <-f.obs.scanSem }()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- f.obs.Sync(ctx) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Sync = %v, want context.DeadlineExceeded", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Sync is still waiting for the scan in progress, past its ctx")
+	}
 }
