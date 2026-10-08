@@ -640,3 +640,33 @@ func TestDayStartsChangeWaitsForTheRollover(t *testing.T) {
 		t.Fatalf("from then on: day [%v, %v), want [Oct 5 12:00, Oct 6 12:00)", start, next)
 	}
 }
+
+// A start reads its clock before it takes budgetMu, so a gate tick can roll
+// the day over in between. The start is counted in the new day, and its
+// record must say so: stamped in the old day, a daemon restart would rebuild
+// the new day without it and refund the run (REQ-7).
+func TestAStartReadBeforeTheRolloverCountsInTheNewDay(t *testing.T) {
+	e := newRunsEnv(t)
+	clock := newTestClock(time.Date(2026, 10, 4, 23, 0, 0, 0, time.UTC))
+	cfg := sweepCfg(budgetSweep("sweep", filepath.Join(e.dir, "marker"), 3))
+	cfg.Budget.DayStarts = mustDaily(t, "TZ=UTC 00:00")
+	m, closeM := budgetManager(t, e, cfg, clock.Now)
+
+	stale := time.Date(2026, 10, 4, 23, 59, 59, 0, time.UTC) // read before the tick
+	clock.Set(time.Date(2026, 10, 5, 0, 0, 1, 0, time.UTC))
+	m.BudgetDue(clock.Now())
+	r := m.Admit("sweep", budget.AdmitRequest{Trigger: string(TriggerWebhook), Now: stale}, RunRecord{Trigger: TriggerWebhook, Outcome: OutcomeRunning})
+	if !r.Decision.Admitted() {
+		t.Fatalf("admission: %+v", r.Decision)
+	}
+	dayStart := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	if r.Run.StartedAt.Before(dayStart) {
+		t.Errorf("record started %s, before the day it was counted in (%s)", r.Run.StartedAt, dayStart)
+	}
+	closeM()
+
+	m2, _ := budgetManager(t, e, cfg, clock.Now)
+	if got := m2.RunsToday("sweep"); got != 1 {
+		t.Fatalf("after a restart: %d runs today, want 1 rebuilt from the ledger", got)
+	}
+}

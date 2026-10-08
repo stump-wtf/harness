@@ -50,6 +50,8 @@ package supervisor
 // ledger", § "The budget day reuses the gate's clock"; SPEC-0022 REQ-6.
 //
 // @joestump 10/04/2026 - Added for stump.wtf/harness#470.
+// @joestump 10/08/2026 - A start whose clock was read before a rollover is
+//   stamped in the day it is counted in.
 
 import (
 	"errors"
@@ -113,6 +115,13 @@ func (m *Manager) Admit(name string, req budget.AdmitRequest, rec RunRecord) Adm
 	h, db := m.budgetDef(name)
 	m.budgetMu.Lock()
 	m.rolloverLocked(req.Now, db.DayStarts)
+	if req.Now.Before(m.bud.start) {
+		// The clock was read before a gate tick rolled the day over. The
+		// start is counted in the new day, so it is stamped in it too:
+		// left in the old one, a rebuild would refund it and its skip would
+		// be settled at once (REQ-7).
+		req.Now = m.bud.start
+	}
 	d := budget.Decide(req, m.admitStateLocked(name, h, db, req))
 	if !d.Admitted() {
 		if d.Reason == budget.ReasonBudget && !req.Resident {
@@ -343,9 +352,11 @@ func (m *Manager) rebuildLocked() {
 	clear(m.bud.runs)
 	recs, _, err := m.ledger.Query(ledger.Query{Since: m.bud.start})
 	if err != nil {
-		// Never swallowed: today's counts start from what the index holds,
-		// and the failure is on the daemon log for doctor's ledger checks.
-		log.Error("could not read today's runs from the run ledger; budget counters may undercount", "day_start", m.bud.start.Format(time.RFC3339), "err", err)
+		// Never swallowed, but not fatal either: Query returns no records
+		// on an error, so today's counts start from zero and admission
+		// fails open until the next rollover. The failure is on the daemon
+		// log for doctor's ledger checks.
+		log.Error("could not read today's runs from the run ledger; budget counters start from zero", "day_start", m.bud.start.Format(time.RFC3339), "err", err)
 	}
 	for _, f := range recs {
 		if admittedRecord(f) {
