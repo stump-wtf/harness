@@ -384,6 +384,11 @@ type activeRun struct {
 	// put one in). It is read back out by runEnv, so a restart of the same
 	// run spawns with the same HARNESS_EVENT_FILE.
 	eventFile string
+	// event is the run's event envelope, nil when the run carries none. It
+	// is held so the template context's event.* values come from the same
+	// envelope the event file was written from, across respawns of the run.
+	// Governing: SPEC-0017 REQ-7, REQ-8.
+	event *trigger.Envelope
 }
 
 // decisionRecord builds the record of a decision that starts no process.
@@ -502,6 +507,9 @@ func (s *Supervisor) admitRun(req RunRequest) (*admission, AdmitResult) {
 func (s *Supervisor) launchRun(req RunRequest, adm *admission) RunRecord {
 	rec := adm.rec
 	run := &activeRun{}
+	if req.Event != nil {
+		run.event = req.Event
+	}
 	if path := adm.log; path != "" {
 		if f, err := openRunLog(path); err != nil {
 			s.logEvent("run log unavailable", "run_id", rec.RunID, "err", err.Error())
@@ -613,18 +621,29 @@ var writeEventFile = func(path string, env *trigger.Envelope) (string, error) {
 // runEnv is the run-context environment the process in flight is spawned with.
 // It is derived from the run rather than stored, so a respawn of the same run
 // gets the same values.
-// Governing: SPEC-0014 REQ "Event Delivery To The Run".
+// Governing: SPEC-0014 REQ "Event Delivery To The Run"; SPEC-0017 REQ-7.
 func (s *Supervisor) runEnv() RunEnv {
 	if s.run == nil {
 		return RunEnv{}
 	}
-	return RunEnv{
+	re := RunEnv{
 		RunID:     s.run.rec.RunID,
 		Trigger:   s.run.rec.Trigger,
 		Source:    s.run.rec.Source,
 		EventFile: s.run.eventFile,
 		StartedAt: s.run.rec.StartedAt,
 	}
+	if s.run.event != nil {
+		re.Event = &EventContext{
+			File:       s.run.eventFile,
+			ID:         s.run.event.TemplateID(),
+			Kind:       string(s.run.event.Kind),
+			Source:     s.run.event.Source,
+			ReceivedAt: s.run.event.ReceivedAt.UTC().Format(time.RFC3339),
+			Typed:      s.run.event.Typed,
+		}
+	}
+	return re
 }
 
 // armRunTimeout schedules the run's timeout, delivered to the loop.

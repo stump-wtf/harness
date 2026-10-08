@@ -34,6 +34,7 @@ import (
 	"github.com/stump-wtf/harness/internal/sealedlog"
 	"github.com/stump-wtf/harness/internal/supervisor"
 	"github.com/stump-wtf/harness/internal/trigger"
+	"github.com/stump-wtf/harness/internal/trigger/extract"
 )
 
 // defaultRunsLimit is how many records runs returns when the request sets no
@@ -169,7 +170,11 @@ func (c *conn) opTrigger(req protocol.ControlReq) {
 //     would otherwise record a run against a source that harness never listens
 //     to, and the run's own `HARNESS_RUN_SOURCE` would be a lie.
 //
-// Governing: SPEC-0014 REQ "Manual Trigger With Event".
+// Then the envelope's typed values are re-derived from its stored body
+// (reextract), so a hand-edited `typed` in the file is worthless: the replay
+// renders what the original run would have.
+//
+// Governing: SPEC-0014 REQ "Manual Trigger With Event"; SPEC-0017 REQ-8.
 func (c *conn) parseTriggerEvent(h core.Harness, raw []byte) (*trigger.Envelope, error) {
 	env, err := trigger.ParseEnvelope(raw, trigger.MaxEventBytes(h, c.srv.mgr.Config()))
 	if err != nil {
@@ -179,7 +184,37 @@ func (c *conn) parseTriggerEvent(h core.Harness, raw []byte) (*trigger.Envelope,
 		return nil, fmt.Errorf("harness %q does not bind %q (its triggers are %s)",
 			h.Name, env.Source, triggerList(h))
 	}
+	reextract(h, env, c.srv.mgr.Config())
 	return env.Replay(time.Now()), nil
+}
+
+// reextract re-derives a replayed envelope's typed values from its stored
+// body, overwriting whatever the file carried. This is what makes a
+// hand-edited `typed` in a replay file worthless: the replay renders exactly
+// what the original run would have, because the values come from the same
+// body through the same table (SPEC-0017 design.md § "Typed extraction
+// happens once, when the envelope is written").
+// Governing: SPEC-0017 REQ-8, issue #507.
+func reextract(h core.Harness, env *trigger.Envelope, cfg *core.Config) {
+	if env.Webhook != nil {
+		ref, err := core.ParseTriggerRef(env.Source)
+		if err != nil {
+			env.Typed = nil
+			return
+		}
+		src, ok := cfg.Webhooks[ref.Name]
+		if !ok {
+			env.Typed = nil
+			return
+		}
+		env.Typed = extract.FromWebhook(src.Verify, env.Webhook.Event, env.Webhook.Body)
+		return
+	}
+	if env.Channel != nil {
+		env.Typed = extract.FromChannel(env.Channel.Meta)
+		return
+	}
+	env.Typed = nil
 }
 
 // triggerList renders a harness's bindings for an error message, so the

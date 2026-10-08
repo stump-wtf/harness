@@ -33,6 +33,7 @@ import (
 	"github.com/stump-wtf/harness/internal/supervisor"
 	"github.com/stump-wtf/harness/internal/trigger"
 	"github.com/stump-wtf/harness/internal/trigger/channel"
+	"github.com/stump-wtf/harness/internal/trigger/extract"
 )
 
 // Status is one source's reported state, the shape `harness triggers` renders
@@ -492,6 +493,12 @@ func (h *sessionHandler) Notification(content string, meta map[string]string) {
 		EventID:    newEventID(),
 		ReceivedAt: h.m.now().UTC(),
 		Channel:    &trigger.ChannelEvent{Content: content, Meta: meta},
+		// Typed carries only the meta keys whose key and value both pass
+		// the REQ-8 channel patterns; a key that fails is absent, never
+		// passed through. content stays OUT: it is free text, reachable
+		// only through the event file.
+		// Governing: SPEC-0017 REQ-8.
+		Typed: extract.FromChannel(meta),
 	}
 	// Fire counts it: every source's `fired` is counted in one place, so a
 	// webhook's and a channel's mean the same thing.

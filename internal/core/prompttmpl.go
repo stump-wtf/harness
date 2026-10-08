@@ -9,13 +9,13 @@ package core
 // load and the supervisor calls it again at spawn, because a template file can
 // change between the two.
 //
-// The allow set is the operator and daemon tiers of the REQ-7 context, the
-// same paths an argv element may render. `prompt` and `prompt_file` are never
-// in the context (a prompt template IS the prompt; REQ-7 forbids naming
-// them). Event paths — including the free-text fields behind {{untrusted …}}
-// — are refused for now: the event context arrives with the event-context
-// story, and a load that accepted them would sell a harness whose every run
-// fails at render.
+// The allow set is the operator, daemon and event tiers of the REQ-7
+// context, the same paths an argv element may render. `prompt` and
+// `prompt_file` are never in the context (a prompt template IS the prompt;
+// REQ-7 forbids naming them). The event paths render from the envelope's
+// validated `typed` object, never the raw payload; the free-text fields
+// behind {{untrusted …}} stay refused until the untrusted-inline story
+// lands, and event.actor until trusted_actors does.
 //
 // Governing: ADR-0023 (command one-shots and templating), SPEC-0017 REQ-5
 // "Templated Prompt Keys", REQ-6 "Template Grammar", REQ-7 "Template
@@ -51,13 +51,13 @@ func checkPromptRef(r tmpl.Ref) error {
 	case r.Path == "prompt" || r.Path == "prompt_file":
 		return fmt.Errorf("%s: a prompt template cannot reference {{%s}} (it IS the prompt; the verbatim keys are never expanded and never enter the context)", at, r.Path)
 	case r.Kind == tmpl.Untrusted || untrustedPaths[r.Path]:
-		return fmt.Errorf("%s: {{%s}} is not available yet (free text renders through {{untrusted …}} only once the event context lands)", at, r.Path)
-	case argvPaths[r.Path]:
+		return fmt.Errorf("%s: {{%s}} is not available yet (free text renders through {{untrusted …}} only once the untrusted-inline story lands; {{event.file}} is the recommended way to hand an agent the event)", at, r.Path)
+	case argvPaths[r.Path] || eventPath(r.Path):
 		return nil
-	case eventPath(r.Path):
-		return fmt.Errorf("%s: {{%s}} is not available yet (event context in templates is not implemented)", at, r.Path)
+	case r.Path == "event.actor":
+		return fmt.Errorf("%s: {{event.actor}} is not available yet (trusted_actors, SPEC-0017 REQ-9, is not implemented)", at)
 	}
-	return fmt.Errorf("%s: unknown template path %q (a prompt template may reference: harness.name, harness.workdir, model, run.id, run.trigger, run.source, run.started_at, run.date)", at, r.Path)
+	return fmt.Errorf("%s: unknown template path %q (a prompt template may reference: harness.name, harness.workdir, model, run.*, event.*)", at, r.Path)
 }
 
 // CheckPromptTemplateContext applies the REQ-7 rules that depend on how the
@@ -68,7 +68,9 @@ func checkPromptRef(r tmpl.Ref) error {
 //     {{run.source}} would skip every one of them;
 //   - a harness with neither `schedule` nor `triggers` has no run records,
 //     so a required {{run.id}}, {{run.trigger}} or {{run.source}} could
-//     never render.
+//     never render;
+//   - the same two rules for a required event.* reference: clock firings
+//     carry no event, and a harness with no triggers never has one.
 //
 // Governing: SPEC-0017 REQ-7 "Template Context".
 func CheckPromptTemplateContext(src string, scheduled, triggered bool) error {
@@ -92,6 +94,12 @@ func CheckPromptTemplateContext(src string, scheduled, triggered bool) error {
 		case PathRunID, PathRunTrigger:
 			if !triggered {
 				return fmt.Errorf("%s: {{%s}} can never render: the harness has no \"schedule\" or \"triggers\", so it has no run records (write {{%s?}} for an empty expansion)", at, r.Path, r.Path)
+			}
+		default:
+			if eventPath(r.Path) {
+				if err := checkRequiredEvent(at, r.Path, scheduled, triggered); err != nil {
+					return err
+				}
 			}
 		}
 	}
