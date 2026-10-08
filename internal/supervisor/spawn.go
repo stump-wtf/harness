@@ -589,7 +589,15 @@ func Workdir(h core.Harness) string { return expandHome(h.Workdir) }
 // undersized: the mux's recorded size already equals the client viewport, so
 // its resize policy sees no change and never pushes a TIOCSWINSZ, and the app
 // inside renders into an 80×24 box in the corner of a full-size window.
-func spawn(h core.Harness, cols, rows int, run RunEnv) (*process, error) {
+//
+// adm is the start's admission (admit.go): the proof that the start passed
+// SPEC-0021 REQ-4's funnel. spawn is the one place this package execs a
+// harness process, and it refuses to without one; TestEveryStartPathIsAdmitted
+// holds the rest of the package to that.
+func spawn(adm *admission, h core.Harness, cols, rows int, run RunEnv) (*process, error) {
+	if adm == nil {
+		return nil, errNotAdmitted
+	}
 	// Resolve prompt_file to its text BEFORE allocating anything: a missing
 	// instruction file must fail the start outright rather than leak a PTY and
 	// launch an agent with nothing to do (ADR-0018).

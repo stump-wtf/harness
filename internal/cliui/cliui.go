@@ -411,6 +411,8 @@ func classify(err error) (Level, string, string, string) {
 		return LevelError, "no project file",
 			cleanMessage(err.Error()),
 			noProjectHint(err)
+	case refusalCode(err) != "":
+		return refusalDetail(err)
 	default:
 		return LevelError, "error", cleanMessage(err.Error()), ""
 	}
@@ -593,6 +595,49 @@ func noProjectHint(err error) string {
 		return "pass the project explicitly: harness down PROJECT"
 	}
 	return "run this inside a project directory (one with a harness.toml)"
+}
+
+// Admission Refusals
+//
+// A start SPEC-0021's admission refused comes back as one of three structured
+// codes (REQ-21), and each gets its own title and hint, so an operator and a
+// script can tell an over-budget harness from a parked one and from a ledger
+// that cannot be written. The message is the daemon's, which names the harness
+// and the spent counter ("pr-review: over budget: 40/40 runs today"), printed
+// verbatim.
+//
+// Governing: ADR-0027; SPEC-0021 REQ-4, REQ-21.
+//
+// @joestump 10/04/2026 - Added for stump.wtf/harness#470.
+
+// refusalCode is err's admission refusal code, "" when it is none.
+func refusalCode(err error) protocol.ErrCode {
+	var em *protocol.ErrorMsg
+	if !errors.As(err, &em) {
+		return ""
+	}
+	switch em.Code {
+	case protocol.ErrOverBudget, protocol.ErrParked, protocol.ErrLedgerUnavailable:
+		return em.Code
+	}
+	return ""
+}
+
+// refusalDetail is classify's answer for an admission refusal.
+func refusalDetail(err error) (Level, string, string, string) {
+	var em *protocol.ErrorMsg
+	errors.As(err, &em)
+	switch em.Code {
+	case protocol.ErrOverBudget:
+		return LevelError, "over budget", em.Message,
+			"it runs again when the budget day rolls over, or raise its cap in harness.toml"
+	case protocol.ErrParked:
+		return LevelError, "parked", em.Message,
+			"it starts again when the provider's quota resets"
+	default:
+		return LevelError, "ledger unavailable", em.Message,
+			"the run ledger cannot be written, so a harness with a budget is not started; check the disk under the daemon's state directory and run harness doctor"
+	}
 }
 
 // pathFromError pulls the path out of an *os.PathError if present.

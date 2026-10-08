@@ -549,3 +549,31 @@ func TestClassifySurvivesVerbContextWrap(t *testing.T) {
 		t.Errorf("classify(wrapped dial error) title = %q, want %q", title, "daemon socket missing")
 	}
 }
+
+// TestClassifyAdmissionRefusals is SPEC-0021 REQ-21 at the CLI: each of the
+// three admission refusals gets its own title and hint, and the daemon's
+// message, which names the spent counter, is printed verbatim. Wrapped, as a
+// verb's error is, it is still recognised.
+func TestClassifyAdmissionRefusals(t *testing.T) {
+	for _, c := range []struct {
+		code      protocol.ErrCode
+		msg       string
+		title     string
+		hintMatch string
+	}{
+		{protocol.ErrOverBudget, "pr-review: over budget: 40/40 runs today", "over budget", "budget day rolls over"},
+		{protocol.ErrParked, "crush-sb: parked: parked until 2026-10-04 15:00 UTC", "parked", "quota resets"},
+		{protocol.ErrLedgerUnavailable, "sweep: ledger unavailable: disk full", "ledger unavailable", "harness doctor"},
+	} {
+		err := fmt.Errorf("start: %w", &protocol.ErrorMsg{Code: c.code, Message: c.msg})
+		level, title, msg, hint := classify(err)
+		if level != LevelError || title != c.title || msg != c.msg || !strings.Contains(hint, c.hintMatch) {
+			t.Errorf("classify(%s) = %v %q %q %q, want error %q with the message verbatim and a hint about %q",
+				c.code, level, title, msg, hint, c.title, c.hintMatch)
+		}
+	}
+	// Any other structured error keeps the generic rendering.
+	if _, title, _, _ := classify(&protocol.ErrorMsg{Code: protocol.ErrUnknownHarness, Message: "x"}); title != "error" {
+		t.Errorf("an unknown_harness error is titled %q, want the generic title", title)
+	}
+}

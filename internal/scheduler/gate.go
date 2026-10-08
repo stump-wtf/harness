@@ -45,6 +45,12 @@ package scheduler
 // the other reasons through a clearing hook (Gate.HoldsCleared) that the park
 // and budget stories feed. ADR-0027, SPEC-0021 REQ-14;
 // stump.wtf/harness#468.
+//
+// @joestump 10/04/2026 - The budget day rides the same tick: the pass asks the
+// Gate's BudgetDue on its own clock, which rolls the day over, and carries out
+// what it answers: a budget reason added to a harness that must be held for
+// it, and a one-shot's budget skips settled, with its one catch-up run.
+// SPEC-0021 REQ-3, REQ-5, REQ-20; stump.wtf/harness#470.
 
 import (
 	"slices"
@@ -102,6 +108,22 @@ type Gate interface {
 	// evaluation after them, starting one catch_up run when the harness
 	// sets `catch_up = true`.
 	OpenFirings(name string)
+	// BudgetDue is the budget day's tick (SPEC-0021 REQ-3): asking it at
+	// now, the tick's clock, is what rolls the day over. It answers the hold
+	// reasons to add (a budget spent by a cap a reload lowered, REQ-20, or
+	// spent on a harness already held for another reason, REQ-4), and the
+	// one-shots whose budget skips from an earlier day are owed their
+	// settle-up. Both are level-triggered, so a harness the pass leaves for
+	// a later tick is reported again. Asked once per tick, so it must be
+	// cheap.
+	BudgetDue(now time.Time) (holds map[string]core.HoldSet, settle []string)
+	// AddHolds adds reasons other than hours to name's hold; a harness that
+	// is up stops.
+	AddHolds(name string, reasons core.HoldSet)
+	// SettleBudget closes name's budget skips from a day that has ended,
+	// starting one catch_up run when the harness sets `catch_up = true`
+	// (SPEC-0021 REQ-5).
+	SettleBudget(name string)
 }
 
 // gateEntry is one gated harness.
@@ -142,6 +164,11 @@ type gateAction struct {
 	// openFirings settles a firing-gated harness's outside_hours skips (and
 	// starts its one catch_up run under catch_up = true).
 	openFirings bool
+	// addHolds are reasons other than hours to add (BudgetDue).
+	addHolds core.HoldSet
+	// settleBudget settles a one-shot's budget skips from an earlier day
+	// (and starts its one catch_up run under catch_up = true).
+	settleBudget bool
 }
 
 // hoursChange is one gated harness's in_hours flip, detected during gatePass
@@ -360,6 +387,7 @@ func (s *Scheduler) gatePass(now time.Time) (acts []gateAction, hoursChanges []h
 			acts = append(acts, gateAction{name: name, ungated: true, release: core.HoldSetOf(core.HoldHours)})
 		}
 	}
+	acts = s.budgetPass(now, acts)
 	acts = s.clearHolds(now, acts)
 	for _, a := range acts {
 		if s.gating == nil {
@@ -395,6 +423,36 @@ func (s *Scheduler) clearHolds(now time.Time, acts []gateAction) []gateAction {
 			continue
 		}
 		acts = append(acts, gateAction{name: name, release: rs})
+	}
+	return acts
+}
+
+// budgetPass appends what the budget day asks of this tick (Gate.BudgetDue):
+// a hold for each reason due, and a settle-up for each one-shot owed one. It
+// runs before clearHolds, so a day rolling over and the budget holds it
+// clears are judged on the same tick. A harness already decided for this
+// tick, or whose last decision is still being carried out, is left to the
+// next: BudgetDue answers level-triggered, so nothing is lost by waiting.
+// Caller holds s.mu.
+func (s *Scheduler) budgetPass(now time.Time, acts []gateAction) []gateAction {
+	holds, settle := s.gate.BudgetDue(now)
+	busy := func(name string) bool {
+		return s.gating[name] || slices.ContainsFunc(acts, func(a gateAction) bool { return a.name == name })
+	}
+	names := make([]string, 0, len(holds))
+	for name := range holds {
+		names = append(names, name)
+	}
+	slices.Sort(names) // a stable dispatch order, tick to tick
+	for _, name := range names {
+		if rs := holds[name].Without(core.HoldHours); !rs.Empty() && !busy(name) {
+			acts = append(acts, gateAction{name: name, addHolds: rs})
+		}
+	}
+	for _, name := range settle {
+		if !busy(name) {
+			acts = append(acts, gateAction{name: name, settleBudget: true})
+		}
 	}
 	return acts
 }
@@ -441,6 +499,16 @@ func (s *Scheduler) dispatchGate(a gateAction) {
 			s.mu.Unlock()
 		}()
 		switch {
+		case !a.addHolds.Empty():
+			s.safely("budget hold", a.name, func() {
+				log.Info("budget spent; holding", "harness", a.name, "reasons", a.addHolds.String())
+				s.gate.AddHolds(a.name, a.addHolds)
+			})
+		case a.settleBudget:
+			s.safely("budget settle-up", a.name, func() {
+				log.Info("budget day rolled over after skipped firings", "harness", a.name)
+				s.gate.SettleBudget(a.name)
+			})
 		case a.openFirings:
 			s.safely("operating-hours catch-up", a.name, func() {
 				log.Info("operating hours opened after skipped firings", "harness", a.name)

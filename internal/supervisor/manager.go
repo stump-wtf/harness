@@ -87,11 +87,18 @@ type ManagerOptions struct {
 	// HoldClearers are the clearing hooks for hold reasons other than hours
 	// (SPEC-0021 REQ-14), keyed by reason: each answers whether a harness's
 	// hold for that reason has cleared at the gate tick's clock. The park
-	// story feeds quota's (a park's reset instant) and the budget story
-	// budget's (a rollover, or a cap a reload raised); until they land
-	// nothing holds a harness for either, and only tests set one
-	// (manager_holds.go).
+	// story feeds quota's (a park's reset instant). Budget's (a rollover, or
+	// a cap a reload raised) is the Manager's own, budgetHoldCleared, and an
+	// entry here replaces it only in a test (manager_holds.go,
+	// manager_admit.go).
 	HoldClearers map[core.HoldReason]HoldClearer
+	// Now is the clock admission decides on when a start path brings no tick
+	// of its own: an operator start, a restart, a firing (SPEC-0021 REQ-4;
+	// manager_admit.go). It defaults to the wall clock with its monotonic
+	// reading stripped, as the scheduler's tick is; tests set it to the same
+	// fake clock they drive the scheduler with, so the budget day and the
+	// gate agree on what time it is.
+	Now func() time.Time
 }
 
 // Manager supervises every harness in a config.
@@ -154,8 +161,17 @@ type Manager struct {
 	armedCloseAt map[string]time.Time
 
 	// holdClearers are ManagerOptions.HoldClearers, read-only after
-	// NewManager (manager_holds.go).
+	// NewManager (manager_holds.go). The budget reason's is the Manager's
+	// own (budgetHoldCleared) unless a test supplies one.
 	holdClearers map[core.HoldReason]HoldClearer
+
+	// nowFn is ManagerOptions.Now (now()). budgetMu guards bud, the budget
+	// day and its counters, which admission decides on (manager_admit.go;
+	// SPEC-0021 REQ-4, REQ-7). Lock order: budgetMu before journalMu before
+	// mu.
+	nowFn    func() time.Time
+	budgetMu sync.Mutex
+	bud      budgetBook
 
 	// runs is each harness's run id allocator, and jobsDir the root of the
 	// per-run logs (manager_runs.go; SPEC-0008 REQ "Run History"). The records
@@ -263,11 +279,21 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 		armedCloseAt:  make(map[string]time.Time),
 		watch:         opts.Watch,
 		holdClearers:  maps.Clone(opts.HoldClearers),
+		nowFn:         opts.Now,
+		bud:           budgetBook{runs: make(map[string]int), skips: make(map[string]time.Time)},
 		dirty:         make(chan struct{}, 1),
 		closed:        make(chan struct{}),
 	}
 	if m.watch == nil {
 		m.watch = runtrace.NewWatcher(runtrace.DefaultWatchPoll)
+	}
+	// A budget hold clears at the gate tick once the budget is no longer
+	// spent (SPEC-0021 REQ-14, REQ-20); the Manager is what knows.
+	if _, ok := m.holdClearers[core.HoldBudget]; !ok {
+		if m.holdClearers == nil {
+			m.holdClearers = make(map[core.HoldReason]HoldClearer)
+		}
+		m.holdClearers[core.HoldBudget] = m.budgetHoldCleared
 	}
 	for _, name := range cfg.HarnessOrder {
 		m.addSupervisor(cfg.Harnesses[name])
@@ -275,6 +301,16 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 	m.wg.Add(1)
 	go m.persistLoop()
 	return m
+}
+
+// now is the Manager's clock (ManagerOptions.Now): the wall clock with its
+// monotonic reading stripped, so an instant compared with a day boundary is
+// judged by the wall clock even across a suspend.
+func (m *Manager) now() time.Time {
+	if m.nowFn != nil {
+		return m.nowFn()
+	}
+	return time.Now().Round(0)
 }
 
 // Events subscribes to the lifecycle event stream (SPEC-0003 REQ "Lifecycle
@@ -499,8 +535,10 @@ func (m *Manager) Restore() error {
 	m.mu.Unlock()
 
 	// Before Autostart admits anything: import, backfill and reconcile the
-	// run ledger (SPEC-0022 REQ-7, REQ-13).
+	// run ledger (SPEC-0022 REQ-7, REQ-13), then rebuild today's budget
+	// counters from it (SPEC-0021 REQ-7).
 	m.bootLedger()
+	m.bootBudget()
 	return nil
 }
 
@@ -719,8 +757,11 @@ func (m *Manager) StartFor(name string, forDur time.Duration) error {
 	}
 	log.Info("after-hours lease", "harness", name, "until", until.Format(time.RFC3339))
 	m.unfollowWatch(name) // a lease starting cancels the close (SPEC-0012)
-	m.startWith(name, TriggerLease, "")
-	return nil
+	// A lease's start passes admission like any other (SPEC-0021 REQ-4); a
+	// refusal is the caller's error, and the lease stands for the window it
+	// was asked for.
+	_, err := m.startWith(name, TriggerLease, "")
+	return err
 }
 
 // ErrNoLease reports that a requested after-hours lease does not apply: the
@@ -756,23 +797,39 @@ func (m *Manager) LeaseApplies(name string) bool {
 }
 
 // Start marks a single harness enabled and brings it up.
-func (m *Manager) Start(name string) bool { return m.startWith(name, TriggerManual, "") }
+func (m *Manager) Start(name string) bool {
+	ok, _ := m.startWith(name, TriggerManual, "")
+	return ok
+}
 
 // StartPeer is Start naming the socket peer the platform reported for the
 // verb (issue #835): the intent-change line carries it.
-func (m *Manager) StartPeer(name, peer string) bool { return m.startWith(name, TriggerManual, peer) }
+func (m *Manager) StartPeer(name, peer string) bool {
+	ok, _ := m.startWith(name, TriggerManual, peer)
+	return ok
+}
 
-// startWith is Start naming the start path its resident run records.
-func (m *Manager) startWith(name string, trigger RunTrigger, peer string) bool {
+// StartChecked is StartPeer that also reports a start admission refused
+// (SPEC-0021 REQ-4, REQ-21): the error wraps budget.ErrOverBudget,
+// budget.ErrParked or budget.ErrLedgerUnavailable where one applies. The
+// intent it records stands either way; a refused resident is held. ok is
+// false for an unknown harness.
+func (m *Manager) StartChecked(name, peer string) (ok bool, refused error) {
+	return m.startWith(name, TriggerManual, peer)
+}
+
+// startWith is Start naming the start path its resident run records, and
+// reporting a refusal.
+func (m *Manager) startWith(name string, trigger RunTrigger, peer string) (bool, error) {
 	if s := m.get(name); s != nil {
-		s.StartWithPeer(trigger, peer)
+		d := s.startChecked(trigger, peer)
 		// Starting it IS the fix for a dormant autostart member, so stop
 		// reporting it — otherwise boot's warning and doctor's row outlive the
 		// condition they describe, until the next restore.
 		m.clearDormant(name)
-		return true
+		return true, d.Refused
 	}
-	return false
+	return false, nil
 }
 
 // StartTransient brings a harness up without persisting enabled intent to
@@ -839,6 +896,15 @@ func (m *Manager) restartBy(name, source, peer string) bool {
 		return true
 	}
 	return false
+}
+
+// RestartChecked is RestartPeer that also reports a start admission refused
+// (StartChecked).
+func (m *Manager) RestartChecked(name, peer string) (ok bool, refused error) {
+	if s := m.get(name); s != nil {
+		return true, s.restartChecked("verb:restart", peer).Refused
+	}
+	return false, nil
 }
 
 // Enable sets a harness's enabled intent and starts it if stopped. It is
@@ -1136,6 +1202,7 @@ func (m *Manager) addSupervisorLocked(h core.Harness) {
 		InitialSize: m.initialSizeFor(h.Name),
 		Runs:        m,
 		Admit:       m.admitRelease,
+		Admission:   m,
 	})
 	m.supervisors[h.Name] = s
 }

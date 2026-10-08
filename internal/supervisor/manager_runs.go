@@ -111,6 +111,19 @@ func (m *Manager) AppendRun(name string, rec RunRecord) (RunRecord, error) {
 // The allocator is saved by the debounced persist loop. That is enough: the id
 // is durable in this line, and boot floors the allocator at the ledger.
 func (m *Manager) appendNew(name string, typ ledger.Type, rec RunRecord) (RunRecord, error) {
+	rec, wait, err := m.enqueueNew(name, typ, rec)
+	if err != nil {
+		return rec, err
+	}
+	return rec, wait()
+}
+
+// enqueueNew is appendNew split where the ledger's Enqueue splits Append: the
+// id is allocated and the line queued, in order, and the returned wait blocks
+// until it is synced. Admission (Manager.Admit) queues a run's `opened` line
+// under its own lock, so the decision and the record are one step, and waits
+// outside it.
+func (m *Manager) enqueueNew(name string, typ ledger.Type, rec RunRecord) (RunRecord, func() error, error) {
 	m.journalMu.Lock()
 	m.mu.Lock()
 	h := m.historyLocked(name)
@@ -125,10 +138,7 @@ func (m *Manager) appendNew(name string, typ ledger.Type, rec RunRecord) (RunRec
 	}, true)
 	m.journalMu.Unlock()
 	m.markDirty()
-	if err != nil {
-		return rec, err
-	}
-	return rec, wait()
+	return rec, wait, err
 }
 
 // CoalesceRun implements RunJournal: it counts one more firing on name's

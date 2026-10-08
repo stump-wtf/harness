@@ -839,6 +839,23 @@ func (g hoursGate) OpenFirings(name string) {
 	}
 }
 
+// BudgetDue, AddHolds and SettleBudget are the budget day's half of the gate
+// pass (SPEC-0021 REQ-3, REQ-5, REQ-20): the rollover on the tick's clock,
+// the budget holds it decides, and a one-shot's settle-up after the day its
+// firings were refused in.
+func (g hoursGate) BudgetDue(now time.Time) (map[string]core.HoldSet, []string) {
+	return g.mgr.BudgetDue(now)
+}
+
+func (g hoursGate) AddHolds(name string, reasons core.HoldSet) { g.mgr.AddHolds(name, reasons) }
+
+func (g hoursGate) SettleBudget(name string) {
+	d, ok := g.mgr.SettleBudget(name)
+	if ok && d.Kind != "" {
+		log.Info("catch-up after the budget day rolled over", "harness", name, "decision", string(d.Kind), "run_id", d.Run.RunID)
+	}
+}
+
 // scheduleStore adapts the Manager's state.json schedule marks to the
 // scheduler's Store seam. The two mark types match field for field, so these
 // conversions stop compiling the moment either one drifts.

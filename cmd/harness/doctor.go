@@ -366,6 +366,12 @@ func runDoctorWith(o verbOpts, notifyTest bool) int {
 		})
 	}
 
+	// What admission met of the run ledger: budgeted starts it refused, and
+	// records boot found lost (SPEC-0021 REQ-4, REQ-7).
+	if r := runLedgerCheck(&di); r != nil {
+		rows = append(rows, *r)
+	}
+
 	hs, err := c.List()
 	switch {
 	case err != nil:

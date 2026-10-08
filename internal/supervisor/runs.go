@@ -132,6 +132,9 @@ const (
 	ReasonBudget      RunReason = "budget"
 	ReasonConcurrency RunReason = "concurrency"
 	ReasonModelHold   RunReason = "model_hold"
+	// ReasonLedgerUnavailable: a budgeted start refused because its ledger
+	// record could not be written (SPEC-0021 REQ-4).
+	ReasonLedgerUnavailable RunReason = "ledger_unavailable"
 
 	// ReasonTemplateUnresolved: a required argv template value was absent
 	// for this run, so nothing was exec'd. The record names the path in
@@ -362,6 +365,11 @@ type RunDecision struct {
 	// Run is the started run's record as opened, or the skipped record; zero
 	// for a queued request.
 	Run RunRecord
+	// Refused is set when admission refused the start (SPEC-0021 REQ-4): the
+	// decision's error, wrapping budget.ErrOverBudget, budget.ErrParked or
+	// budget.ErrLedgerUnavailable where one applies, so the control op can
+	// tell them apart (REQ-21). Nil for every other decision.
+	Refused error
 }
 
 // activeRun is the loop-owned state of the run in flight.
@@ -402,10 +410,11 @@ func decisionRecord(req RunRequest, outcome RunOutcome, now time.Time) RunRecord
 	return rec
 }
 
-// startProcess brings the harness up from idle: as a recorded run if it is
-// scheduled, as a plain start otherwise. It returns the run's record as opened
-// (zero for an unscheduled harness).
-func (s *Supervisor) startProcess(req RunRequest) RunRecord {
+// startProcess brings the harness up from idle, through admission: as a
+// recorded run if it is triggered, as a resident's process lifetime otherwise.
+// It returns what admission decided: started, with the run's record as
+// opened, or refused (admit.go).
+func (s *Supervisor) startProcess(req RunRequest) RunDecision {
 	// Triggered, not scheduled: SPEC-0014 extends the run machinery to event
 	// sources, so a webhook-only harness gets a record, a log, `timeout`,
 	// `on_overlap` and `keep_runs` exactly as a cron one-shot does. A bare
@@ -414,8 +423,7 @@ func (s *Supervisor) startProcess(req RunRequest) RunRecord {
 	if s.harness.Triggered() {
 		return s.beginRun(req)
 	}
-	s.beginStart()
-	return RunRecord{}
+	return s.startResident()
 }
 
 // startRun handles a firing. From idle it starts a run; with a run in flight
@@ -439,7 +447,7 @@ func (s *Supervisor) startRun(req RunRequest) RunDecision {
 	}
 	if !s.hasProcess() {
 		s.clearFailLatch()
-		return RunDecision{Kind: DecisionStarted, Run: s.startProcess(req)}
+		return s.startProcess(req)
 	}
 	if !s.harness.Triggered() {
 		// No overlap policy without a firing source: already up is up.
@@ -455,48 +463,64 @@ func (s *Supervisor) startRun(req RunRequest) RunDecision {
 		}
 		return RunDecision{Kind: DecisionSkipped, Run: s.recordSkip(req, ReasonOverlap)}
 	case core.OverlapReplace:
+		// Admitted BEFORE the run in flight is stopped: a replacement the
+		// budget refuses must not cost the run it would have replaced.
+		adm, res := s.admitRun(req)
+		if adm == nil {
+			return s.refuseRun(req, res)
+		}
 		s.gracefulStop()
 		s.finishRun(OutcomeReplaced, &s.lastExitCode)
 		s.clearFailLatch()
-		return RunDecision{Kind: DecisionStarted, Run: s.beginRun(req)}
+		return RunDecision{Kind: DecisionStarted, Run: s.launchRun(req, adm)}
 	default:
 		return RunDecision{Kind: DecisionSkipped, Run: s.recordSkip(req, ReasonOverlap)}
 	}
 }
 
-// beginRun opens a record for req, opens its log, starts the process, and arms
-// the timeout.
-func (s *Supervisor) beginRun(req RunRequest) RunRecord {
+// beginRun admits req (admit.go), then opens its log, starts the process, and
+// arms the timeout; a refused firing is recorded skipped with the reason.
+func (s *Supervisor) beginRun(req RunRequest) RunDecision {
+	adm, res := s.admitRun(req)
+	if adm == nil {
+		return s.refuseRun(req, res)
+	}
+	return RunDecision{Kind: DecisionStarted, Run: s.launchRun(req, adm)}
+}
+
+// admitRun asks admission for a run of req, opening its record when it is
+// admitted (SPEC-0021 REQ-4, SPEC-0022 REQ-6: on disk before the spawn).
+func (s *Supervisor) admitRun(req RunRequest) (*admission, AdmitResult) {
 	s.ensureLog()
 	rec := decisionRecord(req, OutcomeRunning, time.Now())
 	rec.EndedAt = nil
+	return s.admitStart(req.Trigger, false, rec)
+}
+
+// launchRun starts the admitted run adm: its log and event file, the process,
+// and the timeout. It returns the run's record as opened.
+func (s *Supervisor) launchRun(req RunRequest, adm *admission) RunRecord {
+	rec := adm.rec
 	run := &activeRun{}
-	if s.journal != nil {
-		opened, path, err := s.journal.OpenRun(s.harness.Name, rec)
-		rec = opened
-		if err != nil {
-			s.logEvent("run history not saved", "run_id", rec.RunID, "err", err.Error())
+	if path := adm.log; path != "" {
+		if f, err := openRunLog(path); err != nil {
+			s.logEvent("run log unavailable", "run_id", rec.RunID, "err", err.Error())
+		} else {
+			run.file = f
+			run.evlog = newEventLogger(f)
 		}
-		if path != "" {
-			if f, err := openRunLog(path); err != nil {
-				s.logEvent("run log unavailable", "run_id", rec.RunID, "err", err.Error())
+		// Written HERE, after the run id exists and before the process
+		// spawns, because the spawn's environment names this path. A
+		// failure to write it is logged and the run continues without an
+		// event file rather than being abandoned: an agent that finds no
+		// HARNESS_EVENT_FILE can still do its job, where a firing dropped
+		// for a disk error is work silently lost with nothing to
+		// re-deliver it.
+		if req.Event != nil {
+			if p, err := writeEventFile(eventPathFor(path), req.Event); err != nil {
+				s.logEvent("run event not saved", "run_id", rec.RunID, "err", err.Error())
 			} else {
-				run.file = f
-				run.evlog = newEventLogger(f)
-			}
-			// Written HERE, after the run id exists and before the process
-			// spawns, because the spawn's environment names this path. A
-			// failure to write it is logged and the run continues without an
-			// event file rather than being abandoned: an agent that finds no
-			// HARNESS_EVENT_FILE can still do its job, where a firing dropped
-			// for a disk error is work silently lost with nothing to
-			// re-deliver it.
-			if req.Event != nil {
-				if p, err := writeEventFile(eventPathFor(path), req.Event); err != nil {
-					s.logEvent("run event not saved", "run_id", rec.RunID, "err", err.Error())
-				} else {
-					run.eventFile = p
-				}
+				run.eventFile = p
 			}
 		}
 	}
@@ -504,7 +528,7 @@ func (s *Supervisor) beginRun(req RunRequest) RunRecord {
 	s.run = run
 	s.logEvent("run started", "run_id", rec.RunID, "trigger", string(rec.Trigger))
 
-	s.beginStart()
+	s.beginStart(adm)
 	// A spawn failure has already finished the run inside beginStart.
 	if s.run == run && s.hasProcess() {
 		run.gen = s.gen
@@ -907,37 +931,16 @@ type residentRun struct {
 	rec RunRecord
 }
 
-// openResident opens a record for the resident spawn about to happen, with the
-// trigger its start path set (startTrigger), consuming it. It runs before the
-// spawn, so the opened line is on disk first (SPEC-0022 REQ-6).
-func (s *Supervisor) openResident() {
-	trig := s.startTrigger
-	s.startTrigger = ""
-	if s.journal == nil || s.harness.Triggered() {
+// openResident makes the resident record admission opened for this spawn
+// (startResident) the open resident run, before the spawn, so the opened line
+// is on disk first (SPEC-0022 REQ-6). A one-shot's admission is its run's, not
+// a resident's, and a supervisor with no journal opened nothing.
+func (s *Supervisor) openResident(adm *admission) {
+	if adm.rec.Kind != KindResident || adm.rec.RunID == 0 {
 		return
 	}
-	if trig == "" {
-		trig = TriggerManual
-	}
-	if s.resident != nil {
-		// Every exit path closes the record, so an open one here is a path
-		// that forgot to. Close it rather than leave it open until the next
-		// boot calls it a crash.
-		s.closeResident(OutcomeInterrupted, nil, "")
-	}
-	s.ensureLog()
-	rec := RunRecord{Kind: KindResident, Trigger: trig, Outcome: OutcomeRunning, StartedAt: time.Now()}
-	if s.log != nil {
-		rec.Log = s.log.path()
-	}
-	opened, _, err := s.journal.OpenRun(s.harness.Name, rec)
-	if err != nil {
-		// The run goes on: an unbudgeted harness does not wait on the
-		// ledger (SPEC-0022 REQ-6). The line is queued and retried.
-		s.logEvent("run history not saved", "run_id", opened.RunID, "err", err.Error())
-	}
-	s.resident = &residentRun{rec: opened}
-	s.logEvent("run started", "run_id", opened.RunID, "trigger", string(trig))
+	s.resident = &residentRun{rec: adm.rec}
+	s.logEvent("run started", "run_id", adm.rec.RunID, "trigger", string(adm.rec.Trigger))
 }
 
 // closeResident closes the open resident record, if any, with outcome.

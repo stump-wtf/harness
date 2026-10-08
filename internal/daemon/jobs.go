@@ -127,6 +127,11 @@ func (c *conn) opTrigger(req protocol.ControlReq) {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
 		return
 	}
+	// Admission refused the run (SPEC-0021 REQ-4): the skip is recorded, and
+	// the caller gets the refusal as the error its sentinel maps to.
+	if c.writeRefusal(req, d.Refused) {
+		return
+	}
 	out := protocol.TriggerData{Name: req.Name}
 	switch d.Kind {
 	case supervisor.DecisionStarted:
