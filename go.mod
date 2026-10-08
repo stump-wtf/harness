@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1
 	github.com/charmbracelet/log v0.4.2
-	github.com/charmbracelet/x/ansi v0.11.8
+	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/charmbracelet/x/vt v0.0.0-20261004011457-ad85c59fdf4e
 	github.com/charmbracelet/x/xpty v0.1.4
