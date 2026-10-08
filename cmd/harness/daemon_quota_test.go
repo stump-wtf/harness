@@ -204,10 +204,13 @@ func newQuotaDaemon(t *testing.T, cfg *core.Config, at time.Time, withScheduler 
 	r := newBudgetRig(t, cfg, at)
 	obsOpts := daemonObserverOptions()
 	obsOpts.PollInterval = time.Hour // only an exit's own sync reads a store
-	obs := startDaemonObserver(r.mgr, obsOpts)
+	// The daemon's order: the feed subscribes to an observer whose loop has
+	// not started yet, and the loop starts once everything has attached.
+	obs := newDaemonObserver(r.mgr, obsOpts)
 	t.Cleanup(obs.Stop)
 	qf := startDaemonQuota(obs, r.mgr)
 	t.Cleanup(func() { stopDaemonQuota(qf, r.mgr) })
+	obs.Start()
 	if withScheduler {
 		sched := startDaemonScheduler(r.mgr, cfg, r.clock)
 		t.Cleanup(sched.Close)
@@ -369,6 +372,30 @@ func TestDaemonQuotaDecidesOnTheRunsOwnError(t *testing.T) {
 	}
 	if snap := d.mustSnap(t, "review"); !parked(snap) {
 		t.Fatalf("state=%s holds=%s, want stopped and held for quota", snap.State, snap.Holds)
+	}
+}
+
+// The park detector watches from before the observer's poll loop starts: the
+// daemon subscribes the quota feed and installs its exit sync before
+// Autostart, and starts the loop only after every subscriber has attached. A
+// boot-time run that exits on its quota in that window is still parked, on
+// the exit's own sync (SPEC-0021 REQ-13).
+func TestDaemonQuotaWatchesBeforeThePollLoopStarts(t *testing.T) {
+	tmp := t.TempDir()
+	hermeticHome(t, tmp)
+	_, envFile := standIn(t, tmp, "crush", "crush-402")
+	r := newBudgetRig(t, tarsConfig(t, tmp, envFile), time.Date(2026, 10, 4, 0, 5, 0, 0, time.UTC))
+	obs := newDaemonObserver(r.mgr, daemonObserverOptions())
+	t.Cleanup(obs.Stop)
+	qf := startDaemonQuota(obs, r.mgr)
+	t.Cleanup(func() { stopDaemonQuota(qf, r.mgr) })
+
+	r.mgr.StartRun("review", supervisor.RunRequest{Trigger: supervisor.TriggerChannel})
+	rs := waitRunsWhere(t, r.mgr, "review", "the run closed", func(rs []supervisor.RunRecord) bool {
+		return len(rs) == 1 && rs[0].Outcome != supervisor.OutcomeRunning
+	})
+	if rs[0].Outcome != supervisor.OutcomeQuotaParked {
+		t.Fatalf("outcome = %s, want quota_parked with the poll loop not yet started", rs[0].Outcome)
 	}
 }
 

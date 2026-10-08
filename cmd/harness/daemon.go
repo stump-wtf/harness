@@ -110,9 +110,18 @@ func daemonObserverOptions() observe.Options {
 // Manager and starts it. The daemon stops it on shutdown, before the Manager
 // closes.
 func startDaemonObserver(mgr *supervisor.Manager, opts observe.Options) *observe.Observer {
-	obs := observe.New(mgr, opts)
+	obs := newDaemonObserver(mgr, opts)
 	obs.Start()
 	return obs
+}
+
+// newDaemonObserver builds the observer without starting its poll loop. The
+// daemon builds it before Autostart so the quota feed can subscribe and
+// install its exit sync before anything starts (an exit's Sync scans without
+// the loop), and starts the loop once every subscriber has attached, so the
+// first poll reaches them all.
+func newDaemonObserver(mgr *supervisor.Manager, opts observe.Options) *observe.Observer {
+	return observe.New(mgr, opts)
 }
 
 // startDaemonLoopGuard subscribes the runaway tool-loop guard to the
@@ -425,6 +434,19 @@ func runDaemon(o daemonOpts) {
 	// Its observer, schedule and listener arrive below.
 	daemonMet := beginDaemonMetrics(mgr, metricsListener)
 	notifier.registerMetrics(daemonMet)
+
+	// stump.wtf/harness#477: a harness whose provider refuses it for an
+	// exhausted quota is parked until the reset, instead of restarted into the
+	// same refusal (SPEC-0021 REQ-12, REQ-13). The park detector watches from
+	// before the first start: the observer is built and the quota feed
+	// subscribed, with its exit sync installed, before Autostart and the
+	// scheduler can start anything, so a boot-time run that fails on its quota
+	// is judged on what its agent wrote. Restore has already restored the
+	// parks, so admission refuses a parked harness from the first start. The
+	// observer's poll loop starts below, once every subscriber has attached.
+	observer := newDaemonObserver(mgr, daemonObserverOptions())
+	quotaFeed := startDaemonQuota(observer, mgr)
+
 	mgr.Autostart()
 
 	// Scheduled harnesses and the operating-hours gate share one wall-clock
@@ -521,13 +543,11 @@ func runDaemon(o daemonOpts) {
 	sessionGuard := startDaemonSessionGuard(mgr, notifier, 0, 0)
 	log.Info("session guard active", "interval", supervisor.DefaultSessionGuardInterval, "lookback", supervisor.DefaultSessionGuardLookback)
 
-	// Issue #390: read what the supervised agents write — tool calls, and the
-	// provider errors a running process never surfaces — for the metrics and
-	// telemetry consumers that subscribe to it. Built after Autostart, so its
-	// history floor is this daemon's start and nothing from before it is
+	// Issue #390: the observer (built above, before Autostart) reads what the
+	// supervised agents write — tool calls, and the provider errors a running
+	// process never surfaces — for the consumers that subscribe below. Its
+	// history floor is this daemon's start, so nothing from before it is
 	// reported as live.
-	observer := startDaemonObserver(mgr, daemonObserverOptions())
-	log.Info("agent event observer active", "interval", observe.DefaultPollInterval)
 
 	// stumpcloud/stumpcloud#469: stop a harness whose agent repeats one tool
 	// call with identical arguments, back to back — a loop no process exit
@@ -540,17 +560,15 @@ func runDaemon(o daemonOpts) {
 	// their trace links.
 	runUsage := startDaemonRunUsage(observer, mgr)
 
-	// stump.wtf/harness#477: park a harness whose provider refuses it for an
-	// exhausted quota until the reset, instead of restarting it into the
-	// same refusal (SPEC-0021 REQ-12, REQ-13).
-	quotaFeed := startDaemonQuota(observer, mgr)
-
 	// Issue #391: export that stream, only when [telemetry] names a
 	// destination and only for opted-in harnesses (SPEC-0015 REQ-1).
 	telemetryPipeline := startDaemonTelemetry(telemetryRes, observer, mgr, telemetry.Options{})
 	// Issue #356: GET /metrics (SPEC-0013), fed by the observer and the
 	// Manager, on its own listener.
 	daemonMet.serve(observer, sched.NextFire)
+	// Every subscriber is attached: the first poll reaches them all.
+	observer.Start()
+	log.Info("agent event observer active", "interval", observe.DefaultPollInterval)
 
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
 	// tear down connections, stop harnesses, flush state. SIGHUP triggers a
