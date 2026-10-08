@@ -631,7 +631,13 @@ It reads the refusal from the agent's own transcript, the same error marks the
   pipeline at once, and it all comes back together.
 - **Restarts.** A park is kept in `state.json` (the reset, the matched rule's
   name, never the error text), so a daemon restarted mid-park boots the harness
-  parked.
+  parked. The daemon watches for quota errors from before it starts anything,
+  so a run that hits its quota at boot parks too.
+- **Every park ends.** A one-shot whose park ended while the daemon was down,
+  or a `failed` member of a parked `quota_group` (a park does not hold a
+  `failed` harness, but its firings are still skipped), is released on the
+  first tick after the reset: its skipped firings are settled, and with
+  `catch_up = true` it gets its one `catch_up` run.
 
 Each park writes a `parked` line to the harness's durable log naming the rule,
 the reset and that no restart happens, and `harness list --json` carries
