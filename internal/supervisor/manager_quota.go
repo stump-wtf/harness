@@ -100,6 +100,10 @@ type ParkInfo struct {
 	// cut to 8 days.
 	Step    int
 	Clamped bool
+	// Restored marks a park this daemon read back from state.json at boot:
+	// it was in force before the daemon started, so it was announced then
+	// and the notify watcher does not announce it again.
+	Restored bool
 }
 
 // QuotaExit is what the exit path tells the park detector about an exit.
@@ -137,6 +141,9 @@ type parkRecord struct {
 	By      string    `json:"by"`
 	// Members are a group park's members when it was applied (REQ-20).
 	Members []string `json:"members,omitempty"`
+	// restored marks a park read back from state.json at boot (never
+	// written: an unexported field is not encoded).
+	restored bool
 }
 
 // quotaBook is the Manager's park bookkeeping, guarded by quotaMu.
@@ -427,7 +434,7 @@ func (m *Manager) parkOnLocked(name string, h core.Harness, now time.Time) (Park
 
 // parkInfo is rec as a ParkInfo on group ("" for a harness's own).
 func parkInfo(rec parkRecord, group string) ParkInfo {
-	return ParkInfo{Until: rec.Until, Rule: rec.Rule, Group: group, By: rec.By, Step: rec.Step, Clamped: rec.Clamped}
+	return ParkInfo{Until: rec.Until, Rule: rec.Rule, Group: group, By: rec.By, Step: rec.Step, Clamped: rec.Clamped, Restored: rec.restored}
 }
 
 // pruneParksLocked drops parks that have ended by now, so state.json stops
@@ -555,6 +562,7 @@ func (m *Manager) restoreParks(raw json.RawMessage) {
 			log.Info("quota park ended while the daemon was down", "key", key, "until", rec.Until.Format(time.RFC3339))
 			continue
 		}
+		rec.restored = true
 		m.qb.parks[key] = rec
 	}
 }

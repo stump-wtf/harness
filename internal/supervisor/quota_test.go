@@ -415,6 +415,9 @@ func TestARestartDuringAPark(t *testing.T) {
 	waitSnapshot(t, r.m, h.Name, "running", func(s Snapshot) bool { return s.State == core.StateRunning })
 	r.m.QuotaObserve(h.Name, "claude-code", time.Now(), false, "Claude AI usage limit reached|"+fmt.Sprint(until.Unix()))
 	waitSnapshot(t, r.m, h.Name, "parked", parkedSnap)
+	if p, _ := r.m.ParkOf(h.Name); p.Restored {
+		t.Fatal("a park set by this daemon reads as restored")
+	}
 	before := spawns(t, marker)
 
 	// The daemon goes down and comes back at 14:00.
@@ -426,8 +429,8 @@ func TestARestartDuringAPark(t *testing.T) {
 	if !snap.Enabled {
 		t.Fatal("booted parked but no longer enabled")
 	}
-	if p, ok := r.m.ParkOf(h.Name); !ok || !p.Until.Equal(until) {
-		t.Fatalf("park after the restart = %+v ok=%v, want until 15:00", p, ok)
+	if p, ok := r.m.ParkOf(h.Name); !ok || !p.Until.Equal(until) || !p.Restored {
+		t.Fatalf("park after the restart = %+v ok=%v, want until 15:00, restored", p, ok)
 	}
 	r.gate() // a tick before the reset releases nothing
 	time.Sleep(100 * time.Millisecond)
