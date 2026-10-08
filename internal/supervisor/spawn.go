@@ -28,6 +28,7 @@ import (
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/skillmerge"
 	"github.com/stump-wtf/harness/internal/tmpl"
+	"github.com/stump-wtf/harness/internal/trigger/extract"
 )
 
 // defaultPTYCols/Rows size a freshly spawned PTY when no client viewport is
@@ -204,6 +205,34 @@ type RunEnv struct {
 	// template context's run.started_at and run.date (SPEC-0017 REQ-7), so a
 	// respawn of the same run renders the same values.
 	StartedAt time.Time
+	// Event is the event tier of the template context (SPEC-0017 REQ-7),
+	// built from the run's event envelope. It is never an environment
+	// variable: no event byte reaches the child's environment. Nil when the
+	// run carries no event, so every event.* path is absent — never empty —
+	// and a required reference fails the render.
+	Event *EventContext
+}
+
+// EventContext is the event tier of the template context: the envelope's
+// daemon-tier fields and the typed values the extractor validated when the
+// envelope was written (SPEC-0017 REQ-7, REQ-8). Every value here passed a
+// pattern or came from the daemon itself; nothing is raw payload. Templates
+// read event.* from HERE, never from the payload.
+type EventContext struct {
+	// File is the event file's absolute path (event.file).
+	File string
+	// ID is event.id: the envelope's event_id when it is ID-shaped, else a
+	// daemon-generated ID.
+	ID string
+	// Kind, Source and ReceivedAt are the envelope's own fields; ReceivedAt
+	// is RFC 3339 UTC.
+	Kind       string
+	Source     string
+	ReceivedAt string
+	// Typed holds the validated typed values (event.name, event.action,
+	// event.repo, event.number, event.url, event.sha, event.meta.<key>),
+	// keyed as the envelope's `typed` object spells them.
+	Typed map[string]any
 }
 
 // vars renders r as KEY=VALUE pairs, omitting the two that are meaningful only
@@ -473,6 +502,23 @@ func renderContext(h core.Harness, workdir string, run RunEnv, now time.Time) tm
 	}
 	if run.Source != "" {
 		v[core.PathRunSource] = run.Source
+	}
+	if run.Event != nil {
+		ev := run.Event
+		if ev.File != "" {
+			v[core.PathEventFile] = ev.File
+		}
+		v[core.PathEventID] = ev.ID
+		v[core.PathEventKind] = ev.Kind
+		v[core.PathEventSource] = ev.Source
+		v[core.PathEventReceivedAt] = ev.ReceivedAt
+		for k, val := range ev.Typed {
+			s, ok := extract.String(val)
+			if !ok {
+				continue
+			}
+			v["event."+k] = s
+		}
 	}
 	return tmpl.Map{Values: v}
 }

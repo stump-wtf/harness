@@ -142,8 +142,13 @@ triggers = ["channel.sb"]`, []string{`"argv[1]"`, "every scheduled firing"}},
 			[]string{`"argv[1]"`, "untrusted text is never permitted in argv"}},
 		{"bare untrusted path", `argv = ["x", "{{event.body?}}"]`,
 			[]string{`"argv[1]"`, "untrusted text is never permitted in argv"}},
-		{"event path not yet", `argv = ["gh", "pr", "view", "{{event.number?}}"]`,
-			[]string{`"argv[3]"`, "not available in argv yet"}},
+		{"required event path on a schedule", `argv = ["gh", "pr", "view", "{{event.number}}"]
+schedule = "0 6 * * *"
+triggers = ["channel.sb"]`, []string{`"argv[3]"`, "every scheduled firing", "{{event.number?}}"}},
+		{"required event path with no triggers", `argv = ["gh", "pr", "view", "{{event.number}}"]`,
+			[]string{`"argv[3]"`, "no \"triggers\"", "{{event.number?}}"}},
+		{"event actor not yet", `argv = ["gh", "review", "--by", "{{event.actor?}}"]`,
+			[]string{`"argv[3]"`, "not available yet", "trusted_actors"}},
 		{"prompt not yet", `argv = ["tool", "--msg={{prompt}}"]`,
 			[]string{`"argv[1]"`, "prompt delivery"}},
 		{"unknown path", `argv = ["x", "a", "{{harness.nmae}}"]`,
@@ -183,6 +188,37 @@ func TestCommandArgvTemplatesThatLoad(t *testing.T) {
 	} {
 		if _, err := Parse([]byte("[harness.x]\nharness = \"command\"\nargv = "+argv+"\n"), "t.toml"); err != nil {
 			t.Errorf("argv %s did not load: %v", argv, err)
+		}
+	}
+}
+
+// TestCommandEventPathsThatLoad is REQ-7's "Optional event field on a
+// scheduled firing" from the load side: an OPTIONAL event.* reference on a
+// scheduled harness loads (it renders empty and the run starts), and a
+// REQUIRED one on a triggered, unscheduled harness loads too (every firing
+// of it carries an event).
+func TestCommandEventPathsThatLoad(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"optional event field on a schedule", `[channel.sb]
+url = "https://sb.example.com/mcp/x"
+
+[harness.ci]
+harness = "command"
+argv = ["ci", "{{event.number?}}", "{{event.meta.queue?}}", "{{event.file?}}"]
+schedule = "0 6 * * *"
+triggers = ["channel.sb"]
+`},
+		{"required event field on a triggered harness", `[channel.sb]
+url = "https://sb.example.com/mcp/x"
+
+[harness.ci]
+harness = "command"
+argv = ["ci", "{{event.number}}", "{{event.name}}", "{{event.id}}", "{{event.meta.todo_id}}"]
+triggers = ["channel.sb"]
+`},
+	} {
+		if _, err := Parse([]byte(tc.body), "t.toml"); err != nil {
+			t.Errorf("%s did not load: %v", tc.name, err)
 		}
 	}
 }

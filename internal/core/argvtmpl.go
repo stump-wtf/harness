@@ -42,13 +42,42 @@ const (
 	PathRunDate        = "run.date"
 )
 
-// argvPaths is the argv allow set. Every path here is an identifier, a
-// timestamp or an operator-written value: none carries a byte an outside party
-// chose.
+// Event paths of the REQ-7 context (SPEC-0017 REQ-7, REQ-8). The daemon-tier
+// fields come from the envelope itself; the typed ones only from a value the
+// extractor validated. event.actor (REQ-9) is deliberately NOT among them:
+// trusted_actors is a later story, and allowing the path now would sell a
+// harness whose every required {{event.actor}} render fails.
+const (
+	PathEventFile       = "event.file"
+	PathEventID         = "event.id"
+	PathEventKind       = "event.kind"
+	PathEventSource     = "event.source"
+	PathEventReceivedAt = "event.received_at"
+	PathEventName       = "event.name"
+	PathEventAction     = "event.action"
+	PathEventRepo       = "event.repo"
+	PathEventNumber     = "event.number"
+	PathEventURL        = "event.url"
+	PathEventSHA        = "event.sha"
+)
+
+// EventMetaPrefix is the event.meta.<key> family's prefix; the keys are the
+// extractor's, not a closed set config can enumerate.
+const EventMetaPrefix = "event.meta."
+
+// argvPaths is the closed part of the argv allow set: the operator and
+// daemon tiers (SPEC-0017 REQ-7). The event paths are open (event.meta.<key>)
+// and checked by eventPath. Every path here is an identifier, a timestamp, a
+// URL the extractor verified, or an operator-written value: none carries a
+// byte an outside party chose.
 var argvPaths = map[string]bool{
 	PathHarnessName: true, PathHarnessWorkdir: true, PathModel: true,
 	PathRunID: true, PathRunTrigger: true, PathRunSource: true,
 	PathRunStartedAt: true, PathRunDate: true,
+	PathEventFile: true, PathEventID: true, PathEventKind: true,
+	PathEventSource: true, PathEventReceivedAt: true,
+	PathEventName: true, PathEventAction: true, PathEventRepo: true,
+	PathEventNumber: true, PathEventURL: true, PathEventSHA: true,
 }
 
 // untrustedPaths are REQ-10's free-text fields. They are refused in argv in
@@ -60,20 +89,36 @@ var untrustedPaths = map[string]bool{
 }
 
 // eventPath reports whether p is one of REQ-7's event.* paths (other than the
-// untrusted ones). They are real context paths, so the error says "not yet"
-// rather than "unknown".
+// untrusted ones). event.meta.<key> keys come from the extractor's table, so
+// the prefix is the allow set; event.actor waits for the trusted-actors story.
 func eventPath(p string) bool {
 	switch p {
-	case "event.file", "event.id", "event.kind", "event.source", "event.received_at",
-		"event.name", "event.repo", "event.number", "event.url", "event.sha",
-		"event.action", "event.actor":
+	case PathEventFile, PathEventID, PathEventKind, PathEventSource, PathEventReceivedAt,
+		PathEventName, PathEventRepo, PathEventNumber, PathEventURL, PathEventSHA,
+		PathEventAction:
 		return true
 	}
-	return strings.HasPrefix(p, "event.meta.")
+	return strings.HasPrefix(p, EventMetaPrefix)
 }
 
 // argvElement names argv[i] the way every command-argv error does.
 func argvElement(i int) string { return fmt.Sprintf("%q", fmt.Sprintf("argv[%d]", i)) }
+
+// checkRequiredEvent rejects a REQUIRED event.* reference a harness can
+// never — or never on schedule — render: a harness with no triggers has no
+// event at all, and a scheduled harness's clock firings carry none, so every
+// firing would be skipped with template_unresolved. The optional form is
+// fine: it renders empty and the run starts (REQ-7).
+// Governing: SPEC-0017 REQ-7.
+func checkRequiredEvent(at, path string, scheduled, triggered bool) error {
+	if !triggered {
+		return fmt.Errorf("%s: {{%s}} can never render: the harness has no \"triggers\", so no run carries an event (write {{%s?}} for an empty argument)", at, path, path)
+	}
+	if scheduled {
+		return fmt.Errorf("%s: {{%s}} is absent on every scheduled firing, which would skip them all (write {{%s?}} for an empty argument)", at, path, path)
+	}
+	return nil
+}
 
 // parseArgvTemplates parses argv[1:], returning one Template per element (the
 // entry for argv[0] is the zero Template: argv[0] is never a template). A
@@ -97,14 +142,14 @@ func checkArgvRef(i int, r tmpl.Ref) error {
 	switch {
 	case untrustedPaths[r.Path] || r.Kind == tmpl.Untrusted:
 		return fmt.Errorf("%s: untrusted text is never permitted in argv ({{untrusted %s}} renders only inside a prompt template; give the program {{event.file}} to read instead)", at, r.Path)
-	case argvPaths[r.Path]:
+	case argvPaths[r.Path] || eventPath(r.Path):
 		return nil
-	case eventPath(r.Path):
-		return fmt.Errorf("%s: {{%s}} is not available in argv yet (event context in templates is not implemented; read $HARNESS_EVENT_FILE from the environment)", at, r.Path)
+	case r.Path == "event.actor":
+		return fmt.Errorf("%s: {{event.actor}} is not available yet (trusted_actors, SPEC-0017 REQ-9, is not implemented)", at)
 	case r.Path == "prompt" || r.Path == "prompt_file":
 		return fmt.Errorf("%s: {{%s}} needs a prompt delivery, which a command harness does not have yet", at, r.Path)
 	}
-	return fmt.Errorf("%s: unknown template path %q (argv may reference: harness.name, harness.workdir, model, run.id, run.trigger, run.source, run.started_at, run.date)", at, r.Path)
+	return fmt.Errorf("%s: unknown template path %q (argv may reference: harness.name, harness.workdir, model, run.*, event.*)", at, r.Path)
 }
 
 // CommandArgvRefs returns every placeholder reference in argv[1:], each paired
@@ -143,6 +188,11 @@ type ArgvRef struct {
 //   - A harness with neither `schedule` nor `triggers` has no run records, so
 //     a required {{run.id}}, {{run.trigger}} or {{run.source}} could never
 //     render (REQ-7).
+//   - An event.* path is the same two rules one step over: a scheduled
+//     harness's clock firings carry no event, and a harness with no triggers
+//     never has one at all, so a required event.* reference would skip every
+//     firing (REQ-7 scenarios "Required event field on a scheduled harness"
+//     and "Optional event field on a scheduled firing").
 //
 // The argv must already have passed CheckCommandArgv. The error is meant to
 // follow "harness %q: ".
@@ -170,6 +220,12 @@ func CheckCommandTemplateContext(argv []string, model string, scheduled, trigger
 		case PathRunID, PathRunTrigger:
 			if required && !triggered {
 				return fmt.Errorf("%s: {{%s}} can never render: the harness has no \"schedule\" or \"triggers\", so it has no run records (write {{%s?}} for an empty argument)", at, r.Path, r.Path)
+			}
+		default:
+			if required && eventPath(r.Path) {
+				if err := checkRequiredEvent(at, r.Path, scheduled, triggered); err != nil {
+					return err
+				}
 			}
 		}
 	}

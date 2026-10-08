@@ -57,6 +57,7 @@ import (
 
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/trigger"
+	"github.com/stump-wtf/harness/internal/trigger/extract"
 	"github.com/stump-wtf/harness/internal/trigger/source"
 )
 
@@ -499,6 +500,14 @@ func newEnvelope(rt *route, r *http.Request, body []byte, at time.Time) *trigger
 		EventID:    id,
 		ReceivedAt: at,
 		Webhook:    wh,
+		// Typed is extracted HERE, from this delivery's own event name and
+		// body, per the source's scheme table: one extraction, so the agent
+		// reading the file and the template rendering event.* see the same
+		// validated values (SPEC-0017 design.md § "Typed extraction happens
+		// once, when the envelope is written"). A value that fails its
+		// validation is absent; nothing is passed through raw.
+		// Governing: SPEC-0017 REQ-8.
+		Typed: extract.FromWebhook(rt.src.Verify, wh.Event, wh.Body),
 	}
 }
 

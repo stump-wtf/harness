@@ -24,10 +24,13 @@
 package trigger
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"mime"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -79,6 +82,15 @@ type Envelope struct {
 	Channel *ChannelEvent `json:"channel,omitempty"`
 	// Webhook carries a webhook delivery; nil for a channel notification.
 	Webhook *WebhookEvent `json:"webhook,omitempty"`
+	// Typed holds every typed value the event yields under SPEC-0017 REQ-8,
+	// extracted from the event's own fields and validated by the per-scheme
+	// table in internal/trigger/extract. A value that is missing, wrongly
+	// typed or invalid is simply absent. It is written when the envelope is
+	// built and re-extracted from the stored body on replay, so a hand-edited
+	// `typed` never survives a `harness trigger --event`. Templates read
+	// `event.*` from here and never from the raw payload.
+	// Governing: SPEC-0017 REQ-7, REQ-8.
+	Typed map[string]any `json:"typed,omitempty"`
 }
 
 // ChannelEvent is a `notifications/claude/channel` as received. Both fields
@@ -322,6 +334,24 @@ func (e *Envelope) Replay(at time.Time) *Envelope {
 	t := at.UTC()
 	out.ReplayedAt = &t
 	return &out
+}
+
+// templateIDPattern is what an event_id must match to be exposed as the
+// template context's event.id: SPEC-0017 REQ-7's ID shape.
+var templateIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
+
+// TemplateID is the event.id the template context carries: the envelope's
+// event_id when it is ID-shaped, and a daemon-generated ID otherwise. The
+// generated ID is derived from the envelope's own fields rather than drawn
+// at random, so a respawn of the same run renders the same value. The raw
+// event_id stays in the file for the agent either way.
+// Governing: SPEC-0017 REQ-7.
+func (e *Envelope) TemplateID() string {
+	if templateIDPattern.MatchString(e.EventID) {
+		return e.EventID
+	}
+	sum := sha256.Sum256([]byte(e.Source + "\x00" + e.EventID + "\x00" + e.ReceivedAt.UTC().Format(time.RFC3339Nano)))
+	return "evt-" + hex.EncodeToString(sum[:8])
 }
 
 // MaxEventBytes is the size cap for a manually supplied envelope: the largest
