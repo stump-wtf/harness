@@ -136,6 +136,21 @@ func TestWatcherHoursHoldIsNotAPark(t *testing.T) {
 	}
 }
 
+// A park the daemon booted with was announced by the daemon before it: a
+// restart or an upgrade does not repeat it (SPEC-0003 Scenario "A park is
+// heard once").
+func TestWatcherRestoredParkIsNotAnnouncedAgain(t *testing.T) {
+	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src.park = supervisor.ParkInfo{Until: time.Date(2026, 10, 4, 15, 0, 0, 0, time.UTC), Rule: "common/payment required", Restored: true}
+	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "review", Holds: core.HoldSetOf(core.HoldQuota)}
+	src.ch <- supervisor.Event{Kind: supervisor.EventFlapping, Name: "sentinel", Restarts: 2}
+	WaitReceived(t, w.d, out, 1)
+	time.Sleep(100 * time.Millisecond)
+	if got := ReadReceived(t, out); len(got) != 1 || got[0].Payload.Event != core.NotifyFlapping {
+		t.Fatalf("deliveries = %+v, want the sentinel only", got)
+	}
+}
+
 // A group park says which group, and whose refusal parked it.
 func TestWatcherParkedGroupNamesTheTrigger(t *testing.T) {
 	src, w, out := newWatcherRig(t, core.NotifyEvents)

@@ -39,6 +39,7 @@ package notify
 // @joestump 10/04/2026 - A triggered harness's `failed` is not a give-up;
 //   run_failed quotes the run-ledger streak.
 // @joestump 10/04/2026 - parked, from harness_hold_changed.
+// @joestump 10/08/2026 - A park restored at boot is not announced again.
 
 import (
 	"fmt"
@@ -141,6 +142,11 @@ func (w *Watcher) holdChanged(ev supervisor.Event) {
 		return
 	}
 	p, ok := w.src.ParkOf(ev.Name)
+	if ok && p.Restored {
+		// Booted parked: the park predates this daemon and was announced
+		// by the one before it. Only its clearing re-arms the alert.
+		return
+	}
 	until := p.Until
 	if !ok || until.IsZero() {
 		until = ev.HoldNext
