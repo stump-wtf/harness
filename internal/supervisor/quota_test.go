@@ -132,12 +132,17 @@ func (r *quotaRig) syncCount() int {
 }
 
 // gate is one gate tick at the rig's clock: every hold the clearers report
-// cleared is released, as the scheduler's pass does.
+// cleared is released, and every one-shot owed a quota settle-up with no hold
+// to release is settled, as the scheduler's pass does.
 func (r *quotaRig) gate() {
-	for name, rs := range r.m.HoldsCleared(r.clock.Now()) {
+	now := r.clock.Now()
+	for name, rs := range r.m.HoldsCleared(now) {
 		for _, reason := range rs.Reasons() {
 			r.m.Release(name, reason)
 		}
+	}
+	for _, name := range r.m.QuotaDue(now) {
+		r.m.SettleQuota(name)
 	}
 }
 
@@ -686,5 +691,97 @@ func TestARestartDuringAOneShotParkCatchesUpOnce(t *testing.T) {
 	}
 	if n := spawns(t, marker); n != 2 {
 		t.Fatalf("%d processes, want 2 (the first run and the catch_up)", n)
+	}
+}
+
+// A park that ends while the daemon is down still releases: the one-shot
+// boots with no park left to hold it, but the firing it skipped is owed its
+// catch_up, and the first gate tick gives it exactly one (SPEC-0021 REQ-13:
+// a park always releases, a restart included).
+func TestAParkThatEndsWhileTheDaemonIsDownStillCatchesUp(t *testing.T) {
+	at := time.Date(2026, 10, 4, 0, 5, 0, 0, time.UTC)
+	env := newRunsEnv(t)
+	r := &quotaRig{clock: &fakeNow{t: at}, env: env, marks: filepath.Join(env.dir, "marks")}
+	marker := filepath.Join(env.dir, "spawns")
+	h := oneShot("echo ran >> '" + marker + "'; " + r.agent("review", tarsNote, 1))
+	cfg := managerCfg(h)
+	r.boot(t, cfg, fastPolicy())
+	r.m.StartRun(h.Name, RunRequest{Trigger: TriggerSchedule})
+	waitSnapshot(t, r.m, h.Name, "parked", parkedSnap)
+	r.m.StartRun(h.Name, RunRequest{Trigger: TriggerSchedule})
+	waitRuns(t, r.m, h.Name, "a skipped firing", func(rs []RunRecord) bool { return len(rs) == 2 && rs[1].Reason == ReasonQuotaParked })
+	p, ok := r.m.ParkOf(h.Name)
+	if !ok {
+		t.Fatal("not parked")
+	}
+
+	r.closer()
+	r.clock.Set(p.Until.Add(time.Minute)) // the reset passes while the daemon is down
+	r.boot(t, cfg, fastPolicy())
+	snap := waitSnapshot(t, r.m, h.Name, "booted owing its settle-up", func(s Snapshot) bool { return s.QuotaSkipped })
+	if snap.Holds.Has(core.HoldQuota) {
+		t.Fatalf("booted held for a park that has ended: %+v", snap)
+	}
+	r.gate()
+	runs := waitRuns(t, r.m, h.Name, "one catch_up run", func(rs []RunRecord) bool {
+		return len(rs) == 3 && rs[2].Outcome != OutcomeRunning
+	})
+	if runs[2].Trigger != TriggerCatchUp {
+		t.Fatalf("after the restart: %s run, want catch_up", runs[2].Trigger)
+	}
+	if n := spawns(t, marker); n != 2 {
+		t.Fatalf("%d processes, want 2 (the first run and the catch_up)", n)
+	}
+}
+
+// A group park over a member that is failed does not hold it (a failed
+// harness stays failed for every reason), but admission still skips its
+// firings quota_parked. With no hold to release, the gate tick settles those
+// skips when the park ends, and catch_up gives it its one run (SPEC-0021
+// REQ-13: every park releases).
+func TestAGroupParkOverAFailedMemberStillReleases(t *testing.T) {
+	at := time.Date(2026, 10, 4, 0, 5, 0, 0, time.UTC)
+	env := newRunsEnv(t)
+	r := &quotaRig{clock: &fakeNow{t: at}, env: env, marks: filepath.Join(env.dir, "marks")}
+	review := oneShot(r.agent("review", tarsNote, 1))
+	review.Budget.QuotaGroup = "hyper"
+	lint := oneShot("exit 2")
+	lint.Name = "lint"
+	lint.Budget.QuotaGroup = "hyper"
+	cfg := managerCfg(review, lint)
+	r.boot(t, cfg, fastPolicy())
+
+	r.m.StartRun("lint", RunRequest{Trigger: TriggerSchedule})
+	waitSnapshot(t, r.m, "lint", "lint failed", func(s Snapshot) bool { return s.State == core.StateFailed })
+	r.m.StartRun("review", RunRequest{Trigger: TriggerSchedule})
+	waitSnapshot(t, r.m, "review", "review parked", parkedSnap)
+	p, ok := r.m.ParkOf("lint")
+	if !ok || p.Group != "hyper" {
+		t.Fatalf("lint: park = %+v ok=%v, want the hyper group park", p, ok)
+	}
+	if d, _ := r.m.StartRun("lint", RunRequest{Trigger: TriggerSchedule}); d.Kind != DecisionSkipped || d.Run.Reason != ReasonQuotaParked {
+		t.Fatalf("lint's firing under the park: %+v, want skipped quota_parked", d)
+	}
+	snap := waitSnapshot(t, r.m, "lint", "lint owes its settle-up", func(s Snapshot) bool { return s.QuotaSkipped })
+	if snap.Holds.Has(core.HoldQuota) {
+		t.Fatalf("a failed member was held: %+v", snap)
+	}
+	if due := r.m.QuotaDue(r.clock.Now()); len(due) != 0 {
+		t.Fatalf("QuotaDue while the park holds = %v, want none", due)
+	}
+
+	r.clock.Set(p.Until)
+	r.gate()
+	runs := waitRuns(t, r.m, "lint", "lint's catch_up run", func(rs []RunRecord) bool {
+		return len(rs) == 3 && rs[2].Outcome != OutcomeRunning
+	})
+	if runs[2].Trigger != TriggerCatchUp {
+		t.Fatalf("lint after the reset: %s run, want catch_up", runs[2].Trigger)
+	}
+	if s, _ := r.m.Snapshot("lint"); s.QuotaSkipped {
+		t.Error("lint still owes a settle-up after it was settled")
+	}
+	if due := r.m.QuotaDue(r.clock.Now()); len(due) != 0 {
+		t.Errorf("QuotaDue after the settle-up = %v, want none", due)
 	}
 }

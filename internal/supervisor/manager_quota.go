@@ -51,6 +51,8 @@ package supervisor
 // detector", § "What is persisted", § "Settled Questions".
 //
 // @joestump 10/04/2026 - Added for stump.wtf/harness#477.
+// @joestump 10/08/2026 - QuotaDue/SettleQuota: a park always releases, even
+//   one that ended while the daemon was down or covered a failed member.
 
 import (
 	"context"
@@ -586,4 +588,40 @@ func (m *Manager) seedQuotaSkipped(name string, s *Supervisor) {
 	if n := len(recs); n > 0 && recs[n-1].Outcome == OutcomeSkipped && recs[n-1].Reason == ReasonQuotaParked {
 		s.send(command{kind: cmdSeedQuotaSkipped})
 	}
+}
+
+// QuotaDue reports, at now (the gate tick's clock), the one-shots owed a
+// quota settle-up that no hold's release will give them: firings were
+// skipped quota_parked, no park is in force on them any more, and they are
+// not held for quota. That is a park that ended while the daemon was down
+// (boot re-seeds the skip, but there is no park left to hold it), or a group
+// park over a member that was failed, which a hold does not touch. Without
+// it their catch_up would never run, and their open skips would never close
+// (SPEC-0021 REQ-13: every park releases). Level-triggered: a harness the
+// pass leaves for a later tick is reported again. One snapshot read per
+// harness; the park check only for one that is owed.
+func (m *Manager) QuotaDue(now time.Time) []string {
+	var due []string
+	for _, s := range m.snapshotSupervisors() {
+		snap := s.Snapshot()
+		if !snap.QuotaSkipped || snap.Holds.Has(core.HoldQuota) {
+			continue
+		}
+		if m.quotaHoldCleared(snap.Name, now) {
+			due = append(due, snap.Name)
+		}
+	}
+	slices.Sort(due)
+	return due
+}
+
+// SettleQuota settles name's quota_parked skips for the gate pass
+// (QuotaDue): its open skips close, and under catch_up = true one catch_up
+// run starts through admission. ok is false for an unknown harness.
+func (m *Manager) SettleQuota(name string) (RunDecision, bool) {
+	s := m.get(name)
+	if s == nil {
+		return RunDecision{}, false
+	}
+	return s.SettleQuota(), true
 }

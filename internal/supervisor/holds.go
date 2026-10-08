@@ -367,7 +367,7 @@ func (s *Supervisor) release(reason core.HoldReason) {
 // `catch_up = true` starts the one catch_up run the skipped firings earned,
 // through admission like any firing (SPEC-0021 REQ-13: "catch_up gets one run
 // after release"; the rule SPEC-0021 REQ-5 gives budget skips).
-func (s *Supervisor) settleQuotaSkips() {
+func (s *Supervisor) settleQuotaSkips() RunDecision {
 	skipped := s.quotaSkipped
 	s.quotaSkipped = false
 	for k := range s.openSkips {
@@ -376,17 +376,46 @@ func (s *Supervisor) settleQuotaSkips() {
 		}
 	}
 	if !skipped {
-		return
+		return RunDecision{}
 	}
+	s.publishSnapshot()
 	if !s.harness.CatchUp {
 		s.logEvent("quota park cleared; firings skipped while parked are not caught up", "catch_up", false)
-		return
+		return RunDecision{}
 	}
 	s.logEvent("quota park cleared; catching up firings skipped while parked")
 	// A firing like any other: StartRun's intent handling (#159).
 	s.suppressPersist = true
-	s.startRun(RunRequest{Trigger: TriggerCatchUp})
+	d := s.startRun(RunRequest{Trigger: TriggerCatchUp})
 	s.suppressPersist = false
+	return d
+}
+
+// SettleQuota settles the one-shot's quota_parked skips when no quota hold
+// will: the park they were skipped under has ended, but the harness was
+// never held for it (a park that ended while the daemon was down, or a group
+// park over a member that was failed, which a hold does not touch). It
+// returns the catch_up run's decision, or the zero decision when nothing was
+// owed (Manager.QuotaDue; SPEC-0021 REQ-13: a park always releases).
+func (s *Supervisor) SettleQuota() RunDecision {
+	var d RunDecision
+	s.send(command{kind: cmdSettleQuota, decided: &d})
+	return d
+}
+
+// settleQuotaUnheld is cmdSettleQuota on the actor loop. It re-checks on the
+// loop what QuotaDue read off a snapshot: still owed, not held for quota (the
+// hold's release settles that one), and no park in force now.
+func (s *Supervisor) settleQuotaUnheld() RunDecision {
+	if !s.quotaSkipped || s.holds.Has(core.HoldQuota) {
+		return RunDecision{}
+	}
+	if s.quota != nil {
+		if _, parked := s.quota.ParkOf(s.harness.Name); parked {
+			return RunDecision{}
+		}
+	}
+	return s.settleQuotaSkips()
 }
 
 // holdLogReason is the reason= value a hold's durable-log lines carry. Hours

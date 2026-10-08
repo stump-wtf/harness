@@ -886,6 +886,18 @@ func (g hoursGate) SettleBudget(name string) {
 	}
 }
 
+// QuotaDue and SettleQuota settle a one-shot's quota_parked skips when its
+// park ended with no quota hold to release (SPEC-0021 REQ-13): a park that
+// ended while the daemon was down, or one over a failed member.
+func (g hoursGate) QuotaDue(now time.Time) []string { return g.mgr.QuotaDue(now) }
+
+func (g hoursGate) SettleQuota(name string) {
+	d, ok := g.mgr.SettleQuota(name)
+	if ok && d.Kind != "" {
+		log.Info("catch-up after a quota park ended", "harness", name, "decision", string(d.Kind), "run_id", d.Run.RunID)
+	}
+}
+
 // scheduleStore adapts the Manager's state.json schedule marks to the
 // scheduler's Store seam. The two mark types match field for field, so these
 // conversions stop compiling the moment either one drifts.

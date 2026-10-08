@@ -215,9 +215,10 @@ func (s *Supervisor) refuseRun(req RunRequest, res AdmitResult) RunDecision {
 		// nothing feeds Decide a concurrency cap, so this branch is not
 		// reached by a Wait.
 		rec = s.recordSkip(req, skipReasonFor(d.Reason))
-		if d.Reason == budget.ReasonQuotaParked {
+		if d.Reason == budget.ReasonQuotaParked && !s.quotaSkipped {
 			// Owed a catch_up run when the park clears (holds.go).
 			s.quotaSkipped = true
+			s.publishSnapshot()
 		}
 		if rec.Coalesced <= 1 && d.Detail != "" {
 			// The first refusal of a class says why on the durable log; the

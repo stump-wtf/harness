@@ -63,6 +63,7 @@ const (
 	// Boot: a persisted quota_parked skip is still owed its catch-up when
 	// the park clears (holds.go; SPEC-0021 REQ-13).
 	cmdSeedQuotaSkipped
+	cmdSettleQuota
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -230,6 +231,12 @@ type Snapshot struct {
 	// "Operating Hours On Triggered Harnesses"). Derived; not persisted, and
 	// re-seeded on boot from the run history (Manager.Restore).
 	HoursSkipped bool
+	// QuotaSkipped reports that a one-shot has had firings skipped
+	// quota_parked since its park last cleared: it is owed the settle-up
+	// (and, with catch_up = true, one catch_up run) a park's clearing gives.
+	// The gate pass reads it to settle one whose park ended with no quota
+	// hold to release (Manager.QuotaDue). Derived; re-seeded on boot.
+	QuotaSkipped bool
 }
 
 // Supervisor owns the lifecycle of exactly one harness. It runs a single actor
@@ -759,6 +766,12 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.publishSnapshot()
 	case cmdSeedQuotaSkipped:
 		s.quotaSkipped = true
+		s.publishSnapshot()
+	case cmdSettleQuota:
+		d := s.settleQuotaUnheld()
+		if c.decided != nil {
+			*c.decided = d
+		}
 	case cmdSettleBudget:
 		// The catch-up it starts is a firing: StartRun's intent handling
 		// (#159), as cmdOpenFirings has.
@@ -1595,6 +1608,7 @@ func (s *Supervisor) publishSnapshot() {
 
 		ConsecutiveFailures: s.consecFailures,
 		HoursSkipped:        s.hoursSkipped,
+		QuotaSkipped:        s.quotaSkipped,
 	}
 	s.mu.Unlock()
 	if holdsChanged && s.bus != nil {
