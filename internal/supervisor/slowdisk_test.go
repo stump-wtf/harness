@@ -5,12 +5,13 @@ package supervisor
 // SPEC-0021 REQ-21: admission, counters, the park detector and the gate never
 // block the supervisor's loop on a ledger write beyond the one synchronous
 // append admission requires, and a harness subject to no budget needs none
-// (SPEC-0022 REQ-6: its supervision "SHALL NOT wait"). The park consult on
+// (SPEC-0022 REQ-6, which names the exception). The park consult on
 // the exit path must not add one either.
 //
 // Governing: SPEC-0021 REQ-21, REQ-4; SPEC-0022 REQ-6.
 //
 // @joestump 10/04/2026 - Added for stump.wtf/harness#477.
+// @joestump 10/08/2026 - A stop still waits (SPEC-0022 REQ-6, as amended).
 
 import (
 	"path/filepath"
@@ -50,4 +51,36 @@ func TestASlowDiskDoesNotStallSupervision(t *testing.T) {
 	// record is there, in order.
 	release()
 	waitRuns(t, m, h.Name, "the held records landed", func(rs []RunRecord) bool { return len(rs) >= n0+2 })
+}
+
+// SPEC-0022 REQ-6 Scenario "A stop still waits for its record": the
+// exception for an unbudgeted resident's own exits does not reach an operator
+// stop. With the ledger's writer held, `harness stop` does not return until
+// the run's `closed` line is written, so it never answers ahead of the record.
+func TestAStopStillWaitsForItsRecord(t *testing.T) {
+	h := shHarness("plain", "while true; do sleep 0.02; done", 0)
+	e := newRunsEnv(t)
+	m, _ := e.manager(t, managerCfg(h), fastPolicy())
+	m.Start(h.Name)
+	waitSnapshot(t, m, h.Name, "running", func(s Snapshot) bool { return s.State == core.StateRunning })
+
+	release := m.Ledger().HoldWritesForTesting()
+	defer release()
+	done := make(chan struct{})
+	go func() { m.Stop(h.Name); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("harness stop returned with its run's closed line still held")
+	case <-time.After(500 * time.Millisecond):
+	}
+	release()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("harness stop never returned after the ledger caught up")
+	}
+	rs := m.Runs(h.Name)
+	if len(rs) == 0 || rs[len(rs)-1].Outcome == OutcomeRunning {
+		t.Fatalf("after the stop: records = %+v, want the run closed", rs)
+	}
 }
