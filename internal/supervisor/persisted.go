@@ -48,6 +48,14 @@ type persistedState struct {
 	// per harness (Manager.restoreRunsLocked), so a malformed entry costs that
 	// one harness instead of failing the whole document.
 	Runs json.RawMessage `json:"runs,omitempty"`
+	// Parks holds the quota parks in force (SPEC-0021 REQ-13; design.md §
+	// "What is persisted"): "harness:<name>" and "group:<quota_group>"
+	// entries carrying the reset instant, the matched rule's name, the
+	// backoff step and the harness that triggered it, never error text
+	// (ADR-0008). Kept raw and decoded entry by entry (restoreParks), so a
+	// malformed one costs only its own harness. Additive: an older daemon
+	// ignores it.
+	Parks json.RawMessage `json:"parks,omitempty"`
 }
 
 // errMalformedState marks a state file that exists but does not parse.

@@ -51,6 +51,10 @@ package scheduler
 // what it answers: a budget reason added to a harness that must be held for
 // it, and a one-shot's budget skips settled, with its one catch-up run.
 // SPEC-0021 REQ-3, REQ-5, REQ-20; stump.wtf/harness#470.
+//
+// @joestump 10/08/2026 - And a quota settle-up: a one-shot whose park ended
+// with no quota hold to release (Gate.QuotaDue) has its quota_parked skips
+// settled, with its one catch-up run. SPEC-0021 REQ-13; stump.wtf/harness#477.
 
 import (
 	"slices"
@@ -124,6 +128,15 @@ type Gate interface {
 	// starting one catch_up run when the harness sets `catch_up = true`
 	// (SPEC-0021 REQ-5).
 	SettleBudget(name string)
+	// QuotaDue reports, at now, the one-shots owed a quota settle-up that no
+	// hold's release will give them: firings skipped quota_parked, no park
+	// in force, and no quota hold (a park that ended while the daemon was
+	// down, or one over a failed member). Level-triggered; asked once per
+	// tick, so it must be cheap.
+	QuotaDue(now time.Time) []string
+	// SettleQuota closes name's quota_parked skips, starting one catch_up
+	// run when the harness sets `catch_up = true` (SPEC-0021 REQ-13).
+	SettleQuota(name string)
 }
 
 // gateEntry is one gated harness.
@@ -169,6 +182,9 @@ type gateAction struct {
 	// settleBudget settles a one-shot's budget skips from an earlier day
 	// (and starts its one catch_up run under catch_up = true).
 	settleBudget bool
+	// settleQuota settles a one-shot's quota_parked skips whose park ended
+	// with no quota hold to release (and starts its one catch_up run).
+	settleQuota bool
 }
 
 // hoursChange is one gated harness's in_hours flip, detected during gatePass
@@ -454,6 +470,11 @@ func (s *Scheduler) budgetPass(now time.Time, acts []gateAction) []gateAction {
 			acts = append(acts, gateAction{name: name, settleBudget: true})
 		}
 	}
+	for _, name := range s.gate.QuotaDue(now) {
+		if !busy(name) {
+			acts = append(acts, gateAction{name: name, settleQuota: true})
+		}
+	}
 	return acts
 }
 
@@ -508,6 +529,11 @@ func (s *Scheduler) dispatchGate(a gateAction) {
 			s.safely("budget settle-up", a.name, func() {
 				log.Info("budget day rolled over after skipped firings", "harness", a.name)
 				s.gate.SettleBudget(a.name)
+			})
+		case a.settleQuota:
+			s.safely("quota settle-up", a.name, func() {
+				log.Info("quota park ended with firings skipped and no hold to release", "harness", a.name)
+				s.gate.SettleQuota(a.name)
 			})
 		case a.openFirings:
 			s.safely("operating-hours catch-up", a.name, func() {

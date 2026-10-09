@@ -35,6 +35,7 @@ import (
 	"github.com/stump-wtf/harness/internal/loopguard"
 	"github.com/stump-wtf/harness/internal/notify"
 	"github.com/stump-wtf/harness/internal/observe"
+	"github.com/stump-wtf/harness/internal/quota/feed"
 	"github.com/stump-wtf/harness/internal/remote"
 	"github.com/stump-wtf/harness/internal/runusage"
 	"github.com/stump-wtf/harness/internal/scheduler"
@@ -109,9 +110,18 @@ func daemonObserverOptions() observe.Options {
 // Manager and starts it. The daemon stops it on shutdown, before the Manager
 // closes.
 func startDaemonObserver(mgr *supervisor.Manager, opts observe.Options) *observe.Observer {
-	obs := observe.New(mgr, opts)
+	obs := newDaemonObserver(mgr, opts)
 	obs.Start()
 	return obs
+}
+
+// newDaemonObserver builds the observer without starting its poll loop. The
+// daemon builds it before Autostart so the quota feed can subscribe and
+// install its exit sync before anything starts (an exit's Sync scans without
+// the loop), and starts the loop once every subscriber has attached, so the
+// first poll reaches them all.
+func newDaemonObserver(mgr *supervisor.Manager, opts observe.Options) *observe.Observer {
+	return observe.New(mgr, opts)
 }
 
 // startDaemonLoopGuard subscribes the runaway tool-loop guard to the
@@ -145,6 +155,27 @@ func startDaemonRunUsage(obs *observe.Observer, mgr *supervisor.Manager) *runusa
 		acc.SetTraceURL(mgr.Config().Ledger.TraceURL)
 	})
 	return runusage.Start(obs, acc, runusage.Options{})
+}
+
+// startDaemonQuota feeds the observer into the Manager's quota park detector
+// (SPEC-0021 REQ-11 to REQ-13) and installs the feed's Sync as the Manager's
+// quota sync seam, so an exit is judged on everything its agent wrote, not on
+// whatever the last poll saw. A function, like startDaemonRunUsage, so the
+// wiring test drives the feed the daemon builds. The daemon removes the seam
+// and stops the feed on shutdown, before the observer stops.
+//
+// Governing: ADR-0027; SPEC-0021 REQ-11, REQ-13; stump.wtf/harness#477.
+func startDaemonQuota(obs *observe.Observer, mgr *supervisor.Manager) *feed.Feed {
+	f := feed.Start(obs, mgr, feed.Options{})
+	mgr.SetQuotaSync(f.Sync)
+	return f
+}
+
+// stopDaemonQuota removes the quota sync seam and stops the feed: an exit
+// after this decides on what the detector already has.
+func stopDaemonQuota(f *feed.Feed, mgr *supervisor.Manager) {
+	mgr.SetQuotaSync(nil)
+	f.Stop()
 }
 
 // resolveDaemonTelemetry resolves the [telemetry] table against the daemon's
@@ -403,6 +434,19 @@ func runDaemon(o daemonOpts) {
 	// Its observer, schedule and listener arrive below.
 	daemonMet := beginDaemonMetrics(mgr, metricsListener)
 	notifier.registerMetrics(daemonMet)
+
+	// stump.wtf/harness#477: a harness whose provider refuses it for an
+	// exhausted quota is parked until the reset, instead of restarted into the
+	// same refusal (SPEC-0021 REQ-12, REQ-13). The park detector watches from
+	// before the first start: the observer is built and the quota feed
+	// subscribed, with its exit sync installed, before Autostart and the
+	// scheduler can start anything, so a boot-time run that fails on its quota
+	// is judged on what its agent wrote. Restore has already restored the
+	// parks, so admission refuses a parked harness from the first start. The
+	// observer's poll loop starts below, once every subscriber has attached.
+	observer := newDaemonObserver(mgr, daemonObserverOptions())
+	quotaFeed := startDaemonQuota(observer, mgr)
+
 	mgr.Autostart()
 
 	// Scheduled harnesses and the operating-hours gate share one wall-clock
@@ -499,13 +543,11 @@ func runDaemon(o daemonOpts) {
 	sessionGuard := startDaemonSessionGuard(mgr, notifier, 0, 0)
 	log.Info("session guard active", "interval", supervisor.DefaultSessionGuardInterval, "lookback", supervisor.DefaultSessionGuardLookback)
 
-	// Issue #390: read what the supervised agents write — tool calls, and the
-	// provider errors a running process never surfaces — for the metrics and
-	// telemetry consumers that subscribe to it. Built after Autostart, so its
-	// history floor is this daemon's start and nothing from before it is
+	// Issue #390: the observer (built above, before Autostart) reads what the
+	// supervised agents write — tool calls, and the provider errors a running
+	// process never surfaces — for the consumers that subscribe below. Its
+	// history floor is this daemon's start, so nothing from before it is
 	// reported as live.
-	observer := startDaemonObserver(mgr, daemonObserverOptions())
-	log.Info("agent event observer active", "interval", observe.DefaultPollInterval)
 
 	// stumpcloud/stumpcloud#469: stop a harness whose agent repeats one tool
 	// call with identical arguments, back to back — a loop no process exit
@@ -524,6 +566,9 @@ func runDaemon(o daemonOpts) {
 	// Issue #356: GET /metrics (SPEC-0013), fed by the observer and the
 	// Manager, on its own listener.
 	daemonMet.serve(observer, sched.NextFire)
+	// Every subscriber is attached: the first poll reaches them all.
+	observer.Start()
+	log.Info("agent event observer active", "interval", observe.DefaultPollInterval)
 
 	// Serve until a termination signal, then shut down cleanly: stop accepting,
 	// tear down connections, stop harnesses, flush state. SIGHUP triggers a
@@ -580,6 +625,9 @@ func runDaemon(o daemonOpts) {
 	// Before the observer too: the runs still open keep what runUsage
 	// folded into them, and their closes, in mgr.Close below, carry it.
 	runUsage.Stop()
+	// Before the observer as well: an exit from here on decides on what the
+	// park detector already has, rather than asking a stopped observer.
+	stopDaemonQuota(quotaFeed, mgr)
 	// Before the Manager closes: the observer reads its snapshots.
 	observer.Stop()
 	sessionGuard.Close()
@@ -853,6 +901,18 @@ func (g hoursGate) SettleBudget(name string) {
 	d, ok := g.mgr.SettleBudget(name)
 	if ok && d.Kind != "" {
 		log.Info("catch-up after the budget day rolled over", "harness", name, "decision", string(d.Kind), "run_id", d.Run.RunID)
+	}
+}
+
+// QuotaDue and SettleQuota settle a one-shot's quota_parked skips when its
+// park ended with no quota hold to release (SPEC-0021 REQ-13): a park that
+// ended while the daemon was down, or one over a failed member.
+func (g hoursGate) QuotaDue(now time.Time) []string { return g.mgr.QuotaDue(now) }
+
+func (g hoursGate) SettleQuota(name string) {
+	d, ok := g.mgr.SettleQuota(name)
+	if ok && d.Kind != "" {
+		log.Info("catch-up after a quota park ended", "harness", name, "decision", string(d.Kind), "run_id", d.Run.RunID)
 	}
 }
 

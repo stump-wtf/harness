@@ -315,7 +315,8 @@ type RunRequest struct {
 //
 // An error from OpenRun, CloseRun or AppendRun means the ledger has not synced
 // the line yet: it stays queued and is retried in order, and the run goes on
-// (SPEC-0022 REQ-6).
+// (SPEC-0022 REQ-6). A resident subject to no budget does not wait for the
+// lines of an exit and its restart (SPEC-0021 REQ-21): see exitCloser.
 type RunJournal interface {
 	// OpenRun allocates rec's run id and records it, on disk before it
 	// returns, and returns the record with its id and the path its log
@@ -337,6 +338,16 @@ type RunJournal interface {
 	// means the increment landed but did not persist, and the returned
 	// record carries it.
 	CoalesceRun(name string, id int) (RunRecord, error)
+}
+
+// exitCloser is a RunJournal that closes the record of a resident whose
+// process exited on its own without making the restart that follows wait on
+// the ledger, when the harness is subject to no budget (SPEC-0021 REQ-21
+// Scenario "A slow disk does not stall supervision"). The Manager is one. A
+// stop, a hold or a shutdown closes through CloseRun and waits, so the record
+// is on disk when the verb returns.
+type exitCloser interface {
+	CloseExitedRun(name string, rec RunRecord) error
 }
 
 // errNoRunToCoalesce is CoalesceRun's answer when the open record has gone
@@ -964,6 +975,13 @@ func (s *Supervisor) openResident(adm *admission) {
 
 // closeResident closes the open resident record, if any, with outcome.
 func (s *Supervisor) closeResident(outcome RunOutcome, code *int, reason RunReason) {
+	s.closeResidentFor(outcome, code, reason, false)
+}
+
+// closeResidentFor is closeResident, for a process that exited on its own
+// when exited is set: its close then goes through the journal's exitCloser,
+// so a restart need not wait on the ledger (SPEC-0021 REQ-21).
+func (s *Supervisor) closeResidentFor(outcome RunOutcome, code *int, reason RunReason, exited bool) {
 	if s.resident == nil {
 		return
 	}
@@ -980,7 +998,11 @@ func (s *Supervisor) closeResident(outcome RunOutcome, code *int, reason RunReas
 		kv = append(kv, "reason", string(reason))
 	}
 	s.logEvent("run finished", kv...)
-	if err := s.journal.CloseRun(s.harness.Name, rec); err != nil {
+	closeRun := s.journal.CloseRun
+	if ec, ok := s.journal.(exitCloser); ok && exited {
+		closeRun = ec.CloseExitedRun
+	}
+	if err := closeRun(s.harness.Name, rec); err != nil {
 		s.logEvent("run history not saved", "run_id", rec.RunID, "err", err.Error())
 	}
 }
@@ -993,12 +1015,12 @@ func (s *Supervisor) closeResident(outcome RunOutcome, code *int, reason RunReas
 func (s *Supervisor) residentExit(code int, spawnFailed bool) {
 	switch {
 	case spawnFailed:
-		s.closeResident(OutcomeFailed, nil, ReasonSpawn)
+		s.closeResidentFor(OutcomeFailed, nil, ReasonSpawn, true)
 	case !s.holds.Empty():
-		s.closeResident(OutcomeCancelled, &code, holdRunReason(s.holds))
+		s.closeResidentFor(OutcomeCancelled, &code, holdRunReason(s.holds), true)
 	case code == 0:
-		s.closeResident(OutcomeSuccess, &code, "")
+		s.closeResidentFor(OutcomeSuccess, &code, "", true)
 	default:
-		s.closeResident(OutcomeFailed, &code, "")
+		s.closeResidentFor(OutcomeFailed, &code, "", true)
 	}
 }

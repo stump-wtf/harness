@@ -60,6 +60,10 @@ const (
 	// The budget day rolled over: close the budget skips, catching up once
 	// (admit.go; SPEC-0021 REQ-5).
 	cmdSettleBudget
+	// Boot: a persisted quota_parked skip is still owed its catch-up when
+	// the park clears (holds.go; SPEC-0021 REQ-13).
+	cmdSeedQuotaSkipped
+	cmdSettleQuota
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -128,7 +132,11 @@ type command struct {
 	// Shutdown") — not the instant the daemon noticed.
 	mode    core.HoursShutdownMode
 	closeAt time.Time
-	step    *closeStepReq // cmdCloseStep payload
+	// park is the quota park a cmdHold for quota applies: its reset, rule
+	// and trigger, for the durable log and harness_hold_changed's next
+	// (SPEC-0021 REQ-19). Nil for a quota hold whose park is not known.
+	park *ParkInfo
+	step *closeStepReq // cmdCloseStep payload
 	// cmdLogEvent payload: logEvent is loop-owned state (s.evlog), so a
 	// lifecycle line decided outside the loop — an after-hours lease start/end
 	// (Manager.LogLifecycle) — is written on the loop like every other
@@ -223,6 +231,12 @@ type Snapshot struct {
 	// "Operating Hours On Triggered Harnesses"). Derived; not persisted, and
 	// re-seeded on boot from the run history (Manager.Restore).
 	HoursSkipped bool
+	// QuotaSkipped reports that a one-shot has had firings skipped
+	// quota_parked since its park last cleared: it is owed the settle-up
+	// (and, with catch_up = true, one catch_up run) a park's clearing gives.
+	// The gate pass reads it to settle one whose park ended with no quota
+	// hold to release (Manager.QuotaDue). Derived; re-seeded on boot.
+	QuotaSkipped bool
 }
 
 // Supervisor owns the lifecycle of exactly one harness. It runs a single actor
@@ -292,6 +306,16 @@ type Supervisor struct {
 	// before it spawns (admit.go; SPEC-0021 REQ-4). Nil: a supervisor built
 	// outside a Manager, with nothing budgeted.
 	admitter Admitter
+	// quota is the Manager's park detector, consulted at an exit before the
+	// restart policy or the run's outcome counts it (SPEC-0021 REQ-13;
+	// manager_quota.go). Nil: no park ever applies.
+	quota QuotaGate
+	// park is the quota park the harness is held for, while it is: its
+	// reset is the hold's next transition (holds.go). quotaSkipped marks a
+	// one-shot firing skipped quota_parked since the park began, owed one
+	// catch_up run when it clears.
+	park         ParkInfo
+	quotaSkipped bool
 	// closing marks a graceful close in flight: held and still up, waiting on
 	// the agent's turn state or the deadline (hours.go). closeAt is the
 	// instant the harness went out of hours, which anchors the deadline.
@@ -364,6 +388,10 @@ type Options struct {
 	// (SPEC-0021 REQ-4; admit.go). The Manager passes itself; nil admits
 	// every start, and opens its record through Runs.
 	Admission Admitter
+	// Quota, if set, is the park detector an exit consults before the
+	// restart policy counts it (SPEC-0021 REQ-13). The Manager passes
+	// itself; nil never parks.
+	Quota QuotaGate
 }
 
 // New creates a Supervisor for h and starts its actor loop. The harness begins
@@ -385,6 +413,7 @@ func New(h core.Harness, opts Options) *Supervisor {
 		journal:      opts.Runs,
 		admit:        opts.Admit,
 		admitter:     opts.Admission,
+		quota:        opts.Quota,
 		done:         make(chan struct{}),
 		harness:      h,
 		state:        core.StateStopped,
@@ -711,7 +740,7 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 			s.proc.writeInput(c.input)
 		}
 	case cmdHold:
-		s.hold(c.holdReason, c.enable, c.mode, c.closeAt, c.source)
+		s.hold(c.holdReason, c.enable, c.mode, c.closeAt, c.source, c.park)
 	case cmdRelease:
 		s.release(c.holdReason)
 	case cmdCloseStep:
@@ -735,6 +764,14 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 	case cmdSeedHoursSkipped:
 		s.hoursSkipped = true
 		s.publishSnapshot()
+	case cmdSeedQuotaSkipped:
+		s.quotaSkipped = true
+		s.publishSnapshot()
+	case cmdSettleQuota:
+		d := s.settleQuotaUnheld()
+		if c.decided != nil {
+			*c.decided = d
+		}
 	case cmdSettleBudget:
 		// The catch-up it starts is a firing: StartRun's intent handling
 		// (#159), as cmdOpenFirings has.
@@ -1007,8 +1044,17 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 	if s.bus != nil {
 		s.bus.Publish(Event{Kind: EventExited, Name: s.harness.Name, Time: now, Code: code})
 	}
+	// SPEC-0021 REQ-13: the park detector is consulted before anything
+	// counts this exit — the run's outcome, the restart policy, give-up —
+	// so an exit it classifies as quota exhaustion parks the harness and is
+	// never a step toward `failed`. The park is on disk when this returns.
+	park, parked := s.quotaExit(code, spawnFailed)
 	// The structured record of what "exited code=N" says (SPEC-0022 REQ-3).
-	s.residentExit(code, spawnFailed)
+	if parked && !s.harness.Triggered() {
+		s.closeResidentFor(OutcomeQuotaParked, &code, "", true)
+	} else {
+		s.residentExit(code, spawnFailed)
+	}
 
 	// A triggered harness is a one-shot: its firing source IS its retry
 	// mechanism (SPEC-0008 REQ "Firing And Overlap"). Respawning it here would
@@ -1060,6 +1106,16 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		var exit *int
 		if !spawnFailed {
 			exit = &code
+		}
+		if parked {
+			// SPEC-0021 REQ-13: the run that hit the quota reads
+			// quota_parked, the harness is left stopped (never failed),
+			// held for quota, and later firings are skipped quota_parked
+			// by admission until the reset.
+			s.parkSelf(park)
+			s.transition(core.StateStopped)
+			s.finishRunWith(OutcomeQuotaParked, exit, "")
+			return
 		}
 		if spawnFailed || code != 0 {
 			if s.state == core.StateRunning {
@@ -1137,6 +1193,19 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		} else {
 			s.transition(core.StateStopped)
 		}
+		return
+	}
+
+	// Parked (SPEC-0021 REQ-13): held for quota with no restart, the exit
+	// counted toward neither crash-loop detection nor give-up, backoff
+	// reset, and `enabled` untouched; the gate tick releases it at the
+	// reset. This is the consult the restart policy below never sees past.
+	if parked {
+		s.cancelRestartTimer()
+		s.resetCrashState()
+		s.consecFailures = 0
+		s.parkSelf(park)
+		s.transition(core.StateStopped)
 		return
 	}
 
@@ -1539,6 +1608,7 @@ func (s *Supervisor) publishSnapshot() {
 
 		ConsecutiveFailures: s.consecFailures,
 		HoursSkipped:        s.hoursSkipped,
+		QuotaSkipped:        s.quotaSkipped,
 	}
 	s.mu.Unlock()
 	if holdsChanged && s.bus != nil {

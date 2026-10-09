@@ -228,11 +228,33 @@ daemon SHALL log the failure with the harness and `seq`, count it
 order. SPEC-0021 REQ-4 decides whether admission proceeds. Supervision of a
 harness subject to no budget SHALL NOT wait on the retry.
 
+One exception to waiting for the sync, so a slow disk never stalls supervision
+(SPEC-0021 REQ-21): when a resident harness subject to no budget exits on its
+own, its `closed` line, and the `opened` line of the restart that follows, SHALL
+be queued in that order and SHALL NOT be waited for. The record MAY be published
+and the restart MAY spawn before either line is synced. A late sync SHALL be
+logged and counted like any other. Nothing else is excepted. An operator stop or
+restart, a hold, a shutdown, every one-shot and every budgeted harness SHALL
+still wait, so `harness stop` never returns ahead of the record, and no run that
+admission counts ever spawns ahead of its `opened` line.
+
 #### Scenario: The opened line is on disk before the spawn
 
 - **GIVEN** a one-shot fired at 09:00
 - **WHEN** the daemon is killed with SIGKILL the instant after the process spawns
 - **THEN** the ledger holds that run's `opened` line
+
+#### Scenario: An unbudgeted resident's restart does not wait for the disk
+
+- **GIVEN** a resident harness subject to no budget, and a ledger sync that takes 2 seconds
+- **WHEN** the harness exits on its own and the restart policy restarts it
+- **THEN** the restart spawns without waiting for the sync, and the `closed` line and then the `opened` line reach the ledger in that order
+
+#### Scenario: A stop still waits for its record
+
+- **GIVEN** the same harness and the same slow sync
+- **WHEN** an operator runs `harness stop`
+- **THEN** the stop does not return until the run's `closed` line is on disk, or the 2-second bound on the sync passes
 
 #### Scenario: A read-only disk
 

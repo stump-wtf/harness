@@ -38,6 +38,10 @@ package supervisor
 //
 // @joestump-agent 09/28/2026 - Sealed run artifacts are compressed, for
 // https://github.com/stump-wtf/harness/issues/18.
+//
+// @joestump 10/04/2026 - A resident subject to no budget no longer waits on
+// its `closed` line's sync when its process exited on its own: its restart
+// must not (SPEC-0021 REQ-21; stump.wtf/harness#477). A stop still waits.
 
 import (
 	"encoding/json"
@@ -174,6 +178,21 @@ func (m *Manager) CoalesceRun(name string, id int) (RunRecord, error) {
 // synced, before returning, so nothing publishes an outcome the ledger does not
 // hold (SPEC-0022 REQ-6).
 func (m *Manager) CloseRun(name string, rec RunRecord) error {
+	return m.closeRun(name, rec, true)
+}
+
+// CloseExitedRun closes the record of a resident whose process exited on its
+// own (exitCloser). Its restart must not wait on the ledger when it is subject
+// to no budget (SPEC-0021 REQ-21 Scenario "A slow disk does not stall
+// supervision"), so for such a resident the `closed` line is queued, in order,
+// and its sync waited for off the loop. Every other close still waits.
+func (m *Manager) CloseExitedRun(name string, rec RunRecord) error {
+	return m.closeRun(name, rec, m.awaitsLedger(name, rec.Kind))
+}
+
+// closeRun appends rec's `closed` line, waiting for its sync when wait is
+// set and otherwise leaving the wait to awaitUnbudgeted.
+func (m *Manager) closeRun(name string, rec RunRecord, wait bool) error {
 	fields := ledger.Record{
 		Outcome:     string(rec.Outcome),
 		Reason:      string(rec.Reason),
@@ -186,9 +205,16 @@ func (m *Manager) CloseRun(name string, rec RunRecord) error {
 		at = *rec.EndedAt
 		fields.DurationMs = rec.EndedAt.Sub(rec.StartedAt).Milliseconds()
 	}
-	_, err := m.ledger.Append(ledger.Line{
+	_, synced, err := m.ledger.Enqueue(ledger.Line{
 		Type: ledger.TypeClosed, At: at, Harness: name, RunID: rec.RunID, Record: fields,
 	}, true)
+	if err == nil {
+		if wait {
+			err = synced()
+		} else {
+			go m.awaitUnbudgeted(name, rec.RunID, "exit", synced)
+		}
+	}
 	if rec.Kind != KindResident {
 		m.sealRun(name, rec)
 	}

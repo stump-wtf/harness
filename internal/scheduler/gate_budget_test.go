@@ -14,6 +14,7 @@ package scheduler
 // budget day reuses the gate's clock".
 //
 // @joestump 10/04/2026 - Added for stump.wtf/harness#470.
+// @joestump 10/08/2026 - The quota settle-up rides the same pass (QuotaDue).
 
 import (
 	"slices"
@@ -81,4 +82,28 @@ func TestBudgetPassActsOnWhatIsDue(t *testing.T) {
 	if _, holds, _, _ := g.Status("gated"); holds != core.HoldSetOf(core.HoldHours, core.HoldBudget) {
 		t.Fatalf("gated holds = %s, want hours and budget", holds)
 	}
+}
+
+// A one-shot whose park ended with no quota hold to release (QuotaDue) is
+// settled once, on the tick that reports it; a harness the pass already
+// decided something for this tick waits for the next (SPEC-0021 REQ-13).
+func TestQuotaSettleUpRidesThePass(t *testing.T) {
+	r, g := gateRig(t, mon(13, 30))
+	r.s.Apply(gatedCfg(t, "gated", "TZ=UTC 09:00-14:00", core.HoursShutdownImmediate))
+	g.set("gated", true, false)
+	g.mu.Lock()
+	g.quotaOwed["review"] = true
+	g.mu.Unlock()
+	r.tick()
+	wantCalls(t, g, "13:30", "settle-quota review")
+	r.tick()
+	wantCalls(t, g, "13:30 again: nothing left owed")
+
+	g.mu.Lock()
+	g.quotaOwed["gated"] = true
+	g.mu.Unlock()
+	r.at(mon(14, 0))
+	wantCalls(t, g, "14:00: the hours hold first", "hold gated immediate")
+	r.tick()
+	wantCalls(t, g, "14:00 again", "settle-quota gated")
 }

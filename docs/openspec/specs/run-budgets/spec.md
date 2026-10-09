@@ -345,10 +345,12 @@ SHALL hold every harness whose cost is measurable.
 
 The daemon SHALL classify model errors with the one classifier SPEC-0013 REQ-3
 defines; metrics and budgets SHALL NOT keep separate tables. Errors SHALL reach it
-from the observer's error marks, and, only for a one-shot run that exits
-non-zero with no classified error observed during the run, from the last 4 KiB
-of that run's sanitized run log. The run-log fallback SHALL NOT be used for a
-resident harness or for a zero exit.
+from the observer's error marks only, Claude Code's API errors included. An exit
+SHALL be judged on every mark its agent wrote before it exited: before the exit
+path consults the park detector, the observer SHALL read the transcript stores
+and the detector SHALL receive what that read delivers, so that a run which exits
+seconds after it starts is never decided ahead of its own error mark. Nothing
+SHALL be classified from a run's output or run log.
 
 #### Scenario: A crush quota error mark
 
@@ -357,9 +359,9 @@ resident harness or for a zero exit.
 
 #### Scenario: A Claude Code usage limit on a one-shot
 
-- **GIVEN** agent-trace does not surface claude-code API errors (the pinned version predates those marks)
-- **WHEN** a claude-code `-p` run exits 1 and its run log ends with "Claude AI usage limit reached|1790000000"
-- **THEN** the fallback classifies it `quota` with a reset time of 1790000000
+- **GIVEN** a claude-code `-p` one-shot on pipes whose transcript records an API error reading "Claude AI usage limit reached|1790000000"
+- **WHEN** the run exits 1 straight after writing it, before the observer's next poll
+- **THEN** the error mark reaches the detector before the exit is decided, and it is classified `quota` with a reset time of 1790000000
 
 #### Scenario: The phrase in a successful run
 

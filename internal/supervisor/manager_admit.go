@@ -12,7 +12,9 @@ package supervisor
 // waited for outside the lock, the split appendNew already makes, so one
 // harness's fsync never delays another's admission; a budgeted start whose
 // line then fails is uncounted again and refused with ledger_unavailable,
-// while an unbudgeted one starts anyway, logged and counted.
+// while an unbudgeted one starts anyway, logged and counted. An unbudgeted
+// resident does not wait for the sync at all (REQ-21 Scenario "A slow disk
+// does not stall supervision"): its restart never queues behind the disk.
 //
 // The counters are running totals with exactly one store, the ledger (REQ-7):
 // the first use of the budget day (at boot, bootBudget, after the ledger is
@@ -33,11 +35,11 @@ package supervisor
 // through the pass's clearing hook (budgetHoldCleared) once the budget is no
 // longer spent: a new day, or a cap a reload raised (REQ-14, REQ-20).
 //
-// Three of REQ-4's inputs are stubs, each a named seam its own story fills:
-// quotaPark (the park story, stump.wtf/harness#477), costToday (the caps
-// story, #482) and concurrency (the concurrency story, #479). Decide already
-// evaluates all five checks; until those stories land, their inputs read "not
-// parked", "nothing spent" and "no cap".
+// Two of REQ-4's inputs are stubs, each a named seam its own story fills:
+// costToday (the caps story, #482) and concurrency (the concurrency story,
+// #479). Decide already evaluates all five checks; until those stories land,
+// their inputs read "nothing spent" and "no cap". Check 2's input, quotaPark,
+// is the park store's (manager_quota.go).
 //
 // Lock order: budgetMu, then journalMu, then mu. Nothing that holds mu or
 // journalMu takes budgetMu, and nothing under budgetMu waits on a supervisor's
@@ -50,6 +52,12 @@ package supervisor
 // ledger", § "The budget day reuses the gate's clock"; SPEC-0022 REQ-6.
 //
 // @joestump 10/04/2026 - Added for stump.wtf/harness#470.
+//
+// @joestump 10/04/2026 - quotaPark moved to manager_quota.go, answered from
+// the park store (stump.wtf/harness#477).
+//
+// @joestump 10/04/2026 - An unbudgeted resident's start no longer waits on
+// its `opened` line's sync (SPEC-0021 REQ-21; stump.wtf/harness#477).
 // @joestump 10/08/2026 - A start whose clock was read before a rollover is
 //   stamped in the day it is counted in.
 
@@ -160,7 +168,15 @@ func (m *Manager) Admit(name string, req budget.AdmitRequest, rec RunRecord) Adm
 	opened, wait, err := m.enqueueNew(name, ledger.TypeOpened, rec)
 	m.budgetMu.Unlock()
 	if err == nil {
-		err = wait()
+		if budgeted || !req.Resident {
+			err = wait()
+		} else {
+			// SPEC-0021 REQ-21 Scenario "A slow disk does not stall
+			// supervision": a resident subject to no budget starts without
+			// waiting on its line, which is queued in order; a sync that
+			// then fails is logged and counted all the same.
+			go m.awaitUnbudgeted(name, opened.RunID, "start", wait)
+		}
 	}
 	if err != nil && budgeted {
 		m.budgetMu.Lock()
@@ -186,6 +202,32 @@ func (m *Manager) Admit(name string, req budget.AdmitRequest, rec RunRecord) Adm
 		path = opened.Log
 	}
 	return AdmitResult{Decision: d, Run: opened, Log: path, Err: err}
+}
+
+// awaitUnbudgeted waits, off the supervisor's loop, for the sync of a line a
+// resident subject to no budget did not wait on (SPEC-0021 REQ-21, SPEC-0022
+// REQ-6: "Supervision of a harness subject to no budget SHALL NOT wait"). A
+// failure is counted for doctor and logged, as one admission met; the line
+// stays queued and is retried in order.
+func (m *Manager) awaitUnbudgeted(name string, runID int, what string, wait func() error) {
+	if err := wait(); err != nil {
+		m.budgetMu.Lock()
+		m.noteLedgerLocked(false, err)
+		m.budgetMu.Unlock()
+		log.Warn("run ledger did not record a resident's "+what+" in time; it went ahead (no budget applies)", "harness", name, "run_id", runID, "err", err)
+	}
+}
+
+// awaitsLedger reports whether a record of kind for name waits for its
+// ledger line to sync before the caller goes on: every one-shot's (its
+// `opened` line is on disk before its process spawns, SPEC-0022 REQ-6), and a
+// resident's only when it is subject to a budget (SPEC-0021 REQ-21).
+func (m *Manager) awaitsLedger(name string, kind RunKind) bool {
+	if kind != KindResident {
+		return true
+	}
+	h, db := m.budgetDef(name)
+	return subjectToBudget(h, db, true)
 }
 
 // refuseOpened refuses a budgeted start whose `opened` line the ledger could
@@ -275,19 +317,6 @@ func (m *Manager) admitStateLocked(name string, h core.Harness, db core.DaemonBu
 		st.HoursNext = hoursOpen(h, req.Now)
 	}
 	return st
-}
-
-// quotaPark is admission's check 2: the quota park in force on name, or on
-// its quota group, at now (SPEC-0021 REQ-12, REQ-13).
-//
-// THE SEAM THE PARK STORY FILLS (stump.wtf/harness#477): it adds the park
-// store (state.json's `parks`, design.md § "What is persisted") and answers
-// from it here; a park on the harness or on h.Budget.QuotaGroup refuses a
-// one-shot with quota_parked and holds a resident for quota. Until then no
-// harness is parked. Called with budgetMu held, so it must not take a lock a
-// park path holds while it waits on admission, or wait on any supervisor.
-func (m *Manager) quotaPark(name string, h core.Harness, now time.Time) budget.Park {
-	return budget.Park{}
 }
 
 // costToday is admission's check 3 input: name's spend today and the whole

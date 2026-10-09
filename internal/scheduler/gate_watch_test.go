@@ -75,6 +75,8 @@ func (g gateManager) OpenFirings(name string) { g.Manager.OpenFirings(name) }
 
 func (g gateManager) SettleBudget(name string) { g.Manager.SettleBudget(name) }
 
+func (g gateManager) SettleQuota(name string) { g.Manager.SettleQuota(name) }
+
 func (g gateManager) Lease(name string, now time.Time) (time.Time, bool) {
 	return g.LeaseAt(name, now)
 }

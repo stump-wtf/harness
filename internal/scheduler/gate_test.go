@@ -47,7 +47,9 @@ type fakeGate struct {
 	// settle. asked is every clock BudgetDue was asked at (SPEC-0021 REQ-3).
 	due    map[string]core.HoldSet
 	settle map[string]bool
-	asked  []time.Time
+	// quotaOwed are the harnesses QuotaDue reports.
+	quotaOwed map[string]bool
+	asked     []time.Time
 }
 
 func newFakeGate() *fakeGate {
@@ -56,7 +58,7 @@ func newFakeGate() *fakeGate {
 		other: map[string]core.HoldSet{}, cleared: map[string]core.HoldSet{},
 		lease: map[string]time.Time{}, closeAt: map[string]time.Time{},
 		skipped: map[string]bool{},
-		due:     map[string]core.HoldSet{}, settle: map[string]bool{},
+		due:     map[string]core.HoldSet{}, settle: map[string]bool{}, quotaOwed: map[string]bool{},
 	}
 }
 
@@ -186,6 +188,28 @@ func (g *fakeGate) AddHolds(name string, reasons core.HoldSet) {
 		g.other[name] = g.other[name].With(r)
 	}
 	delete(g.due, name)
+}
+
+// QuotaDue reports the harnesses owed a quota settle-up.
+func (g *fakeGate) QuotaDue(time.Time) []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var due []string
+	for name, owed := range g.quotaOwed {
+		if owed {
+			due = append(due, name)
+		}
+	}
+	slices.Sort(due)
+	return due
+}
+
+// SettleQuota records "settle-quota name" and clears what was owed.
+func (g *fakeGate) SettleQuota(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.calls = append(g.calls, "settle-quota "+name)
+	delete(g.quotaOwed, name)
 }
 
 // SettleBudget records "settle name" and clears what was owed.
