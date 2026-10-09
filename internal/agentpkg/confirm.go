@@ -64,6 +64,12 @@ func RenderReport(w io.Writer, in ReportInput) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 
+	// The declared environment, names only (SPEC-0026 REQ-3, issue #930).
+	fmt.Fprintf(w, "environment:\n")
+	for _, line := range RenderEnv(in.Man) {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+
 	fmt.Fprintf(w, "scan findings:\n")
 	isNew := make(map[Finding]bool, len(in.NewFindings))
 	for _, f := range in.NewFindings {
