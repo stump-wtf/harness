@@ -467,6 +467,9 @@ func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string) error {
 	if p.Homepage != "" {
 		fmt.Fprintf(out, "  homepage %s\n", p.Homepage)
 	}
+	// Always shown, even when absent: a package with no license is a
+	// statement about its terms too (SPEC-0026 REQ-3).
+	fmt.Fprintf(out, "  license %s\n", agentpkg.LicenseLabel(p.License))
 
 	hv := man.Harness
 	fmt.Fprintf(out, "harness:\n")

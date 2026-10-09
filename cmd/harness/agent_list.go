@@ -7,9 +7,10 @@ package main
 // file, and whether the stable's local clone — as of its last stable
 // update — holds a newer default-branch commit than the pin. It is
 // informational only: pure local reads, never a fetch, never an upgrade
-// (SPEC-0026 REQ-12).
+// (SPEC-0026 REQ-12). Each row also carries the pinned manifest's SPDX
+// license (REQ-3).
 //
-// Governing: ADR-0044 (agent package stables), SPEC-0026 REQ-12.
+// Governing: ADR-0044 (agent package stables), SPEC-0026 REQ-12, REQ-3.
 //
 // @joestump-agent 10/02/2026 - Added for harness#815.
 
@@ -34,6 +35,9 @@ type agentListRow struct {
 	Package        string `json:"package"`
 	Pin            string `json:"pin"`
 	NewerAvailable bool   `json:"newer_available"`
+	// License is the pinned manifest's SPDX expression, "" when the package
+	// declares none or its pin is not on disk (SPEC-0026 REQ-3).
+	License string `json:"license"`
 }
 
 func newAgentListCmd(g *globalOpts) *cobra.Command {
@@ -74,13 +78,17 @@ func runAgentList(cmd *cobra.Command, o verbOpts) error {
 		fmt.Fprintln(cmd.OutOrStdout(), "agent: no package-sourced harnesses")
 		return nil
 	}
-	t := NewTable(cmd.OutOrStdout(), "NAME", "FILE", "PACKAGE", "PIN", "NEWER")
+	t := NewTable(cmd.OutOrStdout(), "NAME", "FILE", "PACKAGE", "PIN", "NEWER", "LICENSE")
 	for _, r := range rows {
 		newer := ""
 		if r.NewerAvailable {
 			newer = "yes"
 		}
-		t.Row(r.Name, r.File, r.Stable+"/"+r.Package, shortSHA(r.Pin), newer)
+		license := r.License
+		if license == "" {
+			license = "none"
+		}
+		t.Row(r.Name, r.File, r.Stable+"/"+r.Package, shortSHA(r.Pin), newer, license)
 	}
 	t.Flush()
 	fmt.Fprintln(cmd.OutOrStdout(), "agent: staleness is read from the clone as the last `harness agent stable update` left it; nothing fetched")
@@ -106,7 +114,19 @@ func agentRows(file string, cfg *core.Config) []agentListRow {
 			Package:        src.Package,
 			Pin:            src.SHA,
 			NewerAvailable: agentpkg.NewerThanPin(src.Stable, src.SHA),
+			License:        pinLicense(src),
 		})
 	}
 	return rows
+}
+
+// pinLicense reads the license from the installed pin's manifest — the terms
+// the harness actually runs under, not the clone's newer ones. A pin missing
+// from disk reads as "" here; the doctor row reports it.
+func pinLicense(src agentpkg.Source) string {
+	man, err := agentpkg.LoadManifest(agentpkg.ManifestPath(src))
+	if err != nil {
+		return ""
+	}
+	return man.Package.License
 }
