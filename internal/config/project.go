@@ -393,7 +393,7 @@ func addProjectHarness(cfg *core.Config, filename, name string, line int, rh raw
 			"harness %q: \"export_telemetry = true\" is not allowed in project files — the opt-in to publish transcripts belongs in the daemon's global harness.toml (a project file may set export_telemetry = false)", name)
 	}
 	return registerHarness(cfg, filename, name, line, rh, true,
-		func(p string) string { return resolvePath(p, projectRoot) })
+		func(p string) string { return resolvePath(p, projectRoot) }, nil)
 }
 
 // resolvePath resolves a path that may be relative (against base), may start

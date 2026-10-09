@@ -23,6 +23,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/robfig/cron/v3"
 
+	"github.com/stump-wtf/harness/internal/agentpkg"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/hours"
 	"github.com/stump-wtf/harness/internal/tmpl"
@@ -289,6 +290,23 @@ func Load(path string) (*core.Config, error) {
 // for error messages (source location). Every failure is a *Error carrying the
 // offending line where one can be determined (ADR-0006, SPEC-0001).
 func Parse(data []byte, filename string) (*core.Config, error) {
+	return ParseWith(data, filename, ParseOptions{})
+}
+
+// ParseOptions adjusts how ParseWith resolves what a config refers to. The
+// zero value is exactly Parse.
+type ParseOptions struct {
+	// PinDir, when set, names the directory holding a `source` reference's
+	// package in place of the content-addressed pin store. `harness agent
+	// stable check` points it at a stable checkout's packages/<name>/ so a
+	// package is load-tested through the same applySource and validation an
+	// installed pin gets, without installing anything. nil means
+	// agentpkg.PinDir. Governing: SPEC-0026 REQ-7, REQ-12.
+	PinDir func(agentpkg.Source) string
+}
+
+// ParseWith is Parse with options; see ParseOptions.
+func ParseWith(data []byte, filename string, opts ParseOptions) (*core.Config, error) {
 	var top map[string]toml.Primitive
 	md, err := toml.Decode(string(data), &top)
 	if err != nil {
@@ -382,6 +400,7 @@ func Parse(data []byte, filename string) (*core.Config, error) {
 	// resolved after the last file rather than as each table is read.
 	// Governing: SPEC-0014 REQ "Triggers Key".
 	st := newLoadState()
+	st.pinDir = opts.PinDir
 
 	for _, h := range headers {
 		switch {
@@ -731,7 +750,7 @@ func addHarness(cfg *core.Config, st *loadState, filename, name string, line int
 	}
 	// Global semantics: `enabled` defaults to false (autostart is opt-in) and
 	// workdir/env_file are stored verbatim.
-	if err := registerHarness(cfg, filename, name, line, rh, false, nil); err != nil {
+	if err := registerHarness(cfg, filename, name, line, rh, false, nil, st.pinDir); err != nil {
 		return err
 	}
 	st.harnessAt[name] = declSite{file: filename, line: line}
@@ -764,7 +783,7 @@ func resolveEnvFiles(files envFileValue, resolve func(string) string) []string {
 	return out
 }
 
-func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHarness, defaultEnabled bool, resolve func(string) string) error {
+func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHarness, defaultEnabled bool, resolve func(string) string, pinDir func(agentpkg.Source) string) error {
 	if _, exists := cfg.Harnesses[name]; exists {
 		return newError(filename, line, "duplicate harness %q", name)
 	}
@@ -789,7 +808,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	// does (SPEC-0026 REQ-3, REQ-7). The daemon reads local disk only.
 	if rh.Source != "" {
 		var err error
-		rh, err = applySource(filename, name, line, rh)
+		rh, err = applySource(filename, name, line, rh, pinDir)
 		if err != nil {
 			return err
 		}

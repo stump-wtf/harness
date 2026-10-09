@@ -23,13 +23,19 @@ import (
 // the merged table. Local keys win on presence: a key set directly on the
 // harness table overrides the package's value for that key (SPEC-0026 REQ-7).
 // Relative path values from the manifest resolve against the package's own
-// pin directory, never the installing harness's workdir (REQ-3).
-func applySource(filename, name string, line int, rh rawHarness) (rawHarness, error) {
+// pin directory, never the installing harness's workdir (REQ-3). pinDirFn
+// overrides where a source's package lives (ParseOptions.PinDir); nil is the
+// pin store.
+func applySource(filename, name string, line int, rh rawHarness, pinDirFn func(agentpkg.Source) string) (rawHarness, error) {
 	src, err := agentpkg.ParseSource(rh.Source)
 	if err != nil {
 		return rh, newError(filename, line, "harness %q: invalid \"source\": %v", name, err)
 	}
-	man, err := agentpkg.LoadManifest(agentpkg.ManifestPath(src))
+	if pinDirFn == nil {
+		pinDirFn = agentpkg.PinDir
+	}
+	pinDir := pinDirFn(src)
+	man, err := agentpkg.LoadManifest(filepath.Join(pinDir, "package.toml"))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return rh, newError(filename, line,
@@ -45,7 +51,6 @@ func applySource(filename, name string, line int, rh rawHarness) (rawHarness, er
 	}
 
 	hv := man.Harness
-	pinDir := agentpkg.PinDir(src)
 	// Manifest-relative paths anchor on the pin directory; already-absolute
 	// paths pass through untouched.
 	manifestPath := func(p string) string {
