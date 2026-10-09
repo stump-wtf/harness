@@ -443,11 +443,11 @@ harness agent stable update [NAME]                  # fetch + fast-forward (the 
 harness agent stable remove NAME                    # drop the table; names harnesses still sourced
 
 harness agent search [QUERY] [--stable NAME]        # packages in local clones
-harness agent info STABLE/PACKAGE                   # manifest, requests, declared env, scan findings, files
+harness agent info STABLE/PACKAGE                   # manifest, license, requests, declared env, scan findings, files
 
 harness agent install STABLE/PACKAGE[@VERSION] [--as NAME] [--replace] [--yes] [--force-unsafe]
 harness agent upgrade STABLE/PACKAGE[@VERSION] [--all] [--yes]
-harness agent list [--json]                         # package-sourced harnesses, pins, NEWER
+harness agent list [--json]                         # package-sourced harnesses, pins, NEWER, LICENSE
 harness agent uninstall NAME [--yes]                # remove the table; the pin stays
 harness agent prune                                 # remove pins nothing references
 ```
@@ -463,10 +463,13 @@ harness agent prune                                 # remove pins nothing refere
     request.
   - `--force-unsafe` overrides a `high` finding after you retype the package.
   - `--replace` lets the table switch from another package's source.
+  - The confirmation shows the package's SPDX `license`. A package without
+    one carries the `package.no-license` low finding, which never blocks.
   - Its output ends with an `env_file` skeleton for the variables the
     package declares in `[[env]]`: names and descriptions, never values.
 - **`upgrade`** re-pins to a newer commit of the local clone (`--all` for
-  every sourced harness). It shows the manifest diff, any new scan finding,
+  every sourced harness). It shows the manifest diff (a `package.license`
+  change is flagged as a terms change), any new scan finding,
   and every change to the harness's effective values. It never applies those
   changes unattended: `--yes` refuses, naming them.
 - **`prune`** reads only the global `harness.toml`. A pin referenced only by

@@ -19,6 +19,8 @@ package supervisor
 //   - `harness start`, Autostart, a reload, use-profile, a lease and a hold's
 //     release: startProcess, which is beginRun for a one-shot and
 //     startResident for a resident;
+//   - `harness restart` with a process up: restartRunning, which admits the
+//     replacement before it stops the process, as "replace" does;
 //   - the restart policy's respawn after an exit: handleRestartTimer, then
 //     startResident.
 //
@@ -38,6 +40,7 @@ package supervisor
 // SPEC-0022 REQ-3, REQ-6 (a run's record opens before its process spawns).
 //
 // @joestump 10/04/2026 - Added for stump.wtf/harness#470.
+// @joestump 10/08/2026 - `harness restart` admits before it stops the process.
 
 import (
 	"errors"
@@ -133,15 +136,51 @@ func (s *Supervisor) startResident() RunDecision {
 		// leave it open until the next boot calls it a crash.
 		s.closeResident(OutcomeInterrupted, nil, "")
 	}
+	adm, res := s.admitResident(trig)
+	if adm == nil {
+		return s.refuseResident(res)
+	}
+	s.beginStart(adm)
+	return RunDecision{Kind: DecisionStarted, Run: adm.rec}
+}
+
+// admitResident asks admission for a resident process lifetime started by
+// trig, opening its record when it is admitted.
+func (s *Supervisor) admitResident(trig RunTrigger) (*admission, AdmitResult) {
 	s.ensureLog()
 	rec := RunRecord{Kind: KindResident, Trigger: trig, Outcome: OutcomeRunning, StartedAt: time.Now()}
 	if s.log != nil {
 		rec.Log = s.log.path()
 	}
-	adm, res := s.admitStart(trig, true, rec)
-	if adm == nil {
-		return s.refuseResident(res)
+	return s.admitStart(trig, true, rec)
+}
+
+// restartRunning is `harness restart` on a harness whose process is up. The
+// replacement is admitted BEFORE that process is stopped, as on_overlap =
+// "replace" is (runs.go): a restart admission refuses leaves the process it
+// would have replaced running, rather than stopping it and then holding the
+// harness over-budget for the rest of the day. The refusal still reaches the
+// caller, so `harness restart` reports over_budget (SPEC-0021 REQ-4).
+func (s *Supervisor) restartRunning() RunDecision {
+	req := RunRequest{Trigger: TriggerManual}
+	if s.harness.Triggered() {
+		adm, res := s.admitRun(req)
+		if adm == nil {
+			return s.refuseRun(req, res)
+		}
+		s.gracefulStopKeepEnabled()
+		s.finishRunWith(OutcomeReplaced, &s.lastExitCode, ReasonOperator)
+		return RunDecision{Kind: DecisionStarted, Run: s.launchRun(req, adm)}
 	}
+	s.startTrigger = ""
+	adm, res := s.admitResident(TriggerManual)
+	if adm == nil {
+		d := res.Decision
+		s.logEvent("restart refused; the running process is kept", "reason", string(d.Reason), "detail", d.Detail)
+		return RunDecision{Kind: DecisionSkipped, Run: res.Run, Refused: d.Err()}
+	}
+	s.gracefulStopKeepEnabled()
+	s.finishRunWith(OutcomeReplaced, &s.lastExitCode, ReasonOperator)
 	s.beginStart(adm)
 	return RunDecision{Kind: DecisionStarted, Run: adm.rec}
 }

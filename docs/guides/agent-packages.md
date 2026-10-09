@@ -67,6 +67,11 @@ harness agent info stump-wtf/pr-reviewer
 variables the package declares, the content-scan findings and the bundled
 files, without installing anything.
 
+It also prints the package's SPDX `license`. If the package declares none,
+`info` prints `none declared` and adds a `package.no-license` low finding.
+The finding is shown but never blocks, so you can still install the package
+knowingly.
+
 ## 2. Install it
 
 ```sh
@@ -133,7 +138,8 @@ harness agent upgrade stump-wtf/pr-reviewer
 
 Upgrade re-scans the new commit and shows you three things:
 
-- the manifest diff;
+- the manifest diff, where a `package.license` change is flagged as a
+  change to the package's terms;
 - any **new** scan finding, flagged as new;
 - every change to the harness's effective values.
 
@@ -175,6 +181,7 @@ name        = "pr-reviewer"            # must match the directory
 version     = "0.1.0"
 description = "Reviews PRs that request your review"
 homepage    = "https://github.com/you/your-stable"
+license     = "MIT"                    # SPDX expression, e.g. "MIT OR Apache-2.0"
 
 [harness]
 harness     = "claude-code"            # an existing adapter, never a new one
@@ -198,6 +205,14 @@ name        = "REVIEW_REPOS"
 required    = true
 description = "Space-separated <host>/<owner>/<repo> list"
 ```
+
+`license` is an SPDX license expression. It may use only `AND`, `OR`,
+`WITH` and parentheses. Every ID must be on the
+[SPDX License List](https://spdx.org/licenses/), at the version this
+Harness release vendors, or be a custom `LicenseRef-<name>`. An unknown ID
+fails the manifest load, and the error names that ID. A package without a
+license still installs, but it carries the `package.no-license` low
+finding.
 
 An `[[env]]` block takes only `name` (matching `^[A-Z_][A-Z0-9_]*$`),
 `required` and `secret` (booleans, default `false`) and `description` (one
