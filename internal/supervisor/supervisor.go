@@ -700,12 +700,15 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.cancelRestartTimer()
 		s.clearFailLatch()
 		s.resetCrashState()
+		var d RunDecision
 		if s.hasProcess() {
-			s.gracefulStopKeepEnabled()
-			s.finishRunWith(OutcomeReplaced, &s.lastExitCode, ReasonOperator)
+			// Admitted before the stop (admit.go): a refused restart keeps
+			// the process it would have replaced.
+			d = s.restartRunning()
+		} else {
+			s.startTrigger = TriggerManual
+			d = s.startProcess(RunRequest{Trigger: TriggerManual})
 		}
-		s.startTrigger = TriggerManual
-		d := s.startProcess(RunRequest{Trigger: TriggerManual})
 		if c.decided != nil {
 			*c.decided = d
 		}

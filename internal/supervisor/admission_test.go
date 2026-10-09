@@ -607,6 +607,42 @@ func TestStartReportsTheRefusal(t *testing.T) {
 	}
 }
 
+// TestRestartAtTheCapKeepsTheRunningProcess is REQ-4 for `harness restart`:
+// the replacement is admitted before the running process is stopped, as
+// on_overlap = "replace" is. A restart under the cap replaces the process and
+// counts; one at the cap is refused with ErrOverBudget and leaves the running
+// process alone, not stopped and held over-budget.
+func TestRestartAtTheCapKeepsTheRunningProcess(t *testing.T) {
+	e := newRunsEnv(t)
+	h := shHarness("crush-sb", "while true; do sleep 0.02; done", 0)
+	h.Budget.MaxRunsPerDay = 2
+	cfg := managerCfg(h)
+	cfg.Budget.DayStarts = farDayStarts(t)
+	m, _ := budgetManager(t, e, cfg, nil)
+	running := func(s Snapshot) bool { return s.State == core.StateRunning && s.PID > 0 }
+	if ok, err := m.StartChecked("crush-sb", ""); !ok || err != nil {
+		t.Fatalf("start: ok=%v err=%v", ok, err)
+	}
+	first := waitSnapshot(t, m, "crush-sb", "running", running)
+	if ok, err := m.RestartChecked("crush-sb", ""); !ok || err != nil {
+		t.Fatalf("restart under the cap: ok=%v err=%v", ok, err)
+	}
+	second := waitSnapshot(t, m, "crush-sb", "running a new process", func(s Snapshot) bool { return running(s) && s.PID != first.PID })
+
+	ok, err := m.RestartChecked("crush-sb", "")
+	if !ok || !errors.Is(err, budget.ErrOverBudget) || !strings.Contains(err.Error(), "2/2 runs today") {
+		t.Fatalf("restart at the cap: ok=%v err=%v, want ErrOverBudget naming 2/2 runs today", ok, err)
+	}
+	snap, _ := m.Snapshot("crush-sb")
+	if snap.State != core.StateRunning || snap.PID != second.PID || !snap.Holds.Empty() {
+		t.Fatalf("after the refused restart: state=%s pid=%d (was %d) holds=%v, want the same process running, not held",
+			snap.State, snap.PID, second.PID, snap.Holds)
+	}
+	if got := m.RunsToday("crush-sb"); got != 2 {
+		t.Errorf("runs today = %d, want 2: a refused restart is not counted", got)
+	}
+}
+
 // TestDayStartsChangeWaitsForTheRollover is REQ-20's day_starts rule: a
 // reload that moves day_starts takes effect at the next rollover, and does
 // not start a new day (or refund today's runs) the moment it lands.
