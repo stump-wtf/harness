@@ -25,7 +25,7 @@ import (
 	"github.com/stump-wtf/harness/internal/cliui"
 )
 
-func newAgentStableLintCmd() *cobra.Command {
+func newStableLintCmd(g *globalOpts) *cobra.Command {
 	return &cobra.Command{
 		Use:           "lint [PATH]",
 		Short:         "validate a stable checkout offline: schema, scan, conventions",
@@ -38,7 +38,7 @@ func newAgentStableLintCmd() *cobra.Command {
 	}
 }
 
-func newAgentStableCheckCmd() *cobra.Command {
+func newStableCheckCmd(g *globalOpts) *cobra.Command {
 	return &cobra.Command{
 		Use:           "check [PATH]",
 		Short:         "lint a stable checkout, then load-test each package as config load would",
