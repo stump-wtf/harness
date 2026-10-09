@@ -74,10 +74,15 @@ func RenderReport(w io.Writer, in ReportInput) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 
+	// The declared environment, names only (SPEC-0026 REQ-3, issue #930).
+	fmt.Fprintf(w, "environment:\n")
+	for _, line := range RenderEnv(in.Man) {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+
 	// The README sits before the findings so that the findings and the
 	// no-guarantee statement stay closest to the prompt (harness#929).
 	RenderReadme(w, in.Readme, in.ReadmeFull)
-
 	fmt.Fprintf(w, "scan findings:\n")
 	isNew := make(map[Finding]bool, len(in.NewFindings))
 	for _, f := range in.NewFindings {

@@ -168,6 +168,11 @@ type Harness struct {
 	// table itself never appears here — the local value wins and the key
 	// is the operator's.
 	PackageKeys []string
+	// PackageEnv is the package manifest's [[env]] declarations: the names
+	// the harness expects in its environment, never their values
+	// (SPEC-0026 REQ-3, REQ-12; issue #930). Doctor and describe check each
+	// against the environment the child would get.
+	PackageEnv []PackageEnvVar
 	// Args are the command arguments, appended after the adapter's
 	// executable; {workdir} placeholders are expanded at spawn time by the
 	// supervisor, not here. Never set on a "command" harness, whose Argv
@@ -896,4 +901,14 @@ func (c *Config) AutostartHarnesses() []string {
 		}
 	}
 	return out
+}
+
+// PackageEnvVar is one [[env]] declaration of an agent package manifest: a
+// variable name and how the package uses it. It never carries a value
+// (SPEC-0026 REQ-3; ADR-0038).
+type PackageEnvVar struct {
+	Name        string
+	Required    bool
+	Secret      bool
+	Description string
 }

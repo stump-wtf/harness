@@ -248,6 +248,7 @@ func runAgentInstall(cmd *cobra.Command, o verbOpts, io installOpts, ref string)
 		}
 	}
 	reloadDaemonIfAny(cmd, o)
+	printEnvSkeleton(cmd.OutOrStdout(), name, man)
 	return nil
 }
 

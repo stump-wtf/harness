@@ -1,6 +1,6 @@
 // Manifest is the decoded, validated package.toml (SPEC-0026 REQ-3). The
-// loader is strict by construction: any table beyond [package], [harness] and
-// [requests], any harness key outside the value-key allowlist, any forbidden
+// loader is strict by construction: any table beyond [package], [harness],
+// [requests] and [[env]] (env.go), any harness key outside the value-key allowlist, any forbidden
 // key, and any string containing "${" (the ADR-0038 secret-reference grammar)
 // fails the load naming the key and the manifest's path.
 //
@@ -75,6 +75,9 @@ type Manifest struct {
 	Package  PackageMeta
 	Harness  HarnessValues
 	Requests Requests
+	// Env is the [[env]] declarations, in manifest order: names the harness
+	// expects in its environment, never their values (env.go).
+	Env []EnvVar
 }
 
 // harnessAllowlist is the only set of keys [harness] accepts, matched against
@@ -141,9 +144,9 @@ func ParseManifest(raw []byte, path string) (*Manifest, error) {
 
 	for _, key := range sortedKeys(doc) {
 		switch key {
-		case "package", "harness", "requests":
+		case "package", "harness", "requests", "env":
 		default:
-			return nil, violation(path, "table [%s] is not allowed in a package manifest (only [package], [harness], [requests])", key)
+			return nil, violation(path, "table [%s] is not allowed in a package manifest (only [package], [harness], [requests], [[env]])", key)
 		}
 	}
 
@@ -155,6 +158,9 @@ func ParseManifest(raw []byte, path string) (*Manifest, error) {
 		return nil, err
 	}
 	if err := decodeRequests(doc["requests"], path, m); err != nil {
+		return nil, err
+	}
+	if err := decodeEnv(doc["env"], path, m); err != nil {
 		return nil, err
 	}
 	return m, nil
