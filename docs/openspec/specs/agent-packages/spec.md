@@ -170,6 +170,31 @@ fail to load, naming the table and the manifest's path.
 `[package]` SHALL require `name` (matching the package-name pattern) and
 MAY carry `version`, `description`, `author`, and `homepage` as strings.
 
+`[package]` MAY carry `license`, an SPDX license expression stating the
+terms the package is offered under (issue #932). Its value SHALL be a
+string; any other type SHALL fail to load, naming the key. The expression
+syntax SHALL be limited to license identifiers joined by `AND`, `OR` and
+`WITH` (operators uppercase, `WITH` binding tighter than `AND`, `AND`
+tighter than `OR`) and grouped by parentheses. Every license identifier
+SHALL be on the SPDX License List vendored into the binary at a pinned
+version (matched case-insensitively), or SHALL be a custom
+`LicenseRef-<idstring>`; every identifier after `WITH` SHALL be on the
+vendored SPDX license-exception list. An unknown identifier, an empty
+string, the `+` operator, a `DocumentRef-` reference, or any other
+malformed expression SHALL fail to load, naming the key and the offending
+identifier. The list is vendored, never fetched: validation is
+reproducible from a Harness version alone, and bumping the pinned version
+is a reviewed change regenerated from
+https://github.com/spdx/license-list-data at a tagged release. The license
+SHALL be shown by `harness agent info`, by the install and upgrade
+confirmations (REQ-6, REQ-8), and by `harness agent list`, including its
+`--json` output (REQ-12), where it is read from the installed pin's
+manifest. An upgrade whose candidate declares a different license than
+the installed pin (including one added or dropped) SHALL call it out as
+its own row in the upgrade diff, marked as a change of the package's
+terms. A package that declares no `license` SHALL still load; it
+carries the `package.no-license` low finding (REQ-5).
+
 `[harness]` SHALL require `harness`, naming an adapter exactly as
 SPEC-0006/ADR-0039 validate it (an unknown adapter SHALL fail exactly as it
 does for a hand-written harness). It MAY carry only the per-harness value
@@ -253,6 +278,37 @@ key under `[requests]` SHALL fail to load, naming the key.
 - **THEN** the harness loads with the table's `prompt` alone, and describe
   attributes no prompt key to the package
 
+#### Scenario: A valid license expression loads and is shown
+
+- **WHEN** a manifest declares `license = "MIT OR Apache-2.0"`
+- **THEN** the package loads, and `harness agent info`, the install
+  confirmation and `harness agent list --json` all show
+  `MIT OR Apache-2.0`
+
+#### Scenario: A custom license reference loads
+
+- **WHEN** a manifest declares `license = "LicenseRef-Acme-Internal"`
+- **THEN** the package loads with that license
+
+#### Scenario: An unknown license identifier is rejected
+
+- **WHEN** a manifest declares `license = "MIT OR Bogus-1.0"`
+- **THEN** the package fails to load, naming `license` and `Bogus-1.0`
+
+#### Scenario: A non-string license is rejected
+
+- **WHEN** a manifest declares `license = 1` or `license = ["MIT"]`
+- **THEN** the package fails to load, stating that `[package].license`
+  must be a string
+
+#### Scenario: A license change on upgrade is called out
+
+- **WHEN** the installed pin declares `license = "MIT"` and the upgrade
+  candidate declares `license = "GPL-3.0-only"`
+- **THEN** the upgrade diff shows
+  `package.license: MIT -> GPL-3.0-only` marked as a license change before
+  the confirmation
+
 #### Scenario: An unknown request key
 
 - **WHEN** `[requests]` declares `filesystem = true`
@@ -313,6 +369,14 @@ overridden. `--yes` alone SHALL NOT suppress a `high`-severity block. A
 `low`-severity finding SHALL be shown in the confirmation output and SHALL
 NOT block.
 
+A manifest that declares no `[package].license` (REQ-3) SHALL produce
+exactly one `low` finding with the pattern id `package.no-license`,
+located at `package.toml`'s `[package]` header (issue #932). Like every
+`low` finding it SHALL be shown and SHALL NOT block install or upgrade;
+`harness agent stable lint` runs the same scan and treats it as an error,
+so a stable cannot publish an unlicensed package while an operator can
+still install one knowingly.
+
 A package with no `README.md` at its root (REQ-2) SHALL draw exactly one
 `low` finding with the pattern id `package.no-readme`. The finding names
 `README.md` as its file and carries no line, and is shown as `README.md
@@ -353,6 +417,13 @@ it being called out specifically.
   `homepage`)
 - **THEN** `install` completes under `--yes`, with the finding shown in the
   output
+
+#### Scenario: A package without a license gets a low finding
+
+- **WHEN** a manifest's `[package]` table declares no `license`
+- **THEN** `harness agent info` and the install confirmation show a
+  `package.no-license` `low` finding at `package.toml`, and `install`
+  completes under `--yes`
 
 #### Scenario: A package without a README
 

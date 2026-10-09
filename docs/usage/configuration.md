@@ -584,8 +584,10 @@ of the budget day is refused:
 - **A resident** is held `over-budget`, `enabled` unchanged, until the day
   rolls over. A crash loop therefore spends its budget and stops there,
   held rather than `failed`.
-- `harness start` and `harness trigger` on a spent harness fail with
-  `over budget: 40/40 runs today` (error code `over_budget`).
+- `harness start`, `harness restart` and `harness trigger` on a spent
+  harness fail with `over budget: 40/40 runs today` (error code
+  `over_budget`). A restart is admitted before the running process is
+  stopped, so a refused one leaves that process running.
 
 The budget day runs from one `day_starts` to the next, as long as the wall
 clock makes it across a DST change, and rolls over on the scheduler's tick: a

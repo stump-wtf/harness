@@ -37,6 +37,7 @@ func Scan(pkgDir string, man *agentpkg.Manifest) ([]agentpkg.Finding, error) {
 	manPath := filepath.Join(pkgDir, ManifestFile)
 	if raw, err := os.ReadFile(manPath); err == nil {
 		findings = append(findings, scanLines(ManifestFile, string(raw), homepageHost(man))...)
+		findings = append(findings, licenseFindings(string(raw), man)...)
 	} else if !isNotExist(err) {
 		return nil, fmt.Errorf("scan: read %s: %w", ManifestFile, err)
 	}

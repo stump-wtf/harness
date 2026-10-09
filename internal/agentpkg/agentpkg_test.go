@@ -136,8 +136,8 @@ func TestParseManifestViolations(t *testing.T) {
 		},
 		{
 			name:    "unknown package key",
-			src:     "[package]\nname = \"x\"\nlicense = \"MIT\"\n[harness]\nharness = \"crush\"\n",
-			wantErr: "license",
+			src:     "[package]\nname = \"x\"\nlicence = \"MIT\"\n[harness]\nharness = \"crush\"\n",
+			wantErr: "licence",
 		},
 		{
 			name:    "missing package name",

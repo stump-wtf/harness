@@ -138,6 +138,12 @@ func ManifestChanges(oldMan, newMan *Manifest) []string {
 	add("package.description", om.Package.Description, nm.Package.Description)
 	add("package.author", om.Package.Author, nm.Package.Author)
 	add("package.homepage", om.Package.Homepage, nm.Package.Homepage)
+	// A license change is a terms change: its row says so rather than
+	// reading like any other metadata edit (SPEC-0026 REQ-3, REQ-8).
+	if om.Package.License != nm.Package.License {
+		lines = append(lines, fmt.Sprintf("package.license: %s -> %s  (license change: the package's terms changed)",
+			valOrUnset(strOrNil(om.Package.License)), valOrUnset(strOrNil(nm.Package.License))))
+	}
 	add("harness.harness", om.Harness.Harness, nm.Harness.Harness)
 	add("harness.model", om.Harness.Model, nm.Harness.Model)
 	add("harness.args", om.Harness.Args, nm.Harness.Args)

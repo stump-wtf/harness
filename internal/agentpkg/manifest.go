@@ -25,6 +25,10 @@ type PackageMeta struct {
 	Description string
 	Author      string
 	Homepage    string
+	// License is the SPDX license expression as written, validated against
+	// the vendored SPDX License List (license.go). Empty means the package
+	// declares none, which is a low finding, package.no-license.
+	License string
 }
 
 // HarnessValues is the per-harness value subset a manifest may carry. The
@@ -183,12 +187,12 @@ func decodePackage(v any, path string, m *Manifest) error {
 	}
 	for _, k := range sortedKeys(t) {
 		switch k {
-		case "name", "version", "description", "author", "homepage":
+		case "name", "version", "description", "author", "homepage", "license":
 			if _, ok := t[k].(string); !ok {
 				return violation(path, "[package].%s must be a string", k)
 			}
 		default:
-			return violation(path, "[package].%s is not an allowed key (name, version, description, author, homepage)", k)
+			return violation(path, "[package].%s is not an allowed key (name, version, description, author, homepage, license)", k)
 		}
 	}
 	name, _ := str("name")
@@ -204,6 +208,15 @@ func decodePackage(v any, path string, m *Manifest) error {
 		Description: mustStr(t, "description"),
 		Author:      mustStr(t, "author"),
 		Homepage:    mustStr(t, "homepage"),
+	}
+	// A present license must be a valid SPDX expression; an absent one is
+	// the package.no-license finding, not a load error (SPEC-0026 REQ-3).
+	if _, present := t["license"]; present {
+		lic := mustStr(t, "license")
+		if err := ValidateLicense(lic); err != nil {
+			return violation(path, "[package].license: %v", err)
+		}
+		m.Package.License = lic
 	}
 	return nil
 }

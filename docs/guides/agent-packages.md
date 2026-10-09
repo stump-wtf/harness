@@ -72,6 +72,11 @@ render stops after 200 lines and ends with a footer saying where the full
 file is. Pass `--readme-full` to `info`, `install` or `upgrade` to print the
 whole README.
 
+It also prints the package's SPDX `license`. If the package declares none,
+`info` prints `none declared` and adds a `package.no-license` low finding.
+The finding is shown but never blocks, so you can still install the package
+knowingly.
+
 ## 2. Install it
 
 ```sh
@@ -128,8 +133,9 @@ harness agent upgrade stump-wtf/pr-reviewer
 
 Upgrade re-scans the new commit and shows you three things:
 
-- the manifest diff, plus a `README.md` diff when the README changed between
-  the two commits;
+- the manifest diff, where a `package.license` change is flagged as a
+  change to the package's terms, plus a `README.md` diff when the README
+  changed between the two commits;
 - any **new** scan finding, flagged as new;
 - every change to the harness's effective values.
 
@@ -179,6 +185,7 @@ name        = "pr-reviewer"            # must match the directory
 version     = "0.1.0"
 description = "Reviews PRs that request your review"
 homepage    = "https://github.com/you/your-stable"
+license     = "MIT"                    # SPDX expression, e.g. "MIT OR Apache-2.0"
 
 [harness]
 harness     = "claude-code"            # an existing adapter, never a new one
@@ -191,6 +198,14 @@ network = true
 # mcp_allow   = ["read"]               # "write" makes the installer retype the name
 # skill_paths = true
 ```
+
+`license` is an SPDX license expression. It may use only `AND`, `OR`,
+`WITH` and parentheses. Every ID must be on the
+[SPDX License List](https://spdx.org/licenses/), at the version this
+Harness release vendors, or be a custom `LicenseRef-<name>`. An unknown ID
+fails the manifest load, and the error names that ID. A package without a
+license still installs, but it carries the `package.no-license` low
+finding.
 
 Keep the manifest to keys every adapter accepts if you want operators to
 override `harness`. `system_prompt_file`, `mcp_config` and `allowed_tools`
