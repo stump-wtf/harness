@@ -299,6 +299,16 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 		}
 		t.Row(key, t.faintPlain(cell))
 	}
+	// The package's declared environment (SPEC-0026 REQ-12; issue #930):
+	// each name with whether the harness's child would see it set — names
+	// only, the daemon never sends a value.
+	for i, ev := range h.PackageEnv {
+		key := ""
+		if i == 0 {
+			key = "env"
+		}
+		t.Row(key, packageEnvCell(t, ev))
+	}
 	t.Row("backend", t.faintPlain(h.Backend))
 	switch {
 	case h.Schedule != "":

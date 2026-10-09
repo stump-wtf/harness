@@ -155,6 +155,7 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		// silently converting the table to a bare one (SPEC-0026 REQ-7).
 		info.Source = h.PackageSource
 		info.PackageKeys = h.PackageKeys
+		info.PackageEnv = packageEnvStatus(h)
 		info.Skills = c.skillAttributions(h)
 		info.Backend = string(h.Backend)
 		info.Description = h.Description

@@ -17,6 +17,7 @@ import (
 	"sort"
 
 	"github.com/stump-wtf/harness/internal/agentpkg"
+	"github.com/stump-wtf/harness/internal/core"
 )
 
 // applySource merges the pinned package's [harness] values into rh and returns
@@ -136,5 +137,13 @@ func applySource(filename, name string, line int, rh rawHarness, pinDirFn func(a
 		fromPackage("skill_paths")
 	}
 	sort.Strings(rh.PackageKeys)
+	// The declared environment rides along, names only, so doctor and
+	// describe can check it against what the child would see (SPEC-0026
+	// REQ-12; issue #930).
+	for _, ev := range man.Env {
+		rh.PackageEnv = append(rh.PackageEnv, core.PackageEnvVar{
+			Name: ev.Name, Required: ev.Required, Secret: ev.Secret, Description: ev.Description,
+		})
+	}
 	return rh, nil
 }

@@ -170,6 +170,48 @@ func EnvFileValues(path string, keys []string) (map[string]string, error) {
 	return out, nil
 }
 
+// Where a harness's child gets a variable from, as EnvPresence reports it.
+const (
+	EnvFromFile        = "env_file"
+	EnvFromEnvironment = "environment"
+)
+
+// EnvPresence reports, for each name in keys, where h's process would get a
+// non-empty value — EnvFromFile, EnvFromEnvironment, or "" when it would see
+// the name unset or empty. It is buildEnv's composition (the env_file list,
+// later file winning, layered over the daemon's own environment) reduced to
+// presence: an env_file line that sets a name to "" blanks the daemon's
+// value exactly as it does in the child. No value leaves this function, so
+// a caller can answer "is GH_TOKEN set for this harness?" without holding
+// the token. An unreadable env_file still answers from the daemon's
+// environment, alongside the error.
+//
+// Governing: ADR-0008, ADR-0038 rule 9; SPEC-0026 REQ-12 (doctor checks a
+// package's declared environment; issue #930).
+func EnvPresence(h core.Harness, keys []string) (map[string]string, error) {
+	out := make(map[string]string, len(keys))
+	want := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		want[k] = true
+		if v, ok := os.LookupEnv(k); ok && v != "" {
+			out[k] = EnvFromEnvironment
+		}
+	}
+	extra, err := parseEnvFiles(h.EnvFiles)
+	for _, kv := range extra {
+		k, v, _ := strings.Cut(kv, "=")
+		if !want[k] {
+			continue
+		}
+		if v == "" {
+			delete(out, k)
+			continue
+		}
+		out[k] = EnvFromFile
+	}
+	return out, err
+}
+
 // unquote strips a single matching pair of surrounding single or double quotes.
 func unquote(s string) string {
 	if len(s) >= 2 {

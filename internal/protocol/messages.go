@@ -133,7 +133,12 @@ const (
 	// admission met and the record gaps boot found) — additive only. An older
 	// client prints an unknown code's message as it prints any error; an
 	// older daemon starts an over-budget harness, having no budgets.
-	ProtoMinor = 25
+	// ProtoMinor 26 added PackageEnv on HarnessInfo (issue #930; SPEC-0026
+	// REQ-12): a package-sourced harness's [[env]] declarations, each with
+	// whether the daemon's child would see it set — names only, never a
+	// value. Additive only: an older daemon omits it, and doctor says the
+	// declared variables were not checked rather than passing them.
+	ProtoMinor = 26
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -421,6 +426,23 @@ type SkillAttribution struct {
 	Shadowed     []string `json:"shadowed,omitempty"`
 }
 
+// PackageEnvStatus is one [[env]] declaration of a package-sourced
+// harness's manifest, with whether the variable is set (non-empty) in the
+// environment the daemon would give the harness's child: its env_file list
+// layered over the daemon's own environment (SPEC-0026 REQ-12). It carries
+// the variable's NAME and never its value (ADR-0038 rule 9).
+type PackageEnvStatus struct {
+	Name        string `json:"name"`
+	Required    bool   `json:"required,omitempty"`
+	Secret      bool   `json:"secret,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Set is true when the child would see a non-empty value.
+	Set bool `json:"set"`
+	// From names where the winning value comes from: "env_file" or
+	// "environment" (the daemon's). Empty when unset.
+	From string `json:"from,omitempty"`
+}
+
 // HarnessInfo is one harness's state for list/describe (SPEC-0003 fields; the
 // glyph is derived client-side from State). It is the JSON projection of a
 // supervisor.Snapshot plus the config-derived Cmd/Backend/Description.
@@ -482,6 +504,12 @@ type HarnessInfo struct {
 	// package's or the operator's own. Empty on daemons older than
 	// ProtoMinor 22, where describe shows the source without attribution.
 	PackageKeys []string `json:"package_keys,omitempty"`
+	// PackageEnv is the package's [[env]] declarations with whether each is
+	// satisfied (SPEC-0026 REQ-12; issue #930), so doctor and describe can
+	// name a missing variable without the client ever reading the daemon's
+	// environment or the harness's env_file. Names only. Nil when the
+	// package declares none, and on daemons older than ProtoMinor 26.
+	PackageEnv []PackageEnvStatus `json:"package_env,omitempty"`
 	// Skills is the harness's resolved skill set with its shadow map
 	// (SPEC-0006 REQ "Ordered Merge and Shadowing"): each name's winning
 	// source path and every shadowed one. Nil on daemons older than

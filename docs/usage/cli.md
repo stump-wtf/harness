@@ -445,7 +445,7 @@ harness agent stable lint [PATH] [--json]           # validate a stable checkout
 harness agent stable check [PATH] [--json]          # lint + load-test each package
 
 harness agent search [QUERY] [--stable NAME]        # packages in local clones
-harness agent info STABLE/PACKAGE                   # manifest, license, requests, scan findings, files
+harness agent info STABLE/PACKAGE                   # manifest, license, requests, declared env, scan findings, files
 
 harness agent install STABLE/PACKAGE[@VERSION] [--as NAME] [--replace] [--yes] [--force-unsafe]
 harness agent upgrade STABLE/PACKAGE[@VERSION] [--all] [--yes]
@@ -480,6 +480,8 @@ harness agent prune                                 # remove pins nothing refere
   - `--replace` lets the table switch from another package's source.
   - The confirmation shows the package's SPDX `license`. A package without
     one carries the `package.no-license` low finding, which never blocks.
+  - Its output ends with an `env_file` skeleton for the variables the
+    package declares in `[[env]]`: names and descriptions, never values.
 - **`upgrade`** re-pins to a newer commit of the local clone (`--all` for
   every sourced harness). It shows the manifest diff (a `package.license`
   change is flagged as a terms change), any new scan finding,
@@ -491,6 +493,15 @@ harness agent prune                                 # remove pins nothing refere
 `harness describe NAME` marks each value a package supplied with
 `(package)`, and `harness doctor` reports a sourced harness whose pin is
 missing.
+
+A package's `[[env]]` variables are checked against what the harness's
+process would see: its `env_file` (one file or a list, later file winning),
+then the daemon's own environment. A variable counts as set only when its
+value is non-empty. `harness doctor` adds one `agent_env` row per sourced
+harness that declares variables (`--json`: the `agent_env` list). A missing
+required variable fails the row, and a missing optional one warns with its
+description. `harness describe NAME` lists each variable as `set (env_file)`,
+`set (environment)` or `unset`. Both report names only, never a value.
 
 ## Project verbs
 

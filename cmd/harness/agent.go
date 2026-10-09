@@ -524,6 +524,12 @@ func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string) error {
 		fmt.Fprintf(out, "  network %t\n", *req.Network)
 	}
 
+	// The declared environment, names only (SPEC-0026 REQ-12, issue #930).
+	fmt.Fprintf(out, "environment:\n")
+	for _, line := range agentpkg.RenderEnv(man) {
+		fmt.Fprintf(out, "  %s\n", line)
+	}
+
 	fmt.Fprintf(out, "scan findings:\n")
 	if len(findings) == 0 {
 		fmt.Fprintf(out, "  none\n")
