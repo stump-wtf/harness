@@ -1,0 +1,6 @@
+[package]
+name = "stranger"
+
+[harness]
+harness = "no-such-agent"
+prompt  = "Summarize yesterday's commits."

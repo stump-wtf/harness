@@ -1,0 +1,13 @@
+[
+  {
+    "package": "alpha",
+    "errors": [
+      {
+        "id": "package.name-mismatch",
+        "file": "package.toml",
+        "message": "[package].name \"beta\" does not match its directory \"alpha\""
+      }
+    ],
+    "warnings": []
+  }
+]

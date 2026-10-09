@@ -154,7 +154,7 @@ func newAgentStableCmd(g *globalOpts) *cobra.Command {
 		},
 	}
 
-	cmd.AddCommand(add, remove, update, list)
+	cmd.AddCommand(add, remove, update, list, newAgentStableLintCmd(), newAgentStableCheckCmd())
 	return cmd
 }
 

@@ -1,0 +1,6 @@
+[package]
+name = "installer"
+
+[harness]
+harness     = "claude-code"
+prompt_file = "prompt.md"

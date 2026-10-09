@@ -1,0 +1,6 @@
+[package]
+name = "beta"
+
+[harness]
+harness = "claude-code"
+prompt  = "Summarize yesterday's commits."

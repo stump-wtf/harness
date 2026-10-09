@@ -1,0 +1,6 @@
+[package]
+name = "watcher"
+
+[harness]
+harness = "crush"
+args    = ["--yolo"]

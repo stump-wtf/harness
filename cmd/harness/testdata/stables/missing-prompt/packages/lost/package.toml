@@ -1,0 +1,6 @@
+[package]
+name = "lost"
+
+[harness]
+harness     = "claude-code"
+prompt_file = "prompts/missing.md"

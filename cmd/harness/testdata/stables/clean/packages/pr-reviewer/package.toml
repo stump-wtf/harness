@@ -1,0 +1,9 @@
+[package]
+name        = "pr-reviewer"
+version     = "0.1.0"
+description = "Reviews pull requests that request your review"
+
+[harness]
+harness     = "claude-code"
+prompt_file = "prompts/review.md"
+max_turns   = 40

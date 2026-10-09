@@ -1,0 +1,6 @@
+[package]
+name = "quiet"
+
+[harness]
+harness = "claude-code"
+prompt  = "Summarize yesterday's commits."

@@ -1,0 +1,13 @@
+[
+  {
+    "package": "greedy",
+    "errors": [
+      {
+        "id": "manifest.schema",
+        "file": "package.toml",
+        "message": "[harness].workdir is not permitted in a package manifest: a package cannot choose a workdir; set it on the harness table after install"
+      }
+    ],
+    "warnings": []
+  }
+]

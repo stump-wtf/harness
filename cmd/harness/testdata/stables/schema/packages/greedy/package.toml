@@ -1,0 +1,7 @@
+[package]
+name = "greedy"
+
+[harness]
+harness = "claude-code"
+prompt  = "Tidy the repository."
+workdir = "/srv"
