@@ -409,9 +409,11 @@ func newAgentInfoCmd(g *globalOpts) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgentInfo(cmd, g.opts(), args[0])
+			full, _ := cmd.Flags().GetBool("readme-full")
+			return runAgentInfo(cmd, g.opts(), args[0], full)
 		},
 	}
+	cmd.Flags().Bool("readme-full", false, "print the package README whole instead of capping it")
 	return cmd
 }
 
@@ -419,7 +421,9 @@ func newAgentInfoCmd(g *globalOpts) *cobra.Command {
 // and bundled file list from the stable's local clone, without installing
 // anything (SPEC-0026 REQ-2: no entry appears under the content-addressed
 // store; REQ-5: the findings and the no-guarantee statement print too).
-func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string) error {
+// The package README prints after the requests, sanitized and capped unless
+// readmeFull is set (harness#929).
+func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string, readmeFull bool) error {
 	slash := strings.IndexByte(ref, '/')
 	if slash < 0 {
 		return fmt.Errorf("%w: %q: want <stable>/<package>", agentpkg.ErrInvalidSource, ref)
@@ -445,6 +449,11 @@ func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string) error {
 	// The scan runs read-only over the local clone (SPEC-0026 REQ-5): info
 	// never fetches and never writes anything under the pin store.
 	findings, err := scan.Scan(agentpkg.PackageDir(stable, pkg), man)
+	if err != nil {
+		return err
+	}
+	// The clone outlives this command, so a truncated README can name it.
+	readme, err := agentpkg.LoadReadme(agentpkg.PackageDir(stable, pkg), true)
 	if err != nil {
 		return err
 	}
@@ -520,12 +529,15 @@ func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string) error {
 		fmt.Fprintf(out, "  network %t\n", *req.Network)
 	}
 
+	// The setup README, after the manifest and requests (harness#929).
+	agentpkg.RenderReadme(out, readme, readmeFull)
+
 	fmt.Fprintf(out, "scan findings:\n")
 	if len(findings) == 0 {
 		fmt.Fprintf(out, "  none\n")
 	}
 	for _, f := range findings {
-		fmt.Fprintf(out, "  %s:%d  %s  %s\n", f.File, f.Line, f.PatternID, f.Severity)
+		fmt.Fprintf(out, "  %s  %s  %s\n", f.Where(), f.PatternID, f.Severity)
 	}
 	fmt.Fprintf(out, "bundled files:\n")
 	for _, f := range files {

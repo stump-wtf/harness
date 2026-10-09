@@ -72,6 +72,12 @@ func PinDiff(oldDir, newDir string, oldMan, newMan *Manifest) ([]string, error) 
 			lines = append(lines, "added "+f)
 		}
 	}
+	// Every line here quotes package content, the README's diff among it,
+	// and the operator's terminal prints it: strip what a terminal would
+	// interpret (harness#929).
+	for i := range lines {
+		lines[i] = SanitizeTerminal(lines[i])
+	}
 	return lines, nil
 }
 

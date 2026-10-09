@@ -29,7 +29,8 @@ const ManifestFile = "package.toml"
 // .txt file, and every prompt file the manifest names (SPEC-0026 REQ-5). Manifest string values are covered by
 // scanning package.toml's text; the line numbers are the file's real ones.
 // man supplies the declared homepage for the foreign-domain link check.
-// Files are visited in sorted order so findings are deterministic.
+// Files are visited in sorted order so findings are deterministic. A
+// package with no README.md draws the low package.no-readme finding.
 func Scan(pkgDir string, man *agentpkg.Manifest) ([]agentpkg.Finding, error) {
 	var findings []agentpkg.Finding
 
@@ -82,6 +83,11 @@ func Scan(pkgDir string, man *agentpkg.Manifest) ([]agentpkg.Finding, error) {
 		rel := filepath.ToSlash(strings.TrimPrefix(path, pkgDir+string(filepath.Separator)))
 		findings = append(findings, scanLines(rel, string(raw), homepageHost(man))...)
 	}
+	readme, err := readmeFindings(pkgDir)
+	if err != nil {
+		return nil, fmt.Errorf("scan: %w", err)
+	}
+	findings = append(findings, readme...)
 	sort.SliceStable(findings, func(i, j int) bool {
 		if findings[i].File != findings[j].File {
 			return findings[i].File < findings[j].File

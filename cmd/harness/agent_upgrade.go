@@ -47,6 +47,7 @@ type upgradeOpts struct {
 	all         bool
 	yes         bool
 	forceUnsafe bool
+	readmeFull  bool
 }
 
 func newAgentUpgradeCmd(g *globalOpts) *cobra.Command {
@@ -61,6 +62,7 @@ func newAgentUpgradeCmd(g *globalOpts) *cobra.Command {
 			o.all, _ = cmd.Flags().GetBool("all")
 			o.yes, _ = cmd.Flags().GetBool("yes")
 			o.forceUnsafe, _ = cmd.Flags().GetBool("force-unsafe")
+			o.readmeFull, _ = cmd.Flags().GetBool("readme-full")
 			ref := ""
 			if len(args) > 0 {
 				ref = args[0]
@@ -71,6 +73,7 @@ func newAgentUpgradeCmd(g *globalOpts) *cobra.Command {
 	cmd.Flags().Bool("all", false, "upgrade every package-sourced harness in the global config")
 	cmd.Flags().Bool("yes", false, "skip the ordinary confirmation (never clears a high finding or a write request)")
 	cmd.Flags().Bool("force-unsafe", false, "override a high-severity finding (requires an interactive retype)")
+	cmd.Flags().Bool("readme-full", false, "print the package README whole instead of capping it")
 	return cmd
 }
 
@@ -232,6 +235,12 @@ func upgradeOne(cmd *cobra.Command, o verbOpts, uo upgradeOpts, cfg *core.Config
 		if err != nil {
 			return err
 		}
+		// The candidate's README. A change since the installed pin already
+		// showed as a README.md hunk in the diff above (harness#929).
+		readme, err := agentpkg.LoadReadme(newDir, tmp == "")
+		if err != nil {
+			return err
+		}
 		agentpkg.RenderReport(cmd.OutOrStdout(), agentpkg.ReportInput{
 			Ref:          stable + "/" + pkg,
 			ManifestRaw:  manifestRaw,
@@ -239,6 +248,8 @@ func upgradeOne(cmd *cobra.Command, o verbOpts, uo upgradeOpts, cfg *core.Config
 			Findings:     newFindingsAll,
 			NewFindings:  newFindings,
 			BundledFiles: files,
+			Readme:       readme,
+			ReadmeFull:   uo.readmeFull,
 		})
 		if hasHigh(newFindingsAll) {
 			agentpkg.LogBlocked(stable+"/"+pkg, newFindingsAll)

@@ -45,11 +45,18 @@ type ReportInput struct {
 	NewFindings []Finding
 	// BundledFiles is the package's bundled file list.
 	BundledFiles []string
+	// Readme is the package's README.md, rendered after the requests
+	// (harness#929). The zero value renders as "no README".
+	Readme Readme
+	// ReadmeFull prints the whole README instead of capping it at
+	// ReadmeMaxLines (--readme-full).
+	ReadmeFull bool
 }
 
 // RenderReport writes the confirmation report: the manifest verbatim, the
 // [requests] table as itemized lines with absent keys stated explicitly, the
-// mcp_allow "write" sibling warning, the findings as file:line pattern
+// mcp_allow "write" sibling warning, the package README (sanitized and
+// capped, harness#929), the findings as file:line pattern
 // severity, the bundled files, and — every time, last — the no-guarantee
 // statement (SPEC-0026 REQ-4, REQ-5).
 func RenderReport(w io.Writer, in ReportInput) {
@@ -64,6 +71,10 @@ func RenderReport(w io.Writer, in ReportInput) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 
+	// The README sits before the findings so that the findings and the
+	// no-guarantee statement stay closest to the prompt (harness#929).
+	RenderReadme(w, in.Readme, in.ReadmeFull)
+
 	fmt.Fprintf(w, "scan findings:\n")
 	isNew := make(map[Finding]bool, len(in.NewFindings))
 	for _, f := range in.NewFindings {
@@ -77,7 +88,7 @@ func RenderReport(w io.Writer, in ReportInput) {
 		if isNew[f] {
 			marker = "  (new)"
 		}
-		fmt.Fprintf(w, "  %s:%d  %s  %s%s\n", f.File, f.Line, f.PatternID, f.Severity, marker)
+		fmt.Fprintf(w, "  %s  %s  %s%s\n", f.Where(), f.PatternID, f.Severity, marker)
 	}
 
 	fmt.Fprintf(w, "bundled files:\n")
