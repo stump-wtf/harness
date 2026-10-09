@@ -76,6 +76,9 @@ type doctorResult struct {
 	AgentPins  *checkResult `json:"agent_pins,omitempty"`
 	Notify     *checkResult `json:"notify,omitempty"`
 	NotifyTest *checkResult `json:"notify_test,omitempty"`
+	// AgentEnv is one row per package-sourced harness that declares [[env]]
+	// variables (SPEC-0026 REQ-12); each detail starts "<harness>: ".
+	AgentEnv []checkResult `json:"agent_env,omitempty"`
 	// Settings reports every process setting with the source that supplied it,
 	// so "which one won — my flag, HARNESS_*, the file, or the default?" is
 	// answerable without reading code. It is not a health check and does not
@@ -334,6 +337,12 @@ func runDoctorWith(o verbOpts, notifyTest bool) int {
 	if r := agentPinsCheck(c); r != nil {
 		rows = append(rows, *r)
 	}
+
+	// --- Check: agent package declared environment -------------------------
+	// Governing: SPEC-0026 REQ-12 (issue #930). One row per package-sourced
+	// harness whose manifest declares [[env]] variables, judged from the
+	// daemon's report of what its child would see — names only.
+	rows = append(rows, packageEnvChecks(c, c.SupportsPackageEnv())...)
 
 	// --- Check 5: harnesses in healthy state -------------------------------
 	// Governing: SPEC-0003 (the state model and its healthy/degraded/failed
@@ -608,6 +617,8 @@ func emitDoctorJSON(w io.Writer, rows []check, resolved []settings.Resolved, tel
 		case "agent_pins":
 			c := cr
 			res.AgentPins = &c
+		case "agent_env":
+			res.AgentEnv = append(res.AgentEnv, cr)
 		case "skills":
 			c := cr
 			res.Skills = &c

@@ -138,6 +138,31 @@ fail to load, naming the table and the manifest's path.
 `[package]` SHALL require `name` (matching the package-name pattern) and
 MAY carry `version`, `description`, `author`, and `homepage` as strings.
 
+`[package]` MAY carry `license`, an SPDX license expression stating the
+terms the package is offered under (issue #932). Its value SHALL be a
+string; any other type SHALL fail to load, naming the key. The expression
+syntax SHALL be limited to license identifiers joined by `AND`, `OR` and
+`WITH` (operators uppercase, `WITH` binding tighter than `AND`, `AND`
+tighter than `OR`) and grouped by parentheses. Every license identifier
+SHALL be on the SPDX License List vendored into the binary at a pinned
+version (matched case-insensitively), or SHALL be a custom
+`LicenseRef-<idstring>`; every identifier after `WITH` SHALL be on the
+vendored SPDX license-exception list. An unknown identifier, an empty
+string, the `+` operator, a `DocumentRef-` reference, or any other
+malformed expression SHALL fail to load, naming the key and the offending
+identifier. The list is vendored, never fetched: validation is
+reproducible from a Harness version alone, and bumping the pinned version
+is a reviewed change regenerated from
+https://github.com/spdx/license-list-data at a tagged release. The license
+SHALL be shown by `harness agent info`, by the install and upgrade
+confirmations (REQ-6, REQ-8), and by `harness agent list`, including its
+`--json` output (REQ-12), where it is read from the installed pin's
+manifest. An upgrade whose candidate declares a different license than
+the installed pin (including one added or dropped) SHALL call it out as
+its own row in the upgrade diff, marked as a change of the package's
+terms. A package that declares no `license` SHALL still load; it
+carries the `package.no-license` low finding (REQ-5).
+
 `[harness]` SHALL require `harness`, naming an adapter exactly as
 SPEC-0006/ADR-0039 validate it (an unknown adapter SHALL fail exactly as it
 does for a hand-written harness). It MAY carry only the per-harness value
@@ -177,6 +202,22 @@ exclusive).
 `[requests]` MAY carry `skill_paths` (boolean), `mcp_allow` (a list whose
 values are `"read"` and/or `"write"`), and `network` (boolean). Any other
 key under `[requests]` SHALL fail to load, naming the key.
+
+Amendment (issue #930): besides those three tables, a manifest MAY carry an
+`[[env]]` array of tables declaring the environment variables its harness
+expects, **by name only**. Each entry SHALL carry `name`, matching
+`^[A-Z_][A-Z0-9_]*$`, and MAY carry `required` and `secret` (booleans,
+default false) and `description` (a string of one line with no control
+characters, since it is printed to the operator's terminal and into the
+install skeleton's comment line). Any other key SHALL fail to load, naming
+the entry and the key; a value-carrying key (`value`, `default`, `example`)
+SHALL fail with the reason that a package declares names, never values. A
+name declared twice SHALL fail to load. Every string in an entry SHALL be
+rejected if it contains `${`, exactly as under `[harness]`. `[env]` written
+as a single table, rather than an array of tables, SHALL fail to load. The
+table never weakens the rule above: a package still cannot name an
+`env_file` or carry a value; the operator supplies values in the harness
+table's own `env_file` or the daemon's environment (ADR-0038).
 
 Suggested defaults (issue #931, ADR-0044 amendment of 2026-10-09). A
 manifest MAY additionally carry a top-level `[defaults]` table, admitted
@@ -270,10 +311,61 @@ will run with.
 - **THEN** the harness loads with the table's `prompt` alone, and describe
   attributes no prompt key to the package
 
+#### Scenario: A valid license expression loads and is shown
+
+- **WHEN** a manifest declares `license = "MIT OR Apache-2.0"`
+- **THEN** the package loads, and `harness agent info`, the install
+  confirmation and `harness agent list --json` all show
+  `MIT OR Apache-2.0`
+
+#### Scenario: A custom license reference loads
+
+- **WHEN** a manifest declares `license = "LicenseRef-Acme-Internal"`
+- **THEN** the package loads with that license
+
+#### Scenario: An unknown license identifier is rejected
+
+- **WHEN** a manifest declares `license = "MIT OR Bogus-1.0"`
+- **THEN** the package fails to load, naming `license` and `Bogus-1.0`
+
+#### Scenario: A non-string license is rejected
+
+- **WHEN** a manifest declares `license = 1` or `license = ["MIT"]`
+- **THEN** the package fails to load, stating that `[package].license`
+  must be a string
+
+#### Scenario: A license change on upgrade is called out
+
+- **WHEN** the installed pin declares `license = "MIT"` and the upgrade
+  candidate declares `license = "GPL-3.0-only"`
+- **THEN** the upgrade diff shows
+  `package.license: MIT -> GPL-3.0-only` marked as a license change before
+  the confirmation
+
 #### Scenario: An unknown request key
 
 - **WHEN** `[requests]` declares `filesystem = true`
 - **THEN** the package fails to load, naming `filesystem`
+
+#### Scenario: A package declares its environment by name
+
+- **WHEN** a manifest declares `[[env]] name = "TRIAGE_REPOS"`,
+  `required = true`, `description = "Space-separated repo list"`
+- **THEN** the package loads with that declaration, and `harness agent
+  info` and the install confirmation list `TRIAGE_REPOS` as required with
+  its description
+
+#### Scenario: A value in an [[env]] entry is rejected
+
+- **WHEN** an `[[env]]` entry declares `value = "..."` or `default = "..."`,
+  or its `description` contains `${GH_TOKEN}`
+- **THEN** the package fails to load, naming the entry and the key
+
+#### Scenario: A bad [[env]] name is rejected
+
+- **WHEN** an `[[env]]` entry declares `name = "gh-token"`, or an unknown
+  key such as `file = "x"`
+- **THEN** the package fails to load, naming the entry
 
 #### Scenario: Adapter selection is validated like any harness
 
@@ -366,6 +458,14 @@ overridden. `--yes` alone SHALL NOT suppress a `high`-severity block. A
 `low`-severity finding SHALL be shown in the confirmation output and SHALL
 NOT block.
 
+A manifest that declares no `[package].license` (REQ-3) SHALL produce
+exactly one `low` finding with the pattern id `package.no-license`,
+located at `package.toml`'s `[package]` header (issue #932). Like every
+`low` finding it SHALL be shown and SHALL NOT block install or upgrade;
+`harness agent stable lint` runs the same scan and treats it as an error,
+so a stable cannot publish an unlicensed package while an operator can
+still install one knowingly.
+
 On an upgrade, the scan SHALL run against the new pin's content, and any
 finding not present against the currently installed pin's content SHALL be
 marked as new in the diff output (REQ-8), so a previously accepted package
@@ -399,6 +499,13 @@ it being called out specifically.
   `homepage`)
 - **THEN** `install` completes under `--yes`, with the finding shown in the
   output
+
+#### Scenario: A package without a license gets a low finding
+
+- **WHEN** a manifest's `[package]` table declares no `license`
+- **THEN** `harness agent info` and the install confirmation show a
+  `package.no-license` `low` finding at `package.toml`, and `install`
+  completes under `--yes`
 
 #### Scenario: A new finding on upgrade is called out
 
@@ -861,6 +968,30 @@ row reads the running daemon's harness records — its last-good config
 view — which is the only place a pin can be referenced while missing from
 disk: one pruned or deleted after the daemon loaded its config.
 
+Amendment (issue #930): `harness agent info` and the install and upgrade
+confirmation SHALL list a package's `[[env]]` declarations (REQ-3) with
+each name, whether it is required or secret, and its description. Install
+SHALL end its output with a ready-to-copy `env_file` skeleton: each
+declared name as a `NAME=` line under a comment carrying its description,
+an optional name's line itself commented out (so pasting it never blanks a
+value the daemon's environment supplies), and never a value. `harness
+doctor` SHALL add one row per package-sourced harness that declares
+variables, judging each declared name against the environment the harness's
+process would get: its `env_file` (a single file or a list, later file
+winning) layered over the daemon's own environment, the composition the
+spawn uses. A name is set only when that value is non-empty; an `env_file`
+line that sets it to the empty string leaves it unset. The running daemon
+computes the presence, because only it knows its own environment, and
+reports it per harness with names only (protocol minor 26). A missing
+required variable SHALL fail the row; a missing optional one SHALL warn,
+naming it with its description; every name set passes. Against a daemon
+too old to report, a harness whose installed manifest declares variables
+SHALL get a warn row saying the check did not run, never a pass. `harness
+describe` SHALL list each declared variable with whether it is set and
+where from (`env_file` or the daemon's `environment`). No surface — doctor,
+describe, either `--json` form, the protocol, or a log — SHALL ever carry a
+variable's value (ADR-0038 rule 9).
+
 #### Scenario: list shows staleness without fetching
 
 - **WHEN** a stable's local clone (from its last `stable update`) is three commits
@@ -874,6 +1005,26 @@ disk: one pruned or deleted after the daemon loaded its config.
   harness with one local override
 - **THEN** the output marks the overridden key as `local` and every other
   key as coming from the package's pin
+
+#### Scenario: doctor fails a missing required variable by name
+
+- **WHEN** a package-sourced harness's package declares `TRIAGE_REPOS` as
+  required, and neither its `env_file` nor the daemon's environment sets it
+- **THEN** `harness doctor` fails that harness's `agent_env` row naming
+  `TRIAGE_REPOS`, and no output carries any variable's value
+
+#### Scenario: doctor warns on a missing optional variable
+
+- **WHEN** the package declares `GH_TOKEN` as optional with a description,
+  and nothing sets it
+- **THEN** the row warns, naming `GH_TOKEN` with its description
+
+#### Scenario: A variable set in an env_file list passes
+
+- **WHEN** the harness's `env_file` is a list and the second file sets a
+  required variable the first lacks
+- **THEN** the row passes, and `harness describe` shows the variable as
+  `set (env_file)`
 
 ### Requirement: Error Handling Standards
 

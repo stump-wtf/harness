@@ -1020,6 +1020,9 @@ var harnessFormFields = []string{
 	// it is never serialized to TOML, and the form's save path can neither
 	// carry nor drop it.
 	"PackageKeys",
+	// PackageEnv likewise (issue #930): the manifest's [[env]] names,
+	// recomputed from the pin on every load and never written to TOML.
+	"PackageEnv",
 }
 
 // TestHarnessFormCoversEveryHarnessField is the census half of the issue #161

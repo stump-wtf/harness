@@ -57,6 +57,15 @@ func bootTestDaemon(t *testing.T) (socket, configPath string) {
 	if err := writeMinimalConfig(configPath); err != nil {
 		t.Fatal(err)
 	}
+	return bootTestDaemonAt(t, configPath), configPath
+}
+
+// bootTestDaemonAt is bootTestDaemon over a config file the caller wrote,
+// for a test whose harness tables matter (a package-sourced harness, say).
+// State and logs live beside the config.
+func bootTestDaemonAt(t *testing.T, configPath string) (socket string) {
+	t.Helper()
+	tmp := filepath.Dir(configPath)
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +95,7 @@ func bootTestDaemon(t *testing.T) (socket, configPath string) {
 		srv.Close()
 		mgr.Close()
 	})
-	return socket, configPath
+	return socket
 }
 
 // chdir switches cwd for the test and restores it on cleanup. Tests that use

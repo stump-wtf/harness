@@ -33,6 +33,10 @@ table may only select an adapter and supply values:
 - **Paths stay inside the package.** A path a package names must be relative
   to it. An absolute path, a `~` path, or one that climbs out with `..` is
   refused.
+- **Environment by name only.** A package can declare the environment
+  variables it expects in `[[env]]` blocks, but never their values. You
+  supply those in your harness table's `env_file` or the daemon's
+  environment, and `harness doctor` tells you which are missing.
 
 So installing a package never makes anything run on its own, never reads your
 secrets, and never points an agent at a file on your machine. When it runs,
@@ -59,8 +63,14 @@ harness agent search reviewer           # name or description, case-insensitive
 harness agent info stump-wtf/pr-reviewer
 ```
 
-`info` prints the manifest, the itemised `[requests]`, the content-scan
-findings and the bundled files, without installing anything.
+`info` prints the manifest, the itemised `[requests]`, the environment
+variables the package declares, the content-scan findings and the bundled
+files, without installing anything.
+
+It also prints the package's SPDX `license`. If the package declares none,
+`info` prints `none declared` and adds a `package.no-license` low finding.
+The finding is shown but never blocks, so you can still install the package
+knowingly.
 
 ## 2. Install it
 
@@ -82,6 +92,10 @@ Install does the following, in order:
    never clears a `high` finding or a `mcp_allow = ["write"]` request.
 4. **Binds.** It writes `source = "stump-wtf/pr-reviewer@<sha>"` onto a
    `[harness.pr-reviewer]` table. `--as NAME` picks another table name.
+5. **Lists the environment.** When the package declares `[[env]]`
+   variables, install ends with a ready-to-copy `env_file` skeleton: one
+   `NAME=` line per variable with its description as a comment, and each
+   optional one commented out. It holds names only; you fill in the values.
 
 A clean scan is a tripwire, not a guarantee. Read the bundled prompt before
 you run it.
@@ -107,6 +121,12 @@ workdir  = "~/sweeps/pr-reviewer"
   form either side uses.
 - **Load.** `harness reload` picks the table up. `harness describe
   pr-reviewer` marks each value the package supplied with `(package)`.
+- **Environment.** Put the variables the package declares in an `env_file`
+  on this table (a single file or a list), or in the daemon's environment.
+  `harness doctor` adds an `agent_env` row per package-sourced harness. A
+  missing required variable fails it, and a missing optional one warns with
+  its description. `harness describe` shows each declared variable as `set
+  (env_file)`, `set (environment)` or `unset`. Neither ever prints a value.
 
 ## 4. Upgrade
 
@@ -118,7 +138,8 @@ harness agent upgrade stump-wtf/pr-reviewer
 
 Upgrade re-scans the new commit and shows you three things:
 
-- the manifest diff;
+- the manifest diff, where a `package.license` change is flagged as a
+  change to the package's terms;
 - any **new** scan finding, flagged as new;
 - every change to the harness's effective values.
 
@@ -160,6 +181,7 @@ name        = "pr-reviewer"            # must match the directory
 version     = "0.1.0"
 description = "Reviews PRs that request your review"
 homepage    = "https://github.com/you/your-stable"
+license     = "MIT"                    # SPDX expression, e.g. "MIT OR Apache-2.0"
 
 [harness]
 harness     = "claude-code"            # an existing adapter, never a new one
@@ -171,7 +193,31 @@ max_turns   = 80
 network = true
 # mcp_allow   = ["read"]               # "write" makes the installer retype the name
 # skill_paths = true
+
+[[env]]                                 # one block per variable; names, never values
+name        = "GH_TOKEN"
+required    = false                     # gh may already be logged in
+secret      = true
+description = "Fine-grained PAT: Pull requests read/write, Contents read"
+
+[[env]]
+name        = "REVIEW_REPOS"
+required    = true
+description = "Space-separated <host>/<owner>/<repo> list"
 ```
+
+`license` is an SPDX license expression. It may use only `AND`, `OR`,
+`WITH` and parentheses. Every ID must be on the
+[SPDX License List](https://spdx.org/licenses/), at the version this
+Harness release vendors, or be a custom `LicenseRef-<name>`. An unknown ID
+fails the manifest load, and the error names that ID. A package without a
+license still installs, but it carries the `package.no-license` low
+finding.
+
+An `[[env]]` block takes only `name` (matching `^[A-Z_][A-Z0-9_]*$`),
+`required` and `secret` (booleans, default `false`) and `description` (one
+line). Any other key fails the install, and `value` or `default` fails it
+with the reason: the value belongs to the operator.
 
 Keep the manifest to keys every adapter accepts if you want operators to
 override `harness`. `system_prompt_file`, `mcp_config` and `allowed_tools`

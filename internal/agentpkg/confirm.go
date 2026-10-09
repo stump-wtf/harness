@@ -54,6 +54,9 @@ type ReportInput struct {
 // statement (SPEC-0026 REQ-4, REQ-5).
 func RenderReport(w io.Writer, in ReportInput) {
 	fmt.Fprintf(w, "agent: %s\n", in.Ref)
+	if in.Man != nil {
+		fmt.Fprintf(w, "license: %s\n", LicenseLabel(in.Man.Package.License))
+	}
 	fmt.Fprintf(w, "manifest (verbatim):\n")
 	for _, line := range strings.Split(strings.TrimSuffix(string(in.ManifestRaw), "\n"), "\n") {
 		fmt.Fprintf(w, "  %s\n", line)
@@ -61,6 +64,12 @@ func RenderReport(w io.Writer, in ReportInput) {
 
 	fmt.Fprintf(w, "requests:\n")
 	for _, line := range RenderRequests(in.Man) {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+
+	// The declared environment, names only (SPEC-0026 REQ-3, issue #930).
+	fmt.Fprintf(w, "environment:\n")
+	for _, line := range RenderEnv(in.Man) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 

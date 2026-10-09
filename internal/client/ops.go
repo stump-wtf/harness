@@ -239,6 +239,18 @@ func (c *Client) DaemonInfo() (protocol.DaemonInfo, error) {
 	return out, json.Unmarshal(resp.Data, &out)
 }
 
+// packageEnvMinor is the ProtoMinor that added HarnessInfo.PackageEnv.
+const packageEnvMinor = 26
+
+// SupportsPackageEnv reports whether the daemon reports a package-sourced
+// harness's declared environment (ProtoMinor 26). An older daemon omits
+// HarnessInfo.PackageEnv whatever the package declares, so an empty list
+// from it means "unknown", never "nothing declared" (SPEC-0026 REQ-12).
+func (c *Client) SupportsPackageEnv() bool {
+	minor, ok := protoMinor(c.daemon.ProtoVersion)
+	return ok && minor >= packageEnvMinor
+}
+
 // notifyMinor is the ProtoMinor that added DaemonInfo.Notify and the
 // notify_test op.
 const notifyMinor = 15

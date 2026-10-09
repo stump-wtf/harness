@@ -24,7 +24,7 @@ import (
 // TableVersion identifies the compiled pattern table. Bump it whenever a
 // pattern is added, reworded or re-graded, so an install record can name
 // which table produced its findings.
-const TableVersion = "1"
+const TableVersion = "2"
 
 // Pattern is one entry of the fixed pattern table. ID is the stable
 // identifier a blocked error and a false-positive report name; Severity is

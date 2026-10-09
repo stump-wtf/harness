@@ -1,6 +1,6 @@
 // Manifest is the decoded, validated package.toml (SPEC-0026 REQ-3). The
-// loader is strict by construction: any table beyond [package], [harness] and
-// [requests], any harness key outside the value-key allowlist, any forbidden
+// loader is strict by construction: any table beyond [package], [harness],
+// [requests] and [[env]] (env.go), any harness key outside the value-key allowlist, any forbidden
 // key, and any string containing "${" (the ADR-0038 secret-reference grammar)
 // fails the load naming the key and the manifest's path.
 //
@@ -25,6 +25,10 @@ type PackageMeta struct {
 	Description string
 	Author      string
 	Homepage    string
+	// License is the SPDX license expression as written, validated against
+	// the vendored SPDX License List (license.go). Empty means the package
+	// declares none, which is a low finding, package.no-license.
+	License string
 }
 
 // HarnessValues is the per-harness value subset a manifest may carry. The
@@ -71,6 +75,9 @@ type Manifest struct {
 	Package  PackageMeta
 	Harness  HarnessValues
 	Requests Requests
+	// Env is the [[env]] declarations, in manifest order: names the harness
+	// expects in its environment, never their values (env.go).
+	Env []EnvVar
 }
 
 // harnessAllowlist is the only set of keys [harness] accepts, matched against
@@ -137,9 +144,9 @@ func ParseManifest(raw []byte, path string) (*Manifest, error) {
 
 	for _, key := range sortedKeys(doc) {
 		switch key {
-		case "package", "harness", "requests":
+		case "package", "harness", "requests", "env":
 		default:
-			return nil, violation(path, "table [%s] is not allowed in a package manifest (only [package], [harness], [requests])", key)
+			return nil, violation(path, "table [%s] is not allowed in a package manifest (only [package], [harness], [requests], [[env]])", key)
 		}
 	}
 
@@ -151,6 +158,9 @@ func ParseManifest(raw []byte, path string) (*Manifest, error) {
 		return nil, err
 	}
 	if err := decodeRequests(doc["requests"], path, m); err != nil {
+		return nil, err
+	}
+	if err := decodeEnv(doc["env"], path, m); err != nil {
 		return nil, err
 	}
 	return m, nil
@@ -183,12 +193,12 @@ func decodePackage(v any, path string, m *Manifest) error {
 	}
 	for _, k := range sortedKeys(t) {
 		switch k {
-		case "name", "version", "description", "author", "homepage":
+		case "name", "version", "description", "author", "homepage", "license":
 			if _, ok := t[k].(string); !ok {
 				return violation(path, "[package].%s must be a string", k)
 			}
 		default:
-			return violation(path, "[package].%s is not an allowed key (name, version, description, author, homepage)", k)
+			return violation(path, "[package].%s is not an allowed key (name, version, description, author, homepage, license)", k)
 		}
 	}
 	name, _ := str("name")
@@ -204,6 +214,15 @@ func decodePackage(v any, path string, m *Manifest) error {
 		Description: mustStr(t, "description"),
 		Author:      mustStr(t, "author"),
 		Homepage:    mustStr(t, "homepage"),
+	}
+	// A present license must be a valid SPDX expression; an absent one is
+	// the package.no-license finding, not a load error (SPEC-0026 REQ-3).
+	if _, present := t["license"]; present {
+		lic := mustStr(t, "license")
+		if err := ValidateLicense(lic); err != nil {
+			return violation(path, "[package].license: %v", err)
+		}
+		m.Package.License = lic
 	}
 	return nil
 }

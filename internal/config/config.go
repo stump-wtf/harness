@@ -38,6 +38,9 @@ type rawHarness struct {
 	// manifest supplied (SPEC-0026 REQ-12): filled by applySource for every
 	// key it merged in, never decoded from TOML.
 	PackageKeys []string `toml:"-"`
+	// PackageEnv is the resolved package's [[env]] declarations (SPEC-0026
+	// REQ-12; issue #930): filled by applySource, never decoded from TOML.
+	PackageEnv []core.PackageEnvVar `toml:"-"`
 	// Argv is a `command` harness's whole process (SPEC-0017 REQ-2), and is
 	// rejected on every other kind. A plain slice checked on presence
 	// (non-nil), so `argv = []` on a claude-code harness is still refused.
@@ -1458,6 +1461,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		Name:                 name,
 		PackageSource:        sourceValue,
 		PackageKeys:          rh.PackageKeys,
+		PackageEnv:           rh.PackageEnv,
 		SkillPaths:           skillPaths,
 		UseDefaultSkillPaths: useDefaultSkillPaths,
 		Adapter:              adapter,

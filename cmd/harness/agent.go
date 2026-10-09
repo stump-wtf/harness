@@ -466,6 +466,9 @@ func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string) error {
 	if p.Homepage != "" {
 		fmt.Fprintf(out, "  homepage %s\n", p.Homepage)
 	}
+	// Always shown, even when absent: a package with no license is a
+	// statement about its terms too (SPEC-0026 REQ-3).
+	fmt.Fprintf(out, "  license %s\n", agentpkg.LicenseLabel(p.License))
 
 	hv := man.Harness
 	fmt.Fprintf(out, "harness:\n")
@@ -518,6 +521,12 @@ func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string) error {
 	}
 	if req.Network != nil {
 		fmt.Fprintf(out, "  network %t\n", *req.Network)
+	}
+
+	// The declared environment, names only (SPEC-0026 REQ-12, issue #930).
+	fmt.Fprintf(out, "environment:\n")
+	for _, line := range agentpkg.RenderEnv(man) {
+		fmt.Fprintf(out, "  %s\n", line)
 	}
 
 	fmt.Fprintf(out, "scan findings:\n")
