@@ -1,6 +1,5 @@
 [package]
-name = "quiet"
-license = "MIT"
+name = "unlicensed"
 
 [harness]
 harness = "claude-code"

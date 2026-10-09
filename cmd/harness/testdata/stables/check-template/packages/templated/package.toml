@@ -1,5 +1,6 @@
 [package]
 name = "templated"
+license = "MIT"
 
 [harness]
 harness         = "claude-code"

@@ -40,7 +40,7 @@ const (
 	IDEmptyFile    = "package.empty-file"
 	IDSymlink      = "package.symlink"
 	IDNoReadme     = "package.no-readme"
-	IDNoLicense    = "package.no-license"
+	IDNoLicense    = agentpkg.FindingNoLicense
 	IDLoad         = "check.load"
 )
 
@@ -48,8 +48,7 @@ const (
 // shows them and proceeds; a stable that publishes a package without them
 // fails its own CI, because the operator reading the install confirmation is
 // the one who pays for the gap. The README finding is produced here; the
-// license finding arrives with [package].license (#932) and is promoted the
-// moment a producer emits it.
+// license finding is the scan's own (#932), the same one install shows.
 var promoted = map[string]bool{
 	IDNoReadme:  true,
 	IDNoLicense: true,
@@ -188,8 +187,17 @@ func lintPackage(dir, name string) Report {
 		r.add(agentpkg.SeverityHigh, Issue{ID: "scan.error", Message: err.Error()})
 	}
 	for _, f := range findings {
-		r.add(f.Severity, Issue{ID: "scan." + f.PatternID, File: f.File, Line: f.Line,
-			Message: fmt.Sprintf("%s-severity scan finding %s", f.Severity, f.PatternID)})
+		// A content pattern is namespaced "scan."; a package convention the
+		// scan reports (package.no-license) keeps its shared id, so the
+		// promotion table and every other surface name it the same way.
+		id, msg := "scan."+f.PatternID, fmt.Sprintf("%s-severity scan finding %s", f.Severity, f.PatternID)
+		if strings.HasPrefix(f.PatternID, "package.") {
+			id = f.PatternID
+		}
+		if f.PatternID == agentpkg.FindingNoLicense {
+			msg = "no [package].license: declare the package's SPDX license expression"
+		}
+		r.add(f.Severity, Issue{ID: id, File: f.File, Line: f.Line, Message: msg})
 	}
 	return r
 }

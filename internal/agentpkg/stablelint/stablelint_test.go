@@ -40,7 +40,7 @@ func errorIDs(r Report) string {
 	return strings.Join(ids, ",")
 }
 
-const okManifest = "[package]\nname = \"p\"\n[harness]\nharness = \"claude-code\"\nprompt_file = \"prompt.md\"\n"
+const okManifest = "[package]\nname = \"p\"\nlicense = \"MIT\"\n[harness]\nharness = \"claude-code\"\nprompt_file = \"prompt.md\"\n"
 
 func TestLintEmptyPromptFile(t *testing.T) {
 	root := writeStable(t, map[string]string{

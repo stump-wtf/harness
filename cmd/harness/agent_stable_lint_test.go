@@ -78,10 +78,19 @@ func TestAgentStableLintGolden(t *testing.T) {
 		{"no-readme", 1, []string{stablelint.IDNoReadme}},
 		{"name-mismatch", 1, []string{stablelint.IDNameMismatch}},
 		{"missing-prompt", 1, []string{stablelint.IDMissingFile}},
+		// The package declares no [package].license; the stable's own
+		// LICENSE file beside packages/ does not count, since a package is
+		// pinned and installed without the rest of the stable.
+		{"no-license", 1, []string{stablelint.IDNoLicense}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.stable, func(t *testing.T) {
 			dir := filepath.Join("testdata", "stables", tc.stable)
+			if tc.stable == "no-license" {
+				if _, err := os.Stat(filepath.Join(dir, "LICENSE")); err != nil {
+					t.Fatalf("the fixture must carry a stable-level LICENSE to prove it is not enough: %v", err)
+				}
+			}
 			out, code := runStableVerb(t, "lint", dir, true)
 			if code != tc.wantExit {
 				t.Fatalf("exit %d, want %d; output:\n%s", code, tc.wantExit, out)

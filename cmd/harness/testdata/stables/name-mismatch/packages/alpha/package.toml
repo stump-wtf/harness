@@ -1,5 +1,6 @@
 [package]
 name = "beta"
+license = "MIT"
 
 [harness]
 harness = "claude-code"

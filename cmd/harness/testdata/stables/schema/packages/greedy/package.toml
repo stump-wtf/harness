@@ -1,5 +1,6 @@
 [package]
 name = "greedy"
+license = "MIT"
 
 [harness]
 harness = "claude-code"
