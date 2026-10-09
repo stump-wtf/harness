@@ -140,6 +140,11 @@ func TestAgentNoReadmeFinding(t *testing.T) {
 		if !strings.Contains(o, "README.md: none") {
 			t.Errorf("%s must say the package ships no README:\n%s", name, o)
 		}
+		// The fixture is unlicensed too: #932's line-bearing finding still
+		// renders as file:line beside the file-level one.
+		if !strings.Contains(o, "  package.toml:1  package.no-license  low\n") {
+			t.Errorf("%s must show package.no-license as package.toml:1:\n%s", name, o)
+		}
 	}
 	installedSource(t, e.cfgPath, "pr-reviewer")
 }

@@ -23,8 +23,9 @@ harness = "claude-code"
 // A package with no README draws exactly one low package.no-readme finding,
 // which never blocks the gate.
 func TestNoReadmeFinding(t *testing.T) {
+	// Licensed, so package.no-license (#932) does not fire alongside.
 	dir := writePkg(t, map[string]string{"package.toml": readmeTestManifest})
-	findings := scanPkg(t, dir, &agentpkg.Manifest{})
+	findings := scanPkg(t, dir, &agentpkg.Manifest{Package: agentpkg.PackageMeta{License: "MIT"}})
 	if len(findings) != 1 {
 		t.Fatalf("want exactly the no-readme finding, got %v", findings)
 	}

@@ -154,7 +154,10 @@ func TestRenderReportShowsReadme(t *testing.T) {
 	}
 
 	in.Readme = Readme{}
-	in.Findings = []Finding{{File: ReadmeFile, PatternID: FindingNoReadme, Severity: SeverityLow}}
+	in.Findings = []Finding{
+		{File: ReadmeFile, PatternID: FindingNoReadme, Severity: SeverityLow},
+		{File: "package.toml", Line: 1, PatternID: FindingNoLicense, Severity: SeverityLow},
+	}
 	buf.Reset()
 	RenderReport(&buf, in)
 	out = buf.String()
@@ -163,6 +166,10 @@ func TestRenderReportShowsReadme(t *testing.T) {
 	}
 	if !strings.Contains(out, "  README.md  package.no-readme  low\n") || strings.Contains(out, "README.md:0") {
 		t.Fatalf("a file-level finding renders without a line number:\n%s", out)
+	}
+	// A finding with a line, such as #932's package.no-license, keeps it.
+	if !strings.Contains(out, "  package.toml:1  package.no-license  low\n") {
+		t.Fatalf("a line-bearing finding renders as file:line:\n%s", out)
 	}
 }
 
