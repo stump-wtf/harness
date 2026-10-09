@@ -69,7 +69,7 @@ func installFixture(t *testing.T, e *agentEnv) string {
 	remote, _ := agentRemote(t, map[string]string{
 		"packages/pr-reviewer/package.toml": agentPkg,
 	})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	return remote
@@ -86,7 +86,7 @@ func TestAgentInstallWritesPinnedSource(t *testing.T) {
 		"packages/pr-reviewer/prompts/release.md":     "release notes",
 		"packages/pr-reviewer/skills/review/SKILL.md": "body",
 	})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,7 +201,7 @@ func TestAgentInstallReplaceGuard(t *testing.T) {
 	installFixture(t, e)
 	otherPkg := strings.Replace(agentPkg, "pr-reviewer", "other-pkg", 1)
 	remoteB, _ := agentRemote(t, map[string]string{"packages/other-pkg/package.toml": otherPkg})
-	if _, _, err := e.run("agent", "stable", "add", "other-stable", remoteB); err != nil {
+	if _, _, err := e.run("stable", "add", "other-stable", remoteB); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "other-stable/other-pkg", "--as", "pr-reviewer", "--yes"); err != nil {
@@ -234,7 +234,7 @@ func TestAgentInstallGateThroughTheRealCommand(t *testing.T) {
 		"packages/writer/package.toml":      writePkg,
 		"packages/writer/skills/w/SKILL.md": "benign body\n",
 	})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 
@@ -271,7 +271,7 @@ func TestAgentInstallGateThroughTheRealCommand(t *testing.T) {
 func TestAgentInstallNeverFetches(t *testing.T) {
 	e := newAgentEnv(t)
 	remote, work := agentRemote(t, map[string]string{"packages/pr-reviewer/package.toml": agentPkg})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	oldHead := agentGit(t, agentpkg.StableDir("stump-wtf"), "rev-parse", "HEAD")
@@ -383,7 +383,7 @@ func TestAgentPruneGlobalOnly(t *testing.T) {
 		"packages/pr-reviewer/package.toml": agentPkg,
 		"packages/lint/package.toml":        lintPkg,
 	})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--yes"); err != nil {

@@ -28,7 +28,7 @@ import (
 func TestAgentListStalenessWithoutFetching(t *testing.T) {
 	e := newAgentEnv(t)
 	remote, work := agentRemote(t, map[string]string{"packages/pr-reviewer/package.toml": agentPkg})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -45,7 +45,7 @@ func TestAgentListStalenessWithoutFetching(t *testing.T) {
 		agentGit(t, work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "advance")
 	}
 	agentGit(t, work, "push", "-q", remote, "main")
-	if _, _, err := e.run("agent", "stable", "update", "stump-wtf"); err != nil {
+	if _, _, err := e.run("stable", "update", "stump-wtf"); err != nil {
 		t.Fatal(err)
 	}
 	// The remote is gone: nothing may fetch.
@@ -80,7 +80,7 @@ func TestAgentListStalenessWithoutFetching(t *testing.T) {
 func TestAgentListUpToDate(t *testing.T) {
 	e := newAgentEnv(t)
 	remote, _ := agentRemote(t, map[string]string{"packages/pr-reviewer/package.toml": agentPkg})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -200,7 +200,7 @@ harness = "claude-code"
 model = "pkg-model"
 `
 	remote, _ := agentRemote(t, map[string]string{"packages/pr-reviewer/package.toml": manifest})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--yes"); err != nil {

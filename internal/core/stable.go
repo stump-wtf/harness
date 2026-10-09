@@ -2,7 +2,7 @@
 //
 // The [stable.<name>] table is the trust ledger for SPEC-0026 agent package
 // stables: a git remote the operator explicitly trusts, registered only by
-// `harness agent stable add` and cloned under the agent state root. The shape
+// `harness stable add` and cloned under the agent state root. The shape
 // is deliberately skill_repo's — `remote` plus `public`, nothing else — with
 // the same global-only rule.
 //
@@ -14,13 +14,13 @@ package core
 
 // Stable is one declared [stable.<name>] table: a git remote whose clone
 // under $XDG_STATE_HOME/harness/agents/stables/<name>/ holds installable
-// agent packages. Only `harness agent stable add|remove` writes it; only
-// `harness agent stable update` fetches it (SPEC-0026 REQ-1).
+// agent packages. Only `harness stable add|remove` writes it; only
+// `harness stable update` fetches it (SPEC-0026 REQ-1).
 type Stable struct {
 	// Name is the table suffix, unique across the config, matching
 	// ^[a-z][a-z0-9-]*$.
 	Name string
-	// Remote is the git URL `harness agent stable add` clones.
+	// Remote is the git URL `harness stable add` clones.
 	Remote string
 	// Public is true when unset: an unset `public` is treated as true, the
 	// skill_repo convention.

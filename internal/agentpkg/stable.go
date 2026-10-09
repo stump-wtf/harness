@@ -103,7 +103,7 @@ func UpdateStable(name string) (UpdateResult, error) {
 	res := UpdateResult{Stable: name}
 	dir := StableDir(name)
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-		return res, fmt.Errorf("agentpkg: stable %q: no clone at %s (run `harness agent stable add`): %w", name, dir, err)
+		return res, fmt.Errorf("agentpkg: stable %q: no clone at %s (run `harness stable add`): %w", name, dir, err)
 	}
 
 	def, err := defaultBranch(dir)

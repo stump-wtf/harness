@@ -786,7 +786,7 @@ type Config struct {
 	SkillRepoOrder []string
 	// Stables is every [stable.*] table keyed by name, nil when none are
 	// declared. Global-only: project files and harness_d drop-ins reject
-	// them, and only `harness agent stable add|remove` writes them.
+	// them, and only `harness stable add|remove` writes them.
 	// Governing: ADR-0044; SPEC-0026 REQ-1.
 	Stables map[string]Stable
 	// StableOrder is stable names in the order they appear, as SkillRepoOrder

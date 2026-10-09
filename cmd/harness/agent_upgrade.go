@@ -156,7 +156,7 @@ func upgradeOne(cmd *cobra.Command, o verbOpts, uo upgradeOpts, cfg *core.Config
 
 	newSrc, err := agentpkg.ResolvePin(stable, pkg, version)
 	if err != nil {
-		return fmt.Errorf("agent: version %q is not present in stable %q's local clone — run `harness agent stable update %s` first (no fetch is performed on your behalf): %w",
+		return fmt.Errorf("agent: version %q is not present in stable %q's local clone — run `harness stable update %s` first (no fetch is performed on your behalf): %w",
 			version, stable, stable, err)
 	}
 

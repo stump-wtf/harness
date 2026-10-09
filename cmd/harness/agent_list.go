@@ -51,7 +51,7 @@ func newAgentListCmd(g *globalOpts) *cobra.Command {
 
 // runAgentList walks the global config plus any discovered project file,
 // both read-only. Staleness comes from the clone as the last
-// `harness agent stable update` left it (REQ-12).
+// `harness stable update` left it (REQ-12).
 func runAgentList(cmd *cobra.Command, o verbOpts) error {
 	var rows []agentListRow
 
@@ -83,7 +83,7 @@ func runAgentList(cmd *cobra.Command, o verbOpts) error {
 		t.Row(r.Name, r.File, r.Stable+"/"+r.Package, shortSHA(r.Pin), newer)
 	}
 	t.Flush()
-	fmt.Fprintln(cmd.OutOrStdout(), "agent: staleness is read from the clone as the last `harness agent stable update` left it; nothing fetched")
+	fmt.Fprintln(cmd.OutOrStdout(), "agent: staleness is read from the clone as the last `harness stable update` left it; nothing fetched")
 	return nil
 }
 
