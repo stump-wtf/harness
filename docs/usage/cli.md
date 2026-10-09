@@ -430,17 +430,18 @@ you fire with `schedule`, `triggers` or [`harness trigger`](#scheduled-jobs).
 
 ## Agent packages
 
-`harness agent` installs agent packages from trusted git repositories called
-**stables** (ADR-0044, SPEC-0026). It is a client-only tree that edits your
-global `harness.toml` directly, so most verbs work with no daemon running;
-when one is reachable, the verb asks it to reload. The walkthrough is
+`harness stable` trusts git repositories called **stables**, and
+`harness agent` installs agent packages from them (ADR-0044, SPEC-0026). Both
+are client-only trees that edit your global `harness.toml` directly, so most
+verbs work with no daemon running; when one is reachable, the verb asks it to
+reload. The walkthrough is
 [Install shared agents from a stable](../guides/agent-packages).
 
 ```sh
-harness agent stable add NAME REMOTE [--private]   # clone, then write [stable.NAME]
-harness agent stable list                           # trusted stables and their clones
-harness agent stable update [NAME]                  # fetch + fast-forward (the only fetch)
-harness agent stable remove NAME                    # drop the table; names harnesses still sourced
+harness stable add NAME REMOTE [--private]         # clone, then write [stable.NAME]
+harness stable list                                 # trusted stables and their clones
+harness stable update [NAME]                        # fetch + fast-forward (the only fetch)
+harness stable remove NAME                          # drop the table; names harnesses still sourced
 
 harness agent search [QUERY] [--stable NAME]        # packages in local clones
 harness agent info STABLE/PACKAGE                   # manifest, requests, scan findings, files
@@ -452,6 +453,9 @@ harness agent uninstall NAME [--yes]                # remove the table; the pin 
 harness agent prune                                 # remove pins nothing references
 ```
 
+- **`harness stable` manages the trust ledger.** It was first spelled
+  `harness agent stable`; that spelling still works as a hidden alias with
+  identical output and exit codes, so existing scripts and CI keep running.
 - **Only `stable update` fetches.** Every other verb reads the local clone.
   `agent list`'s `NEWER` column compares against the clone as the last update
   left it.

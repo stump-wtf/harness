@@ -49,7 +49,7 @@ global-only list, because a cloned repository must not be able to expand
 what is trusted on the machine that clones it.
 
 A `[stable.*]` table SHALL be created, modified, or removed only by
-`harness agent stable add|remove <name> ...`, which writes the global
+`harness stable add|remove <name> ...`, which writes the global
 `harness.toml` directly; no other command SHALL add or change a stable
 declaration. `stable add` SHALL clone the remote into
 `$XDG_STATE_HOME/harness/agents/stables/<name>/` before the table is written,
@@ -57,11 +57,19 @@ and SHALL fail without writing the table if the clone fails. `stable remove`
 SHALL delete the table and print every currently installed harness whose
 `source` names that stable, without uninstalling them.
 
-`harness agent stable update [name]` SHALL be the only operation that fetches
+`harness stable update [name]` SHALL be the only operation that fetches
 an already-added stable's remote. It SHALL fast-forward the local clone and
 SHALL fail, without modifying the clone, on a non-fast-forward state. No
 other command, and no daemon activity of any kind, SHALL fetch a stable's
 remote.
+
+Amendment (issue #937): the stable tree is the top-level `harness stable`,
+not a subtree of `harness agent`. `harness agent stable ...` SHALL remain a
+working alias for every `harness stable` verb, with identical stdout,
+stderr and exit status, and SHALL be hidden from help. Both spellings SHALL
+be built from one command definition, so a verb added to the stable tree
+answers under both. User-facing text (hints, errors, help) SHALL name
+`harness stable`.
 
 #### Scenario: A project file cannot add a stable
 
@@ -72,14 +80,14 @@ remote.
 
 #### Scenario: Adding a stable clones before trusting
 
-- **WHEN** `harness agent stable add stump-wtf
+- **WHEN** `harness stable add stump-wtf
   https://forge.example/your-org/harness-stable.git` is run and the clone
   fails (network error, no such repository)
 - **THEN** no `[stable.stump-wtf]` table is written to `harness.toml`
 
 #### Scenario: Removing a stable reports its installed packages
 
-- **WHEN** `harness agent stable remove stump-wtf` is run while
+- **WHEN** `harness stable remove stump-wtf` is run while
   `stump-wtf/pr-reviewer` is installed as harness `pr-reviewer`
 - **THEN** the table is removed, the harness `pr-reviewer` is left exactly as
   it was, and the output names it as installed from the now-untrusted stable
@@ -90,6 +98,14 @@ remote.
   without an intervening `stable update`
 - **THEN** none of them perform a network fetch; they operate on the stable's
   clone as it was left by the last `stable update`
+
+#### Scenario: The old spelling is a hidden alias
+
+- **WHEN** `harness agent stable add|list|update|remove ...` is run with the
+  same arguments and state as `harness stable add|list|update|remove ...`
+- **THEN** stdout, stderr and the exit status are identical, and
+  `harness agent --help` does not list `stable` while `harness --help` lists
+  the `harness stable` verbs
 
 ### Requirement: REQ-2 — Stable Layout And Local Discovery
 
@@ -506,7 +522,7 @@ pin's content-addressed directory SHALL NOT be deleted by upgrade.
 - **WHEN** `upgrade` is run for a version newer than what the stable's local
   clone holds, with no intervening `stable update`
 - **THEN** the command fails, naming the requested version as not present
-  in the local clone and recommending `harness agent stable update`
+  in the local clone and recommending `harness stable update`
 
 #### Scenario: The prior pin survives an upgrade
 
@@ -627,7 +643,10 @@ write to `[mcp.*]`, `[job.*]`, `[server]`, `[profile.*]`, `[adapter.*]`, or
 
 ### Requirement: REQ-12 — CLI Visibility
 
-`harness agent list` SHALL show every harness whose table carries a
+The stable trust ledger SHALL be visible as `harness stable list` (name,
+redacted remote, visibility and clone head), the top-level spelling of
+REQ-1's amendment (issue #937). `harness agent list` SHALL show every
+harness whose table carries a
 `source`, its stable, package, pinned SHA (short form for display, full form
 with `--json`), and whether the stable's local clone (as of its last
 `stable update`) has a newer default-branch commit than the installed pin

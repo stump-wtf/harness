@@ -41,7 +41,7 @@ whom it runs as, and what credentials it sees stay on **your** harness table.
 ## 1. Trust a stable
 
 ```sh
-harness agent stable add stump-wtf https://github.com/stump-wtf/harness-stable.git
+harness stable add stump-wtf https://github.com/stump-wtf/harness-stable.git
 ```
 
 This clones the remote into `$XDG_STATE_HOME/harness/agents/stables/stump-wtf/`
@@ -50,11 +50,11 @@ and only then writes a `[stable.stump-wtf]` table to your **global**
 never add a stable.
 
 Nothing else fetches. `search`, `info`, `install` and `upgrade` read the local
-clone. `harness agent stable update [NAME]` is the one command that fetches,
+clone. `harness stable update [NAME]` is the one command that fetches,
 and it fast-forwards only.
 
 ```sh
-harness agent stable list
+harness stable list
 harness agent search reviewer           # name or description, case-insensitive
 harness agent info stump-wtf/pr-reviewer
 ```
@@ -111,7 +111,7 @@ workdir  = "~/sweeps/pr-reviewer"
 ## 4. Upgrade
 
 ```sh
-harness agent stable update stump-wtf
+harness stable update stump-wtf
 harness agent list                       # the NEWER column shows what moved
 harness agent upgrade stump-wtf/pr-reviewer
 ```
@@ -136,7 +136,7 @@ Review those effective-value changes one by one:
 ```sh
 harness agent uninstall pr-reviewer     # removes the table; the pin stays
 harness agent prune                      # removes pins nothing references
-harness agent stable remove stump-wtf    # lists harnesses still sourced from it
+harness stable remove stump-wtf    # lists harnesses still sourced from it
 ```
 
 `prune` considers only the global `harness.toml`. A pin that only a project

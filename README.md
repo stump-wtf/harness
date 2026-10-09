@@ -115,7 +115,7 @@ To run someone else's agent instead of writing one, install it from a
 **stable**, a git repository of agent packages:
 
 ```sh
-harness agent stable add stump-wtf https://github.com/stump-wtf/harness-stable.git
+harness stable add stump-wtf https://github.com/stump-wtf/harness-stable.git
 harness agent install stump-wtf/pr-reviewer
 ```
 
