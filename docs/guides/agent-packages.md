@@ -59,8 +59,18 @@ harness agent search reviewer           # name or description, case-insensitive
 harness agent info stump-wtf/pr-reviewer
 ```
 
-`info` prints the manifest, the itemised `[requests]`, the content-scan
-findings and the bundled files, without installing anything.
+`info` prints the manifest, the itemised `[requests]`, the package's
+`README.md`, the content-scan findings and the bundled files, without
+installing anything.
+
+The README is where a package says what you must provide that its manifest
+cannot carry: environment variables, tokens, logins. Harness treats it as
+untrusted text from the stable. It prints as plain text, with every terminal
+control sequence removed: escape sequences, OSC 8 hyperlinks, and control
+characters other than newline and tab. Nothing in it is ever run. The inline
+render stops after 200 lines and ends with a footer saying where the full
+file is. Pass `--readme-full` to `info`, `install` or `upgrade` to print the
+whole README.
 
 ## 2. Install it
 
@@ -77,8 +87,8 @@ Install does the following, in order:
    `.txt` file, and every prompt file the manifest names. A `high` finding
    blocks the install. `--force-unsafe` overrides it, and asks you to retype
    the package name.
-3. **Confirms.** It shows the manifest, the requests and the findings, then
-   asks. Without a terminal it refuses unless you pass `--yes`, and `--yes`
+3. **Confirms.** It shows the manifest, the requests, the README and the
+   findings, then asks. Without a terminal it refuses unless you pass `--yes`, and `--yes`
    never clears a `high` finding or a `mcp_allow = ["write"]` request.
 4. **Binds.** It writes `source = "stump-wtf/pr-reviewer@<sha>"` onto a
    `[harness.pr-reviewer]` table. `--as NAME` picks another table name.
@@ -118,7 +128,8 @@ harness agent upgrade stump-wtf/pr-reviewer
 
 Upgrade re-scans the new commit and shows you three things:
 
-- the manifest diff;
+- the manifest diff, plus a `README.md` diff when the README changed between
+  the two commits;
 - any **new** scan finding, flagged as new;
 - every change to the harness's effective values.
 
@@ -150,9 +161,17 @@ A stable is a repository with `packages/<name>/` directories:
 ```text
 packages/pr-reviewer/
   package.toml
+  README.md                  # setup notes: what the operator must provide
   prompts/review.md
   skills/<slug>/SKILL.md     # optional; requires [requests] skill_paths = true
 ```
+
+Ship a `README.md` with every package. Use it to say what the agent needs
+that the manifest cannot carry: environment variables, tokens and their
+scopes, logins for the daemon's user. A package without one draws a `low`
+`package.no-readme` scan finding on `info` and `install`. The finding does
+not block. Keep the README plain Markdown. It is scanned like any other
+`.md` file, and its control sequences are stripped before it is shown.
 
 ```text
 [package]

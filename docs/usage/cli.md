@@ -443,10 +443,10 @@ harness agent stable update [NAME]                  # fetch + fast-forward (the 
 harness agent stable remove NAME                    # drop the table; names harnesses still sourced
 
 harness agent search [QUERY] [--stable NAME]        # packages in local clones
-harness agent info STABLE/PACKAGE                   # manifest, requests, scan findings, files
+harness agent info STABLE/PACKAGE [--readme-full]   # manifest, requests, README, scan findings, files
 
-harness agent install STABLE/PACKAGE[@VERSION] [--as NAME] [--replace] [--yes] [--force-unsafe]
-harness agent upgrade STABLE/PACKAGE[@VERSION] [--all] [--yes]
+harness agent install STABLE/PACKAGE[@VERSION] [--as NAME] [--replace] [--yes] [--force-unsafe] [--readme-full]
+harness agent upgrade STABLE/PACKAGE[@VERSION] [--all] [--yes] [--readme-full]
 harness agent list [--json]                         # package-sourced harnesses, pins, NEWER
 harness agent uninstall NAME [--yes]                # remove the table; the pin stays
 harness agent prune                                 # remove pins nothing references
@@ -469,6 +469,14 @@ harness agent prune                                 # remove pins nothing refere
   changes unattended: `--yes` refuses, naming them.
 - **`prune`** reads only the global `harness.toml`. A pin referenced only by
   a project file is removed, and that project's next `up` reports it missing.
+- **The package README.** `info`, `install` and `upgrade` print the package's
+  `README.md` after the requests.
+  - It is shown as plain text with terminal control sequences removed, and
+    nothing in it is run.
+  - It stops after 200 lines; `--readme-full` prints all of it.
+  - `upgrade` also shows a `README.md` diff when the README changed.
+  - A package without a README gets a `low` `package.no-readme` finding,
+    which does not block.
 
 `harness describe NAME` marks each value a package supplied with
 `(package)`, and `harness doctor` reports a sourced harness whose pin is

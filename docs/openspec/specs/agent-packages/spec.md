@@ -101,6 +101,23 @@ markdown files. `<package-name>` SHALL match the same pattern as a stable name.
 A `packages/` directory with no valid subdirectories SHALL NOT be an error;
 `harness agent search` on such a stable SHALL report zero packages.
 
+Each package directory SHOULD also hold a `README.md` at its root (harness
+#929): the setup notes saying what an operator must provide that the
+manifest cannot carry, such as environment variables, tokens and logins. Only
+a regular file at the package root counts; a symlink is not followed. A
+package without one SHALL still load and install, and draws the
+`package.no-readme` finding (REQ-5). `harness agent info`, and the
+confirmation `install` and `upgrade` show (REQ-6, REQ-8), SHALL render the
+README after the `[requests]` table as untrusted text, under these rules:
+
+* The README SHALL be shown as plain text. Every terminal control sequence
+  SHALL be removed: ESC sequences (CSI, and OSC, DCS, SOS, PM and APC with
+  their payloads, OSC 8 hyperlinks included), C1 controls whether 8-bit or
+  UTF-8 encoded, and C0 controls other than newline and tab.
+* Nothing the README says SHALL be executed, opened or read.
+* The inline render SHALL stop after 200 lines with a footer naming where
+  the full text is. `--readme-full` SHALL print it whole.
+
 `harness agent search [query] [--stable <name>]` SHALL list, across all
 trusted stables or the named one, every package whose name or
 `[package].description` matches `query` case-insensitively (or every
@@ -128,6 +145,21 @@ when the named stable is not registered.
 - **WHEN** `harness agent info ghost/pr-reviewer` is run and no `[stable.ghost]`
   is registered
 - **THEN** the command fails, naming `ghost` as not a registered stable
+
+#### Scenario: The README is shown as plain text
+
+- **WHEN** a package's `README.md` contains an OSC 8 hyperlink
+  (`\x1b]8;;…`), a screen clear (`\x1b[2J`) and raw C1 bytes such as
+  `0x9b` and `0x9d`
+- **THEN** `info`, `install` and `upgrade` print the README after the
+  requests with every one of those sequences removed, so the link text is
+  left as plain text
+
+#### Scenario: A long README is capped
+
+- **WHEN** a package's `README.md` runs past 200 lines
+- **THEN** the inline render stops at 200 lines with a footer naming where
+  the full text is, and `--readme-full` prints it whole
 
 ### Requirement: REQ-3 — Package Manifest Schema
 
@@ -281,6 +313,13 @@ overridden. `--yes` alone SHALL NOT suppress a `high`-severity block. A
 `low`-severity finding SHALL be shown in the confirmation output and SHALL
 NOT block.
 
+A package with no `README.md` at its root (REQ-2) SHALL draw exactly one
+`low` finding with the pattern id `package.no-readme`. The finding names
+`README.md` as its file and carries no line, and is shown as `README.md
+package.no-readme low`. `harness agent info` and the install and upgrade
+confirmations SHALL show it, and it SHALL NOT block. The README, when
+present, SHALL be scanned like any other bundled `.md` file (harness #929).
+
 On an upgrade, the scan SHALL run against the new pin's content, and any
 finding not present against the currently installed pin's content SHALL be
 marked as new in the diff output (REQ-8), so a previously accepted package
@@ -314,6 +353,12 @@ it being called out specifically.
   `homepage`)
 - **THEN** `install` completes under `--yes`, with the finding shown in the
   output
+
+#### Scenario: A package without a README
+
+- **WHEN** a package directory holds no `README.md`
+- **THEN** `info` and `install` show the `low` finding `package.no-readme`,
+  and `install` completes under `--yes`
 
 #### Scenario: A new finding on upgrade is called out
 
