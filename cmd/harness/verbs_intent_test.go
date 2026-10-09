@@ -28,8 +28,12 @@ func bootIntentDaemon(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "harness.toml")
+	// generic execs sh with args appended, so args start at -c: a leading
+	// "sh" made Linux's dash try to open a script named sh and exit 2 in
+	// about a millisecond, and the test passed only when a poll landed in
+	// that window.
 	if err := os.WriteFile(configPath, []byte(
-		"[harness.demo]\nharness = \"generic\"\nargs = [\"sh\", \"-c\", \"while true; do sleep 0.05; done\"]\nenabled = false\n",
+		"[harness.demo]\nharness = \"generic\"\nargs = [\"-c\", \"while true; do sleep 0.05; done\"]\nenabled = false\n",
 	), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -89,6 +93,9 @@ func TestDescribeShowsLastIntentChange(t *testing.T) {
 	h, err = c.Describe("demo")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if h.RestartCount != 0 {
+		t.Fatalf("demo restarted %d time(s) after start; it must stay running (last exit %d)", h.RestartCount, h.LastExitCode)
 	}
 	if h.LastIntentSource != "verb:start" || h.LastIntentAt == "" {
 		t.Fatalf("after start, last intent = %q @ %q, want verb:start with a time", h.LastIntentSource, h.LastIntentAt)
