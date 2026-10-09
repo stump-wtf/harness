@@ -441,6 +441,8 @@ harness agent stable add NAME REMOTE [--private]   # clone, then write [stable.N
 harness agent stable list                           # trusted stables and their clones
 harness agent stable update [NAME]                  # fetch + fast-forward (the only fetch)
 harness agent stable remove NAME                    # drop the table; names harnesses still sourced
+harness agent stable lint [PATH] [--json]           # validate a stable checkout offline
+harness agent stable check [PATH] [--json]          # lint + load-test each package
 
 harness agent search [QUERY] [--stable NAME]        # packages in local clones
 harness agent info STABLE/PACKAGE                   # manifest, requests, scan findings, files
@@ -455,6 +457,19 @@ harness agent prune                                 # remove pins nothing refere
 - **Only `stable update` fetches.** Every other verb reads the local clone.
   `agent list`'s `NEWER` column compares against the clone as the last update
   left it.
+- **`stable lint`** and **`stable check`** are how a stable author validates
+  a checkout (a directory with `packages/`, `.` by default) before
+  publishing. They need no daemon, no registered stable and no network.
+  - `lint` uses the parser and scanner `install` uses. It fails on any
+    manifest violation, `high` scan finding, `[package].name` that differs
+    from its directory, path key naming a missing or empty file, symlink, or
+    missing `README.md`. Other `low` findings are warnings.
+  - `check` runs `lint`, then loads each package the way config load does,
+    under a synthetic `[harness.<package>]` table (with a `schedule` when the
+    package supplies a prompt). It catches what only a load sees, such as an
+    unknown adapter or a template needing context its firing never supplies.
+  - Both exit 1 on any error. `--json` prints an array with one
+    `{package, errors, warnings}` object per package for CI annotations.
 - **`install`** pins the package at an exact commit in the content-addressed
   store, scans it, and asks before it writes `source = "STABLE/PACKAGE@<sha>"`
   onto `[harness.NAME]`.

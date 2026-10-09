@@ -150,6 +150,7 @@ A stable is a repository with `packages/<name>/` directories:
 ```text
 packages/pr-reviewer/
   package.toml
+  README.md                  # required by `stable lint`
   prompts/review.md
   skills/<slug>/SKILL.md     # optional; requires [requests] skill_paths = true
 ```
@@ -177,10 +178,31 @@ Keep the manifest to keys every adapter accepts if you want operators to
 override `harness`. `system_prompt_file`, `mcp_config` and `allowed_tools`
 are Claude Code one-shot keys.
 
+Validate the stable before you publish it. From the root of your checkout:
+
+```sh
+harness agent stable lint              # schema, scan, conventions
+harness agent stable check             # lint, then load each package as config load would
+harness agent stable check --json      # one {package, errors, warnings} per package, for CI
+```
+
+Both run offline: no daemon, no registered stable, no network. `lint` uses
+the manifest parser and content scanner `install` uses, so a package it
+passes is one an operator's install accepts. It fails on any of these:
+
+- a manifest violation;
+- a `high` scan finding;
+- a `[package].name` that differs from its directory;
+- a path key naming a missing or empty file;
+- a symlink;
+- a missing `README.md`.
+
+`check` also catches an unknown adapter, or a prompt template that needs
+context a scheduled run never supplies (write `{{run.source?}}` for an
+optional value). Both exit 1 on any error, so either can gate your CI.
+
 [stump-wtf/harness-stable](https://github.com/stump-wtf/harness-stable) is a
-working example. Its `make test` applies the manifest rules and the
-high-severity scan patterns in CI, so a package Harness would refuse fails
-there first.
+working example.
 
 ## See also
 
