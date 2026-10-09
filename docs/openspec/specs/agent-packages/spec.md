@@ -178,6 +178,22 @@ exclusive).
 values are `"read"` and/or `"write"`), and `network` (boolean). Any other
 key under `[requests]` SHALL fail to load, naming the key.
 
+Amendment (issue #930): besides those three tables, a manifest MAY carry an
+`[[env]]` array of tables declaring the environment variables its harness
+expects, **by name only**. Each entry SHALL carry `name`, matching
+`^[A-Z_][A-Z0-9_]*$`, and MAY carry `required` and `secret` (booleans,
+default false) and `description` (a string of one line with no control
+characters, since it is printed to the operator's terminal and into the
+install skeleton's comment line). Any other key SHALL fail to load, naming
+the entry and the key; a value-carrying key (`value`, `default`, `example`)
+SHALL fail with the reason that a package declares names, never values. A
+name declared twice SHALL fail to load. Every string in an entry SHALL be
+rejected if it contains `${`, exactly as under `[harness]`. `[env]` written
+as a single table, rather than an array of tables, SHALL fail to load. The
+table never weakens the rule above: a package still cannot name an
+`env_file` or carry a value; the operator supplies values in the harness
+table's own `env_file` or the daemon's environment (ADR-0038).
+
 #### Scenario: An unknown table is rejected
 
 - **WHEN** a manifest declares `[adapter.claude-code]` alongside `[harness]`
@@ -225,6 +241,26 @@ key under `[requests]` SHALL fail to load, naming the key.
 
 - **WHEN** `[requests]` declares `filesystem = true`
 - **THEN** the package fails to load, naming `filesystem`
+
+#### Scenario: A package declares its environment by name
+
+- **WHEN** a manifest declares `[[env]] name = "TRIAGE_REPOS"`,
+  `required = true`, `description = "Space-separated repo list"`
+- **THEN** the package loads with that declaration, and `harness agent
+  info` and the install confirmation list `TRIAGE_REPOS` as required with
+  its description
+
+#### Scenario: A value in an [[env]] entry is rejected
+
+- **WHEN** an `[[env]]` entry declares `value = "..."` or `default = "..."`,
+  or its `description` contains `${GH_TOKEN}`
+- **THEN** the package fails to load, naming the entry and the key
+
+#### Scenario: A bad [[env]] name is rejected
+
+- **WHEN** an `[[env]]` entry declares `name = "gh-token"`, or an unknown
+  key such as `file = "x"`
+- **THEN** the package fails to load, naming the entry
 
 #### Scenario: Adapter selection is validated like any harness
 
@@ -643,6 +679,30 @@ row reads the running daemon's harness records — its last-good config
 view — which is the only place a pin can be referenced while missing from
 disk: one pruned or deleted after the daemon loaded its config.
 
+Amendment (issue #930): `harness agent info` and the install and upgrade
+confirmation SHALL list a package's `[[env]]` declarations (REQ-3) with
+each name, whether it is required or secret, and its description. Install
+SHALL end its output with a ready-to-copy `env_file` skeleton: each
+declared name as a `NAME=` line under a comment carrying its description,
+an optional name's line itself commented out (so pasting it never blanks a
+value the daemon's environment supplies), and never a value. `harness
+doctor` SHALL add one row per package-sourced harness that declares
+variables, judging each declared name against the environment the harness's
+process would get: its `env_file` (a single file or a list, later file
+winning) layered over the daemon's own environment, the composition the
+spawn uses. A name is set only when that value is non-empty; an `env_file`
+line that sets it to the empty string leaves it unset. The running daemon
+computes the presence, because only it knows its own environment, and
+reports it per harness with names only (protocol minor 26). A missing
+required variable SHALL fail the row; a missing optional one SHALL warn,
+naming it with its description; every name set passes. Against a daemon
+too old to report, a harness whose installed manifest declares variables
+SHALL get a warn row saying the check did not run, never a pass. `harness
+describe` SHALL list each declared variable with whether it is set and
+where from (`env_file` or the daemon's `environment`). No surface — doctor,
+describe, either `--json` form, the protocol, or a log — SHALL ever carry a
+variable's value (ADR-0038 rule 9).
+
 #### Scenario: list shows staleness without fetching
 
 - **WHEN** a stable's local clone (from its last `stable update`) is three commits
@@ -656,6 +716,26 @@ disk: one pruned or deleted after the daemon loaded its config.
   harness with one local override
 - **THEN** the output marks the overridden key as `local` and every other
   key as coming from the package's pin
+
+#### Scenario: doctor fails a missing required variable by name
+
+- **WHEN** a package-sourced harness's package declares `TRIAGE_REPOS` as
+  required, and neither its `env_file` nor the daemon's environment sets it
+- **THEN** `harness doctor` fails that harness's `agent_env` row naming
+  `TRIAGE_REPOS`, and no output carries any variable's value
+
+#### Scenario: doctor warns on a missing optional variable
+
+- **WHEN** the package declares `GH_TOKEN` as optional with a description,
+  and nothing sets it
+- **THEN** the row warns, naming `GH_TOKEN` with its description
+
+#### Scenario: A variable set in an env_file list passes
+
+- **WHEN** the harness's `env_file` is a list and the second file sets a
+  required variable the first lacks
+- **THEN** the row passes, and `harness describe` shows the variable as
+  `set (env_file)`
 
 ### Requirement: Error Handling Standards
 

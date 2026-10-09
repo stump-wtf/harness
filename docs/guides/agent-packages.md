@@ -33,6 +33,10 @@ table may only select an adapter and supply values:
 - **Paths stay inside the package.** A path a package names must be relative
   to it. An absolute path, a `~` path, or one that climbs out with `..` is
   refused.
+- **Environment by name only.** A package can declare the environment
+  variables it expects in `[[env]]` blocks, but never their values. You
+  supply those in your harness table's `env_file` or the daemon's
+  environment, and `harness doctor` tells you which are missing.
 
 So installing a package never makes anything run on its own, never reads your
 secrets, and never points an agent at a file on your machine. When it runs,
@@ -59,8 +63,9 @@ harness agent search reviewer           # name or description, case-insensitive
 harness agent info stump-wtf/pr-reviewer
 ```
 
-`info` prints the manifest, the itemised `[requests]`, the content-scan
-findings and the bundled files, without installing anything.
+`info` prints the manifest, the itemised `[requests]`, the environment
+variables the package declares, the content-scan findings and the bundled
+files, without installing anything.
 
 ## 2. Install it
 
@@ -82,6 +87,10 @@ Install does the following, in order:
    never clears a `high` finding or a `mcp_allow = ["write"]` request.
 4. **Binds.** It writes `source = "stump-wtf/pr-reviewer@<sha>"` onto a
    `[harness.pr-reviewer]` table. `--as NAME` picks another table name.
+5. **Lists the environment.** When the package declares `[[env]]`
+   variables, install ends with a ready-to-copy `env_file` skeleton: one
+   `NAME=` line per variable with its description as a comment, and each
+   optional one commented out. It holds names only; you fill in the values.
 
 A clean scan is a tripwire, not a guarantee. Read the bundled prompt before
 you run it.
@@ -107,6 +116,12 @@ workdir  = "~/sweeps/pr-reviewer"
   form either side uses.
 - **Load.** `harness reload` picks the table up. `harness describe
   pr-reviewer` marks each value the package supplied with `(package)`.
+- **Environment.** Put the variables the package declares in an `env_file`
+  on this table (a single file or a list), or in the daemon's environment.
+  `harness doctor` adds an `agent_env` row per package-sourced harness. A
+  missing required variable fails it, and a missing optional one warns with
+  its description. `harness describe` shows each declared variable as `set
+  (env_file)`, `set (environment)` or `unset`. Neither ever prints a value.
 
 ## 4. Upgrade
 
@@ -171,7 +186,23 @@ max_turns   = 80
 network = true
 # mcp_allow   = ["read"]               # "write" makes the installer retype the name
 # skill_paths = true
+
+[[env]]                                 # one block per variable; names, never values
+name        = "GH_TOKEN"
+required    = false                     # gh may already be logged in
+secret      = true
+description = "Fine-grained PAT: Pull requests read/write, Contents read"
+
+[[env]]
+name        = "REVIEW_REPOS"
+required    = true
+description = "Space-separated <host>/<owner>/<repo> list"
 ```
+
+An `[[env]]` block takes only `name` (matching `^[A-Z_][A-Z0-9_]*$`),
+`required` and `secret` (booleans, default `false`) and `description` (one
+line). Any other key fails the install, and `value` or `default` fails it
+with the reason: the value belongs to the operator.
 
 Keep the manifest to keys every adapter accepts if you want operators to
 override `harness`. `system_prompt_file`, `mcp_config` and `allowed_tools`
