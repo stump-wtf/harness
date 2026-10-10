@@ -219,6 +219,55 @@ table never weakens the rule above: a package still cannot name an
 `env_file` or carry a value; the operator supplies values in the harness
 table's own `env_file` or the daemon's environment (ADR-0038).
 
+Suggested defaults (issue #931, ADR-0044 amendment of 2026-10-09). A
+manifest MAY additionally carry a top-level `[defaults]` table, admitted
+beside the tables above. `[defaults]` holds values a package *suggests* for
+the operator's own harness table; it is never package content. It MAY carry
+only `schedule`, `triggers`, `timeout`, `on_overlap`, `catch_up`,
+`operating_hours`, `restart`, `restart_delay` and `workdir`. Any other key
+under `[defaults]` SHALL fail to load, naming the key; `env_file`,
+`secrets_env` and `enabled` SHALL each fail with a reason naming why the key
+can never be suggested (a credential reference, ADR-0038; autostart intent,
+which a package must never set). Each value SHALL be validated at manifest
+load by the same parser config load applies to that key on a `[harness.*]`
+table, and an invalid value SHALL fail to load, naming the key under
+`[defaults]`:
+
+- `schedule`: a non-blank string accepted by the cron parser SPEC-0008 REQ
+  "Schedule Key" uses (`cron.ParseStandard`, including a `CRON_TZ=` or
+  `TZ=` prefix and the `@`-descriptors).
+- `triggers`: a non-empty list of non-blank, distinct strings, each of the
+  form `channel.<name>` or `webhook.<name>` (SPEC-0014 REQ "Triggers Key";
+  `core.ParseTriggerRef`). Only the shape is checked here; whether the
+  source exists is decided at install (REQ-6).
+- `timeout`: a string accepted by Go's `time.ParseDuration` and not
+  negative; `"0"` means no limit (SPEC-0008 REQ "Run Timeout").
+- `on_overlap`: one of `"skip"`, `"queue"`, `"replace"` (SPEC-0008 REQ
+  "Overlap Policy").
+- `catch_up`: a boolean (SPEC-0008 REQ "Missed Window Handling").
+- `operating_hours`: a non-blank string accepted by the SPEC-0012 REQ
+  "Operating Hours Key" grammar (`hours.Parse`).
+- `restart`: one of `"no"`, `"always"`, `"unless-stopped"`, `"on-failure"`
+  (SPEC-0003 REQ "Restart Policy").
+- `restart_delay`: a non-negative integer number of seconds.
+- `workdir`: a non-blank string. It is the operator's path, never a package
+  path: it SHALL NOT be resolved against the pin directory, and the
+  package-relative path rule above SHALL NOT apply to it.
+
+The `${` rule above SHALL apply to every string under `[defaults]`, exactly
+as it does under `[harness]`. Cross-key exclusions that depend on the
+operator's table (a `timeout` with no `schedule` or `triggers`, `schedule`
+beside `enabled = true` or `operating_hours`) SHALL NOT be checked at
+manifest load; REQ-6 checks them against the table being written. The
+supervision keys above SHALL remain forbidden under `[harness]` exactly as
+listed earlier in this requirement: a package suggests them only through
+`[defaults]`. At config load (REQ-7), `[defaults]` SHALL be validated with
+the rest of the manifest and SHALL NOT be applied: a harness resolved from a
+pin whose manifest carries `[defaults]` SHALL be identical to one resolved
+from the same pin without it. `harness agent info` SHALL show `[defaults]`
+as suggestions the operator will be asked about, not as values the harness
+will run with.
+
 #### Scenario: An unknown table is rejected
 
 - **WHEN** a manifest declares `[adapter.claude-code]` alongside `[harness]`
@@ -323,6 +372,42 @@ table's own `env_file` or the daemon's environment (ADR-0038).
 - **WHEN** a manifest declares `harness = "nonexistent"`
 - **THEN** the package fails to load with the same unknown-adapter error a
   hand-written harness table produces
+
+#### Scenario: A package suggests supervision defaults
+
+- **WHEN** a manifest declares `[defaults]` with `schedule =
+  "CRON_TZ=UTC 30 9 * * *"`, `timeout = "45m"`, `on_overlap = "skip"` and
+  `workdir = "~/sweeps/pr-reviewer"`
+- **THEN** the manifest loads, and none of the four values is part of the
+  package's `[harness]` values
+
+#### Scenario: An invalid default fails the load, naming the key
+
+- **WHEN** `[defaults]` declares `schedule = "every morning"`, or `timeout
+  = "45 minutes"`, or `on_overlap = "drop"`, or `operating_hours =
+  "Mon-Fri 9-17"`, or `restart = "sometimes"`, or `restart_delay = -5`, or
+  `triggers = ["queue.reviews"]`
+- **THEN** the package fails to load, naming that key under `[defaults]`
+
+#### Scenario: enabled and the secret keys can never be suggested
+
+- **WHEN** `[defaults]` declares `enabled = true`, or `env_file =
+  "~/.config/x.env"`, or `secrets_env = ["TOKEN"]`
+- **THEN** the package fails to load, naming the key and why it can never
+  be suggested
+
+#### Scenario: Supervision keys stay forbidden under [harness]
+
+- **WHEN** a manifest declares `schedule = "@hourly"` under `[harness]`
+  rather than `[defaults]`
+- **THEN** the package fails to load, naming `schedule`
+
+#### Scenario: Defaults are inert at config load
+
+- **WHEN** a harness table sets only `source` to a pin whose manifest
+  declares `[defaults] schedule = "@hourly"`
+- **THEN** the loaded harness has no schedule, and its validated
+  configuration is identical to the same pin's without `[defaults]`
 
 ### Requirement: REQ-4 — Capability Requests
 
@@ -451,6 +536,50 @@ Installing into a harness name that already has a `source` from a
 *different* stable or package SHALL require an explicit `--replace` flag;
 without it, the command SHALL fail, naming the existing source.
 
+Suggested defaults (issue #931). A value from the manifest's `[defaults]`
+(REQ-3) SHALL take effect only as the operator's choice: install MUST NOT
+write a default the operator did not choose, and `[defaults]` SHALL NOT
+reach a harness by any path other than the one below. The confirmation
+report (REQ-4) SHALL list every default, marked as a suggestion. Defaults
+SHALL be decided only after the trust gate (REQ-4, REQ-5) passes, and only
+for keys the target table does not already set; a key the table already
+sets SHALL NOT be offered, and its value SHALL be left untouched. Then:
+
+- **Interactive, without `--yes` or `--accept-defaults`:** install SHALL
+  offer each default in turn, in the key order REQ-3 lists, with three
+  choices: keep it, override it, or skip it. An override SHALL be validated
+  by the same parser REQ-3 applies to that key, and an invalid value SHALL
+  be reported and asked for again, never written.
+- **`--yes`:** install SHALL NOT accept any default. It SHALL leave every
+  suggested key unset and print each default it skipped, with its value and
+  the flag that would have accepted it. `--yes` is consent to the trust
+  review, never a choice of what runs or when (ADR-0044 amendment of
+  2026-10-09).
+- **`--accept-defaults`:** install SHALL accept every default without
+  prompting for them, subject to the two rules below. It SHALL NOT suppress
+  the ordinary confirmation, a `high` block or a typed confirmation; with
+  `--yes` it makes an unattended install that writes the defaults. An
+  unattended `--accept-defaults` SHALL count as the operator's choice.
+
+A `triggers` default SHALL be accepted, kept or overridden only when every
+source it names is declared as a `[channel.*]` or `[webhook.*]` table in
+the global configuration; otherwise it SHALL be skipped, naming each
+missing source, and the install SHALL continue without it. Install SHALL
+NOT create a trigger source. Before writing, install SHALL validate the
+table it is about to write (its existing keys, `source`, and every chosen
+default) with the same config loader the daemon uses. A chosen default
+that would make the global file fail to load (for example, `schedule`
+beside the operator's `enabled = true`, or `timeout` once neither
+`schedule` nor `triggers` was chosen) SHALL be skipped, naming the
+loader's error; defaults SHALL be decided in REQ-3's key order so the
+outcome is deterministic. Every chosen default SHALL be written onto
+`[harness.<name>]` as an ordinary key, beside `source` and in the same
+write, so it is the operator's own key: `harness describe` (REQ-12)
+attributes it as local, and a declined, cancelled or refused install
+writes none of them. Install SHALL NOT create a suggested `workdir`. The
+install output SHALL list each default written and each one skipped, with
+the reason.
+
 #### Scenario: A branch resolves to a pinned SHA
 
 - **WHEN** `harness agent install stump-wtf/pr-reviewer` is run with no
@@ -484,6 +613,57 @@ without it, the command SHALL fail, naming the existing source.
   "other-stable/other-pkg@..."` and `harness agent install
   stump-wtf/pr-reviewer --as pr-reviewer` is run without `--replace`
 - **THEN** the command fails, naming the existing source
+
+#### Scenario: An interactive install keeps, overrides and skips defaults
+
+- **WHEN** a package suggests `schedule = "@daily"`, `timeout = "45m"` and
+  `on_overlap = "skip"`, and the operator keeps `schedule`, overrides
+  `timeout` with `"20m"` and skips `on_overlap`
+- **THEN** `[harness.<name>]` holds `source`, `schedule = "@daily"` and
+  `timeout = "20m"`, and no `on_overlap`
+
+#### Scenario: An invalid override is asked again
+
+- **WHEN** the operator overrides a suggested `timeout` with `"soon"`
+- **THEN** install reports the parse error, asks again, and writes nothing
+  for `timeout` until a valid value is given or the default is skipped
+
+#### Scenario: --yes never accepts a default
+
+- **WHEN** the same package is installed with `--yes`
+- **THEN** the table holds `source` and no suggested key, and the output
+  lists `schedule`, `timeout` and `on_overlap` as skipped, naming
+  `--accept-defaults`
+
+#### Scenario: --accept-defaults writes them
+
+- **WHEN** the same package is installed with `--yes --accept-defaults`
+  on a non-interactive terminal
+- **THEN** the table holds `source`, `schedule = "@daily"`, `timeout =
+  "45m"` and `on_overlap = "skip"`
+
+#### Scenario: A trigger default naming an unknown source is skipped
+
+- **WHEN** a package suggests `triggers = ["webhook.gitea"]`, the global
+  configuration declares no `[webhook.gitea]`, and the install runs with
+  `--yes --accept-defaults`
+- **THEN** the install completes without `triggers` on the table, and the
+  output names `webhook.gitea` as the missing source
+
+#### Scenario: The operator's value is never replaced by a default
+
+- **WHEN** `[harness.pr-reviewer]` already sets `timeout = "10m"` and the
+  package suggests `timeout = "45m"`, installed with `--accept-defaults`
+- **THEN** `timeout` is not offered and stays `"10m"`
+
+#### Scenario: A default that would break the load is skipped
+
+- **WHEN** the target table already sets `restart = "always"` and the
+  package suggests `schedule = "@daily"` and `timeout = "45m"`, installed
+  with `--accept-defaults`
+- **THEN** `schedule` is skipped, naming the loader's restart-policy
+  error, `timeout` is then skipped because nothing fires the harness, and
+  the written file loads
 
 ### Requirement: REQ-7 — The Source Field And Config-Load Resolution
 
@@ -591,6 +771,23 @@ affected harness table plus exactly the changes the review's choices
 require; every other key on that table SHALL be left untouched. The prior
 pin's content-addressed directory SHALL NOT be deleted by upgrade.
 
+Suggested defaults on upgrade (issue #931). Upgrade SHALL compare the
+installed pin's `[defaults]` (REQ-3) with the new pin's and SHALL report
+every default the new pin adds, changes or drops, with its old and new
+value. Upgrade MUST NOT change, add or remove a key on the harness table
+because a default changed: a value already on the table is the operator's,
+whether they typed it or accepted it at install, and SHALL be left
+byte-identical. A default that is new or changed in the new pin SHALL be
+offered only for a key still unset on the table, under exactly REQ-6's
+rules: interactively keep, override or skip; `--yes` accepts none and lists
+them; `--accept-defaults` accepts them; the trigger-source rule and the
+loader check apply. A default the new pin leaves unchanged SHALL NOT be
+offered again, so a default skipped at install is asked about again only
+when the package changes it. Because `[defaults]` is inert at config load,
+a changed default SHALL NOT appear in the effective-value review above and
+SHALL NOT by itself make `upgrade --yes` refuse. A chosen default SHALL be
+written in the same write as the `source` update.
+
 #### Scenario: A trivial upgrade still requires confirmation
 
 - **WHEN** `upgrade` resolves a new pin that changes only
@@ -628,6 +825,27 @@ pin's content-addressed directory SHALL NOT be deleted by upgrade.
   still present
 - **THEN** the harness's `source` is rewritten back to `@sha1` with no
   network access
+
+#### Scenario: A changed default never moves the operator's value
+
+- **WHEN** a harness accepted `timeout = "45m"` from the installed pin's
+  `[defaults]`, the new pin suggests `timeout = "2h"`, and `upgrade
+  --accept-defaults` is run
+- **THEN** the output reports `timeout: 45m -> 2h` as a changed
+  suggestion, and the table's `timeout = "45m"` is left byte-identical
+
+#### Scenario: A new default is offered for an unset key
+
+- **WHEN** the new pin adds `on_overlap = "queue"` to `[defaults]`, the
+  table does not set `on_overlap`, and `upgrade --yes` is run
+- **THEN** the upgrade completes, the table gains no `on_overlap`, and the
+  output lists the new default as skipped
+
+#### Scenario: An unchanged skipped default is not offered again
+
+- **WHEN** the operator skipped `schedule` at install and the new pin's
+  `schedule` default is unchanged
+- **THEN** an interactive upgrade does not offer `schedule`
 
 ### Requirement: REQ-9 — Uninstall And Prune
 

@@ -146,6 +146,37 @@ and resolves configuration; it does not manage external state on its own
 initiative. It also means `harness agent install` works with no daemon
 running at all, the same way hand-editing `harness.toml` does today.
 
+### Supervision values are suggested in `[defaults]` and written as the operator's keys
+
+*Added for issue #931 (ADR-0044 amendment of 2026-10-09).*
+
+**Choice**: `schedule`, `triggers`, `timeout`, `on_overlap`, `catch_up`,
+`operating_hours`, `restart`, `restart_delay` and `workdir` stay forbidden
+under `[harness]`. A package may suggest them in a separate `[defaults]`
+table, validated at manifest load by the parsers config load uses and never
+applied at config load. Install (and upgrade, for keys still unset) asks the
+operator to keep, override or skip each one, and writes the chosen values
+onto `[harness.<name>]` as ordinary keys. `--yes` accepts none of them;
+`--accept-defaults` accepts them all. `env_file`, `secrets_env` and
+`enabled` are never suggestible.
+
+**Rationale**: the forbidden-key list exists so that installing a package
+never makes anything run on its own, and a supervision key is exactly what
+decides whether, when and how long something runs. Keeping the suggestion
+out of `[harness]` keeps that guarantee structural: nothing the resolver
+reads can schedule a harness. Writing an accepted value as the operator's
+own key means nothing downstream (config load, REQ-7 precedence, REQ-8's
+review, `describe`) needs a new provenance tier, and an upgrade can never
+move it. `--yes` is the trust review's shortcut and predates the
+suggestions, so letting it accept them would let a package author arm a
+schedule in every existing `install --yes` script by adding a table.
+
+**Alternatives considered**: applying the keys at load like any package
+value (a package would schedule itself); display-only suggestions the
+operator copies by hand (most of the friction, no safety gain); `--yes`
+accepting the defaults (the scripted-install problem above). See ADR-0044's
+amendment for the full comparison.
+
 ## Architecture
 
 ```mermaid
