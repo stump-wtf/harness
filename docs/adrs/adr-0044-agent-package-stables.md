@@ -175,6 +175,10 @@ remote = "https://forge.example/your-org/harness-stable.git"
 public = true            # declared visibility, as ADR-0030; unset is treated as public
 ```
 
+*Amended 2026-10-09 for #937: the stable tree was promoted to a top-level
+`harness stable …`; `harness agent stable …` remains a hidden alias. The
+bullets below keep the original spelling.*
+
 * `harness agent stable add <name> <remote> [--public|--private]` is the only
   way a stable is added — mirrors `brew tap` and ADR-0030's `skill_repo`: adding
   trust is a deliberate, one-time, hand-run command, never an implicit side

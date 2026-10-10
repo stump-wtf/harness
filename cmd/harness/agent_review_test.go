@@ -278,7 +278,7 @@ func TestAgentUpgradeReviewRefusesUnderYes(t *testing.T) {
 	v1 := strings.Replace(agentPkg, `harness = "claude-code"`, `harness = "claude-code"
 args = ["--deep"]`, 1)
 	remote, work := agentRemote(t, map[string]string{"packages/pr-reviewer/package.toml": v1})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -295,7 +295,7 @@ args = ["--deeper"]`, 1)
 	agentGit(t, work, "add", "-A")
 	agentGit(t, work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "move args")
 	agentGit(t, work, "push", "-q", remote, "main")
-	if _, _, err := e.run("agent", "stable", "update", "stump-wtf"); err != nil {
+	if _, _, err := e.run("stable", "update", "stump-wtf"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -324,7 +324,7 @@ harness = "claude-code"
 [requests]
 mcp_allow = ["read"]`, 1)
 	remote, _ := agentRemote(t, map[string]string{"packages/pr-reviewer/package.toml": manifest})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -359,7 +359,7 @@ system_prompt_file = "system.md"`, 1)
 		"packages/pr-reviewer/package.toml": v1,
 		"packages/pr-reviewer/system.md":    "Review carefully.\n",
 	})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -380,7 +380,7 @@ system_prompt_file = "system.md"`, 1)
 	agentGit(t, work, "add", "-A")
 	agentGit(t, work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "bump")
 	agentGit(t, work, "push", "-q", remote, "main")
-	if _, _, err := e.run("agent", "stable", "update", "stump-wtf"); err != nil {
+	if _, _, err := e.run("stable", "update", "stump-wtf"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "upgrade", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -535,7 +535,7 @@ func TestAgentUpgradeLocalOverrideBlocksOnlyOnAMove(t *testing.T) {
 	v1 := strings.Replace(agentPkg, `harness = "claude-code"`, `harness = "claude-code"
 model = "sonnet"`, 1)
 	remote, work := agentRemote(t, map[string]string{"packages/pr-reviewer/package.toml": v1})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -557,7 +557,7 @@ model = "sonnet"`, 1)
 		agentGit(t, work, "add", "-A")
 		agentGit(t, work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", msg)
 		agentGit(t, work, "push", "-q", remote, "main")
-		if _, _, err := e.run("agent", "stable", "update", "stump-wtf"); err != nil {
+		if _, _, err := e.run("stable", "update", "stump-wtf"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -633,7 +633,7 @@ func TestAgentPruneKeepsAPinAKeptPathPointsInto(t *testing.T) {
 				"packages/pr-reviewer/package.toml": v1,
 				"packages/pr-reviewer/" + tc.file:   tc.body,
 			})
-			if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+			if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 				t.Fatal(err)
 			}
 			if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -661,7 +661,7 @@ func TestAgentPruneKeepsAPinAKeptPathPointsInto(t *testing.T) {
 			agentGit(t, work, "add", "-A")
 			agentGit(t, work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "move path")
 			agentGit(t, work, "push", "-q", remote, "main")
-			if _, _, err := e.run("agent", "stable", "update", "stump-wtf"); err != nil {
+			if _, _, err := e.run("stable", "update", "stump-wtf"); err != nil {
 				t.Fatal(err)
 			}
 
@@ -721,7 +721,7 @@ func TestAgentPruneHonorsPathsIntoPins(t *testing.T) {
 		"packages/pr-reviewer/package.toml": agentPkg,
 		"packages/pr-reviewer/system.md":    "Review carefully.\n",
 	})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -735,7 +735,7 @@ func TestAgentPruneHonorsPathsIntoPins(t *testing.T) {
 	agentGit(t, work, "add", "-A")
 	agentGit(t, work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "bump")
 	agentGit(t, work, "push", "-q", remote, "main")
-	if _, _, err := e.run("agent", "stable", "update", "stump-wtf"); err != nil {
+	if _, _, err := e.run("stable", "update", "stump-wtf"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--replace", "--yes"); err != nil {

@@ -132,13 +132,14 @@ see Open Questions.
 
 ### `harness agent` is a pure client subtree; the daemon gains one resolver, nothing else
 
-**Choice**: every subcommand under `harness agent` (`stable add/remove/update`,
-`search`, `info`, `install`, `upgrade`, `uninstall`, `prune`, `list`) runs
-entirely in the CLI process, reading and writing `harness.toml` and the two
-on-disk stores directly. The only daemon-side change is the config loader's
-new branch for a `source` key (REQ-7), which is pure local filesystem
-reads through the same validation path every other harness table already
-goes through.
+**Choice**: every subcommand under `harness agent` (`search`, `info`,
+`install`, `upgrade`, `uninstall`, `prune`, `list`) and `harness stable`
+(`add/remove/update/list`, top-level since #937; `harness agent stable` is
+its hidden alias) runs entirely in the CLI process, reading and writing
+`harness.toml` and the two on-disk stores directly. The only daemon-side
+change is the config loader's new branch for a `source` key (REQ-7), which
+is pure local filesystem reads through the same validation path every other
+harness table already goes through.
 
 **Rationale**: matches the split ADR-0030 already established for
 `harness distill`/`harness skills sync` — the daemon supervises processes

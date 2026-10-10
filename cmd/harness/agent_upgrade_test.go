@@ -39,7 +39,7 @@ func newUpgradedEnv(t *testing.T) *upgradeEnv {
 	remote, work := agentRemote(t, map[string]string{
 		"packages/pr-reviewer/package.toml": v1,
 	})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := e.run("agent", "install", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -76,7 +76,7 @@ func (u *upgradeEnv) pushCommit(t *testing.T, files map[string]string) {
 func TestAgentUpgradeTrivial(t *testing.T) {
 	u := newUpgradedEnv(t)
 	u.pushCommit(t, map[string]string{"package.toml": strings.Replace(agentPkg, "1.0.0", "1.1.0", 1)})
-	if _, _, err := u.run("agent", "stable", "update", "stump-wtf"); err != nil {
+	if _, _, err := u.run("stable", "update", "stump-wtf"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -136,7 +136,7 @@ func TestAgentUpgradeNeedsStableUpdate(t *testing.T) {
 func TestAgentUpgradeRollback(t *testing.T) {
 	u := newUpgradedEnv(t)
 	u.pushCommit(t, map[string]string{"package.toml": strings.Replace(agentPkg, "1.0.0", "1.1.0", 1)})
-	if _, _, err := u.run("agent", "stable", "update", "stump-wtf"); err != nil {
+	if _, _, err := u.run("stable", "update", "stump-wtf"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := u.run("agent", "upgrade", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -169,7 +169,7 @@ func TestAgentUpgradeNewFindingBlocks(t *testing.T) {
 		"package.toml":       agentPkg,
 		"prompts/review.txt": benign,
 	})
-	if _, _, err := u.run("agent", "stable", "update", "stump-wtf"); err != nil {
+	if _, _, err := u.run("stable", "update", "stump-wtf"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := u.run("agent", "upgrade", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -182,7 +182,7 @@ func TestAgentUpgradeNewFindingBlocks(t *testing.T) {
 	agentGit(t, u.work, "add", "-A")
 	agentGit(t, u.work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "sneaky")
 	agentGit(t, u.work, "push", "-q", u.remote, "main")
-	if _, _, err := u.run("agent", "stable", "update", "stump-wtf"); err != nil {
+	if _, _, err := u.run("stable", "update", "stump-wtf"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -210,7 +210,7 @@ harness = "claude-code"
 [requests]
 mcp_allow = ["read", "write"]`, 1)
 	remote, work := agentRemote(t, map[string]string{"packages/pr-reviewer/package.toml": writeManifest})
-	if _, _, err := e.run("agent", "stable", "add", "stump-wtf", remote); err != nil {
+	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
 	}
 	// Hand-materialize the pin and table: install's gate would (correctly)
@@ -239,7 +239,7 @@ mcp_allow = ["read", "write"]`, 1)
 	agentGit(t, work, "add", "-A")
 	agentGit(t, work, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "next")
 	agentGit(t, work, "push", "-q", remote, "main")
-	if _, _, err := e.run("agent", "stable", "update", "stump-wtf"); err != nil {
+	if _, _, err := e.run("stable", "update", "stump-wtf"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -277,7 +277,7 @@ func TestAgentUpgradeChangesOnlyTheSHA(t *testing.T) {
 	}
 
 	u.pushCommit(t, map[string]string{"package.toml": strings.Replace(agentPkg, "1.0.0", "1.1.0", 1)})
-	if _, _, err := u.run("agent", "stable", "update", "stump-wtf"); err != nil {
+	if _, _, err := u.run("stable", "update", "stump-wtf"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := u.run("agent", "upgrade", "stump-wtf/pr-reviewer", "--yes"); err != nil {
@@ -321,7 +321,7 @@ func TestAgentUpgradeAll(t *testing.T) {
 		t.Fatal(err)
 	}
 	u.pushCommit(t, map[string]string{"package.toml": strings.Replace(agentPkg, "1.0.0", "1.1.0", 1)})
-	if _, _, err := u.run("agent", "stable", "update", "stump-wtf"); err != nil {
+	if _, _, err := u.run("stable", "update", "stump-wtf"); err != nil {
 		t.Fatal(err)
 	}
 

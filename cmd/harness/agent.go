@@ -2,10 +2,11 @@ package main
 
 // Agent Package Commands
 //
-// The `harness agent` subtree is the CLI half of SPEC-0026: it manages the
-// [stable.*] trust ledger, clones and fast-forwards stable repositories, and
-// discovers packages in them. Every command here runs entirely in the CLI
-// process, reading and writing harness.toml and the on-disk stores directly
+// The `harness agent` and `harness stable` subtrees are the CLI half of
+// SPEC-0026: `stable` manages the [stable.*] trust ledger and clones and
+// fast-forwards stable repositories; `agent` discovers and installs packages
+// from them. Every command here runs entirely in the CLI process, reading
+// and writing harness.toml and the on-disk stores directly
 // (ADR-0044) — no daemon required, and no daemon involvement: `stable
 // update` is the only command in the tree that performs a network fetch.
 //
@@ -17,6 +18,8 @@ package main
 // discovery), Error Handling Standards.
 //
 // @joestump-agent 10/02/2026 - Added for harness#811.
+// @joestump-agent 10/09/2026 - Promoted `agent stable` to top-level
+// `harness stable`, the old spelling a hidden alias (harness#937).
 
 import (
 	"errors"
@@ -43,8 +46,13 @@ func newAgentCmd(g *globalOpts) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	// `harness agent stable` is the pre-#937 spelling of `harness stable`,
+	// kept as a working alias hidden from help: a second instance from the
+	// same constructor, since a cobra command has one parent.
+	stableAlias := newStableCmd(g)
+	stableAlias.Hidden = true
 	cmd.AddCommand(
-		newAgentStableCmd(g),
+		stableAlias,
 		newAgentListCmd(g),
 		newAgentInstallCmd(g),
 		newAgentUninstallCmd(g),
@@ -58,7 +66,7 @@ func newAgentCmd(g *globalOpts) *cobra.Command {
 
 // loadGlobalConfig loads the global config, tolerating a missing file: the
 // agent commands may be the first thing ever written into it (a fresh
-// machine has no harness.toml until `agent stable add` creates one).
+// machine has no harness.toml until `stable add` creates one).
 func loadGlobalConfig(path string) (*core.Config, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -87,9 +95,16 @@ func loadGlobalEditor(path string) (*tomledit.Editor, error) {
 	return ed, nil
 }
 
-// ---- harness agent stable -------------------------------------------------
+// ---- harness stable -------------------------------------------------------
 
-func newAgentStableCmd(g *globalOpts) *cobra.Command {
+// newStableCmd builds the `harness stable` subtree. Root registers one
+// instance; `harness agent` registers a second, hidden, as the
+// `harness agent stable` alias, so every verb added here answers under both
+// spellings with identical output and exit codes.
+//
+// Governing: ADR-0044 (agent package stables), SPEC-0026 REQ-1 (stable
+// registration and global-only trust), REQ-12 (CLI visibility); #937.
+func newStableCmd(g *globalOpts) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "stable",
 		Short:         "manage the [stable.*] trust ledger and its clones",
@@ -168,7 +183,7 @@ func runAgentStableAdd(cmd *cobra.Command, o verbOpts, name, remote string) erro
 		return fmt.Errorf("agent: load config: %w", err)
 	}
 	if _, exists := cfg.Stables[name]; exists {
-		return fmt.Errorf("agent: stable %q is already registered; run `harness agent stable update %s` to fetch it", name, name)
+		return fmt.Errorf("agent: stable %q is already registered; run `harness stable update %s` to fetch it", name, name)
 	}
 
 	head, err := agentpkg.CloneStable(name, remote)
@@ -300,7 +315,7 @@ func runAgentStableList(cmd *cobra.Command, o verbOpts) error {
 	}
 	stables := cfg.OrderedStables()
 	if len(stables) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "agent: no stables registered (add one with `harness agent stable add NAME REMOTE`)")
+		fmt.Fprintln(cmd.OutOrStdout(), "agent: no stables registered (add one with `harness stable add NAME REMOTE`)")
 		return nil
 	}
 	for _, s := range stables {
@@ -309,7 +324,7 @@ func runAgentStableList(cmd *cobra.Command, o verbOpts) error {
 			vis = "private"
 		}
 		head, err := agentpkg.CloneHead(s.Name)
-		state := "no clone (run `harness agent stable add` again)"
+		state := "no clone (run `harness stable add` again)"
 		if err == nil {
 			state = "head " + shortSHA(head)
 		}
