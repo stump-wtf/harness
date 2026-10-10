@@ -4,7 +4,7 @@ date: 2026-09-27
 decision-makers: [joestump]
 extends: [ADR-0006, ADR-0009, ADR-0030]
 governs: [SPEC-0026]
-related: [ADR-0008, ADR-0011, ADR-0023, ADR-0024, ADR-0029, ADR-0038, ADR-0039]
+related: [ADR-0008, ADR-0011, ADR-0013, ADR-0019, ADR-0021, ADR-0023, ADR-0024, ADR-0029, ADR-0038, ADR-0039]
 ---
 
 # ADR-0044: Agent package stables — installable, trust-gated harness definitions shared as git repositories
@@ -237,7 +237,11 @@ network     = false
   (`prompt`, `prompt_file`, `prompt_template`, `prompt_template_file`). A
   package ships the instruction; the `schedule` or `triggers` that fire it
   stay on the operator's table, so installing a package never makes
-  anything run on its own. Every path it names stays inside the package.
+  anything run on its own. Amended 2026-10-09: a package may now *suggest*
+  a schedule, triggers, a timeout and the other supervision keys in a
+  separate `[defaults]` table, which nothing reads at config load; only the
+  operator's choice at install writes one onto the table (see the amendment
+  at the end of this ADR). Every path it names stays inside the package.
   It rejects `env_file` and `secrets_env`
   outright — a hard load error, never a silent drop — and any string value
   containing `${`, closing exactly the smuggling path ADR-0038 defined.
@@ -628,3 +632,238 @@ flowchart TD
   make a human trust an install without seeing it; fleet-wide
   auto-registration of a package's bundled prompts; packaging scheduled jobs
   (`[job.*]`) or MCP servers (`[mcp.*]`) as installable units.
+
+## Amendment (2026-10-09)
+
+**A package can suggest; only the operator schedules.**
+
+The original manifest rule, "a package cannot schedule itself", rejected
+`schedule`, `triggers`, `workdir`, `restart`, `restart_delay` and
+`operating_hours` by name, and never admitted `timeout`, `on_overlap` or
+`catch_up` at all, so that installing a package could never make anything
+run. That property is right and this amendment keeps it. Its cost was that
+every operator had to invent a schedule, a timeout and a workdir from a
+README, when the package's author already knew sensible values and had no
+way to offer them
+([harness#931](https://github.com/stump-wtf/harness/issues/931)).
+
+The invariant is restated, not weakened: **installing never makes anything
+run without an operator choice.** What changes is who may *propose* the
+values. A package may now carry a `[defaults]` table of suggested
+supervision values. Nothing in it takes effect on its own: config load
+never applies it, and a suggested value reaches a harness only when the
+operator chooses it at install or upgrade. At that point it is written onto
+the operator's `[harness.<name>]` table as the operator's own key:
+indistinguishable from one they typed, hand-editable, and attributed
+`local` by `harness describe`.
+
+### Amendment decision — how a package offers supervision values
+
+* Option A — Keep the ban (the original rule). Suggestions live in the
+  package README.
+* Option B — Let `[harness]` carry the supervision keys, applied at config
+  load like every other package value, with local keys overriding.
+* Option C — A display-only `[defaults]` table: shown by `info` and install,
+  never written; the operator copies what they want by hand.
+* Option D — A `[defaults]` table the operator is asked about at install,
+  each accepted value written onto the table as the operator's own key,
+  with `--yes` inert and a separate, explicit `--accept-defaults`.
+* Option E — Option D, but `--yes` accepts the defaults too.
+
+Chosen: **Option D.**
+
+#### Option A — Keep the ban
+
+* Good, because there is nothing new to build or to get wrong.
+* Bad, because it pushes the author's knowledge through prose the operator
+  must transcribe, unvalidated, into TOML: a typo'd cron line fails the next
+  load instead of failing at install, where the operator is already looking.
+
+#### Option B — Supervision keys in `[harness]`, applied at load
+
+* Good, because it is the least code: the keys merge exactly as `model`
+  does.
+* Bad, because a package would schedule itself. The moment the pin is
+  written and the daemon reloads, a cron firing or a webhook binding runs an
+  agent nobody chose to run, which is the exact property this ADR exists to
+  hold.
+* Bad, because an upgrade could move a schedule, arm a trigger or lift a
+  timeout under the operator's feet; REQ-8's review would have to treat
+  every supervision key as a security-relevant change.
+
+#### Option C — Display-only suggestions
+
+* Good, because nothing is ever written that the operator did not type.
+* Neutral, because the values could still be validated at manifest load.
+* Bad, because it keeps most of Option A's friction (the operator still
+  hand-edits `harness.toml` after every install) for no safety gain over
+  Option D, where nothing is written without an explicit choice either.
+
+#### Option D — Prompted defaults, written as the operator's keys (chosen)
+
+* Good, because the author's knowledge reaches the operator validated, and
+  the operator decides each value with it in front of them: keep, override,
+  or skip.
+* Good, because an accepted value becomes an ordinary local key, so config
+  load, REQ-7's precedence and REQ-8's review need no new concept: there is
+  no third tier of "suggested by the package, accepted by the operator"
+  values to track, attribute or diff.
+* Good, because `[defaults]` is inert at config load: a daemon that loads a
+  pin validates the table with the rest of the manifest and applies none of
+  it, so the daemon's surface does not grow.
+* Bad, because once accepted, a value no longer remembers it came from the
+  package. A later change to the suggestion cannot update it. That is by
+  design, but it means an operator who wants the author's new timeout takes
+  it by hand (see Upgrade below).
+* Bad, because it is one more prompt in an install that already asks for a
+  confirmation, and possibly a retype.
+
+#### Option E — `--yes` also accepts defaults
+
+* Good, because one flag gives a one-command unattended install.
+* Bad, because `--yes` already appears in bootstrap scripts and dotfile
+  installers. The day a package author adds `[defaults]`, every one of those
+  scripts would start arming schedules and binding triggers without anyone
+  changing a line: the package would have scheduled itself, through a flag
+  that was typed before the suggestion existed.
+* Bad, because it conflates two different questions (see below).
+
+### Why `--yes` stays inert
+
+`--yes` is a consent shortcut for the **trust review**: "I have seen, or I
+accept unseen, what this content is." It answers a yes/no about safety, and
+REQ-4/REQ-5 already limit it: it never clears a `high` finding or an
+`mcp_allow` write request. A default answers a different question: **what
+should run, and when.** That is a choice with a value, not a consent, and
+folding it into `--yes` would let a flag that means "skip the prompt" decide
+that an agent fires every morning. So `--yes` never accepts a default. It
+leaves every suggested key unset and prints each default it skipped, so the
+operator learns what was on offer. Accepting defaults takes its own flag,
+`--accept-defaults`, which names exactly that act.
+
+### The `[defaults]` table
+
+```toml
+[defaults]
+schedule   = "CRON_TZ=UTC 30 9 * * *"
+timeout    = "45m"
+on_overlap = "skip"
+workdir    = "~/sweeps/pr-reviewer"   # the operator's path, never a package path
+```
+
+* **Allowed keys** are the supervision keys a package could not set before,
+  except the secret ones and `enabled`: `schedule`, `triggers`, `timeout`,
+  `on_overlap`, `catch_up`, `operating_hours`, `restart`, `restart_delay`
+  and `workdir`. Any other key under `[defaults]` is a load error naming it.
+* **Never allowed:** `env_file` and `secrets_env`, because a value the
+  operator accepts with one keystroke is still a path into the
+  credential-smuggling hole ADR-0038 closed; and `enabled`, because a
+  package must never start itself (open question 2, below).
+* **The parsers config load uses** validate each value at manifest load:
+  the cron grammar `schedule` uses (`cron.ParseStandard`, with its
+  `CRON_TZ=`/`TZ=` prefix and `@hourly`-style descriptors), Go durations for
+  `timeout` (non-negative, `"0"` for no limit), the `on_overlap` and
+  `restart` enums, a non-negative integer of seconds for `restart_delay`, a
+  boolean for `catch_up`, the SPEC-0012 operating-hours grammar
+  (`hours.Parse`), and the `channel.<name>`/`webhook.<name>` reference
+  shape for `triggers`. A bad value fails the manifest load naming the key,
+  so a broken suggestion fails `info`, `install`, `stable lint` and a config
+  load of an installed pin alike, not only on the day someone accepts it.
+  The `${` ban covers `[defaults]` like every other manifest string.
+* **`workdir` is the operator's path, not a package path.** It never
+  resolves against the pin directory; it is a suggestion for the operator's
+  table, so REQ-3's "paths stay inside the package" rule does not apply to
+  it. Install does not create the directory.
+* **Cross-key rules are checked on the table, not the manifest.** Whether
+  `timeout` is legal depends on whether the harness is triggered; whether
+  `schedule` is legal depends on the operator's `enabled` and
+  `operating_hours`. Install validates the table it is about to write with
+  the config loader itself, and skips a default that would make the file
+  fail to load, naming the loader's error. A written table always loads.
+
+### Install
+
+* **Interactive:** after the trust gate passes, each default is offered in a
+  fixed order: keep it, override it (the typed value is validated by the
+  same parser, and asked again on error), or skip it. A key the table
+  already sets is never offered: the operator's value wins, and a re-install
+  does not ask again.
+* **`--yes`:** accepts nothing, and lists the skipped defaults.
+* **`--accept-defaults`:** accepts every default without prompting, subject
+  to the trigger rule and the table check above. It combines with `--yes`
+  for an unattended install; on its own it leaves the ordinary confirmation
+  in place.
+* **Triggers** are accepted only when every named source already exists as
+  a `[channel.*]` or `[webhook.*]` table in the operator's global config. A
+  package can name a source; it can never create one, because a source holds
+  a listener, a credential and an allowlist that are the operator's to set.
+  A default naming a missing source is skipped, naming that source, and the
+  rest of the install continues.
+* Chosen values are written onto `[harness.<name>]` beside `source`, by the
+  same editor and in the same write, so a declined or refused install writes
+  none of them.
+
+### Upgrade
+
+An upgrade compares the old pin's `[defaults]` with the new pin's. It
+**never changes a value already on the table**: whether the operator typed
+it or accepted it at install, it is theirs. A new or changed default is
+reported. It is offered (interactively, or taken by `--accept-defaults`)
+only for a key still unset on the table. A default the operator skipped
+earlier is not offered again unless the package changes it, so a skip is a
+choice and not a question asked on every upgrade. Because a default is inert
+at load, a changed default is not part of REQ-8's effective-value review and
+never on its own makes `upgrade --yes` refuse.
+
+### Open questions, answered
+
+1. **Does `--accept-defaults` on an unattended install count as an operator
+   choice?** Yes. The flag is explicit, names exactly the act it performs,
+   and does not ride on `--yes`. An operator who writes it into a script has
+   chosen to take the author's suggestions for that pin, and the install
+   prints every value it wrote. What would *not* be a choice is a flag that
+   predates the suggestion, which is why `--yes` stays inert.
+2. **Is `enabled` ever suggestible?** No. `enabled` is autostart intent
+   (SPEC-0003). A package that could suggest it would be one keystroke, or
+   one `--accept-defaults`, away from starting itself on every boot. A
+   resident harness is started by the operator. A scheduled or triggered
+   harness needs no `enabled` (SPEC-0008 and SPEC-0014 reject it there), so
+   nothing a package legitimately wants is lost.
+
+### Consequences of the amendment
+
+* Good, because an author's tested schedule, timeout and overlap policy
+  reach the operator validated, at the one moment the operator is already
+  reading the package.
+* Good, because the daemon gains nothing: `[defaults]` is validated with the
+  manifest and ignored by resolution. A package-sourced harness with no
+  accepted defaults resolves identically before and after this amendment.
+* Bad, because the manifest grows another table, and its key list must
+  track the config schema: a supervision key added to `[harness.*]` later is
+  not suggestible until it is added here deliberately.
+* Bad, because the trigger rule makes the outcome of an unattended
+  `--accept-defaults` depend on what else is in the operator's config. The
+  output names each skipped trigger and its missing source, so the
+  difference is visible.
+
+### Confirmation of the amendment
+
+SPEC-0026 REQ-3 (the `[defaults]` table, its keys, validation and the
+still-forbidden keys), REQ-6 (prompting, `--yes`, `--accept-defaults`, the
+trigger rule, writing the operator's keys) and REQ-8 (reporting changed
+defaults, never overwriting the operator's value) carry the testable
+requirements. Acceptance tests that matter:
+
+* Each `[defaults]` key with an invalid value fails the manifest load,
+  naming the key; `[defaults]` declaring `enabled`, `env_file` or
+  `secrets_env` fails, naming the key.
+* An interactive install keeps, overrides and skips a default, and the table
+  holds exactly the kept and overridden values.
+* `install --yes` writes no default and lists each one it skipped;
+  `install --yes --accept-defaults` writes them all.
+* A trigger default naming a source the global config does not declare is
+  skipped, naming the source, and the install completes.
+* A config load of a pin whose manifest carries `[defaults]` produces a
+  harness identical to the same pin without it.
+* An upgrade whose new pin changes a default leaves the operator's value for
+  that key byte-identical.
