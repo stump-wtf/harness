@@ -11,7 +11,10 @@
 // @joestump-agent 10/02/2026 - Added for harness#812.
 package agentpkg
 
-import "hash/fnv"
+import (
+	"fmt"
+	"hash/fnv"
+)
 
 // Severity is a scan finding's classification (SPEC-0026 REQ-5): high
 // blocks install and upgrade behind --force-unsafe and a retype; low is
@@ -37,6 +40,15 @@ type Finding struct {
 	PatternID string
 	Severity  Severity
 	LineHash  uint64
+}
+
+// Where renders the finding's location: "file:line", or just "file" for a
+// finding about a whole file (Line 0), such as package.no-readme.
+func (f Finding) Where() string {
+	if f.Line == 0 {
+		return f.File
+	}
+	return fmt.Sprintf("%s:%d", f.File, f.Line)
 }
 
 // NewSince returns the candidate findings that were absent from the
