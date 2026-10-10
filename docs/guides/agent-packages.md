@@ -136,7 +136,7 @@ Review those effective-value changes one by one:
 ```sh
 harness agent uninstall pr-reviewer     # removes the table; the pin stays
 harness agent prune                      # removes pins nothing references
-harness stable remove stump-wtf    # lists harnesses still sourced from it
+harness stable remove stump-wtf          # lists harnesses still sourced from it
 ```
 
 `prune` considers only the global `harness.toml`. A pin that only a project
