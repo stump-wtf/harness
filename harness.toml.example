@@ -63,7 +63,7 @@
 #
 # [notify]
 # command  = ["/home/me/.config/harness/notify.sh"]
-# events   = ["failed", "flapping", "loop_stopped", "session_rotated", "recovered"]  # add "run_failed" to hear about failed scheduled runs
+# events   = ["failed", "flapping", "loop_stopped", "session_rotated", "intent_lost", "parked", "recovered"]  # add "run_failed" to hear about failed scheduled runs
 # timeout  = "15s"
 # cooldown = "15m"   # per (harness, event); "0s" alerts on every occurrence
 
