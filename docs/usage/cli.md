@@ -430,30 +430,34 @@ you fire with `schedule`, `triggers` or [`harness trigger`](#scheduled-jobs).
 
 ## Agent packages
 
-`harness agent` installs agent packages from trusted git repositories called
-**stables** (ADR-0044, SPEC-0026). It is a client-only tree that edits your
-global `harness.toml` directly, so most verbs work with no daemon running;
-when one is reachable, the verb asks it to reload. The walkthrough is
+`harness stable` trusts git repositories called **stables**, and
+`harness agent` installs agent packages from them (ADR-0044, SPEC-0026). Both
+are client-only trees that edit your global `harness.toml` directly, so most
+verbs work with no daemon running; when one is reachable, the verb asks it to
+reload. The walkthrough is
 [Install shared agents from a stable](../guides/agent-packages).
 
 ```sh
-harness agent stable add NAME REMOTE [--private]   # clone, then write [stable.NAME]
-harness agent stable list                           # trusted stables and their clones
-harness agent stable update [NAME]                  # fetch + fast-forward (the only fetch)
-harness agent stable remove NAME                    # drop the table; names harnesses still sourced
-harness agent stable lint [PATH] [--json]           # validate a stable checkout offline
-harness agent stable check [PATH] [--json]          # lint + load-test each package
+harness stable add NAME REMOTE [--private]   # clone, then write [stable.NAME]
+harness stable list                           # trusted stables and their clones
+harness stable update [NAME]                  # fetch + fast-forward (the only fetch)
+harness stable remove NAME                    # drop the table; names harnesses still sourced
+harness stable lint [PATH] [--json]           # validate a stable checkout offline
+harness stable check [PATH] [--json]          # lint + load-test each package
 
 harness agent search [QUERY] [--stable NAME]        # packages in local clones
-harness agent info STABLE/PACKAGE                   # manifest, license, requests, declared env, scan findings, files
+harness agent info STABLE/PACKAGE [--readme-full]   # manifest, license, requests, declared env, README, scan findings, files
 
-harness agent install STABLE/PACKAGE[@VERSION] [--as NAME] [--replace] [--yes] [--force-unsafe]
-harness agent upgrade STABLE/PACKAGE[@VERSION] [--all] [--yes]
+harness agent install STABLE/PACKAGE[@VERSION] [--as NAME] [--replace] [--yes] [--force-unsafe] [--readme-full]
+harness agent upgrade STABLE/PACKAGE[@VERSION] [--all] [--yes] [--readme-full]
 harness agent list [--json]                         # package-sourced harnesses, pins, NEWER, LICENSE
 harness agent uninstall NAME [--yes]                # remove the table; the pin stays
 harness agent prune                                 # remove pins nothing references
 ```
 
+- **`harness stable` manages the trust ledger.** It was first spelled
+  `harness agent stable`; that spelling still works as a hidden alias with
+  identical output and exit codes, so existing scripts and CI keep running.
 - **Only `stable update` fetches.** Every other verb reads the local clone.
   `agent list`'s `NEWER` column compares against the clone as the last update
   left it.
@@ -489,6 +493,14 @@ harness agent prune                                 # remove pins nothing refere
   changes unattended: `--yes` refuses, naming them.
 - **`prune`** reads only the global `harness.toml`. A pin referenced only by
   a project file is removed, and that project's next `up` reports it missing.
+- **The package README.** `info`, `install` and `upgrade` print the package's
+  `README.md` after the requests.
+  - It is shown as plain text with terminal control sequences removed, and
+    nothing in it is run.
+  - It stops after 200 lines; `--readme-full` prints all of it.
+  - `upgrade` also shows a `README.md` diff when the README changed.
+  - A package without a README gets a `low` `package.no-readme` finding,
+    which does not block.
 
 `harness describe NAME` marks each value a package supplied with
 `(package)`, and `harness doctor` reports a sourced harness whose pin is

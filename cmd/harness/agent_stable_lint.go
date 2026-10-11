@@ -2,7 +2,7 @@ package main
 
 // Stable Lint And Check
 //
-// `harness agent stable lint [PATH]` and `harness agent stable check [PATH]`
+// `harness stable lint [PATH]` and `harness stable check [PATH]`
 // validate a stable checkout — a directory with packages/ — with Harness's
 // own manifest parser and content scanner, so a stable's CI and an
 // operator's install can never disagree. Both are offline: they read only
@@ -13,6 +13,9 @@ package main
 // REQ-7, REQ-12 (CLI visibility).
 //
 // @joestump-agent 10/09/2026 - Added for harness#933.
+// @joestump-agent 10/10/2026 - Retitled to the top-level `harness stable`
+// spelling after #941's promotion; `harness agent stable` still answers as
+// the hidden alias, so both spellings reach these commands.
 
 import (
 	"encoding/json"

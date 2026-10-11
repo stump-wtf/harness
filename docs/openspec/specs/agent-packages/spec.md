@@ -49,7 +49,7 @@ global-only list, because a cloned repository must not be able to expand
 what is trusted on the machine that clones it.
 
 A `[stable.*]` table SHALL be created, modified, or removed only by
-`harness agent stable add|remove <name> ...`, which writes the global
+`harness stable add|remove <name> ...`, which writes the global
 `harness.toml` directly; no other command SHALL add or change a stable
 declaration. `stable add` SHALL clone the remote into
 `$XDG_STATE_HOME/harness/agents/stables/<name>/` before the table is written,
@@ -57,11 +57,19 @@ and SHALL fail without writing the table if the clone fails. `stable remove`
 SHALL delete the table and print every currently installed harness whose
 `source` names that stable, without uninstalling them.
 
-`harness agent stable update [name]` SHALL be the only operation that fetches
+`harness stable update [name]` SHALL be the only operation that fetches
 an already-added stable's remote. It SHALL fast-forward the local clone and
 SHALL fail, without modifying the clone, on a non-fast-forward state. No
 other command, and no daemon activity of any kind, SHALL fetch a stable's
 remote.
+
+Amendment (issue #937): the stable tree is the top-level `harness stable`,
+not a subtree of `harness agent`. `harness agent stable ...` SHALL remain a
+working alias for every `harness stable` verb, with identical stdout,
+stderr and exit status, and SHALL be hidden from help. Both spellings SHALL
+be built from one command definition, so a verb added to the stable tree
+answers under both. User-facing text (hints, errors, help) SHALL name
+`harness stable`.
 
 #### Scenario: A project file cannot add a stable
 
@@ -72,14 +80,14 @@ remote.
 
 #### Scenario: Adding a stable clones before trusting
 
-- **WHEN** `harness agent stable add stump-wtf
+- **WHEN** `harness stable add stump-wtf
   https://forge.example/your-org/harness-stable.git` is run and the clone
   fails (network error, no such repository)
 - **THEN** no `[stable.stump-wtf]` table is written to `harness.toml`
 
 #### Scenario: Removing a stable reports its installed packages
 
-- **WHEN** `harness agent stable remove stump-wtf` is run while
+- **WHEN** `harness stable remove stump-wtf` is run while
   `stump-wtf/pr-reviewer` is installed as harness `pr-reviewer`
 - **THEN** the table is removed, the harness `pr-reviewer` is left exactly as
   it was, and the output names it as installed from the now-untrusted stable
@@ -91,6 +99,14 @@ remote.
 - **THEN** none of them perform a network fetch; they operate on the stable's
   clone as it was left by the last `stable update`
 
+#### Scenario: The old spelling is a hidden alias
+
+- **WHEN** `harness agent stable add|list|update|remove ...` is run with the
+  same arguments and state as `harness stable add|list|update|remove ...`
+- **THEN** stdout, stderr and the exit status are identical, and
+  `harness agent --help` does not list `stable` while `harness --help` lists
+  the `harness stable` verbs
+
 ### Requirement: REQ-2 — Stable Layout And Local Discovery
 
 A stable's clone SHALL be expected to contain zero or more package directories
@@ -100,6 +116,23 @@ manifest and, optionally, a `skills/` directory of skill directories
 markdown files. `<package-name>` SHALL match the same pattern as a stable name.
 A `packages/` directory with no valid subdirectories SHALL NOT be an error;
 `harness agent search` on such a stable SHALL report zero packages.
+
+Each package directory SHOULD also hold a `README.md` at its root (harness
+#929): the setup notes saying what an operator must provide that the
+manifest cannot carry, such as environment variables, tokens and logins. Only
+a regular file at the package root counts; a symlink is not followed. A
+package without one SHALL still load and install, and draws the
+`package.no-readme` finding (REQ-5). `harness agent info`, and the
+confirmation `install` and `upgrade` show (REQ-6, REQ-8), SHALL render the
+README after the `[requests]` table as untrusted text, under these rules:
+
+* The README SHALL be shown as plain text. Every terminal control sequence
+  SHALL be removed: ESC sequences (CSI, and OSC, DCS, SOS, PM and APC with
+  their payloads, OSC 8 hyperlinks included), C1 controls whether 8-bit or
+  UTF-8 encoded, and C0 controls other than newline and tab.
+* Nothing the README says SHALL be executed, opened or read.
+* The inline render SHALL stop after 200 lines with a footer naming where
+  the full text is. `--readme-full` SHALL print it whole.
 
 `harness agent search [query] [--stable <name>]` SHALL list, across all
 trusted stables or the named one, every package whose name or
@@ -128,6 +161,21 @@ when the named stable is not registered.
 - **WHEN** `harness agent info ghost/pr-reviewer` is run and no `[stable.ghost]`
   is registered
 - **THEN** the command fails, naming `ghost` as not a registered stable
+
+#### Scenario: The README is shown as plain text
+
+- **WHEN** a package's `README.md` contains an OSC 8 hyperlink
+  (`\x1b]8;;…`), a screen clear (`\x1b[2J`) and raw C1 bytes such as
+  `0x9b` and `0x9d`
+- **THEN** `info`, `install` and `upgrade` print the README after the
+  requests with every one of those sequences removed, so the link text is
+  left as plain text
+
+#### Scenario: A long README is capped
+
+- **WHEN** a package's `README.md` runs past 200 lines
+- **THEN** the inline render stops at 200 lines with a footer naming where
+  the full text is, and `--readme-full` prints it whole
 
 ### Requirement: REQ-3 — Package Manifest Schema
 
@@ -218,6 +266,55 @@ as a single table, rather than an array of tables, SHALL fail to load. The
 table never weakens the rule above: a package still cannot name an
 `env_file` or carry a value; the operator supplies values in the harness
 table's own `env_file` or the daemon's environment (ADR-0038).
+
+Suggested defaults (issue #931, ADR-0044 amendment of 2026-10-09). A
+manifest MAY additionally carry a top-level `[defaults]` table, admitted
+beside the tables above. `[defaults]` holds values a package *suggests* for
+the operator's own harness table; it is never package content. It MAY carry
+only `schedule`, `triggers`, `timeout`, `on_overlap`, `catch_up`,
+`operating_hours`, `restart`, `restart_delay` and `workdir`. Any other key
+under `[defaults]` SHALL fail to load, naming the key; `env_file`,
+`secrets_env` and `enabled` SHALL each fail with a reason naming why the key
+can never be suggested (a credential reference, ADR-0038; autostart intent,
+which a package must never set). Each value SHALL be validated at manifest
+load by the same parser config load applies to that key on a `[harness.*]`
+table, and an invalid value SHALL fail to load, naming the key under
+`[defaults]`:
+
+- `schedule`: a non-blank string accepted by the cron parser SPEC-0008 REQ
+  "Schedule Key" uses (`cron.ParseStandard`, including a `CRON_TZ=` or
+  `TZ=` prefix and the `@`-descriptors).
+- `triggers`: a non-empty list of non-blank, distinct strings, each of the
+  form `channel.<name>` or `webhook.<name>` (SPEC-0014 REQ "Triggers Key";
+  `core.ParseTriggerRef`). Only the shape is checked here; whether the
+  source exists is decided at install (REQ-6).
+- `timeout`: a string accepted by Go's `time.ParseDuration` and not
+  negative; `"0"` means no limit (SPEC-0008 REQ "Run Timeout").
+- `on_overlap`: one of `"skip"`, `"queue"`, `"replace"` (SPEC-0008 REQ
+  "Overlap Policy").
+- `catch_up`: a boolean (SPEC-0008 REQ "Missed Window Handling").
+- `operating_hours`: a non-blank string accepted by the SPEC-0012 REQ
+  "Operating Hours Key" grammar (`hours.Parse`).
+- `restart`: one of `"no"`, `"always"`, `"unless-stopped"`, `"on-failure"`
+  (SPEC-0003 REQ "Restart Policy").
+- `restart_delay`: a non-negative integer number of seconds.
+- `workdir`: a non-blank string. It is the operator's path, never a package
+  path: it SHALL NOT be resolved against the pin directory, and the
+  package-relative path rule above SHALL NOT apply to it.
+
+The `${` rule above SHALL apply to every string under `[defaults]`, exactly
+as it does under `[harness]`. Cross-key exclusions that depend on the
+operator's table (a `timeout` with no `schedule` or `triggers`, `schedule`
+beside `enabled = true` or `operating_hours`) SHALL NOT be checked at
+manifest load; REQ-6 checks them against the table being written. The
+supervision keys above SHALL remain forbidden under `[harness]` exactly as
+listed earlier in this requirement: a package suggests them only through
+`[defaults]`. At config load (REQ-7), `[defaults]` SHALL be validated with
+the rest of the manifest and SHALL NOT be applied: a harness resolved from a
+pin whose manifest carries `[defaults]` SHALL be identical to one resolved
+from the same pin without it. `harness agent info` SHALL show `[defaults]`
+as suggestions the operator will be asked about, not as values the harness
+will run with.
 
 #### Scenario: An unknown table is rejected
 
@@ -324,6 +421,42 @@ table's own `env_file` or the daemon's environment (ADR-0038).
 - **THEN** the package fails to load with the same unknown-adapter error a
   hand-written harness table produces
 
+#### Scenario: A package suggests supervision defaults
+
+- **WHEN** a manifest declares `[defaults]` with `schedule =
+  "CRON_TZ=UTC 30 9 * * *"`, `timeout = "45m"`, `on_overlap = "skip"` and
+  `workdir = "~/sweeps/pr-reviewer"`
+- **THEN** the manifest loads, and none of the four values is part of the
+  package's `[harness]` values
+
+#### Scenario: An invalid default fails the load, naming the key
+
+- **WHEN** `[defaults]` declares `schedule = "every morning"`, or `timeout
+  = "45 minutes"`, or `on_overlap = "drop"`, or `operating_hours =
+  "Mon-Fri 9-17"`, or `restart = "sometimes"`, or `restart_delay = -5`, or
+  `triggers = ["queue.reviews"]`
+- **THEN** the package fails to load, naming that key under `[defaults]`
+
+#### Scenario: enabled and the secret keys can never be suggested
+
+- **WHEN** `[defaults]` declares `enabled = true`, or `env_file =
+  "~/.config/x.env"`, or `secrets_env = ["TOKEN"]`
+- **THEN** the package fails to load, naming the key and why it can never
+  be suggested
+
+#### Scenario: Supervision keys stay forbidden under [harness]
+
+- **WHEN** a manifest declares `schedule = "@hourly"` under `[harness]`
+  rather than `[defaults]`
+- **THEN** the package fails to load, naming `schedule`
+
+#### Scenario: Defaults are inert at config load
+
+- **WHEN** a harness table sets only `source` to a pin whose manifest
+  declares `[defaults] schedule = "@hourly"`
+- **THEN** the loaded harness has no schedule, and its validated
+  configuration is identical to the same pin's without `[defaults]`
+
 ### Requirement: REQ-4 — Capability Requests
 
 The confirmation shown by `install` and `upgrade` (REQ-6, REQ-8) SHALL
@@ -381,6 +514,13 @@ located at `package.toml`'s `[package]` header (issue #932). Like every
 so a stable cannot publish an unlicensed package while an operator can
 still install one knowingly.
 
+A package with no `README.md` at its root (REQ-2) SHALL draw exactly one
+`low` finding with the pattern id `package.no-readme`. The finding names
+`README.md` as its file and carries no line, and is shown as `README.md
+package.no-readme low`. `harness agent info` and the install and upgrade
+confirmations SHALL show it, and it SHALL NOT block. The README, when
+present, SHALL be scanned like any other bundled `.md` file (harness #929).
+
 On an upgrade, the scan SHALL run against the new pin's content, and any
 finding not present against the currently installed pin's content SHALL be
 marked as new in the diff output (REQ-8), so a previously accepted package
@@ -422,6 +562,12 @@ it being called out specifically.
   `package.no-license` `low` finding at `package.toml`, and `install`
   completes under `--yes`
 
+#### Scenario: A package without a README
+
+- **WHEN** a package directory holds no `README.md`
+- **THEN** `info` and `install` show the `low` finding `package.no-readme`,
+  and `install` completes under `--yes`
+
 #### Scenario: A new finding on upgrade is called out
 
 - **WHEN** the currently installed pin has zero findings and the candidate
@@ -450,6 +596,50 @@ or update a `[harness.<name>]` table in the target `harness.toml`
 Installing into a harness name that already has a `source` from a
 *different* stable or package SHALL require an explicit `--replace` flag;
 without it, the command SHALL fail, naming the existing source.
+
+Suggested defaults (issue #931). A value from the manifest's `[defaults]`
+(REQ-3) SHALL take effect only as the operator's choice: install MUST NOT
+write a default the operator did not choose, and `[defaults]` SHALL NOT
+reach a harness by any path other than the one below. The confirmation
+report (REQ-4) SHALL list every default, marked as a suggestion. Defaults
+SHALL be decided only after the trust gate (REQ-4, REQ-5) passes, and only
+for keys the target table does not already set; a key the table already
+sets SHALL NOT be offered, and its value SHALL be left untouched. Then:
+
+- **Interactive, without `--yes` or `--accept-defaults`:** install SHALL
+  offer each default in turn, in the key order REQ-3 lists, with three
+  choices: keep it, override it, or skip it. An override SHALL be validated
+  by the same parser REQ-3 applies to that key, and an invalid value SHALL
+  be reported and asked for again, never written.
+- **`--yes`:** install SHALL NOT accept any default. It SHALL leave every
+  suggested key unset and print each default it skipped, with its value and
+  the flag that would have accepted it. `--yes` is consent to the trust
+  review, never a choice of what runs or when (ADR-0044 amendment of
+  2026-10-09).
+- **`--accept-defaults`:** install SHALL accept every default without
+  prompting for them, subject to the two rules below. It SHALL NOT suppress
+  the ordinary confirmation, a `high` block or a typed confirmation; with
+  `--yes` it makes an unattended install that writes the defaults. An
+  unattended `--accept-defaults` SHALL count as the operator's choice.
+
+A `triggers` default SHALL be accepted, kept or overridden only when every
+source it names is declared as a `[channel.*]` or `[webhook.*]` table in
+the global configuration; otherwise it SHALL be skipped, naming each
+missing source, and the install SHALL continue without it. Install SHALL
+NOT create a trigger source. Before writing, install SHALL validate the
+table it is about to write (its existing keys, `source`, and every chosen
+default) with the same config loader the daemon uses. A chosen default
+that would make the global file fail to load (for example, `schedule`
+beside the operator's `enabled = true`, or `timeout` once neither
+`schedule` nor `triggers` was chosen) SHALL be skipped, naming the
+loader's error; defaults SHALL be decided in REQ-3's key order so the
+outcome is deterministic. Every chosen default SHALL be written onto
+`[harness.<name>]` as an ordinary key, beside `source` and in the same
+write, so it is the operator's own key: `harness describe` (REQ-12)
+attributes it as local, and a declined, cancelled or refused install
+writes none of them. Install SHALL NOT create a suggested `workdir`. The
+install output SHALL list each default written and each one skipped, with
+the reason.
 
 #### Scenario: A branch resolves to a pinned SHA
 
@@ -484,6 +674,57 @@ without it, the command SHALL fail, naming the existing source.
   "other-stable/other-pkg@..."` and `harness agent install
   stump-wtf/pr-reviewer --as pr-reviewer` is run without `--replace`
 - **THEN** the command fails, naming the existing source
+
+#### Scenario: An interactive install keeps, overrides and skips defaults
+
+- **WHEN** a package suggests `schedule = "@daily"`, `timeout = "45m"` and
+  `on_overlap = "skip"`, and the operator keeps `schedule`, overrides
+  `timeout` with `"20m"` and skips `on_overlap`
+- **THEN** `[harness.<name>]` holds `source`, `schedule = "@daily"` and
+  `timeout = "20m"`, and no `on_overlap`
+
+#### Scenario: An invalid override is asked again
+
+- **WHEN** the operator overrides a suggested `timeout` with `"soon"`
+- **THEN** install reports the parse error, asks again, and writes nothing
+  for `timeout` until a valid value is given or the default is skipped
+
+#### Scenario: --yes never accepts a default
+
+- **WHEN** the same package is installed with `--yes`
+- **THEN** the table holds `source` and no suggested key, and the output
+  lists `schedule`, `timeout` and `on_overlap` as skipped, naming
+  `--accept-defaults`
+
+#### Scenario: --accept-defaults writes them
+
+- **WHEN** the same package is installed with `--yes --accept-defaults`
+  on a non-interactive terminal
+- **THEN** the table holds `source`, `schedule = "@daily"`, `timeout =
+  "45m"` and `on_overlap = "skip"`
+
+#### Scenario: A trigger default naming an unknown source is skipped
+
+- **WHEN** a package suggests `triggers = ["webhook.gitea"]`, the global
+  configuration declares no `[webhook.gitea]`, and the install runs with
+  `--yes --accept-defaults`
+- **THEN** the install completes without `triggers` on the table, and the
+  output names `webhook.gitea` as the missing source
+
+#### Scenario: The operator's value is never replaced by a default
+
+- **WHEN** `[harness.pr-reviewer]` already sets `timeout = "10m"` and the
+  package suggests `timeout = "45m"`, installed with `--accept-defaults`
+- **THEN** `timeout` is not offered and stays `"10m"`
+
+#### Scenario: A default that would break the load is skipped
+
+- **WHEN** the target table already sets `restart = "always"` and the
+  package suggests `schedule = "@daily"` and `timeout = "45m"`, installed
+  with `--accept-defaults`
+- **THEN** `schedule` is skipped, naming the loader's restart-policy
+  error, `timeout` is then skipped because nothing fires the harness, and
+  the written file loads
 
 ### Requirement: REQ-7 — The Source Field And Config-Load Resolution
 
@@ -591,6 +832,23 @@ affected harness table plus exactly the changes the review's choices
 require; every other key on that table SHALL be left untouched. The prior
 pin's content-addressed directory SHALL NOT be deleted by upgrade.
 
+Suggested defaults on upgrade (issue #931). Upgrade SHALL compare the
+installed pin's `[defaults]` (REQ-3) with the new pin's and SHALL report
+every default the new pin adds, changes or drops, with its old and new
+value. Upgrade MUST NOT change, add or remove a key on the harness table
+because a default changed: a value already on the table is the operator's,
+whether they typed it or accepted it at install, and SHALL be left
+byte-identical. A default that is new or changed in the new pin SHALL be
+offered only for a key still unset on the table, under exactly REQ-6's
+rules: interactively keep, override or skip; `--yes` accepts none and lists
+them; `--accept-defaults` accepts them; the trigger-source rule and the
+loader check apply. A default the new pin leaves unchanged SHALL NOT be
+offered again, so a default skipped at install is asked about again only
+when the package changes it. Because `[defaults]` is inert at config load,
+a changed default SHALL NOT appear in the effective-value review above and
+SHALL NOT by itself make `upgrade --yes` refuse. A chosen default SHALL be
+written in the same write as the `source` update.
+
 #### Scenario: A trivial upgrade still requires confirmation
 
 - **WHEN** `upgrade` resolves a new pin that changes only
@@ -613,7 +871,7 @@ pin's content-addressed directory SHALL NOT be deleted by upgrade.
 - **WHEN** `upgrade` is run for a version newer than what the stable's local
   clone holds, with no intervening `stable update`
 - **THEN** the command fails, naming the requested version as not present
-  in the local clone and recommending `harness agent stable update`
+  in the local clone and recommending `harness stable update`
 
 #### Scenario: The prior pin survives an upgrade
 
@@ -628,6 +886,27 @@ pin's content-addressed directory SHALL NOT be deleted by upgrade.
   still present
 - **THEN** the harness's `source` is rewritten back to `@sha1` with no
   network access
+
+#### Scenario: A changed default never moves the operator's value
+
+- **WHEN** a harness accepted `timeout = "45m"` from the installed pin's
+  `[defaults]`, the new pin suggests `timeout = "2h"`, and `upgrade
+  --accept-defaults` is run
+- **THEN** the output reports `timeout: 45m -> 2h` as a changed
+  suggestion, and the table's `timeout = "45m"` is left byte-identical
+
+#### Scenario: A new default is offered for an unset key
+
+- **WHEN** the new pin adds `on_overlap = "queue"` to `[defaults]`, the
+  table does not set `on_overlap`, and `upgrade --yes` is run
+- **THEN** the upgrade completes, the table gains no `on_overlap`, and the
+  output lists the new default as skipped
+
+#### Scenario: An unchanged skipped default is not offered again
+
+- **WHEN** the operator skipped `schedule` at install and the new pin's
+  `schedule` default is unchanged
+- **THEN** an interactive upgrade does not offer `schedule`
 
 ### Requirement: REQ-9 — Uninstall And Prune
 
@@ -734,7 +1013,10 @@ write to `[mcp.*]`, `[job.*]`, `[server]`, `[profile.*]`, `[adapter.*]`, or
 
 ### Requirement: REQ-12 — CLI Visibility
 
-`harness agent list` SHALL show every harness whose table carries a
+The stable trust ledger SHALL be visible as `harness stable list` (name,
+redacted remote, visibility and clone head), the top-level spelling of
+REQ-1's amendment (issue #937). `harness agent list` SHALL show every
+harness whose table carries a
 `source`, its stable, package, pinned SHA (short form for display, full form
 with `--json`), and whether the stable's local clone (as of its last
 `stable update`) has a newer default-branch commit than the installed pin
@@ -774,8 +1056,8 @@ where from (`env_file` or the daemon's `environment`). No surface — doctor,
 describe, either `--json` form, the protocol, or a log — SHALL ever carry a
 variable's value (ADR-0038 rule 9).
 
-Amendment (issue #933): `harness agent stable lint [PATH]` and `harness
-agent stable check [PATH]` SHALL validate a stable checkout (a directory
+Amendment (issue #933): `harness stable lint [PATH]` and `harness stable
+check [PATH]` SHALL validate a stable checkout (a directory
 holding `packages/`; `PATH` defaults to the working directory) offline: no
 daemon socket, no git operation and no network access. `lint` SHALL use the
 same manifest loader (REQ-3) and the same content scan (REQ-5) as install,
@@ -796,18 +1078,18 @@ rather than report a clean run.
 #### Scenario: stable lint fails a package install would refuse
 
 - **WHEN** a stable checkout's package carries a `high` scan finding
-- **THEN** `harness agent stable lint` exits non-zero and names the file,
+- **THEN** `harness stable lint` exits non-zero and names the file,
   the line and the pattern id, without echoing the matched text
 
 #### Scenario: stable check catches a load error lint cannot
 
 - **WHEN** a package's manifest names an adapter Harness does not know
-- **THEN** `harness agent stable lint` passes it, and `harness agent stable
+- **THEN** `harness stable lint` passes it, and `harness stable
   check` exits non-zero with the same error config load would report
 
 #### Scenario: stable lint runs offline
 
-- **WHEN** `harness agent stable lint` or `check` runs
+- **WHEN** `harness stable lint` or `check` runs
 - **THEN** it dials no daemon socket, runs no git command and writes nothing
   under the state directory
 

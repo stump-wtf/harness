@@ -133,6 +133,7 @@ func newRootCmd() *cobra.Command {
 		newAttachCmd(g),
 		newCaptureCmd(g),
 		newSkillsCmd(g),
+		newStableCmd(g),
 		newAgentCmd(g),
 		newDoctorCmd(g),
 		newInitCmd(g),

@@ -1,7 +1,8 @@
 // Package stablelint validates a stable checkout — a directory with a
 // packages/ tree — offline, with Harness's own manifest parser and content
-// scanner: the engine behind `harness agent stable lint` and `stable check`.
-// A stable's CI runs it so a package Harness would refuse at install fails
+// scanner: the engine behind `harness stable lint` and `harness stable
+// check`. A stable's CI runs it so a package Harness would refuse at
+// install fails
 // there first, and the two can never disagree: lint calls the same
 // agentpkg.LoadManifest and scan.Scan install does, and check loads each
 // package through the same config.ParseWith path a sourced harness table
@@ -13,6 +14,8 @@
 // visibility), Error Handling Standards.
 //
 // @joestump-agent 10/09/2026 - Added for harness#933.
+// @joestump-agent 10/10/2026 - Command spelling retitled to the top-level
+// `harness stable` tree after #941's promotion.
 package stablelint
 
 import (

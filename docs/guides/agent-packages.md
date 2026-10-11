@@ -45,7 +45,7 @@ whom it runs as, and what credentials it sees stay on **your** harness table.
 ## 1. Trust a stable
 
 ```sh
-harness agent stable add stump-wtf https://github.com/stump-wtf/harness-stable.git
+harness stable add stump-wtf https://github.com/stump-wtf/harness-stable.git
 ```
 
 This clones the remote into `$XDG_STATE_HOME/harness/agents/stables/stump-wtf/`
@@ -54,18 +54,27 @@ and only then writes a `[stable.stump-wtf]` table to your **global**
 never add a stable.
 
 Nothing else fetches. `search`, `info`, `install` and `upgrade` read the local
-clone. `harness agent stable update [NAME]` is the one command that fetches,
+clone. `harness stable update [NAME]` is the one command that fetches,
 and it fast-forwards only.
 
 ```sh
-harness agent stable list
+harness stable list
 harness agent search reviewer           # name or description, case-insensitive
 harness agent info stump-wtf/pr-reviewer
 ```
 
 `info` prints the manifest, the itemised `[requests]`, the environment
-variables the package declares, the content-scan findings and the bundled
-files, without installing anything.
+variables the package declares, the package's `README.md`, the content-scan
+findings and the bundled files, without installing anything.
+
+The README is where a package says what you must provide that its manifest
+cannot carry: environment variables, tokens, logins. Harness treats it as
+untrusted text from the stable. It prints as plain text, with every terminal
+control sequence removed: escape sequences, OSC 8 hyperlinks, and control
+characters other than newline and tab. Nothing in it is ever run. The inline
+render stops after 200 lines and ends with a footer saying where the full
+file is. Pass `--readme-full` to `info`, `install` or `upgrade` to print the
+whole README.
 
 It also prints the package's SPDX `license`. If the package declares none,
 `info` prints `none declared` and adds a `package.no-license` low finding.
@@ -87,8 +96,8 @@ Install does the following, in order:
    `.txt` file, and every prompt file the manifest names. A `high` finding
    blocks the install. `--force-unsafe` overrides it, and asks you to retype
    the package name.
-3. **Confirms.** It shows the manifest, the requests and the findings, then
-   asks. Without a terminal it refuses unless you pass `--yes`, and `--yes`
+3. **Confirms.** It shows the manifest, the requests, the README and the
+   findings, then asks. Without a terminal it refuses unless you pass `--yes`, and `--yes`
    never clears a `high` finding or a `mcp_allow = ["write"]` request.
 4. **Binds.** It writes `source = "stump-wtf/pr-reviewer@<sha>"` onto a
    `[harness.pr-reviewer]` table. `--as NAME` picks another table name.
@@ -131,7 +140,7 @@ workdir  = "~/sweeps/pr-reviewer"
 ## 4. Upgrade
 
 ```sh
-harness agent stable update stump-wtf
+harness stable update stump-wtf
 harness agent list                       # the NEWER column shows what moved
 harness agent upgrade stump-wtf/pr-reviewer
 ```
@@ -139,7 +148,8 @@ harness agent upgrade stump-wtf/pr-reviewer
 Upgrade re-scans the new commit and shows you three things:
 
 - the manifest diff, where a `package.license` change is flagged as a
-  change to the package's terms;
+  change to the package's terms, plus a `README.md` diff when the README
+  changed between the two commits;
 - any **new** scan finding, flagged as new;
 - every change to the harness's effective values.
 
@@ -157,7 +167,7 @@ Review those effective-value changes one by one:
 ```sh
 harness agent uninstall pr-reviewer     # removes the table; the pin stays
 harness agent prune                      # removes pins nothing references
-harness agent stable remove stump-wtf    # lists harnesses still sourced from it
+harness stable remove stump-wtf          # lists harnesses still sourced from it
 ```
 
 `prune` considers only the global `harness.toml`. A pin that only a project
@@ -171,10 +181,17 @@ A stable is a repository with `packages/<name>/` directories:
 ```text
 packages/pr-reviewer/
   package.toml
-  README.md                  # required by `stable lint`
+  README.md                  # setup notes: what the operator must provide; required by `stable lint`
   prompts/review.md
   skills/<slug>/SKILL.md     # optional; requires [requests] skill_paths = true
 ```
+
+Ship a `README.md` with every package. Use it to say what the agent needs
+that the manifest cannot carry: environment variables, tokens and their
+scopes, logins for the daemon's user. A package without one draws a `low`
+`package.no-readme` scan finding on `info` and `install`. The finding does
+not block. Keep the README plain Markdown. It is scanned like any other
+`.md` file, and its control sequences are stripped before it is shown.
 
 ```text
 [package]
@@ -227,9 +244,9 @@ are Claude Code one-shot keys.
 Validate the stable before you publish it. From the root of your checkout:
 
 ```sh
-harness agent stable lint              # schema, scan, conventions
-harness agent stable check             # lint, then load each package as config load would
-harness agent stable check --json      # one {package, errors, warnings} per package, for CI
+harness stable lint           # schema, scan, conventions
+harness stable check          # lint, then load each package as config load would
+harness stable check --json   # one {package, errors, warnings} per package, for CI
 ```
 
 Both run offline: no daemon, no registered stable, no network. `lint` uses

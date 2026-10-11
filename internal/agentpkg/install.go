@@ -52,7 +52,7 @@ func ResolvePin(stable, pkg, version string) (Source, error) {
 	}
 	dir := StableDir(stable)
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-		return Source{}, fmt.Errorf("agentpkg: stable %q has no local clone at %s (run `harness agent stable add %s`): %w",
+		return Source{}, fmt.Errorf("agentpkg: stable %q has no local clone at %s (run `harness stable add %s`): %w",
 			stable, dir, stable, err)
 	}
 	ref := version

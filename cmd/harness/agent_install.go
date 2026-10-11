@@ -49,6 +49,7 @@ type installOpts struct {
 	replace     bool
 	yes         bool
 	forceUnsafe bool
+	readmeFull  bool
 }
 
 func newAgentInstallCmd(g *globalOpts) *cobra.Command {
@@ -64,6 +65,7 @@ func newAgentInstallCmd(g *globalOpts) *cobra.Command {
 			o.replace, _ = cmd.Flags().GetBool("replace")
 			o.yes, _ = cmd.Flags().GetBool("yes")
 			o.forceUnsafe, _ = cmd.Flags().GetBool("force-unsafe")
+			o.readmeFull, _ = cmd.Flags().GetBool("readme-full")
 			return runAgentInstall(cmd, g.opts(), o, args[0])
 		},
 	}
@@ -71,6 +73,7 @@ func newAgentInstallCmd(g *globalOpts) *cobra.Command {
 	install.Flags().Bool("replace", false, "allow replacing an existing source from a different package")
 	install.Flags().Bool("yes", false, "skip the ordinary confirmation (never clears a high finding or a write request)")
 	install.Flags().Bool("force-unsafe", false, "override a high-severity finding (requires an interactive retype)")
+	install.Flags().Bool("readme-full", false, "print the package README whole instead of capping it")
 	return install
 }
 
@@ -168,12 +171,20 @@ func runAgentInstall(cmd *cobra.Command, o verbOpts, io installOpts, ref string)
 	if err != nil {
 		return err
 	}
+	// A temp materialization is discarded, so only a stored pin can be
+	// named as where the full README lives (harness#929).
+	readme, err := agentpkg.LoadReadme(srcDir, tmp == "")
+	if err != nil {
+		return err
+	}
 	agentpkg.RenderReport(cmd.OutOrStdout(), agentpkg.ReportInput{
 		Ref:          src.Stable + "/" + src.Package,
 		ManifestRaw:  manifestRaw,
 		Man:          man,
 		Findings:     findings,
 		BundledFiles: files,
+		Readme:       readme,
+		ReadmeFull:   io.readmeFull,
 	})
 	if hasHigh(findings) {
 		agentpkg.LogBlocked(src.Stable+"/"+src.Package, findings)
