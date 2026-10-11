@@ -554,6 +554,15 @@ func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string, readmeFull bool) e
 		fmt.Fprintf(out, "  %s\n", line)
 	}
 
+	// The suggested supervision values, shown as suggestions and never as
+	// values the harness runs with: [defaults] is inert at config load, so
+	// info is where the operator learns what install will ask about
+	// (SPEC-0026 REQ-3, harness#931).
+	fmt.Fprintf(out, "suggested defaults:\n")
+	for _, line := range agentpkg.RenderDefaults(man) {
+		fmt.Fprintf(out, "  %s\n", line)
+	}
+
 	// The setup README, after the manifest and requests (harness#929).
 	agentpkg.RenderReadme(out, readme, readmeFull)
 	fmt.Fprintf(out, "scan findings:\n")

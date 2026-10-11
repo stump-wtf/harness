@@ -239,14 +239,18 @@ func TestValueEncoding(t *testing.T) {
 		{"str", `he said "hi"\ go`},
 		{"list", []string{"a", "b c"}},
 		{"flag", false},
+		// An integer stays an integer: restart_delay is a count of seconds,
+		// and quoting it would make the loader reject it.
+		{"seconds", 30},
+		{"wide", int64(60)},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	want := "[harness.x]\nstr = \"he said \\\"hi\\\"\\\\ go\"\nlist = [\"a\", \"b c\"]\nflag = false\n"
+	want := "[harness.x]\nstr = \"he said \\\"hi\\\"\\\\ go\"\nlist = [\"a\", \"b c\"]\nflag = false\nseconds = 30\nwide = 60\n"
 	if string(e.Bytes()) != want {
 		t.Errorf("got:\n%s\nwant:\n%s", e.Bytes(), want)
 	}
-	if err := e.AddHarness("y", [][2]any{{"bad", 42}}); err == nil {
+	if err := e.AddHarness("y", [][2]any{{"bad", 42.5}}); err == nil {
 		t.Error("unsupported value type accepted")
 	}
 }

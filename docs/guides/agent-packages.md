@@ -37,6 +37,11 @@ table may only select an adapter and supply values:
   variables it expects in `[[env]]` blocks, but never their values. You
   supply those in your harness table's `env_file` or the daemon's
   environment, and `harness doctor` tells you which are missing.
+- **Suggests, never schedules.** Those forbidden keys are what a `[defaults]`
+  table is for: a suggestion the installer offers and you choose, never a
+  value a config load applies. `env_file`, `secrets_env` and `enabled` are
+  not suggestible at all, so a package can neither point at a secret file
+  nor switch itself on.
 
 So installing a package never makes anything run on its own, never reads your
 secrets, and never points an agent at a file on your machine. When it runs,
@@ -101,7 +106,14 @@ Install does the following, in order:
    never clears a `high` finding or a `mcp_allow = ["write"]` request.
 4. **Binds.** It writes `source = "stump-wtf/pr-reviewer@<sha>"` onto a
    `[harness.pr-reviewer]` table. `--as NAME` picks another table name.
-5. **Lists the environment.** When the package declares `[[env]]`
+5. **Offers its suggestions.** Every `[defaults]` key the package carries is
+   offered once, in a fixed order: accept it, overwrite it with a value you
+   type, or skip it. What you accept lands on your table as your own key, in
+   the same write as the `source` line, and the output ends with one line per
+   suggestion saying `written`, `skipped` and why, or `kept` because your
+   table already set it. `--accept-defaults` accepts them all unattended;
+   `--yes` accepts none and says so.
+6. **Lists the environment.** When the package declares `[[env]]`
    variables, install ends with a ready-to-copy `env_file` skeleton: one
    `NAME=` line per variable with its description as a comment, and each
    optional one commented out. It holds names only; you fill in the values.
@@ -161,6 +173,11 @@ Review those effective-value changes one by one:
   overrides, you choose whether to drop your override.
 - **No silent apply.** `--yes` and unattended runs refuse to apply such a
   diff. They name the changes instead.
+- **A changed suggestion.** Upgrade also lists what the new commit's
+  `[defaults]` added, changed or dropped, and offers only the added and
+  changed keys, so one the package left alone is not asked about twice. A key
+  your table already sets is never moved, even under `--accept-defaults`:
+  the report shows it as `kept` with your value.
 
 ## 5. Remove
 
@@ -222,6 +239,11 @@ description = "Fine-grained PAT: Pull requests read/write, Contents read"
 name        = "REVIEW_REPOS"
 required    = true
 description = "Space-separated <host>/<owner>/<repo> list"
+
+[defaults]                              # suggestions, never applied values
+schedule    = "0 9 * * 1-5"
+timeout     = "45m"
+on_overlap  = "queue"
 ```
 
 `license` is an SPDX license expression. It may use only `AND`, `OR`,
@@ -236,6 +258,17 @@ An `[[env]]` block takes only `name` (matching `^[A-Z_][A-Z0-9_]*$`),
 `required` and `secret` (booleans, default `false`) and `description` (one
 line). Any other key fails the install, and `value` or `default` fails it
 with the reason: the value belongs to the operator.
+
+A `[defaults]` table takes only `schedule`, `triggers`, `timeout`,
+`on_overlap`, `catch_up`, `operating_hours`, `restart`, `restart_delay` and
+`workdir`, each validated by the same parser your table's key uses. It is
+inert at config load: nothing there reaches a running harness until you take
+it at install or upgrade, when it becomes your own key. Two things gate an
+offer: the table the write would produce must load (a `timeout` with nothing
+to fire is skipped, naming the loader's error), and a `triggers` suggestion
+needs every source it names to exist already, because install never creates
+one. `env_file`, `secrets_env` and `enabled` are refused with a reason: the
+first two are secret references (ADR-0038), and autostart is your call.
 
 Keep the manifest to keys every adapter accepts if you want operators to
 override `harness`. `system_prompt_file`, `mcp_config` and `allowed_tools`

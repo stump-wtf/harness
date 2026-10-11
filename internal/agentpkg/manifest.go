@@ -1,10 +1,13 @@
 // Manifest is the decoded, validated package.toml (SPEC-0026 REQ-3). The
 // loader is strict by construction: any table beyond [package], [harness],
-// [requests] and [[env]] (env.go), any harness key outside the value-key allowlist, any forbidden
-// key, and any string containing "${" (the ADR-0038 secret-reference grammar)
-// fails the load naming the key and the manifest's path.
+// [requests], [[env]] (env.go) and [defaults] (defaults.go), any harness key
+// outside the value-key allowlist, any forbidden key, and any string
+// containing "${" (the ADR-0038 secret-reference grammar) fails the load
+// naming the key and the manifest's path.
 //
 // Governing: ADR-0044, SPEC-0026 REQ-3, Error Handling Standards.
+//
+// @joestump-agent 10/10/2026 - Accept [defaults] suggestions (harness#931).
 package agentpkg
 
 import (
@@ -78,6 +81,11 @@ type Manifest struct {
 	// Env is the [[env]] declarations, in manifest order: names the harness
 	// expects in its environment, never their values (env.go).
 	Env []EnvVar
+	// Defaults are the [defaults] suggestions: supervision values the
+	// package proposes for the operator's table. Inert at config load —
+	// they reach a harness only through the operator's choice at install
+	// or upgrade (defaults.go, ADR-0044 amendment of 2026-10-09).
+	Defaults *Defaults
 }
 
 // harnessAllowlist is the only set of keys [harness] accepts, matched against
@@ -144,9 +152,9 @@ func ParseManifest(raw []byte, path string) (*Manifest, error) {
 
 	for _, key := range sortedKeys(doc) {
 		switch key {
-		case "package", "harness", "requests", "env":
+		case "package", "harness", "requests", "env", "defaults":
 		default:
-			return nil, violation(path, "table [%s] is not allowed in a package manifest (only [package], [harness], [requests], [[env]])", key)
+			return nil, violation(path, "table [%s] is not allowed in a package manifest (only [package], [harness], [requests], [[env]], [defaults])", key)
 		}
 	}
 
@@ -161,6 +169,9 @@ func ParseManifest(raw []byte, path string) (*Manifest, error) {
 		return nil, err
 	}
 	if err := decodeEnv(doc["env"], path, m); err != nil {
+		return nil, err
+	}
+	if err := decodeDefaults(doc["defaults"], path, m); err != nil {
 		return nil, err
 	}
 	return m, nil

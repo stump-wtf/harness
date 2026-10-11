@@ -448,8 +448,8 @@ harness stable check [PATH] [--json]          # lint + load-test each package
 harness agent search [QUERY] [--stable NAME]        # packages in local clones
 harness agent info STABLE/PACKAGE [--readme-full]   # manifest, license, requests, declared env, README, scan findings, files
 
-harness agent install STABLE/PACKAGE[@VERSION] [--as NAME] [--replace] [--yes] [--force-unsafe] [--readme-full]
-harness agent upgrade STABLE/PACKAGE[@VERSION] [--all] [--yes] [--readme-full]
+harness agent install STABLE/PACKAGE[@VERSION] [--as NAME] [--replace] [--yes] [--accept-defaults] [--force-unsafe] [--readme-full]
+harness agent upgrade STABLE/PACKAGE[@VERSION] [--all] [--yes] [--accept-defaults] [--readme-full]
 harness agent list [--json]                         # package-sourced harnesses, pins, NEWER, LICENSE
 harness agent uninstall NAME [--yes]                # remove the table; the pin stays
 harness agent prune                                 # remove pins nothing references
@@ -486,11 +486,21 @@ harness agent prune                                 # remove pins nothing refere
     one carries the `package.no-license` low finding, which never blocks.
   - Its output ends with an `env_file` skeleton for the variables the
     package declares in `[[env]]`: names and descriptions, never values.
+  - A package can suggest supervision settings in `[defaults]`. Nothing in
+    that table is ever applied on its own: `install` offers each suggestion
+    once (accept it, overwrite it with a value you type, or skip it) and
+    writes what you choose as your own keys beside `source`. Keys your table
+    already sets are never offered. `--accept-defaults` takes every
+    suggestion unattended; `--yes` takes none and says so.
 - **`upgrade`** re-pins to a newer commit of the local clone (`--all` for
   every sourced harness). It shows the manifest diff (a `package.license`
   change is flagged as a terms change), any new scan finding,
   and every change to the harness's effective values. It never applies those
-  changes unattended: `--yes` refuses, naming them.
+  changes unattended: `--yes` refuses, naming them. It reports the
+  `[defaults]` suggestions the new commit added or changed and offers only
+  those, so a suggestion the package left alone is not asked about twice; a
+  key your table already sets is never moved, even under
+  `--accept-defaults`.
 - **`prune`** reads only the global `harness.toml`. A pin referenced only by
   a project file is removed, and that project's next `up` reports it missing.
 - **The package README.** `info`, `install` and `upgrade` print the package's

@@ -23,6 +23,10 @@ package main
 // @joestump-agent 10/04/2026 - prune keeps a pin a global file path points
 // into: a package path kept through the #882 review is the old pin's
 // absolute path, and pruning that pin broke the next config load.
+//
+// @joestump-agent 10/10/2026 - install asks about the manifest's [defaults]
+// after the gate and writes the chosen ones beside source (harness#931);
+// --yes accepts none of them and says so, --accept-defaults accepts all.
 
 import (
 	"errors"
@@ -45,11 +49,12 @@ import (
 )
 
 type installOpts struct {
-	as          string
-	replace     bool
-	yes         bool
-	forceUnsafe bool
-	readmeFull  bool
+	as             string
+	replace        bool
+	yes            bool
+	forceUnsafe    bool
+	readmeFull     bool
+	acceptDefaults bool
 }
 
 func newAgentInstallCmd(g *globalOpts) *cobra.Command {
@@ -66,6 +71,7 @@ func newAgentInstallCmd(g *globalOpts) *cobra.Command {
 			o.yes, _ = cmd.Flags().GetBool("yes")
 			o.forceUnsafe, _ = cmd.Flags().GetBool("force-unsafe")
 			o.readmeFull, _ = cmd.Flags().GetBool("readme-full")
+			o.acceptDefaults, _ = cmd.Flags().GetBool("accept-defaults")
 			return runAgentInstall(cmd, g.opts(), o, args[0])
 		},
 	}
@@ -74,6 +80,7 @@ func newAgentInstallCmd(g *globalOpts) *cobra.Command {
 	install.Flags().Bool("yes", false, "skip the ordinary confirmation (never clears a high finding or a write request)")
 	install.Flags().Bool("force-unsafe", false, "override a high-severity finding (requires an interactive retype)")
 	install.Flags().Bool("readme-full", false, "print the package README whole instead of capping it")
+	install.Flags().Bool("accept-defaults", false, "accept every [defaults] suggestion the package carries (counts as your choice)")
 	return install
 }
 
@@ -209,11 +216,38 @@ func runAgentInstall(cmd *cobra.Command, o verbOpts, io installOpts, ref string)
 		}
 	}
 
-	// Write exactly one key on one table (REQ-11): source.
+	// The suggested defaults are decided after the trust gate has passed and
+	// after the pin is on disk, and before any write (SPEC-0026 REQ-6,
+	// harness#931). Placing first is not cosmetic: the loader check resolves
+	// source against the pin store, so the pin has to be materialized for
+	// the candidate config to load at all. Only keys the target table does
+	// not already set are offered.
 	name := io.as
 	if name == "" {
 		name = pkg
 	}
+	outcomes, err := decideDefaults(cmd, defaultsAsk{
+		ConfigPath: o.configPath,
+		Table:      name,
+		Man:        man,
+		Cfg:        cfg,
+		Candidate: func(ed *tomledit.Editor) error {
+			if _, ok := cfg.Harnesses[name]; ok {
+				return ed.SetHarnessKey(name, "source", src.String())
+			}
+			return ed.AddHarness(name, [][2]any{{"source", src.String()}})
+		},
+		Yes:            io.yes,
+		AcceptDefaults: io.acceptDefaults,
+		Interactive:    cliui.IsTTY(os.Stdin),
+	})
+	if err != nil {
+		return err
+	}
+
+	// Write the source key plus the defaults the operator chose (REQ-11,
+	// REQ-6): the chosen suggestions land as the operator's own keys, in the
+	// same write as source.
 	// The confirmed requested scope lands on the table with the source
 	// (issue #882): the effective mcp_allow is visible and hand-editable,
 	// one place, never split between table and manifest. A package that
@@ -221,6 +255,11 @@ func runAgentInstall(cmd *cobra.Command, o verbOpts, io installOpts, ref string)
 	var extra [][2]any
 	if len(man.Requests.MCPAllow) > 0 {
 		extra = append(extra, [2]any{"mcp_allow", man.Requests.MCPAllow})
+	}
+	for _, d := range outcomes {
+		if d.Status == defaultWritten {
+			extra = append(extra, [2]any{d.Key, d.Value})
+		}
 	}
 	if err := writeSourceTable(o.configPath, cfg, name, src, io.replace, extra); err != nil {
 		return err
@@ -241,6 +280,7 @@ func runAgentInstall(cmd *cobra.Command, o verbOpts, io installOpts, ref string)
 
 	fmt.Fprintf(cmd.OutOrStdout(), "agent: installed %s as harness %q (source = %q, pinned at %s)\n",
 		src.Stable+"/"+src.Package, name, src.String(), agentpkg.PinDir(src))
+	printDefaults(cmd, "", outcomes)
 	for _, f := range files {
 		if strings.HasPrefix(f, "prompts/") {
 			fmt.Fprintf(cmd.OutOrStdout(), "agent: bundled prompts/ directory is NOT registered automatically; add it to [mcp.prompts] by hand if you want it\n")

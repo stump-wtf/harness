@@ -80,6 +80,14 @@ func RenderReport(w io.Writer, in ReportInput) {
 		fmt.Fprintf(w, "  %s\n", line)
 	}
 
+	// The suggested supervision values, marked as suggestions: nothing here
+	// is applied, and the operator decides each one after this report
+	// (SPEC-0026 REQ-6, harness#931).
+	fmt.Fprintf(w, "suggested defaults:\n")
+	for _, line := range RenderDefaults(in.Man) {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+
 	// The README sits before the findings so that the findings and the
 	// no-guarantee statement stay closest to the prompt (harness#929).
 	RenderReadme(w, in.Readme, in.ReadmeFull)

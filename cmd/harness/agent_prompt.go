@@ -41,7 +41,15 @@ func readRetype(w io.Writer, ref string) (string, error) {
 
 // readLine reads one line from stdin (TTY or pipe).
 func readLine() (string, error) {
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	return readLineFrom(bufio.NewReader(os.Stdin))
+}
+
+// readLineFrom reads one line from an existing reader. A flow with more than
+// one prompt must pass the same reader every time: a fresh bufio.Reader
+// buffers past the line it returns, and discarding it drops the next
+// answer still sitting in the buffer.
+func readLineFrom(in *bufio.Reader) (string, error) {
+	line, err := in.ReadString('\n')
 	if err != nil && line == "" {
 		return "", err
 	}

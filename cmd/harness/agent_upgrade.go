@@ -25,6 +25,10 @@ package main
 //
 // @joestump-agent 10/04/2026 - A kept package path says it holds the old
 // pin: prune now counts it as a reference.
+//
+// @joestump-agent 10/10/2026 - Upgrade reports the manifest's added, changed
+// and dropped [defaults] and offers only the added or changed ones, for
+// keys the table does not already set (harness#931).
 
 import (
 	"errors"
@@ -44,10 +48,11 @@ import (
 )
 
 type upgradeOpts struct {
-	all         bool
-	yes         bool
-	forceUnsafe bool
-	readmeFull  bool
+	all            bool
+	yes            bool
+	forceUnsafe    bool
+	readmeFull     bool
+	acceptDefaults bool
 }
 
 func newAgentUpgradeCmd(g *globalOpts) *cobra.Command {
@@ -63,6 +68,7 @@ func newAgentUpgradeCmd(g *globalOpts) *cobra.Command {
 			o.yes, _ = cmd.Flags().GetBool("yes")
 			o.forceUnsafe, _ = cmd.Flags().GetBool("force-unsafe")
 			o.readmeFull, _ = cmd.Flags().GetBool("readme-full")
+			o.acceptDefaults, _ = cmd.Flags().GetBool("accept-defaults")
 			ref := ""
 			if len(args) > 0 {
 				ref = args[0]
@@ -74,6 +80,7 @@ func newAgentUpgradeCmd(g *globalOpts) *cobra.Command {
 	cmd.Flags().Bool("yes", false, "skip the ordinary confirmation (never clears a high finding or a write request)")
 	cmd.Flags().Bool("force-unsafe", false, "override a high-severity finding (requires an interactive retype)")
 	cmd.Flags().Bool("readme-full", false, "print the package README whole instead of capping it")
+	cmd.Flags().Bool("accept-defaults", false, "accept every NEW or CHANGED [defaults] suggestion (counts as your choice; never moves a key you set)")
 	return cmd
 }
 
@@ -288,10 +295,56 @@ func upgradeOne(cmd *cobra.Command, o verbOpts, uo upgradeOpts, cfg *core.Config
 			return err
 		}
 
+		// Suggested defaults on upgrade (SPEC-0026 REQ-8, harness#931):
+		// report every suggestion the new pin adds, changes or drops, then
+		// offer the added or changed ones for keys the table does not
+		// already set. A value already on the table is the operator's, from
+		// either hand, and is left byte-identical; an unchanged suggestion
+		// is not asked about a second time.
+		dd := agentpkg.DiffDefaults(oldMan.Defaults, newMan.Defaults)
+		if lines := agentpkg.DiffLines(oldMan.Defaults, newMan.Defaults); len(lines) > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "suggested defaults since @%s:\n", oldSHA)
+			for _, l := range lines {
+				fmt.Fprintf(cmd.OutOrStdout(), "  %s\n", l)
+			}
+		}
+		offered := append(append([]string{}, dd.Added...), dd.Changed...)
+
 		// Place the new pin; the prior pin's directory is never deleted.
 		if tmp != "" {
 			if _, err := agentpkg.Place(newSrc, tmp); err != nil {
 				return err
+			}
+		}
+
+		// The offers run once the new pin is on disk, because the loader
+		// check resolves source against the pin store.
+		pending := map[string][]defaultOutcome{}
+		if len(offered) > 0 {
+			for _, name := range names {
+				outcomes, err := decideDefaults(cmd, defaultsAsk{
+					ConfigPath: o.configPath,
+					Table:      name,
+					Man:        newMan,
+					Cfg:        cfg,
+					Only:       offered,
+					Candidate: func(ed *tomledit.Editor) error {
+						if err := ed.SetHarnessKey(name, "source", newSrc.String()); err != nil {
+							return err
+						}
+						if rc, ok := choices[name]; ok {
+							return applyReviewChoices(cmd, ed, name, rc.chgs, rc.take)
+						}
+						return nil
+					},
+					Yes:            uo.yes,
+					AcceptDefaults: uo.acceptDefaults,
+					Interactive:    cliui.IsTTY(os.Stdin),
+				})
+				if err != nil {
+					return err
+				}
+				pending[name] = outcomes
 			}
 		}
 
@@ -309,6 +362,16 @@ func upgradeOne(cmd *cobra.Command, o verbOpts, uo upgradeOpts, cfg *core.Config
 			if rc, ok := choices[name]; ok {
 				if err := applyReviewChoices(cmd, ed, name, rc.chgs, rc.take); err != nil {
 					return err
+				}
+			}
+			// A chosen default lands in the same write as the source line
+			// (REQ-8), as the operator's own key.
+			for _, d := range pending[name] {
+				if d.Status != defaultWritten {
+					continue
+				}
+				if err := ed.SetHarnessKey(name, d.Key, d.Value); err != nil {
+					return fmt.Errorf("agent: set %s on [harness.%s]: %w", d.Key, name, err)
 				}
 			}
 		}
@@ -331,6 +394,7 @@ func upgradeOne(cmd *cobra.Command, o verbOpts, uo upgradeOpts, cfg *core.Config
 		for _, name := range names {
 			fmt.Fprintf(cmd.OutOrStdout(), "agent: upgraded %s: @%s -> @%s (prior pin retained at %s)\n",
 				name, oldSHA, newSrc.SHA, oldDir)
+			printDefaults(cmd, name+" ", pending[name])
 		}
 	}
 	return nil

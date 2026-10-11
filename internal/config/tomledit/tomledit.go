@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -741,7 +742,10 @@ func splice(data []byte, from, to int, insert []byte) []byte {
 }
 
 // encodeValue renders the only value shapes these commands write: TOML basic
-// strings with escapes, string lists and booleans.
+// strings with escapes, string lists, booleans and integers.
+//
+// @joestump-agent 10/10/2026 - Integers, for a suggested restart_delay written
+// onto a harness table (harness#931).
 func encodeValue(v any) (string, error) {
 	switch t := v.(type) {
 	case bool:
@@ -751,6 +755,10 @@ func encodeValue(v any) (string, error) {
 		return "false", nil
 	case string:
 		return encodeString(t), nil
+	case int:
+		return strconv.Itoa(t), nil
+	case int64:
+		return strconv.FormatInt(t, 10), nil
 	case []string:
 		parts := make([]string, len(t))
 		for i, s := range t {
@@ -758,7 +766,7 @@ func encodeValue(v any) (string, error) {
 		}
 		return "[" + strings.Join(parts, ", ") + "]", nil
 	default:
-		return "", fmt.Errorf("tomledit: unsupported value type %T (strings, string lists, booleans only)", v)
+		return "", fmt.Errorf("tomledit: unsupported value type %T (strings, string lists, booleans, integers only)", v)
 	}
 }
 
