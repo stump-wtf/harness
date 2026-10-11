@@ -170,6 +170,7 @@ func newStableCmd(g *globalOpts) *cobra.Command {
 	}
 
 	cmd.AddCommand(add, remove, update, list)
+	cmd.AddCommand(newStableLintCmd(g), newStableCheckCmd(g))
 	return cmd
 }
 

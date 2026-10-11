@@ -66,6 +66,8 @@ var helpText = struct {
 		{"stable remove NAME", "remove a stable's [stable.NAME] table; installed harnesses are untouched and named"},
 		{"stable update [NAME]", "fetch and fast-forward stable clones — the only stable or agent command that fetches"},
 		{"stable list", "list trusted stables and their clones"},
+		{"stable lint [PATH] [--json]", "validate a stable checkout offline with Harness's own parser and scanner (no daemon, no network)"},
+		{"stable check [PATH] [--json]", "lint, then load-test each package exactly as config load would (unknown adapter, template context)"},
 		{"agent list [--json]", "list package-sourced harnesses, their pins and clone staleness (no fetch)"},
 		{"agent install STABLE/PACKAGE[@VERSION]", "pin a package, scan and confirm it, bind it to a harness table (--as, --replace, --yes, --force-unsafe; never fetches)"},
 		{"agent upgrade STABLE/PACKAGE[@VERSION]", "re-pin a package-sourced harness to a newer local-clone commit (--all, --yes; diff, rescan, confirm)"},

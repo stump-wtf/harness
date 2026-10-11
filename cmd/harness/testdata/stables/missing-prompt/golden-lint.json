@@ -1,0 +1,13 @@
+[
+  {
+    "package": "lost",
+    "errors": [
+      {
+        "id": "package.missing-file",
+        "file": "package.toml",
+        "message": "[harness].prompt_file \"prompts/missing.md\" does not exist in the package"
+      }
+    ],
+    "warnings": []
+  }
+]

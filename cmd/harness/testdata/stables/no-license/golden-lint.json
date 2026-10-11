@@ -1,0 +1,14 @@
+[
+  {
+    "package": "unlicensed",
+    "errors": [
+      {
+        "id": "package.no-license",
+        "file": "package.toml",
+        "line": 1,
+        "message": "no [package].license: declare the package's SPDX license expression"
+      }
+    ],
+    "warnings": []
+  }
+]

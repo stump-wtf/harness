@@ -1,0 +1,6 @@
+[package]
+name = "unlicensed"
+
+[harness]
+harness = "claude-code"
+prompt  = "Summarize yesterday's commits."

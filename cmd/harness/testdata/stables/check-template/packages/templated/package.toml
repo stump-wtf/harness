@@ -1,0 +1,7 @@
+[package]
+name = "templated"
+license = "MIT"
+
+[harness]
+harness         = "claude-code"
+prompt_template = "Handle the event from {{run.source}}."

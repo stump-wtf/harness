@@ -1,0 +1,13 @@
+[
+  {
+    "package": "quiet",
+    "errors": [
+      {
+        "id": "package.no-readme",
+        "file": "README.md",
+        "message": "no README.md: the operator installing this package has nothing to read about it"
+      }
+    ],
+    "warnings": []
+  }
+]

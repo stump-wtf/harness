@@ -1056,6 +1056,43 @@ where from (`env_file` or the daemon's `environment`). No surface — doctor,
 describe, either `--json` form, the protocol, or a log — SHALL ever carry a
 variable's value (ADR-0038 rule 9).
 
+Amendment (issue #933): `harness stable lint [PATH]` and `harness stable
+check [PATH]` SHALL validate a stable checkout (a directory
+holding `packages/`; `PATH` defaults to the working directory) offline: no
+daemon socket, no git operation and no network access. `lint` SHALL use the
+same manifest loader (REQ-3) and the same content scan (REQ-5) as install,
+and SHALL report as an error, per package: every manifest violation the
+loader returns; every `high` scan finding; a `[package].name` that does not
+match its directory; a path key naming a file the package does not ship, or
+an empty one; a symlink; and a missing `README.md` (`package.no-readme`) or
+license (`package.no-license`). These two convention findings are `low` at
+install and are promoted to errors by finding id. Every other `low` finding
+SHALL be a warning. `check` SHALL run `lint`, then load every package whose
+manifest parsed through config load's own `source` resolution (REQ-7) under
+a synthetic `[harness.<package>]` table, adding a `schedule` when the
+package supplies a prompt, and SHALL report any load error. Both verbs SHALL
+exit non-zero on any error, and `--json` SHALL emit one `{package, errors,
+warnings}` object per package. A directory with no packages SHALL fail
+rather than report a clean run.
+
+#### Scenario: stable lint fails a package install would refuse
+
+- **WHEN** a stable checkout's package carries a `high` scan finding
+- **THEN** `harness stable lint` exits non-zero and names the file,
+  the line and the pattern id, without echoing the matched text
+
+#### Scenario: stable check catches a load error lint cannot
+
+- **WHEN** a package's manifest names an adapter Harness does not know
+- **THEN** `harness stable lint` passes it, and `harness stable
+  check` exits non-zero with the same error config load would report
+
+#### Scenario: stable lint runs offline
+
+- **WHEN** `harness stable lint` or `check` runs
+- **THEN** it dials no daemon socket, runs no git command and writes nothing
+  under the state directory
+
 #### Scenario: list shows staleness without fetching
 
 - **WHEN** a stable's local clone (from its last `stable update`) is three commits

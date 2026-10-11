@@ -1,0 +1,7 @@
+[package]
+name = "beta"
+license = "MIT"
+
+[harness]
+harness = "claude-code"
+prompt  = "Summarize yesterday's commits."

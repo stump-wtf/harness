@@ -1,0 +1,12 @@
+[
+  {
+    "package": "pr-reviewer",
+    "errors": [],
+    "warnings": []
+  },
+  {
+    "package": "watcher",
+    "errors": [],
+    "warnings": []
+  }
+]

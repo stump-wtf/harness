@@ -34,6 +34,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/stump-wtf/harness/internal/agentpkg"
 	"github.com/stump-wtf/harness/internal/core"
 )
 
@@ -99,6 +100,9 @@ type loadState struct {
 	// endpoints maps a normalized channel URL to the source that claimed it,
 	// for REQ "One Consumer Per Endpoint".
 	endpoints map[string]string
+	// pinDir is ParseOptions.PinDir for this load: nil resolves `source`
+	// against the pin store.
+	pinDir func(agentpkg.Source) string
 }
 
 func newLoadState() *loadState {

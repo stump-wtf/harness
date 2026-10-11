@@ -1,0 +1,7 @@
+[package]
+name = "installer"
+license = "MIT"
+
+[harness]
+harness     = "claude-code"
+prompt_file = "prompt.md"

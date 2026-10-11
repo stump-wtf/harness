@@ -1,0 +1,7 @@
+[package]
+name = "watcher"
+license = "MIT"
+
+[harness]
+harness = "crush"
+args    = ["--yolo"]
