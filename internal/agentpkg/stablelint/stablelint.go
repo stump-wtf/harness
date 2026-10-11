@@ -16,6 +16,9 @@
 // @joestump-agent 10/09/2026 - Added for harness#933.
 // @joestump-agent 10/10/2026 - Command spelling retitled to the top-level
 // `harness stable` tree after #941's promotion.
+// @joestump-agent 10/10/2026 - Dropped the synthetic README check: the
+// scanner grew its own package.no-readme finding in #929, and lint would
+// have reported it twice.
 package stablelint
 
 import (
@@ -50,8 +53,8 @@ const (
 // promoted names the low-severity findings lint reports as errors. Install
 // shows them and proceeds; a stable that publishes a package without them
 // fails its own CI, because the operator reading the install confirmation is
-// the one who pays for the gap. The README finding is produced here; the
-// license finding is the scan's own (#932), the same one install shows.
+// the one who pays for the gap. Both findings are the scan's own (#929 and
+// #932), the same ones install shows, so lint never reports them twice.
 var promoted = map[string]bool{
 	IDNoReadme:  true,
 	IDNoLicense: true,
@@ -178,11 +181,6 @@ func lintPackage(dir, name string) Report {
 		return nil
 	})
 
-	if fi, err := os.Stat(filepath.Join(dir, "README.md")); err != nil || !fi.Mode().IsRegular() {
-		r.add(agentpkg.SeverityLow, Issue{ID: IDNoReadme, File: "README.md",
-			Message: "no README.md: the operator installing this package has nothing to read about it"})
-	}
-
 	// The scan, exactly as install runs it. A manifest that failed to parse
 	// is still scanned (with no manifest), so one run reports both.
 	findings, err := scan.Scan(dir, r.man)
@@ -197,8 +195,11 @@ func lintPackage(dir, name string) Report {
 		if strings.HasPrefix(f.PatternID, "package.") {
 			id = f.PatternID
 		}
-		if f.PatternID == agentpkg.FindingNoLicense {
+		switch f.PatternID {
+		case agentpkg.FindingNoLicense:
 			msg = "no [package].license: declare the package's SPDX license expression"
+		case agentpkg.FindingNoReadme:
+			msg = "no README.md: the operator installing this package has nothing to read about it"
 		}
 		r.add(f.Severity, Issue{ID: id, File: f.File, Line: f.Line, Message: msg})
 	}
