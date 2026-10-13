@@ -21,6 +21,7 @@ package source
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -333,6 +334,48 @@ func TestLongOutageCatchesUp(t *testing.T) {
 	r.mu.Unlock()
 	if n != 2 {
 		t.Errorf("a 20-minute outage produced %d runs, want the start catch-up plus exactly one more", n)
+	}
+}
+
+// TestIdleCutStreamsResetTheBackoff is the end-to-end regression guard for a
+// proxy that cancels idle streams at ~125 s. No single stream reaches the
+// 5-minute reset, so the old reset never fired and the delay ratcheted to the
+// ceiling, leaving the channel down most of the time; open time now
+// accumulates across consecutive healthy streams, so the delay returns to the
+// base within a few cycles.
+func TestIdleCutStreamsResetTheBackoff(t *testing.T) {
+	srv := testserver.New(testserver.Options{})
+	t.Cleanup(srv.Close)
+
+	clk := newClock()
+	cfg := channelCfg(srv.URL, true, "sweep")
+	_, states := reconnectManager(t, &fakeRunner{}, func() *core.Config { return cfg }, clk)
+
+	opened := func(n int) {
+		waitFor(t, 5*time.Second, fmt.Sprintf("the source has connected %d times", n), func() bool {
+			count := 0
+			for _, s := range states.snapshot() {
+				if s == trigger.StateConnected {
+					count++
+				}
+			}
+			return count == n
+		})
+	}
+	opened(1)
+
+	for i := 0; i < 4; i++ {
+		// The stream is READ for ~125 s, then the proxy cuts it.
+		clk.Advance(125 * time.Second)
+		srv.CloseStreams()
+		opened(i + 2)
+	}
+
+	// The first two retries escalate (1 s, 2 s); by the third, 375 s of
+	// healthy open time has accumulated and the delay is back at the base.
+	// The old code gave 4 s there and kept climbing to the ceiling.
+	if got := clk.Slept(); len(got) < 3 || got[2] != channel.BackoffBase {
+		t.Errorf("third retry waited %v, want the %s base", got, channel.BackoffBase)
 	}
 }
 

@@ -100,3 +100,53 @@ func TestResetNeedsAStreamThatStayedOpen(t *testing.T) {
 		t.Errorf("a %s connection did not reset the backoff: next delay %s", BackoffResetAfter, got)
 	}
 }
+
+// TestResetAccumulatesConsecutiveHealthyStreams is the regression guard for a
+// proxy that cancels idle streams at ~125 s. No single stream reaches the
+// 5-minute mark, and the old reset never fired, so the delay ratcheted to the
+// ceiling and the channel was down most of the time; the same streams,
+// counted together, must bring the base delay back.
+func TestResetAccumulatesConsecutiveHealthyStreams(t *testing.T) {
+	b := &Backoff{Rand: fixed(0)}
+	for i := 0; i < 6; i++ {
+		b.Next()
+	}
+	escalated := b.Next()
+
+	// Two 125-second streams: 250 s of credit, short of the 5-minute mark.
+	b.ResetAfter(125 * time.Second)
+	b.ResetAfter(125 * time.Second)
+	if got := b.Next(); got <= escalated {
+		t.Errorf("two healthy streams reset the backoff early: next delay %s", got)
+	}
+	// The third crosses it, and the delay comes home.
+	b.ResetAfter(125 * time.Second)
+	if got := b.Next(); got != BackoffBase {
+		t.Errorf("three healthy 125 s streams did not reset the backoff: next delay %s", got)
+	}
+}
+
+// TestHardFailureClearsTheCredit: a failure that never opened a stream breaks
+// the run of consecutive healthy streams, so the credit the healthy streams
+// earned does not carry through a real outage.
+func TestHardFailureClearsTheCredit(t *testing.T) {
+	b := &Backoff{Rand: fixed(0)}
+	for i := 0; i < 6; i++ {
+		b.Next()
+	}
+	escalated := b.Next()
+
+	b.ResetAfter(125 * time.Second)
+	// A hard failure: nothing opened.
+	b.ResetAfter(0)
+	// Two more healthy streams: 250 s of fresh credit, still short.
+	b.ResetAfter(125 * time.Second)
+	b.ResetAfter(125 * time.Second)
+	if got := b.Next(); got <= escalated {
+		t.Errorf("the credit survived a hard failure: next delay %s", got)
+	}
+	b.ResetAfter(125 * time.Second)
+	if got := b.Next(); got != BackoffBase {
+		t.Errorf("the credit rebuilt after the outage did not reset the backoff: next delay %s", got)
+	}
+}
