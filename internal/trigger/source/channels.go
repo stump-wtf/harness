@@ -362,11 +362,15 @@ func (m *Manager) attempt(
 // only a long gap or a restart can outlast the re-rings; and "late" then means
 // one thing across the daemon rather than two numbers that drift.
 //
-// A flapping link is NOT immune. The backoff resets only after a stream has
-// stayed open 5 minutes, so on a link that drops sooner every time the ladder
-// climbs past LateGrace within a few flaps, and from then on each reconnect
-// follows an outage longer than LateGrace and catches up — about once per
-// ceiling interval. REQ "Channel Catch-Up" asks for exactly that, read
+// A flapping link is NOT immune. The backoff resets once 5 minutes of open
+// time has accumulated across consecutive healthy streams, so on a link that
+// opens and dies within seconds each time the credit accrues a few seconds a
+// flap, the ladder climbs past LateGrace within a few flaps, and from then on
+// each reconnect follows an outage longer than LateGrace and catches up —
+// about once per ceiling interval. A link whose proxy cuts idle streams after
+// a couple of minutes accumulates the 5 minutes in a few cycles and returns
+// to the base delay, so its outages stay under LateGrace and no catch-up
+// fires. REQ "Channel Catch-Up" asks for exactly the first behavior, read
 // literally; it is bounded by the ceiling and by on_overlap, not prevented.
 // Governing: SPEC-0014 REQ "Channel Catch-Up"; SPEC-0008 REQ "Missed Window
 // Handling".
