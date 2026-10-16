@@ -117,10 +117,11 @@ reconciliation run: list open PRs and handle any the events missed.
 ```
 
 It starts seconds after the event, touches one pull request, and has nothing
-to do when nothing happened. Putting event fields straight into the prompt
-(`{{event.*}}` templates) is **coming**
-([ADR-0023](/decisions/adr-0023-command-one-shots-and-templating)); until then,
-the file is the interface.
+to do when nothing happened. The event's validated metadata also renders into
+the prompt and argv as `{{event.*}}` paths
+([event context](/usage/configuration#event-context),
+[ADR-0023](/decisions/adr-0023-command-one-shots-and-templating)); the raw
+text stays in the file, and for it the file remains the interface.
 
 ## When a schedule is still right
 
