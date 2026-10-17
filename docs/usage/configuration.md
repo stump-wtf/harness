@@ -177,15 +177,21 @@ schedule = "0 */4 * * *"
   "requires `prompt`" rules for `model`, `auto_accept`, `max_turns`, `quiet`
   and `schedule`.
 - **The context is the run, not the world**: `harness.name`,
-  `harness.workdir`, `model`, and the run record's `run.id`, `run.trigger`,
-  `run.source`, `run.started_at`, `run.date`. `prompt` and `prompt_file` are
-  never in it — a template referencing them fails the load. Event values
-  (`{{event.*}}`) are not available yet.
+  `harness.workdir`, `model`, the run record's `run.id`, `run.trigger`,
+  `run.source`, `run.started_at`, `run.date`, and, for a run a trigger
+  fired, the [event context](#event-context): `event.file`, `event.id`,
+  `event.kind`, `event.source`, `event.received_at`, and the event's
+  validated `event.name`, `event.action`, `event.repo`, `event.number`,
+  `event.url`, `event.sha` and `event.meta.<key>`. `prompt` and
+  `prompt_file` are never in it — a template referencing them fails the
+  load.
 - **Required vs optional**: `{{run.id}}` fails the run when the path is
   absent; `{{run.id?}}` renders empty. A required path no firing of the
   harness can ever supply (say `{{run.source}}` on a scheduled harness, or
   `{{run.id}}` outside any schedule or trigger) fails the config load, so
-  every firing cannot fail one by one.
+  every firing cannot fail one by one. The same holds for `event.*`: a
+  clock firing carries no event, so a required `{{event.repo}}` on a
+  harness with a `schedule` fails the load — write `{{event.repo?}}`.
 - **Grammar**: the only special sequences are `{{path}}`, `{{path?}}` and
   `{{literal_open}}` (the literal two characters `{{`). No functions, filters
   or loops. A malformed placeholder fails the load with the line and column —
@@ -788,21 +794,33 @@ conditionals or loops; `{{printf …}}` is a config error.
 | `run.source` | the trigger source, e.g. `webhook.ci` | a source caused the run |
 | `run.started_at` | the run's start, RFC 3339 UTC | always |
 | `run.date` | `YYYY-MM-DD` in the schedule's `CRON_TZ`/`TZ` zone, else the daemon's local zone | always |
+| `event.file` | the event file's absolute path | the run carries an event |
+| `event.id` | the event's ID (the sender's delivery ID, or a daemon-derived `evt-…`) | the run carries an event |
+| `event.kind` | `channel` or `webhook` | the run carries an event |
+| `event.source` | the trigger source, e.g. `webhook.ci` | the run carries an event |
+| `event.received_at` | when the daemon received the event, RFC 3339 UTC | the run carries an event |
+| `event.name`, `event.action`, `event.repo`, `event.number`, `event.url`, `event.sha` | the event's validated [`typed`](#typed-validated-event-metadata) value | extraction yielded it for the scheme |
+| `event.meta.<key>` | a validated channel `meta` value | the channel event's `meta` carried `<key>` with an ID-shaped value |
 
 Every template is checked when the config loads, and each failure names the
 element, line and column:
 
 - a malformed placeholder, or an unknown path;
-- event text in argv in **any** form (`{{event.title}}`, `{{untrusted
+- event **text** in argv in **any** form (`{{event.title}}`, `{{untrusted
   event.body}}`, …): text an outside party wrote never becomes an argument.
-  Give the program `$HARNESS_EVENT_FILE` to read instead;
-- `event.*` paths and `{{prompt}}`, which are not available in argv yet;
+  Give the program `{{event.file}}` to read instead;
+- `{{prompt}}` and `{{prompt_file}}` (a command harness has no prompt
+  delivery yet), and `{{event.actor}}` (trusted_actors is not implemented);
 - a required `{{run.id}}`, `{{run.trigger}}` or `{{run.source}}` on a harness
   with neither `schedule` nor `triggers` (it has no run records, so it could
   never render);
 - a required `{{run.source}}` on a harness with a `schedule` (a clock firing
   has no source, so every scheduled run would be skipped). Write
   `{{run.source?}}`;
+- a required `event.*` on a harness with a `schedule` (a clock firing carries
+  no event, so every scheduled run would be skipped), or on one with neither
+  `schedule` nor `triggers` (it never has an event at all). Write
+  `{{event.repo?}}`;
 - a required `{{model}}` with no `model` set.
 
 If a required value is still absent when a run spawns — a manual run of a
@@ -1573,6 +1591,125 @@ Changing `webhook_listen` or the TLS files needs a daemon restart; a reload
 logs that a restart is required and keeps serving on the old settings. Route
 changes (a source added, disabled, rebound) apply on reload. On shutdown the
 listener stops accepting and gives in-flight deliveries 5 seconds.
+
+## Event context
+
+A harness bound with `triggers` fires when a source delivers an **event**:
+a channel notification, or a verified webhook delivery. The delivery
+reaches the run as a private `0600` JSON file whose absolute path the run's
+`$HARNESS_EVENT_FILE` names; a scheduled firing has no event, and the
+variable is unset, not empty. Event text is attacker input by
+construction — anyone who can open a pull request can put words in it — so
+it never becomes prompt text or argv; the file is the interface for it
+([ADR-0021](/decisions/adr-0021-on-demand-one-shots)). Beyond the file, the
+event's **validated** parts render as `event.*` template paths in `argv`
+elements and `prompt_template`.
+
+### The event file
+
+One JSON object per event (`version` is `1`):
+
+```json
+{
+  "version": 1,
+  "kind": "webhook",
+  "source": "webhook.gh",
+  "event_id": "7053294418",
+  "received_at": "2026-10-08T14:03:11Z",
+  "webhook": {
+    "event": "pull_request",
+    "delivery": "7053294418",
+    "content_type": "application/vnd.github+json",
+    "headers": {"Content-Type": "application/vnd.github+json"},
+    "body": { "action": "opened", "number": 412 }
+  },
+  "typed": {
+    "name": "pull_request",
+    "action": "opened",
+    "repo": "stump.wtf/harness",
+    "number": 412,
+    "url": "https://gitea.stump.rocks/stump.wtf/harness/pulls/412"
+  }
+}
+```
+
+- `kind` is `channel` or `webhook` and decides which of the two sub-objects
+  is set; `source` is the reference that fired (`channel.sb`, `webhook.gh`).
+- `channel` passes the notification through verbatim: `content` (the free
+  text) and `meta`.
+- `webhook` carries the delivery's `event` name, the sender's `delivery` ID
+  when it sent one, `content_type`, an **allowlisted** `headers` subset
+  (never the signature, `Authorization` or a cookie), and the body under
+  exactly one of three keys: `body` when the content type is JSON and the
+  body parses, `body_text` when the body is valid UTF-8, `body_base64`
+  otherwise.
+- `replayed_at` is set only on a replay. `harness trigger NAME --event FILE`
+  re-derives `typed` from the stored body, so a hand-edited `typed` in a
+  replay file never renders.
+- `typed` holds the event's validated metadata, below. It is absent when
+  nothing validates.
+
+### `typed`: validated event metadata
+
+`typed` is the only way a payload byte becomes a template value. When the
+daemon writes the envelope, it extracts the typed values from the event's
+own fields with a per-scheme table and validates each: a value that is
+missing, of the wrong JSON type, or fails its validation is simply absent —
+never passed through, truncated, or normalized. No typed value can begin
+with `-`.
+
+| Scheme | Fields the table extracts |
+|---|---|
+| `github`, `gitea` | `name` (from the delivery's event header), `action` (`action`), `repo` (`repository.full_name`), `number` (`pull_request.number`, `issue.number`, `number`), `url` (`pull_request.html_url`, `issue.html_url` — must share the repository's own host), `sha` (`pull_request.head.sha`, `after`; 40 or 64 hex digits) |
+| `gitlab` | `name` (event header), `action` (`object_attributes.action`), `repo` (`project.path_with_namespace`), `number` (`object_attributes.iid`), `url` (`object_attributes.url`), `sha` (`object_attributes.last_commit.id`, `checkout_sha`) |
+| `bearer`, `hmac-sha256`, `standard-webhooks` | `name` only; an opaque scheme never reads the body |
+| a channel source | `meta.<key>` for each `meta` entry whose key matches `^[a-z][a-z0-9_]{0,31}$` and whose value matches `^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$` (Switchboard's `meta.todo_id` and `meta.queue`, say) |
+
+`number` is a JSON integer, 1 to 2³¹−1; `"412"` is absent, not parsed.
+`url` is an absolute https URL of at most 2048 bytes, absent when its host
+cannot be checked against the repository's own.
+
+### `event.*` template paths
+
+An `argv` element and a `prompt_template` render the same event paths (see
+[Argv templates](#argv-templates) and [Templated prompts](#templated-prompts)).
+The values come from the same envelope the event file was written from, so
+a rendered value and the file cannot disagree:
+
+| Path | Value | Present when |
+|---|---|---|
+| `event.file` | the event file's absolute path | the run carries an event |
+| `event.id` | the event's ID: the sender's delivery ID when it is ID-shaped, else a daemon-derived `evt-…` | the run carries an event |
+| `event.kind` | `channel` or `webhook` | the run carries an event |
+| `event.source` | the trigger source, e.g. `webhook.ci` | the run carries an event |
+| `event.received_at` | when the daemon received the event, RFC 3339 UTC | the run carries an event |
+| `event.name`, `event.action`, `event.repo`, `event.number`, `event.url`, `event.sha` | the matching `typed` value | extraction yielded it |
+| `event.meta.<key>` | a validated channel `meta` value | the channel event carried it |
+
+```toml
+[harness.pr-tooling]
+harness = "command"
+argv = ["pr-tool", "review", "{{event.repo}}", "{{event.number}}", "--event", "{{event.file}}"]
+triggers = ["webhook.gh"]
+```
+
+```toml
+[harness.pr-watch]
+harness = "claude-code"
+prompt_template = "A {{event.name}} ({{event.action}}) landed in {{event.repo}}: {{event.url}}. Read the full delivery in {{event.file}} and triage it."
+triggers = ["webhook.gh"]
+```
+
+Two refusals and one rule:
+
+- **Free text never renders.** `event.title`, `event.body`, `event.comment`, `event.ref`,
+  `event.content` and `{{untrusted …}}` are refused in argv and in prompt
+  templates alike. Give the program or agent `event.file` and let it read
+  the raw text knowing it is untrusted.
+- **`event.actor` is not available yet** (trusted_actors is a later story).
+- A required `event.*` that a firing could not render fails the load: a
+  harness with no `triggers` never has an event, and a `schedule`'s clock
+  firings carry none. Write `{{event.repo?}}` for an empty expansion.
 
 ## Environment variables
 
