@@ -39,6 +39,7 @@ import (
 	"github.com/stump-wtf/harness/internal/remote"
 	"github.com/stump-wtf/harness/internal/runusage"
 	"github.com/stump-wtf/harness/internal/scheduler"
+	"github.com/stump-wtf/harness/internal/stallguard"
 	"github.com/stump-wtf/harness/internal/supervisor"
 	"github.com/stump-wtf/harness/internal/telemetry"
 	"github.com/stump-wtf/harness/internal/trigger/source"
@@ -555,6 +556,13 @@ func runDaemon(o daemonOpts) {
 	loopGuard := startDaemonLoopGuard(mgr, observer, notifier, loopguard.Options{})
 	log.Info("runaway tool-loop guard active", "threshold", loopguard.DefaultThreshold)
 
+	// Issue #959: watch persistent harnesses for lost progress. A worker that
+	// stays alive and blocks is never recovered by `restart`, which fires on
+	// exit, and the wall-clock `timeout` is not a liveness signal for a worker
+	// meant to live for days — so this measures observed model calls instead.
+	stallGuard := startDaemonStallGuard(mgr, observer, notifier, stallguard.Options{})
+	log.Info("stall watchdog active", "interval", stallguard.DefaultInterval, "restart_limit", stallguard.DefaultRestartLimit)
+
 	// harness#459: fold that activity into each harness's open run in the
 	// run ledger (SPEC-0022 REQ-8): model calls, error classes, sessions and
 	// their trace links.
@@ -622,6 +630,8 @@ func runDaemon(o daemonOpts) {
 	// Before the observer and the Manager: the guard reads one and stops
 	// harnesses through the other.
 	loopGuard.Close()
+	// Same: it reads the observer and restarts harnesses through the Manager.
+	stallGuard.Close()
 	// Before the observer too: the runs still open keep what runUsage
 	// folded into them, and their closes, in mgr.Close below, carry it.
 	runUsage.Stop()

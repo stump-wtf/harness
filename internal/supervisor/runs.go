@@ -160,6 +160,11 @@ const (
 	OutcomeFailed RunOutcome = "failed"
 	// OutcomeTimedOut is a process killed for outliving `timeout`.
 	OutcomeTimedOut RunOutcome = "timed_out"
+	// OutcomeStalled is a resident run killed by the stall watchdog because no
+	// successful model call had landed for `stall_timeout`. It carries no
+	// verdict: the worker was blocked, which says nothing about whether the
+	// harness works (ADR-0045; issue #959).
+	OutcomeStalled RunOutcome = "stalled"
 	// OutcomeSkipped is a firing dropped because a run was already in flight
 	// (or the harness was mid-stop). No process.
 	OutcomeSkipped RunOutcome = "skipped"
@@ -703,6 +708,37 @@ func (s *Supervisor) handleRunTimeout(gen uint64) {
 		exit = &code
 	}
 	s.finishRun(OutcomeTimedOut, exit)
+}
+
+// handleStall ends a resident run the stall watchdog found wedged: the process
+// is alive, the state machine says running, and nothing has been answered,
+// because the agent is blocked inside a tool call, a hung child or a dead
+// network call rather than at a prompt (issue #959). `restart` cannot reach
+// this: it fires on exit, and a wedged process never exits.
+//
+// startedAt is the start time the watchdog sampled its finding against. A
+// finding about a process that has since been replaced is dropped here: the
+// watchdog's clock runs on the guard's goroutine, and this is the check that
+// keeps it from killing a worker that came up a moment ago.
+//
+// The process group then dies the way a timeout kills one, and the exit is
+// handed to the ordinary exit path with stallEnding set. That is deliberate:
+// the exit line and event a natural exit produces, the `stalled` run record,
+// and the crash-loop backoff and give-up that bound restart loops are the
+// same code that decides every other exit, so a stall cannot drift from how
+// the rest of the daemon reports and recovers. One thing differs: the respawn
+// happens whatever `restart` says, because asking for
+// `stall_action = "restart"` is asking to be revived.
+// Governing: ADR-0045; issue #959.
+func (s *Supervisor) handleStall(startedAt time.Time) {
+	if !s.hasProcess() || !s.startedAt.Equal(startedAt) {
+		return // the watchdog sampled a process that is no longer the current one
+	}
+	s.logEvent("worker stalled", "stall_timeout", s.harness.StallTimeout.String())
+	code, _ := s.killProcess()
+	s.stallEnding = true
+	s.onProcessGone(code, false)
+	s.stallEnding = false
 }
 
 // killProcess ends the live process group the way a graceful stop does —

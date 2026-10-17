@@ -16,6 +16,8 @@ import (
 
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/loopguard"
+	"github.com/stump-wtf/harness/internal/proctree"
+	"github.com/stump-wtf/harness/internal/stallguard"
 	"github.com/stump-wtf/harness/internal/supervisor"
 )
 
@@ -341,5 +343,77 @@ func TestWatcherIntentLostNotifiesPerHarness(t *testing.T) {
 	b, ok := by["beta"]
 	if !ok || b.Event != core.NotifyIntentLost {
 		t.Fatalf("beta payload = %+v (ok=%v)", b, ok)
+	}
+}
+
+// ---- issue #959: the stall watchdog -----------------------------------------------
+
+// A stall is announced with what it measured and what was done about it: the
+// idle span against the configured timeout, the process tree the worker was
+// stuck in, and whether it was revived or left alone.
+func TestWatcherStalledNamesTheCauseAndTheTree(t *testing.T) {
+	_, w, out := newWatcherRig(t, core.NotifyEvents)
+	w.Stalled(stallguard.Stall{
+		Harness: "worker", Idle: 90 * time.Minute, StallTimeout: 45 * time.Minute,
+		Action: core.StallRestart, Restarts: 2,
+		Tree: []proctree.Line{{PID: 41, Parent: 7, Age: 45 * time.Minute, Name: "node"}},
+	})
+	w.Stalled(stallguard.Stall{Harness: "sleeper", Idle: 2 * time.Hour, StallTimeout: 45 * time.Minute, Action: core.StallNotify})
+	got := WaitReceived(t, w.d, out, 2)
+	by := map[string]Payload{}
+	for _, r := range got {
+		by[r.Payload.Harness] = r.Payload
+	}
+	p := by["worker"]
+	if p.Event != core.NotifyStalled || p.Restarts != 2 || p.State != string(core.StateRunning) ||
+		!strings.Contains(p.Message, "stall_timeout 45m0s") || !strings.Contains(p.Message, "pid=41") ||
+		!strings.Contains(p.Message, "restarted (stall 2") || !strings.Contains(p.Message, "harness logs worker") {
+		t.Fatalf("restart stall payload = %+v", p)
+	}
+	if p.Cause == "" || !strings.Contains(p.Cause, "no successful model call for 1h30m0s") {
+		t.Errorf("cause = %q, want the idle span and the timeout", p.Cause)
+	}
+	if s := by["sleeper"]; s.Event != core.NotifyStalled || s.Restarts != 0 ||
+		!strings.Contains(s.Message, "left running") {
+		t.Errorf("notify stall payload = %+v, want the left-running wording", s)
+	}
+}
+
+// The give-up is the one stall that opens an alert: the guard has stopped
+// reviving this worker, so a human is in the loop, and the moment it is running
+// again is worth hearing.
+func TestWatcherStallGiveUpOpensAnAlert(t *testing.T) {
+	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	w.Stalled(stallguard.Stall{
+		Harness: "worker", Idle: 3 * time.Hour, StallTimeout: 45 * time.Minute,
+		Action: core.StallRestart, Restarts: 5, GaveUp: true,
+	})
+	got := WaitReceived(t, w.d, out, 1)
+	if m := got[0].Payload.Message; !strings.Contains(m, "will not be restarted again") ||
+		!strings.Contains(m, "harness restart worker") {
+		t.Fatalf("give-up payload = %q, want the manual-revive wording", m)
+	}
+	src.ch <- supervisor.Event{Kind: supervisor.EventStateChanged, Name: "worker", From: core.StateStarting, To: core.StateRunning}
+	got = WaitReceived(t, w.d, out, 2)
+	if rec := got[1].Payload; rec.Event != core.NotifyRecovered || rec.Harness != "worker" {
+		t.Fatalf("after the alert, a start delivered %+v, want recovered", rec)
+	}
+}
+
+// An ordinary stall revives on its own, so it opens nothing: the operator must
+// not get a recovery notice for a worker that never stopped.
+func TestWatcherStallDoesNotOpenAnAlert(t *testing.T) {
+	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	w.Stalled(stallguard.Stall{Harness: "worker", Idle: time.Hour, StallTimeout: 45 * time.Minute, Action: core.StallRestart, Restarts: 1})
+	WaitReceived(t, w.d, out, 1)
+	src.ch <- supervisor.Event{Kind: supervisor.EventFlapping, Name: "sentinel", Restarts: 2}
+	got := WaitReceived(t, w.d, out, 2)
+	for _, r := range got[1:] {
+		if r.Payload.Event == core.NotifyRecovered {
+			t.Fatalf("a stall that restarts on its own opened an alert: %+v", r.Payload)
+		}
+	}
+	if got[1].Payload.Event != core.NotifyFlapping {
+		t.Fatalf("deliveries after a stall + start = %+v, want the sentinel next", got[1].Payload)
 	}
 }

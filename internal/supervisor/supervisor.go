@@ -346,6 +346,16 @@ type Supervisor struct {
 	run          *activeRun  // the run in flight; nil when none
 	queued       *RunRequest // the one firing on_overlap = "queue" holds
 	timeoutCh    chan uint64 // run timeout fired (carries run gen)
+	// stallCh carries the start time of the process the stall watchdog
+	// sampled, so handleStall can tell a live finding from one about a
+	// process that has since been replaced (issue #959).
+	stallCh chan time.Time
+	// stallEnding marks the exit the watchdog itself caused: the resident
+	// record closes `stalled` rather than `failed`, and the restart happens
+	// whatever the restart policy says, because recovering a wedged worker is
+	// the whole point of `stall_action = "restart"`. Loop-owned, like the
+	// channel above. Governing: ADR-0045.
+	stallEnding bool
 	// openSkips maps a skip class to the run id of the record covering it,
 	// for the run currently in flight. Loop-owned, like every other field in
 	// this block: coalescing is part of the overlap decision, and the overlap
@@ -410,6 +420,7 @@ func New(h core.Harness, opts Options) *Supervisor {
 		timerCh:      make(chan struct{}, 1),
 		surviveCh:    make(chan uint64, 1),
 		timeoutCh:    make(chan uint64),
+		stallCh:      make(chan time.Time),
 		journal:      opts.Runs,
 		admit:        opts.Admit,
 		admitter:     opts.Admission,
@@ -618,6 +629,8 @@ func (s *Supervisor) loop() {
 			s.handleSurvival(gen)
 		case gen := <-s.timeoutCh:
 			s.handleRunTimeout(gen)
+		case startedAt := <-s.stallCh:
+			s.handleStall(startedAt)
 		}
 	}
 }
@@ -1055,6 +1068,10 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 	// The structured record of what "exited code=N" says (SPEC-0022 REQ-3).
 	if parked && !s.harness.Triggered() {
 		s.closeResidentFor(OutcomeQuotaParked, &code, "", true)
+	} else if s.stallEnding {
+		// The watchdog killed this one, so the resident record says the
+		// worker was revived, not that it failed on its own.
+		s.closeResidentFor(OutcomeStalled, &code, "", true)
 	} else {
 		s.residentExit(code, spawnFailed)
 	}
@@ -1180,7 +1197,10 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 
 	// Restart policy gates automatic respawn (core.RestartPolicy, mirroring
 	// Docker Compose's `restart` directive; SPEC-0003 REQ "Restart On Exit").
-	if !s.harness.Restart.ShouldRestart(code) {
+	// A stall is the one exit that ignores the gate: `stall_action = "restart"`
+	// is a request to recover a worker the policy could never recover, because
+	// the process never exited for the policy to act on (ADR-0045; issue #959).
+	if !s.harness.Restart.ShouldRestart(code) && !s.stallEnding {
 		s.setIntent(false, "policy", "") // honor the policy: this exit is final
 		s.consecFailures = 0
 		// This harness will never retry on its own: clear flap bookkeeping so

@@ -73,20 +73,26 @@ type rawHarness struct {
 	// list of strings loaded in order (SPEC-0018 REQ-12). Nil means the key
 	// is absent; an explicit empty list is rejected in registerHarness, where
 	// the harness name and source line are known.
-	EnvFile           envFileValue `toml:"env_file"`
-	RestartDelay      int          `toml:"restart_delay"`
-	Restart           string       `toml:"restart"`
-	Backend           string       `toml:"backend"`
-	Description       string       `toml:"description"`
-	Enabled           *bool        `toml:"enabled"`
-	TmuxSocket        string       `toml:"tmux_socket"`
-	Schedule          string       `toml:"schedule"`
-	CatchUp           *bool        `toml:"catch_up"`
-	Timeout           *string      `toml:"timeout"`
-	OnOverlap         *string      `toml:"on_overlap"`
-	KeepRuns          *int         `toml:"keep_runs"`
-	HarvestTrajectory *bool        `toml:"harvest_trajectory"`
-	MCPAllow          []string     `toml:"mcp_allow"`
+	EnvFile      envFileValue `toml:"env_file"`
+	RestartDelay int          `toml:"restart_delay"`
+	Restart      string       `toml:"restart"`
+	Backend      string       `toml:"backend"`
+	Description  string       `toml:"description"`
+	Enabled      *bool        `toml:"enabled"`
+	TmuxSocket   string       `toml:"tmux_socket"`
+	Schedule     string       `toml:"schedule"`
+	CatchUp      *bool        `toml:"catch_up"`
+	Timeout      *string      `toml:"timeout"`
+	OnOverlap    *string      `toml:"on_overlap"`
+	KeepRuns     *int         `toml:"keep_runs"`
+	// StallTimeout and StallAction are the progress-based watchdog for a
+	// persistent harness (issue #959): no observed successful model call for
+	// StallTimeout trips it, and StallAction says what to do. Pointers, like
+	// Timeout: the exclusions are checked on presence, not value.
+	StallTimeout      *string  `toml:"stall_timeout"`
+	StallAction       *string  `toml:"stall_action"`
+	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
+	MCPAllow          []string `toml:"mcp_allow"`
 	// SkillPaths and UseDefaultSkillPaths are the SPEC-0006 REQ "Skill Path
 	// Configuration" keys: additive per-harness skill roots, and the switch
 	// that drops the adapter's defaults. Legal in the global file and in a
@@ -1301,6 +1307,55 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 				"harness %q: %q requires \"schedule\" or \"triggers\" (it applies to the runs a firing produces, and nothing fires this harness)", name, k.key)
 		}
 	}
+	// stall_timeout and stall_action are the watchdog for a worker that stays
+	// alive and stops making progress. A harness whose runs come from a
+	// schedule or a trigger already bounds every run with `timeout` (which it
+	// gets a default for), and a wedged one-shot is killed by that and retried
+	// by its next firing; a progress watchdog on top would only restart the
+	// same firing twice. So both keys are refused there, and the stall clock
+	// runs only on a persistent harness — the case `restart` cannot reach,
+	// because restart fires on exit and a wedged process never exits.
+	// Governing: ADR-0045; issue #959.
+	var (
+		stallTimeout time.Duration
+		stallAction  string
+	)
+	for _, k := range []struct {
+		key string
+		set bool
+	}{{"stall_timeout", rh.StallTimeout != nil}, {"stall_action", rh.StallAction != nil}} {
+		if k.set && triggered {
+			return newError(filename, line,
+				"harness %q: %q is refused on a scheduled or triggered harness (each of its runs is already bounded by \"timeout\", and the stall watchdog is for a worker that never exits)", name, k.key)
+		}
+	}
+	if rh.StallTimeout != nil {
+		d, err := time.ParseDuration(strings.TrimSpace(*rh.StallTimeout))
+		if err != nil || d < 0 {
+			return newError(filename, line,
+				"harness %q: invalid \"stall_timeout\" %q (want a duration such as \"45m\" or \"2h\", or \"0\" to disable the watchdog)", name, *rh.StallTimeout)
+		}
+		stallTimeout = d
+	}
+	if rh.StallAction != nil {
+		a := strings.TrimSpace(*rh.StallAction)
+		if !core.ValidStallAction(a) {
+			return newError(filename, line,
+				"harness %q: invalid \"stall_action\" %q (want %s)", name, *rh.StallAction, strings.Join(core.StallActions, " | "))
+		}
+		if stallTimeout <= 0 {
+			return newError(filename, line,
+				"harness %q: \"stall_action\" requires a non-zero \"stall_timeout\" (nothing would trip the watchdog without one)", name)
+		}
+		if a != "" {
+			stallAction = a
+		}
+	}
+	// An unarmed watchdog has no action to report: what to do about a finding
+	// only means something once there can be one.
+	if stallTimeout > 0 && stallAction == "" {
+		stallAction = core.DefaultStallAction
+	}
 	var (
 		timeout  time.Duration
 		overlap  core.OverlapPolicy
@@ -1511,6 +1566,8 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		Timeout:              timeout,
 		OnOverlap:            overlap,
 		KeepRuns:             keepRuns,
+		StallTimeout:         stallTimeout,
+		StallAction:          stallAction,
 
 		OperatingHours:       operatingHours,
 		HoursExpr:            hoursExpr,

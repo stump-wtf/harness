@@ -80,6 +80,36 @@ func (p RestartPolicy) ShouldRestart(code int) bool {
 	}
 }
 
+// Stall actions (the `stall_action` values), for a persistent harness the
+// watchdog has found wedged: no successful model call for `stall_timeout`.
+const (
+	// StallRestart ends the wedged process and brings the harness back. The
+	// run closes `stalled`, so the ledger says the process was ended, not
+	// that it failed on its own.
+	StallRestart = "restart"
+	// StallNotify is the default: log and notify, and leave the process
+	// alone. A watchdog that restarts an agent mid-thought is a louder
+	// failure than one that pages, so the safe answer is the default.
+	StallNotify = "notify"
+	// StallNone observes silently: the stall shows up in the log only.
+	StallNone = "none"
+)
+
+// DefaultStallAction is what a `stall_timeout` with no `stall_action` does.
+const DefaultStallAction = StallNotify
+
+// StallActions lists the valid `stall_action` values in documentation order.
+var StallActions = []string{StallRestart, StallNotify, StallNone}
+
+// ValidStallAction reports whether a is one of the stall_action values. The
+// empty string (the omitted key) is valid and means DefaultStallAction.
+func ValidStallAction(a string) bool {
+	if a == "" {
+		return true
+	}
+	return slices.Contains(StallActions, a)
+}
+
 // OverlapPolicy decides what a scheduled harness does with a firing that
 // arrives while its previous run is still in flight (SPEC-0008 REQ "Overlap
 // Policy"). The empty string means the default, OverlapSkip.
@@ -309,6 +339,19 @@ type Harness struct {
 	// except for prompt harnesses, which default to "no": a one-shot agent run
 	// exiting 0 must not respawn (an explicit `restart = ...` still wins).
 	Restart RestartPolicy
+	// StallTimeout is the progress-based watchdog for a persistent harness:
+	// how long without an observed successful model call counts as wedged —
+	// the process alive, `harness list` saying `running`, and nothing being
+	// answered. Zero (the default) means no watchdog. This is deliberately not
+	// a wall-clock ceiling on the run: that is `timeout`, which a schedule or
+	// trigger already supplies, and which would kill a healthy long-lived
+	// worker on a schedule. Requires that nothing fires this harness.
+	// Governing: ADR-0045; issue #959.
+	StallTimeout time.Duration
+	// StallAction is what the watchdog does when it trips: StallRestart,
+	// StallNotify (the default) or StallNone. Requires a non-zero
+	// StallTimeout. Governing: ADR-0045; issue #959.
+	StallAction string
 	// Backend selects the hosting strategy (default native, ADR-0003).
 	Backend Backend
 	// Description is shown in the TUI list (ADR-0006).

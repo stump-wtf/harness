@@ -49,6 +49,12 @@ const (
 	// quota_parked rather than failed, so neither `failed` nor `run_failed`
 	// would ever say so.
 	NotifyParked = "parked"
+	// NotifyStalled fires when the stall watchdog finds a persistent harness
+	// with no agent progress for its `stall_timeout` — alive, `running`, and
+	// answering nothing. It fires for every `stall_action`, including
+	// `restart`, because a worker that has to be revived is worth hearing
+	// about once however it is revived.
+	NotifyStalled = "stalled"
 	// NotifyRecovered fires when a harness that was reported failed or
 	// loop-stopped is running again, so the alert thread can close.
 	NotifyRecovered = "recovered"
@@ -59,7 +65,7 @@ const (
 
 // NotifyEvents is every event `events` may name, in documentation order.
 var NotifyEvents = []string{
-	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyRunFailed, NotifyIntentLost, NotifyParked, NotifyRecovered,
+	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyRunFailed, NotifyIntentLost, NotifyParked, NotifyStalled, NotifyRecovered,
 }
 
 // DefaultNotifyEvents is `events` when the table omits it: everything that
@@ -67,9 +73,10 @@ var NotifyEvents = []string{
 // is left out because a scheduled job's failure already lands in `harness
 // jobs`, and some jobs fail as their normal "nothing to do" answer. parked is
 // in: a provider refusing an account for quota or credits is usually
-// something only a person can top up.
+// something only a person can top up. stalled is in for the same reason: a
+// watchdog firing at all is the news, whatever it then does about it.
 var DefaultNotifyEvents = []string{
-	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyIntentLost, NotifyParked, NotifyRecovered,
+	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyIntentLost, NotifyParked, NotifyStalled, NotifyRecovered,
 }
 
 // Notify defaults and bounds.

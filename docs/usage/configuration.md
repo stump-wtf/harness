@@ -37,6 +37,8 @@ enabled = false
 | `enabled` | autostart on daemon boot / after a daemon restart (`true`) |
 | `restart` | restart policy on exit — see [Restart policy](#restart-policy) |
 | `restart_delay` | seconds to wait before restarting a harness that exited |
+| `stall_timeout` | idle with **no successful model call** before the [stall watchdog](#the-stall-watchdog) acts; `"0"` or omitted means off. Refused on a harness with `schedule` or `triggers` |
+| `stall_action` | what the watchdog does: `"notify"` (default), `"restart"` or `"none"`. Requires a non-zero `stall_timeout` |
 | `backend` | hosting strategy: `native` (default) or `tmux` |
 | `tmux_socket` | tmux socket name; only used when `backend = "tmux"` |
 | `export_telemetry` | publish this harness's agent activity to the [telemetry](#telemetry-export-telemetry) destinations: `true` opts in, `false` opts out (and beats `export_all`), unset follows `[telemetry] export_all`. A project file may set only `false`. Applies on reload |
@@ -317,7 +319,9 @@ keep_runs = 30         # default 20
   append-only JSONL file per UTC day, private to your user (ADR-0028). Each run
   records its id, trigger (`schedule`, `manual`, `catch_up`, `channel`,
   `webhook`), start, end, exit code, and an outcome: `success`, `failed`,
-  `timed_out`, `skipped`, `replaced`, `missed`, `cancelled`, or `interrupted`.
+  `timed_out`, `skipped`, `replaced`, `missed`, `cancelled`, `interrupted`, or
+  `stalled` — a resident worker the [stall watchdog](#the-stall-watchdog) ended
+  because it had stopped making progress.
   Firings that start nothing (skipped, missed) are recorded too. Run ids never
   repeat. A run the daemon crashed under reads `interrupted` (reason
   `daemon_crash`) on the next boot; one a clean shutdown stopped reads
@@ -1356,6 +1360,63 @@ harness is restarted when it exits:
 
 Retry limits under a crash loop come from the daemon's crash-loop policy, which
 escalates backoff — see [Supervision](./supervision).
+
+## The stall watchdog
+
+`restart` fires when a process **exits**. A worker that stays alive and stops
+making progress therefore never gets restarted: it is blocked inside a tool call,
+on a child that never returns, or on a peer that stopped answering, and
+`harness list` keeps saying `running` (issue #959). The run `timeout` cannot help
+either — on a persistent harness it is a wall-clock ceiling that kills healthy
+agents on a schedule.
+
+```toml
+[harness.claude-src]
+harness = "claude-code"
+args = ["--remote-control", "--continue"]
+enabled = true
+stall_timeout = "45m"    # off unless you write it
+stall_action = "restart" # notify (default) | restart | none
+```
+
+**Progress, not wall time.** The clock runs from the later of the current
+process's start and the last successful model or tool call the daemon observed —
+the same signal `harness_last_successful_call_timestamp` exports, so the
+watchdog and the metric never disagree about whether the agent did anything. A
+worker that has been up nine hours and called tools for nine hours is not
+stalled; one that has answered nothing for two hours is. It samples once a
+minute, so a stall can be up to a minute old before it is reported.
+
+**What each action does.**
+
+| `stall_action` | Behavior |
+|---|---|
+| `"notify"` | the default: log the stall with a process-tree post-mortem and run the [notify hook](./notify). The process is left alone |
+| `"restart"` | the same, then SIGTERM and SIGKILL to its process group and a fresh start. The run closes `stalled`, and the respawn happens whatever `restart` says — asking for `restart` here is asking to be revived, and `restart = "no"` answers a different question |
+| `"none"` | one log line, nothing else |
+
+Each stall episode is acted on **once** per process: it is not re-notified every
+minute, and it is not killed again on the next sample. The episode ends when the
+process is replaced or when progress resumes.
+
+**A recovery loop is bounded.** After five consecutive stalls with no successful
+call between them the watchdog stops restarting that harness and only reports,
+with `restart limit reached` in the message — another restart does not fix a
+worker that wedges before it ever calls a tool. Any observed call resets the
+count. A worker that instead exits immediately on every start is caught by the
+ordinary crash-loop give-up, which needs no help here.
+
+**One case to know about.** A harness the observer never reports on — a `generic`
+or `command` harness with no [`transcripts`](#binding-transcripts) binding — has
+no progress signal, so its clock runs from process start alone. That is a
+wall-clock restart period by another name, and the five-stall bound is what keeps
+it from churning forever.
+
+**Where the keys are refused.** `stall_timeout` and `stall_action` are refused at
+load on a harness with `schedule` or `triggers`: every run of one of those is
+already bounded by [`timeout`](#runs-history-logs-timeout-overlap), a wedged
+one-shot is killed by that, and its next firing is the retry. Each kind of
+harness gets exactly one watchdog.
 
 ## Profiles
 

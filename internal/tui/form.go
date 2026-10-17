@@ -106,7 +106,17 @@ type HarnessForm struct {
 	Timeout   string
 	OnOverlap string
 	KeepRuns  int
-	Args      []string
+	// StallTimeout and StallAction are the progress watchdog for a worker that
+	// stays alive and stops making progress (ADR-0045, issue #959).
+	// StallTimeout is a duration as typed ("45m"); "" and "0" both mean the
+	// watchdog is off. StallAction holds only a value that differs from the
+	// parser default, same convention as Timeout above. Validate mirrors the
+	// parser: both require a persistent harness, and an action needs a timeout
+	// to trip it. Round-trip fields (issue #161) — an edit that dropped them
+	// would silently disarm the watchdog over a wedged worker.
+	StallTimeout string
+	StallAction  string
+	Args         []string
 	// Argv is a command harness's whole process (SPEC-0017 REQ-2), argv[0]
 	// first. It replaces Args on that kind and is refused on every other
 	// (Validate mirrors the parser). A round-trip field like Schedule: the
@@ -391,6 +401,28 @@ func (f HarnessForm) Validate() error {
 	if f.KeepRuns > 0 && f.KeepRuns != core.DefaultKeepRuns && !triggered {
 		return fmt.Errorf("keep_runs requires schedule or triggers")
 	}
+	// Mirror the parser's stall watchdog rules (ADR-0045, issue #959). The
+	// watchdog is for a worker that never exits: a scheduled or triggered
+	// harness bounds every run with `timeout` and is refused both keys, so a
+	// save that wrote them would leave harness.toml unparseable until it was
+	// hand-edited. And an action with nothing to trip it is a key that lies
+	// about what the daemon will do.
+	if t := strings.TrimSpace(f.StallTimeout); t != "" {
+		if triggered {
+			return fmt.Errorf("stall_timeout requires a persistent harness (each run of a scheduled or triggered harness is already bounded by timeout)")
+		}
+		if d, err := time.ParseDuration(t); err != nil || d < 0 {
+			return fmt.Errorf("invalid stall_timeout %q (want a duration such as 45m or 2h, or 0 to disable the watchdog)", t)
+		}
+	}
+	if a := strings.TrimSpace(f.StallAction); a != "" {
+		if !core.ValidStallAction(a) {
+			return fmt.Errorf("stall_action must be restart, notify, or none")
+		}
+		if d, err := time.ParseDuration(strings.TrimSpace(f.StallTimeout)); err != nil || d <= 0 {
+			return fmt.Errorf("stall_action requires a non-zero stall_timeout (nothing would trip the watchdog without one)")
+		}
+	}
 	// Mirror the parser's operating_hours rules (ADR-0019, config.registerHarness):
 	// same reasoning as schedule above — a combination the parser rejects would
 	// leave the file unparseable on disk until hand-edited.
@@ -635,6 +667,20 @@ func (f HarnessForm) TOML() string {
 	if f.Restart != "" && f.Restart != defaultRestart {
 		fmt.Fprintf(&b, "restart = %s\n", strconv.Quote(f.Restart))
 	}
+	// The stall watchdog (issue #959). A timeout the watchdog cannot trip is no
+	// watchdog at all, so "0" is written as the absence of the key, and an
+	// action is emitted only when it differs from the parser default — the same
+	// rule as restart above, so an untouched edit neither grows a key nor drops
+	// one. Both are written whatever the harness kind is, like tmux_socket:
+	// Validate has already refused the combination the parser would reject.
+	if t := strings.TrimSpace(f.StallTimeout); t != "" {
+		if d, err := time.ParseDuration(t); err == nil && d > 0 {
+			fmt.Fprintf(&b, "stall_timeout = %s\n", strconv.Quote(formatRunTimeout(d)))
+		}
+	}
+	if a := strings.TrimSpace(f.StallAction); a != "" && a != core.DefaultStallAction {
+		fmt.Fprintf(&b, "stall_action = %s\n", strconv.Quote(a))
+	}
 	if f.Backend != "" && f.Backend != string(core.BackendNative) {
 		fmt.Fprintf(&b, "backend = %s\n", strconv.Quote(f.Backend))
 	}
@@ -867,6 +913,15 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 			fi.keepRuns = strconv.Itoa(h.KeepRuns)
 		}
 	}
+	// The stall watchdog is pre-filled only while it is armed: with the
+	// watchdog off the parser reports no action either, so a blank pair here is
+	// exactly what the file says.
+	if h.StallTimeout > 0 {
+		fi.stallTimeout = formatRunTimeout(h.StallTimeout)
+		if h.StallAction != core.DefaultStallAction {
+			fi.stallAction = h.StallAction
+		}
+	}
 	fi.args = shellQuoteJoin(h.Args)
 	fi.argv = formatArgvInput(h.Argv)
 	fi.transcripts = h.Transcripts
@@ -970,6 +1025,8 @@ func (fi formInputs) toForm() HarnessForm {
 	// clear rather than an unset one.
 	f.MCPAllow = strings.Fields(fi.mcpAllow)
 	f.SkillPaths = splitEnvFileInput(fi.skillPaths)
+	f.StallTimeout = strings.TrimSpace(fi.stallTimeout)
+	f.StallAction = strings.TrimSpace(fi.stallAction)
 	f.UseDefaultSkillPaths = strings.TrimSpace(fi.useDefaultSkillPaths)
 	if d, err := strconv.Atoi(strings.TrimSpace(fi.delay)); err == nil {
 		f.RestartDelay = d

@@ -31,6 +31,7 @@ var Outcomes = []string{
 	string(supervisor.OutcomeMissed), string(supervisor.OutcomeCancelled), string(supervisor.OutcomeInterrupted),
 	string(supervisor.OutcomeBudgetExceeded), string(supervisor.OutcomeQuotaParked),
 	string(supervisor.OutcomeModelMismatch), string(supervisor.OutcomeModelUnattested),
+	string(supervisor.OutcomeStalled),
 }
 
 // Triggers is every trigger a record can carry (SPEC-0008, SPEC-0014,
