@@ -123,7 +123,32 @@ func (w *Watcher) handle(ev supervisor.Event) {
 		w.runFinished(ev)
 	case supervisor.EventHoldChanged:
 		w.holdChanged(ev)
+	case supervisor.EventHealth:
+		w.health(ev)
 	}
+}
+
+// health announces a health probe streak that tripped its action (issue
+// #960): the probe said unhealthy health_failures times in a row and the
+// daemon restarted the harness or is only alerting. The restart's own
+// state transitions stay quiet — this is the sentence that says why.
+func (w *Watcher) health(ev supervisor.Event) {
+	snap, _ := w.src.Snapshot(ev.Name)
+	msg := fmt.Sprintf("%s health probe failed %d times in a row", ev.Name, ev.Streak)
+	hint := "harness describe " + ev.Name
+	if ev.Action == string(core.HealthRestart) {
+		msg += "; daemon restarted it"
+	} else {
+		msg += " and no action was taken — see `harness logs " + ev.Name + "`"
+		hint = "harness logs " + ev.Name
+	}
+	w.send(Notification{
+		Event: core.NotifyHealth, Harness: ev.Name, State: string(snap.State),
+		Message: withCause(msg, ev.Output),
+		Cause:   ev.Output,
+		Hint:    hint,
+		Time:    ev.Time,
+	}, false)
 }
 
 // holdChanged announces a park once: when quota joins name's hold reasons.

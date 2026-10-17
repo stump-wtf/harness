@@ -37,6 +37,10 @@ enabled = false
 | `enabled` | autostart on daemon boot / after a daemon restart (`true`) |
 | `restart` | restart policy on exit — see [Restart policy](#restart-policy) |
 | `restart_delay` | seconds to wait before restarting a harness that exited |
+| `health_cmd` | a probe program the daemon runs every `health_interval` while the harness is up; exit 0 is healthy. See [Health probes](#health-probes) |
+| `health_interval` | gap between probe runs (duration string, default `5m`). Requires `health_cmd` |
+| `health_failures` | consecutive failed probes before `health_action` (default `3`). Requires `health_cmd` |
+| `health_action` | what trips it — `restart` (default) or `notify`. Requires `health_cmd` |
 | `backend` | hosting strategy: `native` (default) or `tmux` |
 | `tmux_socket` | tmux socket name; only used when `backend = "tmux"` |
 | `export_telemetry` | publish this harness's agent activity to the [telemetry](#telemetry-export-telemetry) destinations: `true` opts in, `false` opts out (and beats `export_all`), unset follows `[telemetry] export_all`. A project file may set only `false`. Applies on reload |
@@ -1356,6 +1360,40 @@ harness is restarted when it exits:
 
 Retry limits under a crash loop come from the daemon's crash-loop policy, which
 escalates backoff — see [Supervision](./supervision).
+
+## Health probes
+
+`health_cmd` is a systemd-`WatchdogSec`-style liveness probe for the domain
+knowledge the daemon cannot have — "my work queue has items older than
+fifteen minutes and the agent hasn't claimed any". You supply the check; the
+daemon owns the schedule, the consecutive-failure count, the cooldown, the
+restart, and the alert, so no sidecar sweep has to re-implement that loop
+(issue #960; ADR-0045, proposed).
+
+```toml
+[harness.worker]
+harness = "crush"
+args = ["--yolo"]
+health_cmd      = "/usr/local/bin/worker-probe.sh"
+health_interval = "5m"      # default
+health_failures = 3         # default
+health_action   = "restart" # or "notify"
+```
+
+The probe runs only while the harness is up, gets the daemon's environment
+plus `HARNESS_NAME`, `HARNESS_PID`, `HARNESS_STATE` and
+`HARNESS_LAST_SUCCESSFUL_CALL`, and is exec'd directly — not through a
+shell. It has 30 seconds to answer; a hung probe counts as a failure. After
+`health_failures` consecutive failures the daemon takes the action — a
+restart through the normal verb path, or nothing but the `health` notify
+event — and one interval of cooldown passes before the probe may act again;
+a healthy probe clears the streak.
+
+`harness list` and `describe` carry the verdict as `health: ok|failing`, and
+`describe` shows the last ten probe results with their output tails, so a
+probe that is itself broken (exit 127, say) is readable instead of silent.
+Like the `[notify]` hook, the probe is a daemon-side hook, not a supervised
+harness: no PTY, no restart policy, no run record.
 
 ## Profiles
 

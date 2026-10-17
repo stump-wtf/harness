@@ -138,7 +138,11 @@ const (
 	// whether the daemon's child would see it set — names only, never a
 	// value. Additive only: an older daemon omits it, and doctor says the
 	// declared variables were not checked rather than passing them.
-	ProtoMinor = 26
+	// ProtoMinor 27 added Health on HarnessInfo and describe's HealthProbes
+	// (issue #960): the health_cmd probe's ok|failing verdict and its last
+	// outputs. Additive only: an older daemon omits both, an older client
+	// ignores them.
+	ProtoMinor = 27
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -467,6 +471,10 @@ type HarnessInfo struct {
 	// state says. SessionRotations counts rotations the guard has performed.
 	SessionStalled   bool `json:"session_stalled,omitempty"`
 	SessionRotations int  `json:"session_rotations,omitempty"`
+	// Health is the health probe's verdict — "ok" or "failing" — empty when
+	// the harness configures no health_cmd or no probe has completed yet
+	// (issue #960). The probe outputs ride describe's health_probes only.
+	Health string `json:"health,omitempty"`
 	// Adapter is the harness-kind enum the harness selected ("crush" default).
 	Adapter string `json:"adapter,omitempty"`
 	// Workdir is the resolved process working directory the supervisor spawns
@@ -641,6 +649,18 @@ type HarnessInfo struct {
 	Waiting    bool   `json:"waiting"`
 	WaitingFor string `json:"waiting_for,omitempty"`
 	IdleMs     int64  `json:"idle_ms,omitempty"`
+
+	// HealthProbes is the health probe's last results, oldest first, output
+	// tails capped (issue #960). Describe only; list carries Health alone.
+	HealthProbes []HealthProbeInfo `json:"health_probes,omitempty"`
+}
+
+// HealthProbeInfo is one health probe result on the wire (issue #960).
+type HealthProbeInfo struct {
+	At       string `json:"at"`
+	OK       bool   `json:"ok"`
+	ExitCode int    `json:"exit_code"`
+	Output   string `json:"output,omitempty"`
 }
 
 // CaptureData is the capture op response payload (issue #735; ADR-0040).

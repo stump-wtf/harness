@@ -73,20 +73,28 @@ type rawHarness struct {
 	// list of strings loaded in order (SPEC-0018 REQ-12). Nil means the key
 	// is absent; an explicit empty list is rejected in registerHarness, where
 	// the harness name and source line are known.
-	EnvFile           envFileValue `toml:"env_file"`
-	RestartDelay      int          `toml:"restart_delay"`
-	Restart           string       `toml:"restart"`
-	Backend           string       `toml:"backend"`
-	Description       string       `toml:"description"`
-	Enabled           *bool        `toml:"enabled"`
-	TmuxSocket        string       `toml:"tmux_socket"`
-	Schedule          string       `toml:"schedule"`
-	CatchUp           *bool        `toml:"catch_up"`
-	Timeout           *string      `toml:"timeout"`
-	OnOverlap         *string      `toml:"on_overlap"`
-	KeepRuns          *int         `toml:"keep_runs"`
-	HarvestTrajectory *bool        `toml:"harvest_trajectory"`
-	MCPAllow          []string     `toml:"mcp_allow"`
+	EnvFile      envFileValue `toml:"env_file"`
+	RestartDelay int          `toml:"restart_delay"`
+	Restart      string       `toml:"restart"`
+	// The issue #960 health probe keys. HealthInterval is a duration string
+	// like `timeout`; the three siblings are rejected on presence without
+	// `health_cmd`, so they are pointers and HealthAction a plain string
+	// (blank-vs-absent checked the same way as `restart`).
+	HealthCmd         string   `toml:"health_cmd"`
+	HealthInterval    *string  `toml:"health_interval"`
+	HealthFailures    *int     `toml:"health_failures"`
+	HealthAction      string   `toml:"health_action"`
+	Backend           string   `toml:"backend"`
+	Description       string   `toml:"description"`
+	Enabled           *bool    `toml:"enabled"`
+	TmuxSocket        string   `toml:"tmux_socket"`
+	Schedule          string   `toml:"schedule"`
+	CatchUp           *bool    `toml:"catch_up"`
+	Timeout           *string  `toml:"timeout"`
+	OnOverlap         *string  `toml:"on_overlap"`
+	KeepRuns          *int     `toml:"keep_runs"`
+	HarvestTrajectory *bool    `toml:"harvest_trajectory"`
+	MCPAllow          []string `toml:"mcp_allow"`
 	// SkillPaths and UseDefaultSkillPaths are the SPEC-0006 REQ "Skill Path
 	// Configuration" keys: additive per-harness skill roots, and the switch
 	// that drops the adapter's defaults. Legal in the global file and in a
@@ -1182,6 +1190,71 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		}
 	}
 
+	// Health probe keys (issue #960). health_cmd gates the other three: the
+	// siblings are rejected on PRESENCE without it, so a probe tuning block
+	// that outlived its command cannot silently change nothing.
+	healthCmd := strings.TrimSpace(rh.HealthCmd)
+	if rh.HealthCmd != "" && healthCmd == "" {
+		return newError(filename, line, "harness %q: health_cmd must not be blank", name)
+	}
+	healthInterval := time.Duration(0)
+	if rh.HealthInterval != nil {
+		if healthCmd == "" {
+			return newError(filename, line,
+				"harness %q: health_interval requires health_cmd", name)
+		}
+		d, err := time.ParseDuration(strings.TrimSpace(*rh.HealthInterval))
+		if err != nil {
+			return newError(filename, line,
+				"harness %q: invalid health_interval %q: %v", name, *rh.HealthInterval, err)
+		}
+		if d <= 0 {
+			return newError(filename, line,
+				"harness %q: health_interval must be positive (got %q)", name, *rh.HealthInterval)
+		}
+		healthInterval = d
+	}
+	healthFailures := 0
+	if rh.HealthFailures != nil {
+		if healthCmd == "" {
+			return newError(filename, line,
+				"harness %q: health_failures requires health_cmd", name)
+		}
+		if *rh.HealthFailures < 1 {
+			return newError(filename, line,
+				"harness %q: health_failures must be at least 1 (got %d)", name, *rh.HealthFailures)
+		}
+		healthFailures = *rh.HealthFailures
+	}
+	healthAction := core.HealthAction("")
+	if strings.TrimSpace(rh.HealthAction) != "" {
+		if healthCmd == "" {
+			return newError(filename, line,
+				"harness %q: health_action requires health_cmd", name)
+		}
+		healthAction = core.HealthAction(strings.TrimSpace(rh.HealthAction))
+		if !healthAction.Valid() {
+			return newError(filename, line,
+				"harness %q: invalid health_action %q (want \"restart\" or \"notify\")",
+				name, rh.HealthAction)
+		}
+	}
+	// With a probe configured, normalize the omitted siblings to the
+	// documented defaults so one canonical spelling travels downstream; a
+	// harness with no probe keeps them all zero — there is no verdict for a
+	// probe that cannot run, and zero means inert everywhere.
+	if healthCmd != "" {
+		if healthInterval == 0 {
+			healthInterval = core.DefaultHealthInterval
+		}
+		if healthFailures == 0 {
+			healthFailures = core.DefaultHealthFailures
+		}
+		if healthAction == "" {
+			healthAction = core.HealthRestart
+		}
+	}
+
 	enabled := defaultEnabled
 	if rh.Enabled != nil {
 		enabled = *rh.Enabled
@@ -1502,6 +1575,10 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		EnvFiles:             resolveEnvFiles(rh.EnvFile, resolve),
 		RestartDelay:         time.Duration(rh.RestartDelay) * time.Second,
 		Restart:              restartPolicy,
+		HealthCmd:            healthCmd,
+		HealthInterval:       healthInterval,
+		HealthFailures:       healthFailures,
+		HealthAction:         healthAction,
 		Backend:              backend,
 		Description:          rh.Description,
 		Enabled:              enabled,

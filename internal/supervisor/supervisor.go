@@ -198,6 +198,10 @@ type Snapshot struct {
 	// (issue #347). SessionRotations counts rotations the guard performed.
 	SessionStalled   bool
 	SessionRotations int
+	// Health is the health prober's verdict for this harness — "ok" or
+	// "failing", empty when it configures no probe or none has completed
+	// yet (issue #960). Overlaid by Manager.Snapshot, like the guard's flags.
+	Health string
 	// Gated marks a harness with operating_hours set. Holds is the set of
 	// reasons the daemon is keeping the harness down for (or closing it
 	// for) while leaving `enabled` alone: its hours, a quota park, a spent

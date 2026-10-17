@@ -543,6 +543,16 @@ func runDaemon(o daemonOpts) {
 	sessionGuard := startDaemonSessionGuard(mgr, notifier, 0, 0)
 	log.Info("session guard active", "interval", supervisor.DefaultSessionGuardInterval, "lookback", supervisor.DefaultSessionGuardLookback)
 
+	// Issue #960: run each harness's health_cmd probe on its interval, count
+	// consecutive failures, and take the configured action (restart or
+	// notify). The verdict overlays onto every snapshot for list and
+	// describe; the trip lands on the lifecycle bus, where the notify
+	// Watcher turns it into the `health` alert.
+	healthProber := supervisor.NewHealthProber(mgr, 0)
+	mgr.SetHealthProber(healthProber)
+	healthProber.Start()
+	log.Info("health prober active", "tick", supervisor.DefaultHealthProbeTick)
+
 	// Issue #390: the observer (built above, before Autostart) reads what the
 	// supervised agents write — tool calls, and the provider errors a running
 	// process never surfaces — for the consumers that subscribe below. Its
@@ -632,6 +642,8 @@ func runDaemon(o daemonOpts) {
 	observer.Stop()
 	sessionGuard.Close()
 	mgr.SetSessionGuard(nil)
+	healthProber.Close()
+	mgr.SetHealthProber(nil)
 	// After both guards, which report into it; its deliveries in flight get
 	// notify.DefaultShutdownGrace.
 	notifier.Close()

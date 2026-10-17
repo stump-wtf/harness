@@ -65,6 +65,28 @@ func (p RestartPolicy) Valid() bool {
 	return false
 }
 
+// HealthAction is what the daemon does when a harness's health probe has
+// failed health_failures times in a row (issue #960).
+type HealthAction string
+
+const (
+	// HealthRestart restarts the harness, then waits one health_interval of
+	// cooldown before the probe may act again.
+	HealthRestart HealthAction = "restart"
+	// HealthNotify alerts without touching the process.
+	HealthNotify HealthAction = "notify"
+)
+
+// Valid reports whether a is a known health action. The empty string (the
+// zero value / omitted key) is valid and means the default, HealthRestart.
+func (a HealthAction) Valid() bool {
+	switch a {
+	case "", HealthRestart, HealthNotify:
+		return true
+	}
+	return false
+}
+
 // ShouldRestart reports whether an exit with the given code should be followed
 // by an automatic respawn under policy p. A spawn failure or signal death
 // (code == -1) counts as a failure for RestartOnFailure. The zero value and any
@@ -144,6 +166,16 @@ const (
 	// past its window's end before the harness is stopped anyway (SPEC-0012
 	// REQ "Shutdown Mode").
 	DefaultHoursShutdownTimeout = 15 * time.Minute
+	// DefaultHealthInterval is the gap between health probe runs when
+	// `health_interval` is omitted (issue #960).
+	DefaultHealthInterval = 5 * time.Minute
+	// DefaultHealthFailures is the consecutive-failure streak that triggers
+	// the health action when `health_failures` is omitted (issue #960).
+	DefaultHealthFailures = 3
+	// DefaultHealthProbeTimeout bounds one health probe run: a probe that
+	// hangs is itself unhealthy, so it counts as a failure without holding
+	// the prober open (issue #960).
+	DefaultHealthProbeTimeout = 30 * time.Second
 )
 
 // Harness is one supervised process definition: a command + args + working
@@ -309,6 +341,27 @@ type Harness struct {
 	// except for prompt harnesses, which default to "no": a one-shot agent run
 	// exiting 0 must not respawn (an explicit `restart = ...` still wins).
 	Restart RestartPolicy
+	// HealthCmd is an operator-owned probe program the daemon runs every
+	// HealthInterval while the harness is up (issue #960): exit 0 is one
+	// healthy probe, anything else is one failure. The probe encodes domain
+	// knowledge the daemon cannot have; the daemon owns scheduling, failure
+	// counting, cooldown, the action, and the alert. It inherits the daemon's
+	// environment plus HARNESS_NAME, HARNESS_PID, HARNESS_STATE and
+	// HARNESS_LAST_SUCCESSFUL_CALL, runs with no terminal, and gets a
+	// DefaultHealthProbeTimeout to answer. Like the [notify] hook it is a
+	// daemon-side hook, not a supervised harness (ADR-0033).
+	// Governing: ADR-0045 (proposed).
+	HealthCmd string
+	// HealthInterval is the time between probe runs. Zero after parsing means
+	// the default, DefaultHealthInterval. Meaningful only with HealthCmd.
+	HealthInterval time.Duration
+	// HealthFailures is the streak of consecutive failed probes that triggers
+	// HealthAction. Zero after parsing means DefaultHealthFailures.
+	HealthFailures int
+	// HealthAction is taken once HealthFailures consecutive failures accrue,
+	// after which the streak resets and one interval of cooldown passes
+	// before the probe may act again. Empty means HealthRestart.
+	HealthAction HealthAction
 	// Backend selects the hosting strategy (default native, ADR-0003).
 	Backend Backend
 	// Description is shown in the TUI list (ADR-0006).

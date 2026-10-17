@@ -52,6 +52,11 @@ const (
 	// NotifyRecovered fires when a harness that was reported failed or
 	// loop-stopped is running again, so the alert thread can close.
 	NotifyRecovered = "recovered"
+	// NotifyHealth fires when a harness's health probe has failed
+	// health_failures times in a row and the daemon has taken its configured
+	// action — restart or notify (issue #960). `recovered` closes it: the
+	// next healthy probe returns the harness to `health: ok`.
+	NotifyHealth = "health"
 	// NotifyTest is what `harness doctor --notify-test` sends. It is never
 	// listed in `events`; it always runs.
 	NotifyTest = "test"
@@ -59,7 +64,7 @@ const (
 
 // NotifyEvents is every event `events` may name, in documentation order.
 var NotifyEvents = []string{
-	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyRunFailed, NotifyIntentLost, NotifyParked, NotifyRecovered,
+	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyRunFailed, NotifyIntentLost, NotifyParked, NotifyHealth, NotifyRecovered,
 }
 
 // DefaultNotifyEvents is `events` when the table omits it: everything that
@@ -69,7 +74,7 @@ var NotifyEvents = []string{
 // in: a provider refusing an account for quota or credits is usually
 // something only a person can top up.
 var DefaultNotifyEvents = []string{
-	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyIntentLost, NotifyParked, NotifyRecovered,
+	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyIntentLost, NotifyParked, NotifyHealth, NotifyRecovered,
 }
 
 // Notify defaults and bounds.
