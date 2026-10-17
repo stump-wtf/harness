@@ -6,7 +6,7 @@ extends: [ADR-0005, ADR-0007, ADR-0033]
 related: [ADR-0006, ADR-0019, ADR-0021]
 ---
 
-# ADR-0045: Per-harness health probes — the daemon runs an operator-supplied probe command and owns the verdict, the streak, and the action
+# ADR-0046: Per-harness health probes — the daemon runs an operator-supplied probe command and owns the verdict, the streak, and the action
 
 > **Not yet accepted.** Proposed in the PR for stump.wtf/harness#960 by the
 > m lane; no maintainer decision exists yet. The issue is an imported outside

@@ -234,9 +234,12 @@ a wedged session or fails to (`session_rotated`), on a failed or timed-out
 scheduled or triggered run (`run_failed`, opt-in), once per park when a
 harness is parked on an exhausted provider quota (`parked`, SPEC-0021 REQ-13:
 its message SHALL name the reset and the classifier rule, never the error
-text), and when a harness it
-reported `failed` or `loop_stopped` is running again (`recovered`). A
-triggered harness never gives up — a failed run lands it in `failed` and its
+text), once per stall episode when the stall watchdog finds a persistent
+harness alive but making no progress (`stalled`, ADR-0045: its message SHALL
+name the idle span, the action taken and the worker's process tree, and an
+alert SHALL be opened only once the watchdog has stopped restarting it), and
+when a harness it reported `failed` or `loop_stopped` is running again
+(`recovered`). A triggered harness never gives up — a failed run lands it in `failed` and its
 next firing is the retry (SPEC-0008 REQ "Firing And Overlap") — so that
 transition SHALL NOT send `failed`, and the next firing's start SHALL NOT send
 `recovered`; the run itself is reported as `run_failed`, whose message SHALL
@@ -286,6 +289,15 @@ run it once with a `test` event.
 - **WHEN** its run parks it until 00:20 and the 00:15 firing is skipped by the park
 - **THEN** the hook receives one `parked` naming 00:20 and the rule, and no
   `failed` or `run_failed`
+
+#### Scenario: A stall is heard once
+
+- **GIVEN** a persistent harness with `stall_timeout = "45m"` and
+  `stall_action = "restart"`
+- **WHEN** its worker makes no model call for 45 minutes, is restarted, and the
+  replacement then makes a call
+- **THEN** the hook receives one `stalled` naming the idle span, the restart and
+  the worker's process tree, and neither `failed` nor `recovered`
 
 #### Scenario: A loop-guard stop is not silent
 

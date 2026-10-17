@@ -142,11 +142,24 @@ Two launchd specifics worth knowing:
   with other work between — `make test` after each edit, one queue poll per
   prompt — never counts; nor does calling the same tool with different
   arguments. A loop that alternates between two calls is not caught.
+- **A wedged persistent harness is noticed**: a process that stays alive but
+  stops making a successful model call is invisible to the restart policy, so a
+  harness that writes `stall_timeout` gets a watchdog (ADR-0045). It samples
+  each running persistent harness once a minute, and when the idle span since
+  the last model call passes the timeout it acts once per episode: by default it
+  logs and notifies, with `stall_action = "restart"` it also kills the worker
+  and brings a fresh one up (the run closes `stalled`, and a respawn happens
+  even under `restart = "no"`). Before a restart it dumps the worker's process
+  tree into the logs, because after the kill nothing of the wedge is left to
+  inspect. Five stalls in a row with no call between them switches that harness
+  to reporting only, so a wedge that restarts cannot fix does not become a
+  restart loop. Scheduled and triggered one-shots are refused the key: their
+  runs are already bounded by `timeout`.
 - **Someone hears about it**: with a [`[notify]` hook](./notify) configured,
   the daemon runs your program when a harness gives up into `failed`, starts
-  crash-looping, is stopped by the loop guard, or has its session rotated —
-  and again when it recovers. Without one, all of the above reaches only the
-  logs.
+  crash-looping, is stopped by the loop guard, has its session rotated, or is
+  found stalled by the watchdog, and again when it recovers. Without one, all of
+  the above reaches only the logs.
 - **Restarts don't accumulate memory**: each spawn gets its own terminal
   emulator, which cleans up the output for the durable log. The daemon
   releases that emulator when the spawn's output ends. A harness that restarts

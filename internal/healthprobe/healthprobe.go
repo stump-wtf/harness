@@ -10,7 +10,7 @@
 // execs outside the supervisor package for the same reason. The prober's
 // scheduling, streak and action logic stays in internal/supervisor.
 //
-// Governing: ADR-0045 (proposed); stump.wtf/harness#960.
+// Governing: ADR-0046 (proposed); stump.wtf/harness#960.
 package healthprobe
 
 import (

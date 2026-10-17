@@ -139,6 +139,13 @@ type formInputs struct {
 	// timeout/onOverlap/keepRuns are the schedule's run keys (issue #119);
 	// blank means the parser default.
 	timeout, onOverlap, keepRuns string
+	// stallTimeout/stallAction are the progress watchdog for a worker that
+	// stays alive and stops making progress (ADR-0045, issue #959): a duration
+	// and one of restart/notify/none, where blank means off and the parser
+	// default. Carried for the same round-trip reason as schedule — the save
+	// path rewrites the whole table, so a dropped key silently disarms an
+	// operator's watchdog over a worker that wedges.
+	stallTimeout, stallAction string
 	// operatingHours/hoursShutdown/hoursShutdownTimeout are the ADR-0019
 	// operating-hours gate: operatingHours is the weekly-window expression;
 	// hoursShutdown/hoursShutdownTimeout blank mean the parser defaults

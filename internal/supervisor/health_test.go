@@ -1,6 +1,6 @@
 package supervisor
 
-// Governing tests: ADR-0045 (proposed); stump.wtf/harness#960.
+// Governing tests: ADR-0046 (proposed); stump.wtf/harness#960.
 
 import (
 	"os"

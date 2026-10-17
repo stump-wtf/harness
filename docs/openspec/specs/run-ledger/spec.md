@@ -185,10 +185,14 @@ one of:
 | `quota_parked` | SPEC-0021 REQ-13 | ended by a provider quota refusal that parked the harness |
 | `model_mismatch` | SPEC-0020 (model pinning) | the served model or provider did not match the harness's pin |
 | `model_unattested` | SPEC-0020 (model pinning) | a full-attestation pin found no model or provider evidence for a call, or its final check timed out |
+| `stalled` | ADR-0045 (stall watchdog) | a resident run ended by the watchdog because no successful model call had landed for `stall_timeout`; the worker was blocked, which says nothing about whether the harness works |
 
 `running` SHALL mark a record in flight. `cancelled` SHALL mean a run ended by a
 deliberate stop, with `reason` `operator`, `hours` or `reload`. A resident whose
-process exits on its own SHALL read `success` for exit 0 and `failed` otherwise.
+process exits on its own SHALL read `success` for exit 0 and `failed` otherwise;
+one the stall watchdog ended SHALL read `stalled` with the exit code the kill
+produced, whatever the process would otherwise have been scored as, so a wedged
+worker does not look like a broken one.
 `reason` SHALL be set for `skipped` (SPEC-0014's `overlap`, `stopping` and
 `outside_hours`; SPEC-0021's `quota_parked`, `budget` and `concurrency`; and
 SPEC-0020's `model_hold`),
@@ -198,8 +202,8 @@ SPEC-0020's `model_hold`),
 For SPEC-0013's `harness_scheduled_runs_total{outcome}` and for SPEC-0008's
 consecutive-failure count, `success` SHALL count as success; `failed`,
 `timed_out`, `budget_exceeded`, `model_mismatch` and `model_unattested` SHALL
-count as failure; and
-every other outcome, `quota_parked` included, SHALL count as neither.
+count as failure; and every other outcome, `quota_parked` and `stalled`
+included, SHALL count as neither.
 
 #### Scenario: A model mismatch counts as a failure
 

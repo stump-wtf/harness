@@ -50,6 +50,7 @@ import (
 
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/loopguard"
+	"github.com/stump-wtf/harness/internal/stallguard"
 	"github.com/stump-wtf/harness/internal/supervisor"
 )
 
@@ -354,6 +355,36 @@ func (w *Watcher) SessionRotated(r supervisor.SessionRotation) {
 		Cause:   cause,
 		Hint:    "harness logs " + r.Harness,
 	}, r.Failed != "")
+}
+
+// Stalled reports a stall episode the watchdog acted on (issue #959): the
+// process was alive and `running`, and had made no successful model call for
+// its `stall_timeout`. It reports every action including `restart`, because a
+// worker that had to be revived is worth hearing about once however it was
+// revived; `stall_action = "none"` never reaches it, since silence is what that
+// value asks for. Reaching the restart limit is the case that needs a person,
+// so that one opens the alert and a later `running` closes it.
+func (w *Watcher) Stalled(s stallguard.Stall) {
+	cause := s.Cause()
+	msg := fmt.Sprintf("%s stalled: %s", s.Harness, cause)
+	switch {
+	case s.Action == core.StallRestart && s.GaveUp:
+		msg += fmt.Sprintf(" — %d stalls in a row with no progress between them, so it is left running and will not be restarted again; `harness restart %s` is the manual revive", s.Restarts, s.Harness)
+	case s.Action == core.StallRestart:
+		msg += fmt.Sprintf(" — restarted (stall %d with no progress since the last one)", s.Restarts)
+	default:
+		msg += " — left running; `stall_action = \"restart\"` would revive it"
+	}
+	if len(s.Tree) > 0 {
+		msg += "; process tree: " + s.TreeText()
+	}
+	w.send(Notification{
+		Event: core.NotifyStalled, Harness: s.Harness, State: string(core.StateRunning),
+		Message:  msg + "; see `harness logs " + s.Harness + "`",
+		Cause:    cause,
+		Hint:     "harness logs " + s.Harness,
+		Restarts: s.Restarts,
+	}, s.GaveUp)
 }
 
 // send hands n to the dispatcher. opens marks an alert that a later

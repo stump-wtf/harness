@@ -3,7 +3,7 @@ package supervisor
 // Per-Harness Health Probe
 //
 // HealthProber is the daemon-side half of the `health_cmd` feature (issue
-// #960, ADR-0045 proposed): an operator-owned probe program the daemon runs
+// #960, ADR-0046 proposed): an operator-owned probe program the daemon runs
 // on an interval while a harness is up. The probe encodes the domain
 // knowledge the daemon cannot have ("my queue has items older than 15
 // minutes"); the prober owns scheduling, the consecutive-failure streak,
@@ -29,7 +29,7 @@ package supervisor
 // working on. The streak and the cooldown live in memory only — like the
 // session guard's flags, a daemon restart re-learns them.
 //
-// Governing: ADR-0045 (proposed); stump.wtf/harness#960.
+// Governing: ADR-0046 (proposed); stump.wtf/harness#960.
 
 import (
 	"context"
