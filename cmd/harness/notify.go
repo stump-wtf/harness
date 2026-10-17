@@ -25,6 +25,7 @@ import (
 
 	"github.com/stump-wtf/harness/internal/loopguard"
 	"github.com/stump-wtf/harness/internal/notify"
+	"github.com/stump-wtf/harness/internal/stallguard"
 	"github.com/stump-wtf/harness/internal/supervisor"
 )
 
@@ -83,6 +84,15 @@ func (n *daemonNotifier) loopGuardOptions(opts loopguard.Options) loopguard.Opti
 	return opts
 }
 
+// stallGuardOptions connects the stall watchdog's episodes to the notifier
+// (issue #959).
+func (n *daemonNotifier) stallGuardOptions(opts stallguard.Options) stallguard.Options {
+	if n != nil {
+		opts.OnStall = n.w.Stalled
+	}
+	return opts
+}
+
 // intentLost forwards boot's dormant-autostart finding to the hook (issue
 // #835): an always-on member that silently lost its intent reaches the
 // operator, not only the journal.
@@ -121,5 +131,16 @@ func startDaemonSessionGuard(mgr *supervisor.Manager, n *daemonNotifier, interva
 	}
 	mgr.SetSessionGuard(g)
 	g.Start()
+	return g
+}
+
+// startDaemonStallGuard builds the stall watchdog (issue #959), subscribes it
+// to the observer for the progress signal, connects its episodes to the
+// notifier and starts it. A zero interval and restart limit take the defaults.
+// The daemon closes it on shutdown, before the observer stops and the Manager
+// closes.
+func startDaemonStallGuard(mgr *supervisor.Manager, obs stallguard.Subscriber, n *daemonNotifier, opts stallguard.Options) *stallguard.Guard {
+	g := stallguard.New(mgr, n.stallGuardOptions(opts))
+	g.Start(obs)
 	return g
 }

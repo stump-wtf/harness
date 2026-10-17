@@ -930,6 +930,25 @@ func (m *Manager) RestartChecked(name, peer string) (ok bool, refused error) {
 	return false, nil
 }
 
+// ReportStall hands the stall watchdog's finding for one harness to that
+// harness's own actor goroutine (issue #959). startedAt is the start time the
+// guard sampled its idle measurement against, so a finding about a process that
+// has since been replaced is dropped instead of killing a worker that came up a
+// moment ago. ok is false when the harness is unknown or its loop is gone; the
+// guard treats that as "already handled elsewhere" and says so in its log.
+func (m *Manager) ReportStall(name string, startedAt time.Time) bool {
+	s := m.get(name)
+	if s == nil {
+		return false
+	}
+	select {
+	case s.stallCh <- startedAt:
+		return true
+	case <-s.done:
+		return false
+	}
+}
+
 // Enable sets a harness's enabled intent and starts it if stopped. It is
 // Start under another name — cmdStart is what carries the intent — and
 // delegates rather than repeating the body, which is how it keeps Start's

@@ -376,6 +376,15 @@ func buildHarnessForm(fi *formInputs) *huh.Form {
 			huh.NewInput().Title("timeout (per run, e.g. 45m; 0 = no limit; blank = 1h; requires schedule)").Value(&fi.timeout),
 			huh.NewInput().Title("on_overlap (skip/queue/replace; blank = skip, or queue with triggers; requires schedule or triggers)").Value(&fi.onOverlap),
 			huh.NewInput().Title("keep_runs (run history kept; blank = 20; requires schedule or triggers)").Value(&fi.keepRuns),
+			huh.NewInput().Title("stall_timeout (idle with no model call before the watchdog acts, e.g. 45m; blank = off; refuses schedule/triggers)").Value(&fi.stallTimeout),
+			huh.NewSelect[string]().Title("stall_action (what the watchdog does when it trips; requires stall_timeout)").
+				Options(
+					huh.NewOption("unset (notify, and leave the worker running)", ""),
+					huh.NewOption("restart", core.StallRestart),
+					huh.NewOption("notify", core.StallNotify),
+					huh.NewOption("none", core.StallNone),
+				).
+				Value(&fi.stallAction),
 			huh.NewInput().Title("args (space-separated)").Value(&fi.args),
 			huh.NewInput().Title(`argv (command harness only; a TOML array, e.g. ["/usr/local/bin/report", "a b"]; exec'd, never via a shell)`).Value(&fi.argv),
 			huh.NewInput().Title("transcripts (command harness only; claude-code/crush/codex/pi/omp — observe its sessions as that agent's)").Value(&fi.transcripts),
