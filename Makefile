@@ -78,6 +78,16 @@ race:
 # inputs. FUZZTIME bounds each target so the gate stays predictable; raise it
 # locally (`make fuzz FUZZTIME=5m`) to dig. A failing input is written under
 # the package's testdata/fuzz/ — commit it with the fix as a regression seed.
+#
+# A failed target is retried once. The fuzz coordinator gives its workers a
+# short stop window after FUZZTIME, and on a contended runner a worker can
+# miss it, failing a clean run with "context deadline exceeded" and no
+# failing input — seen on the merge train for PR #962 (run 18263) where the
+# same tree was green on its PR run and on main. A real crasher does not get
+# past the retry: its input is already in testdata/fuzz/, so the second run
+# fails at the seed corpus and the gate still goes red, at the cost of a few
+# seconds per target.
+#
 # internal/tmpl FuzzParse: SPEC-0017 REQ-6, issue #501.
 # internal/attach FuzzRing: the byte-bounded scrollback ring against a flat
 # model (ADR-0007), https://github.com/stump-wtf/harness/issues/18.
@@ -92,7 +102,10 @@ fuzz:
 	@set -e; for t in $(FUZZ_TARGETS); do \
 		pkg=$${t%%:*}; fn=$${t##*:}; \
 		echo "fuzz $$pkg $$fn ($(FUZZTIME))"; \
-		$(GO) test -run '^$$' -fuzz "^$$fn\$$" -fuzztime $(FUZZTIME) $$pkg; \
+		if ! $(GO) test -run '^$$' -fuzz "^$$fn\$$" -fuzztime $(FUZZTIME) $$pkg; then \
+			echo "fuzz $$pkg $$fn failed once; retrying (a stop-window timeout fails clean runs; a real crasher is re-found at the seed corpus and fails the retry too)"; \
+			$(GO) test -run '^$$' -fuzz "^$$fn\$$" -fuzztime $(FUZZTIME) $$pkg; \
+		fi; \
 	done
 
 # Apply formatting in place. Uses gofumpt if installed, falls back to gofmt.
