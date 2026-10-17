@@ -136,7 +136,14 @@ type HarnessForm struct {
 	EnvFile      []string
 	RestartDelay int    // seconds
 	Restart      string // core.RestartPolicy; empty = the parse default
-	Backend      string
+	// The issue #960 health probe keys, round-tripped for the reason Argv
+	// is. HealthInterval zero and HealthFailures zero mean the key was
+	// omitted (the parser default); HealthAction empty means "restart".
+	HealthCmd      string
+	HealthInterval time.Duration
+	HealthFailures int
+	HealthAction   core.HealthAction
+	Backend        string
 	// Transcripts is a command harness's transcript binding (SPEC-0017
 	// REQ-4), round-tripped for the reason Argv is: a save that dropped it
 	// would silently unobserve the harness.
@@ -655,6 +662,23 @@ func (f HarnessForm) TOML() string {
 	if f.RestartDelay > 0 {
 		fmt.Fprintf(&b, "restart_delay = %d\n", f.RestartDelay)
 	}
+	// Health probe keys (issue #960), emitted only under health_cmd — the
+	// parser rejects the siblings without it, so writing them for a harness
+	// with no probe would turn an unrelated edit into a load error. Siblings
+	// equal to the parse default are omitted so an untouched edit round-trips
+	// without growing keys (same rule as restart above).
+	if hc := strings.TrimSpace(f.HealthCmd); hc != "" {
+		fmt.Fprintf(&b, "health_cmd = %s\n", strconv.Quote(hc))
+		if f.HealthInterval > 0 {
+			fmt.Fprintf(&b, "health_interval = %s\n", strconv.Quote(formatRunTimeout(f.HealthInterval)))
+		}
+		if f.HealthFailures > 0 {
+			fmt.Fprintf(&b, "health_failures = %d\n", f.HealthFailures)
+		}
+		if f.HealthAction != "" {
+			fmt.Fprintf(&b, "health_action = %s\n", strconv.Quote(string(f.HealthAction)))
+		}
+	}
 	// Omit restart when it equals the parse default for this harness kind —
 	// "no" for prompt one-shots and scheduled or triggered command harnesses
 	// (SPEC-0017 REQ-3), "always" otherwise — so an untouched edit
@@ -947,6 +971,20 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	// Typed, not string-bound: no widget edits it yet, so there is no input
 	// encoding to round-trip through (SPEC-0021 REQ-1).
 	fi.budget = h.Budget
+	// Same convention for the health probe keys (issue #960): carried typed,
+	// only what differs from the parser defaults, and only under a probe.
+	if h.HealthCmd != "" {
+		fi.healthCmd = h.HealthCmd
+		if h.HealthInterval != core.DefaultHealthInterval {
+			fi.healthInterval = h.HealthInterval
+		}
+		if h.HealthFailures != core.DefaultHealthFailures {
+			fi.healthFailures = h.HealthFailures
+		}
+		if h.HealthAction != core.HealthRestart {
+			fi.healthAction = h.HealthAction
+		}
+	}
 	fi.operatingHours = h.OperatingHours
 	if h.OperatingHours != "" {
 		// Same "blank means the parser default" convention as the schedule
@@ -1009,6 +1047,10 @@ func (fi formInputs) toForm() HarnessForm {
 		HoursShutdownTimeout: strings.TrimSpace(fi.hoursShutdownTimeout),
 		ExportTelemetry:      strings.TrimSpace(fi.exportTelemetry),
 		Budget:               fi.budget,
+		HealthCmd:            strings.TrimSpace(fi.healthCmd),
+		HealthInterval:       fi.healthInterval,
+		HealthFailures:       fi.healthFailures,
+		HealthAction:         fi.healthAction,
 	}
 	if args, err := shlex.Split(fi.args, true); err == nil && len(args) > 0 {
 		f.Args = args

@@ -113,6 +113,7 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		PID:                snap.PID,
 		SessionStalled:     snap.SessionStalled,
 		SessionRotations:   snap.SessionRotations,
+		Health:             snap.Health,
 	}
 	if !snap.LastStarted.IsZero() {
 		info.LastStarted = snap.LastStarted.Format(time.RFC3339Nano)
@@ -300,7 +301,27 @@ func (c *conn) opDescribe(req protocol.ControlReq) {
 	}
 	info := c.infoFor(snap)
 	c.attachInfoFor(&info)
+	c.attachHealthFor(&info)
 	c.respond(req, info)
+}
+
+// attachHealthFor decorates a describe payload with the health probe's last
+// results (issue #960). Describe only — list carries the health verdict on
+// HarnessInfo.Health without paying for N probe rings nobody asked for.
+func (c *conn) attachHealthFor(info *protocol.HarnessInfo) {
+	probes := c.srv.mgr.HealthProbes(info.Name)
+	if len(probes) == 0 {
+		return
+	}
+	out := make([]protocol.HealthProbeInfo, 0, len(probes))
+	for _, p := range probes {
+		w := protocol.HealthProbeInfo{OK: p.OK, ExitCode: p.ExitCode, Output: p.Output}
+		if !p.At.IsZero() {
+			w.At = p.At.Format(time.RFC3339Nano)
+		}
+		out = append(out, w)
+	}
+	info.HealthProbes = out
 }
 
 // attachInfoFor decorates a describe payload with the harness's attach plane:

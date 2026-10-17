@@ -66,6 +66,12 @@ const (
 	// Governing: SPEC-0017 REQ-11 "Rendering", REQ "Error Handling
 	// Standards".
 	EventTemplateRenderFailed EventKind = "harness_template_render_failed"
+	// EventHealth is emitted when a harness's health probe has failed
+	// health_failures times in a row and the prober has taken its action
+	// (restart or notify): Action names the action taken, Streak the failure
+	// count that tripped it, and Code the probe's exit code (issue #960).
+	// The notify Watcher turns it into the `health` event.
+	EventHealth EventKind = "harness_health"
 )
 
 // Render failure reasons, the `reason` label of
@@ -123,6 +129,13 @@ type Event struct {
 	// RenderFailure is set for EventTemplateRenderFailed: one of the
 	// RenderFailure* reasons.
 	RenderFailure string
+
+	// Action ("restart" | "notify") and Streak are set for EventHealth
+	// (issue #960), alongside Code: the probe's exit code, and Output: the
+	// capped tail of its combined output.
+	Action string
+	Streak int
+	Output string
 }
 
 // subBuffer is the per-subscriber queue depth. Publishing never blocks on a

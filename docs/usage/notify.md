@@ -18,7 +18,7 @@ care, it only hands the program the event.
 ```toml
 [notify]
 command  = ["/home/me/.config/harness/notify.sh"]  # argv; exec'd without a shell
-events   = ["failed", "flapping", "loop_stopped", "session_rotated", "intent_lost", "parked", "stalled", "recovered"]  # the default
+events   = ["failed", "flapping", "loop_stopped", "session_rotated", "intent_lost", "parked", "stalled", "health", "recovered"]  # the default
 timeout  = "15s"   # the hook's whole process group is killed after this
 cooldown = "15m"   # one alert per harness per event per window; "0s" turns it off
 ```
@@ -43,6 +43,7 @@ something to say.
 | `session_rotated` | The session guard found a `crush` session wedged on context-limit errors, archived its store and restarted it on a fresh session — or could not finish, and left it stopped. |
 | `parked` | The harness's provider refused it for quota or credits, so it is [parked](./configuration#run-budgets) until the reset: its runs are skipped, and it is released by itself then. Once per park; `until` carries the reset and `cause` the classifier rule. |
 | `stalled` | The [stall watchdog](./configuration#the-stall-watchdog) found a persistent harness alive with no successful model call for `stall_timeout`. The message says what was done about it — left running, restarted, or left alone after five stalls in a row — and names the processes it was stuck behind. Once per episode, never once per sample. |
+| `health` | The harness's `health_cmd` probe failed `health_failures` times in a row and the daemon took its action — `restart` says it restarted the harness, `notify` says nothing was touched. `cause` carries the probe's output tail. See [Health probes](./configuration#health-probes). |
 | `recovered` | A harness you were told was `failed`, `loop_stopped` or `stalled` is running again, so the alert thread can close. |
 | `run_failed` | A scheduled or triggered run ended `failed` or `timed_out`. **Not in the default set** — some jobs fail as their normal "nothing to do" answer. Add it to `events` to opt in. |
 

@@ -172,6 +172,15 @@ type formInputs struct {
 	// the round-trip reason triggers is: a dropped key silently lifts a
 	// spend cap.
 	budget core.Budget
+	// healthCmd/healthInterval/healthFailures/healthAction are the issue
+	// #960 health probe keys, carried typed with no widget yet — same
+	// convention as budget above. Zero interval/failures and an empty
+	// action mean "the parser default"; a blank cmd means no probe, and the
+	// siblings are then never written.
+	healthCmd      string
+	healthInterval time.Duration
+	healthFailures int
+	healthAction   core.HealthAction
 }
 
 // Model is the root Bubble Tea model.

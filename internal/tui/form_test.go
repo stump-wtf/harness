@@ -1024,6 +1024,10 @@ var harnessFormFields = []string{
 	// PackageEnv likewise (issue #930): the manifest's [[env]] names,
 	// recomputed from the pin on every load and never written to TOML.
 	"PackageEnv",
+	// The issue #960 health probe keys: carried typed through formInputs
+	// with no widget yet, the budget convention — the save path writes them
+	// only under health_cmd, default-equal siblings omitted.
+	"HealthCmd", "HealthInterval", "HealthFailures", "HealthAction",
 }
 
 // TestHarnessFormCoversEveryHarnessField is the census half of the issue #161

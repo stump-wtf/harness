@@ -121,6 +121,11 @@ type Manager struct {
 	// (issue #347). Its per-harness findings overlay onto every Snapshot.
 	guard *SessionGuard
 
+	// health, when set (SetHealthProber at daemon boot), is the health_cmd
+	// prober whose per-harness ok|failing verdict overlays onto every
+	// Snapshot (issue #960).
+	health *HealthProber
+
 	mu                sync.Mutex
 	cfg               *core.Config
 	supervisors       map[string]*Supervisor
@@ -1093,13 +1098,38 @@ func (m *Manager) SetSessionGuard(g *SessionGuard) {
 	m.mu.Unlock()
 }
 
+// SetHealthProber attaches the health prober whose verdict overlays onto
+// every Snapshot (issue #960). Nil detaches (daemon shutdown).
+func (m *Manager) SetHealthProber(p *HealthProber) {
+	m.mu.Lock()
+	m.health = p
+	m.mu.Unlock()
+}
+
+// HealthProbes returns the prober's last probe results for name, oldest
+// first — describe-only payload, so it is fetched by name and never rides
+// list (issue #960). Nil when no prober is attached or nothing has run.
+func (m *Manager) HealthProbes(name string) []HealthProbe {
+	m.mu.Lock()
+	p := m.health
+	m.mu.Unlock()
+	if p == nil {
+		return nil
+	}
+	return p.Probes(name)
+}
+
 // overlayGuard stamps the session guard's observation onto snap so callers
 // see a wedged session even while process state still reads healthy. Zero
 // when no guard is attached or it never flagged the harness.
 func (m *Manager) overlayGuard(snap Snapshot) Snapshot {
 	m.mu.Lock()
 	g := m.guard
+	h := m.health
 	m.mu.Unlock()
+	if h != nil {
+		snap.Health = h.Flag(snap.Name)
+	}
 	if g == nil {
 		return snap
 	}
