@@ -305,6 +305,7 @@ else:
 | `harness.name` | operator | Always |
 | `harness.workdir` | operator | Always (the expanded workdir) |
 | `model` | operator | The harness sets `model` |
+| `package.dir` | daemon | The harness is defined by an installed package pin (it has a `source`) |
 | `run.id` | daemon | The run has a SPEC-0008 run record |
 | `run.trigger` | daemon | The run has a record: `schedule`, `catch_up`, `manual`, `channel` or `webhook` |
 | `run.source` | daemon | A source caused the run |
@@ -321,6 +322,14 @@ else:
 | `event.title`, `event.body`, `event.comment`, `event.ref`, `event.content` | untrusted | Only through `{{untrusted …}}` (REQ-10) |
 
 The prompt template itself SHALL NOT reference `prompt` or `prompt_file`.
+
+`package.dir` SHALL be derived by the daemon from the harness's own `source`
+pin — its installed package directory in the content-addressed store — and
+never supplied by the package, so a manifest cannot point a render outside the
+files it ships (ADR-0047). A harness with no `source` SHALL have no
+`package.dir` in the context, and a harness without a `source` whose template
+references a required `package.dir` SHALL fail config validation, because every
+render would fail.
 
 A harness with a `schedule` whose template references a required `event.*` or
 `run.source` path SHALL fail config validation, because every scheduled firing
@@ -352,6 +361,21 @@ fail config validation, because it never has a run record.
 
 - **WHEN** a resident command harness references `{{run.id}}`
 - **THEN** config validation fails, stating that the harness has no run records
+
+#### Scenario: A package's bundled script is named by package.dir
+
+- **WHEN** a harness declares `source = "stump-wtf/watcher@abc123..."`, its
+  pinned manifest declares `harness = "command"` and `argv = ["bash",
+  "{{package.dir}}/watch.sh"]`, and the run starts
+- **THEN** the process receives `bash` and the absolute path of `watch.sh`
+  inside that pin's directory, with no `{{package.dir}}` in its argv
+
+#### Scenario: Required package.dir on a harness with no package
+
+- **WHEN** a hand-written `command` harness with no `source` references
+  `{{package.dir}}`
+- **THEN** config validation fails, naming `source`, and `{{package.dir?}}` is
+  suggested for an empty argument
 
 ### Requirement: REQ-8 — Typed Event Metadata
 

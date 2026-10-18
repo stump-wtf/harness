@@ -183,7 +183,8 @@ schedule = "0 */4 * * *"
   "requires `prompt`" rules for `model`, `auto_accept`, `max_turns`, `quiet`
   and `schedule`.
 - **The context is the run, not the world**: `harness.name`,
-  `harness.workdir`, `model`, the run record's `run.id`, `run.trigger`,
+  `harness.workdir`, `model`, the installed package's `package.dir` (for a
+  harness with `source`), the run record's `run.id`, `run.trigger`,
   `run.source`, `run.started_at`, `run.date`, and, for a run a trigger
   fired, the [event context](#event-context): `event.file`, `event.id`,
   `event.kind`, `event.source`, `event.received_at`, and the event's
@@ -797,6 +798,7 @@ conditionals or loops; `{{printf …}}` is a config error.
 | `harness.name` | the harness's name | always |
 | `harness.workdir` | the expanded working directory | always |
 | `model` | the harness's `model` | `model` is set |
+| `package.dir` | the directory of the installed package pin | the harness has `source` |
 | `run.id` | the run's ID | the harness has `schedule` or `triggers` |
 | `run.trigger` | `schedule`, `catch_up`, `manual`, `channel` or `webhook` | the harness has `schedule` or `triggers` |
 | `run.source` | the trigger source, e.g. `webhook.ci` | a source caused the run |
