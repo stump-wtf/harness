@@ -9,11 +9,11 @@ package core
 // wire, the TUI form and spawn all call it, so they cannot disagree.
 //
 // What argv may reference is a closed allow set over the operator and daemon
-// tiers of the context: harness.name, harness.workdir, model, and the run.*
-// paths. Event paths are refused for now (a later story wires the event
-// context), `prompt`/`prompt_file` wait for a prompt delivery (REQ-12), and
-// untrusted free text is refused in argv in every form, permanently: text an
-// outside party wrote never becomes an argument (REQ-10).
+// tiers of the context: harness.name, harness.workdir, model, package.dir, and
+// the run.* paths. Event paths are refused for now (a later story wires the
+// event context), `prompt`/`prompt_file` wait for a prompt delivery (REQ-12),
+// and untrusted free text is refused in argv in every form, permanently: text
+// an outside party wrote never becomes an argument (REQ-10).
 //
 // Governing: ADR-0023 (command one-shots and templating), SPEC-0017 REQ-6
 // "Template Grammar", REQ-7 "Template Context", REQ-10 "Untrusted Free Text",
@@ -35,6 +35,7 @@ const (
 	PathHarnessName    = "harness.name"
 	PathHarnessWorkdir = "harness.workdir"
 	PathModel          = "model"
+	PathPackageDir     = "package.dir"
 	PathRunID          = "run.id"
 	PathRunTrigger     = "run.trigger"
 	PathRunSource      = "run.source"
@@ -71,7 +72,7 @@ const EventMetaPrefix = "event.meta."
 // URL the extractor verified, or an operator-written value: none carries a
 // byte an outside party chose.
 var argvPaths = map[string]bool{
-	PathHarnessName: true, PathHarnessWorkdir: true, PathModel: true,
+	PathHarnessName: true, PathHarnessWorkdir: true, PathModel: true, PathPackageDir: true,
 	PathRunID: true, PathRunTrigger: true, PathRunSource: true,
 	PathRunStartedAt: true, PathRunDate: true,
 	PathEventFile: true, PathEventID: true, PathEventKind: true,
@@ -149,7 +150,7 @@ func checkArgvRef(i int, r tmpl.Ref) error {
 	case r.Path == "prompt" || r.Path == "prompt_file":
 		return fmt.Errorf("%s: {{%s}} needs a prompt delivery, which a command harness does not have yet", at, r.Path)
 	}
-	return fmt.Errorf("%s: unknown template path %q (argv may reference: harness.name, harness.workdir, model, run.*, event.*)", at, r.Path)
+	return fmt.Errorf("%s: unknown template path %q (argv may reference: harness.name, harness.workdir, model, package.dir, run.*, event.*)", at, r.Path)
 }
 
 // CommandArgvRefs returns every placeholder reference in argv[1:], each paired
@@ -176,10 +177,11 @@ type ArgvRef struct {
 }
 
 // CheckCommandTemplateContext applies the rules that depend on the rest of the
-// harness, not on argv alone: whether `model` is set, and whether the harness
-// is scheduled or triggered at all. Each rule rejects a template whose every
-// render would fail (or a key that would do nothing), at load, instead of
-// letting every firing turn into a skip nobody asked for.
+// harness, not on argv alone: whether `model` is set, whether the harness is
+// scheduled or triggered at all, and whether an installed package defines it.
+// Each rule rejects a template whose every render would fail (or a key that
+// would do nothing), at load, instead of letting every firing turn into a skip
+// nobody asked for.
 //
 //   - `model` is accepted only when an argv element references {{model}}
 //     (REQ-3), and a required {{model}} needs `model` set.
@@ -193,12 +195,15 @@ type ArgvRef struct {
 //     never has one at all, so a required event.* reference would skip every
 //     firing (REQ-7 scenarios "Required event field on a scheduled harness"
 //     and "Optional event field on a scheduled firing").
+//   - `package.dir` exists only for a harness defined by an installed package
+//     pin, so a required {{package.dir}} on any other harness could never
+//     render (SPEC-0026 REQ-7).
 //
 // The argv must already have passed CheckCommandArgv. The error is meant to
 // follow "harness %q: ".
-// Governing: ADR-0023, SPEC-0017 REQ-3 "Command Harness Modes And
+// Governing: ADR-0023, ADR-0044, SPEC-0017 REQ-3 "Command Harness Modes And
 // Exclusions", REQ-7 "Template Context".
-func CheckCommandTemplateContext(argv []string, model string, scheduled, triggered bool) error {
+func CheckCommandTemplateContext(argv []string, model string, scheduled, triggered, packaged bool) error {
 	refs := CommandArgvRefs(argv)
 	usesModel := false
 	for _, r := range refs {
@@ -220,6 +225,10 @@ func CheckCommandTemplateContext(argv []string, model string, scheduled, trigger
 		case PathRunID, PathRunTrigger:
 			if required && !triggered {
 				return fmt.Errorf("%s: {{%s}} can never render: the harness has no \"schedule\" or \"triggers\", so it has no run records (write {{%s?}} for an empty argument)", at, r.Path, r.Path)
+			}
+		case PathPackageDir:
+			if required && !packaged {
+				return fmt.Errorf("%s: {{package.dir}} can never render: the harness has no \"source\", so it is not defined by an installed package (write {{package.dir?}} for an empty argument)", at)
 			}
 		default:
 			if required && eventPath(r.Path) {

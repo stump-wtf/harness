@@ -513,8 +513,10 @@ func checkCommandDef(h core.Harness) error {
 	// The same template-context rules as the file: `model` only with
 	// {{model}}, and — since schedule and triggers never travel here, so a
 	// wire harness is always resident — no required run.* reference, which
-	// could never render. Governing: SPEC-0017 REQ-7, REQ-14.
-	return core.CheckCommandTemplateContext(h.Argv, h.Model, h.Schedule != "", h.Triggered())
+	// could never render. A wire harness carries its `source` too, so
+	// {{package.dir}} follows the same rule.
+	// Governing: SPEC-0017 REQ-7, REQ-14; SPEC-0026 REQ-7.
+	return core.CheckCommandTemplateContext(h.Argv, h.Model, h.Schedule != "", h.Triggered(), h.PackageSource != "")
 }
 
 // harnessDefEqual reports whether two definitions are identical field-for-

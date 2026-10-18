@@ -130,3 +130,25 @@ func PinDir(s Source) string {
 
 // ManifestPath is package.toml inside a pin directory.
 func ManifestPath(s Source) string { return filepath.Join(PinDir(s), "package.toml") }
+
+// InstalledPackageDir turns a harness's PackageSource string into the
+// directory the installed package's bundled files live in. It is what the run
+// context's `{{package.dir}}` renders to, so a package can name a file it
+// ships without hard-coding the content SHA, which breaks on every upgrade. A
+// harness with no source, or a source string that does not parse, yields false
+// and the caller says so: no path is invented. Config load has already refused
+// a pin absent from disk (SPEC-0026 REQ-7), so this performs no disk access.
+// PackageDir is the same idea on the other side of install: a package folder
+// inside a stable's clone.
+//
+// Governing: ADR-0044; SPEC-0026 REQ-7; SPEC-0017 REQ-7 "Template Context".
+func InstalledPackageDir(packageSource string) (string, bool) {
+	if packageSource == "" {
+		return "", false
+	}
+	src, err := ParseSource(packageSource)
+	if err != nil {
+		return "", false
+	}
+	return PinDir(src), true
+}

@@ -513,15 +513,21 @@ type spawnPlan struct {
 
 // renderContext is the template context a command harness's argv renders
 // against: the operator tier (harness.name, harness.workdir, model) and the
-// daemon tier (run.*), and nothing else (SPEC-0017 REQ-7). A path is absent,
-// not empty, when the run does not have it — no record means no run.id or
-// run.trigger, no source means no run.source — so a required reference fails
-// the render instead of passing an empty argument.
+// daemon tier (package.dir, run.*), and nothing else (SPEC-0017 REQ-7). A path
+// is absent, not empty, when the run does not have it — no record means no
+// run.id or run.trigger, no source means no run.source, no package pin means
+// no package.dir — so a required reference fails the render instead of passing
+// an empty argument.
+//
+// package.dir is derived, never read from the package: the daemon computes it
+// from the harness's own `source` pin, so a manifest cannot point the render
+// anywhere its own files are not.
 //
 // It holds no untrusted values at all: argv may never reference free text
 // (REQ-10), and an empty untrusted namespace makes that true at render time
 // too, not only at load.
-// Governing: ADR-0023, SPEC-0017 REQ-7 "Template Context".
+// Governing: ADR-0023, ADR-0044, SPEC-0017 REQ-7 "Template Context", SPEC-0026
+// REQ-7.
 func renderContext(h core.Harness, workdir string, run RunEnv, now time.Time) tmpl.Map {
 	started := run.StartedAt
 	if started.IsZero() {
@@ -535,6 +541,9 @@ func renderContext(h core.Harness, workdir string, run RunEnv, now time.Time) tm
 	}
 	if h.Model != "" {
 		v[core.PathModel] = h.Model
+	}
+	if dir, ok := agentpkg.InstalledPackageDir(h.PackageSource); ok {
+		v[core.PathPackageDir] = dir
 	}
 	if run.RunID > 0 {
 		v[core.PathRunID] = strconv.Itoa(run.RunID)

@@ -503,7 +503,8 @@ func (f HarnessForm) validateCommand(promptSet bool) error {
 	}
 	scheduled := strings.TrimSpace(f.Schedule) != ""
 	triggered := scheduled || len(normalizeTriggers(f.Triggers)) > 0
-	return core.CheckCommandTemplateContext(f.Argv, strings.TrimSpace(f.Model), scheduled, triggered)
+	packaged := strings.TrimSpace(f.PackageSource) != ""
+	return core.CheckCommandTemplateContext(f.Argv, strings.TrimSpace(f.Model), scheduled, triggered, packaged)
 }
 
 // formatRunTimeout renders a timeout the way an operator would type it:
