@@ -194,7 +194,11 @@ func (c *Client) CreateTrainBranch(ctx context.Context, repo string, spec forge.
 	for i, h := range heads {
 		side1 := spec.BaseSHA
 		if i > 0 {
-			out, err := c.git(ctx, dir, identity{}, "commit-tree", tree, "-p", spec.BaseSHA, "-m", "merge train fold")
+			// The bot identity, same as the final commit below: the child
+			// environment carries no git config (GIT_CONFIG_GLOBAL=/dev/null),
+			// so a commit-tree with identity{} depends on the runner's
+			// fallback email auto-detection and dies where that is absent.
+			out, err := c.git(ctx, dir, id, "commit-tree", tree, "-p", spec.BaseSHA, "-m", "merge train fold")
 			if err != nil {
 				return forge.TrainBranch{}, err
 			}
