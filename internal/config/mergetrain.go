@@ -10,9 +10,9 @@ package config
 // ignored. The table is global-only: a project file or harness_d drop-in
 // must not be able to turn on a component that merges code.
 //
-// `batch` (SPEC-0025 REQ-17) is decoded and range-checked ahead of the
-// batching itself, so a table written against the spec loads; the daemon
-// warns that a value above 1 still runs one PR per train.
+// `batch` (SPEC-0025 REQ-17) is decoded and range-checked: a whole number of
+// at least 1, where a value above 1 batches that many heads onto one train
+// commit.
 //
 // Governing: ADR-0032; SPEC-0025 REQ-1, REQ-12, REQ-17.
 //

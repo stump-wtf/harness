@@ -60,11 +60,22 @@ type Forge interface {
 
 // TrainSpec says what train commit to build.
 type TrainSpec struct {
-	Branch  string // "train/<pr>"
+	Branch  string // "train/<pr>", or "train/batch/<pr>-…" when Heads carries more than one head
 	BaseSHA string // the base branch head the train is built on
-	PR      int
-	HeadSHA string // the PR head; the build fails with ErrStale if the forge disagrees
+	PR      int    // the first PR in the batch
+	HeadSHA string // the first PR's head; the build fails with ErrStale if the forge disagrees
+	// Heads pins every PR in the batch, in the order their heads fold onto
+	// BaseSHA (SPEC-0025 REQ-17). Empty means the single-PR spelling: exactly
+	// PR and HeadSHA.
+	Heads   []PRHead
 	Message string // the train commit's message
+}
+
+// PRHead pins one pull request's head inside a batch TrainSpec
+// (SPEC-0025 REQ-17).
+type PRHead struct {
+	PR      int
+	HeadSHA string
 }
 
 // TrainBranch is the train commit CreateTrainBranch built.
@@ -74,6 +85,20 @@ type TrainBranch struct {
 	Changed []string // paths added or modified relative to BaseSHA, sorted
 	Deleted []string // paths deleted relative to BaseSHA, sorted
 }
+
+// ConflictError attributes a batch build's conflict to the first PR whose
+// head the in-order fold rejected (SPEC-0025 REQ-17). It unwraps to
+// ErrConflict, so callers that do not care which PR rejected keep matching
+// the sentinel.
+type ConflictError struct {
+	PR int
+}
+
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("forge: merge conflict at PR %d", e.PR)
+}
+
+func (e *ConflictError) Unwrap() error { return ErrConflict }
 
 var (
 	// ErrConflict means the PR head does not merge cleanly onto the base.

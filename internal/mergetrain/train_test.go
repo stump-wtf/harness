@@ -315,3 +315,87 @@ func TestTrainRemovesLeftoverBeforeBuilding(t *testing.T) {
 	}
 	noTrainBranches(t, f)
 }
+
+// secondPR is PR 8 at a head of its own, eligible like ready().
+func secondPR() PullRequest {
+	pr := ready()
+	pr.Number = 8
+	pr.HeadSHA = head2
+	for i := range pr.Reviews {
+		pr.Reviews[i].CommitID = head2
+	}
+	return pr
+}
+
+const head2 = "2222222222222222222222222222222222222222"
+
+func TestTrainBatchGreenCapturesEveryHeadsPaths(t *testing.T) {
+	f, first := trainSetup(t)
+	second := secondPR()
+	f.AddPR(repo, second)
+	f.OnTrain(func(s forge.TrainSpec) (forge.TrainBranch, error) {
+		if len(s.Heads) != 2 || s.Heads[0].PR != 7 || s.Heads[1].PR != 8 {
+			t.Errorf("spec heads = %+v, want 7 then 8", s.Heads)
+		}
+		if s.Branch != "train/batch/7-8" {
+			t.Errorf("Branch = %q, want train/batch/7-8", s.Branch)
+		}
+		if !strings.Contains(s.Message, "#7,#8") {
+			t.Errorf("Message = %q, want both PRs named", s.Message)
+		}
+		return forge.TrainBranch{SHA: trainSHA, Tree: "T", Changed: []string{"a.go", "b.go"}}, nil
+	})
+	f.SetFile(repo, trainSHA, "b.go", []byte("B"))
+	f.SetStatus(repo, trainSHA, "success")
+
+	res := RunTrainBatch(context.Background(), f, cfg(nil), []PullRequest{first, second}, "base")
+	if res.Outcome != OutcomeGreen {
+		t.Fatalf("Result = %+v, want green", res)
+	}
+	if want := map[string][]byte{"a.go": []byte("A"), "b.go": []byte("B")}; len(res.Want) != 2 || string(res.Want["b.go"]) != "B" {
+		t.Fatalf("Want = %q, want both heads' paths", want)
+	}
+	noTrainBranches(t, f)
+}
+
+func TestTrainBatchConflictNamesTheRejectingHead(t *testing.T) {
+	f, first := trainSetup(t)
+	second := secondPR()
+	f.AddPR(repo, second)
+	f.OnTrain(func(forge.TrainSpec) (forge.TrainBranch, error) {
+		return forge.TrainBranch{}, &forge.ConflictError{PR: 8}
+	})
+
+	res := RunTrainBatch(context.Background(), f, cfg(nil), []PullRequest{first, second}, "base")
+	if res.Outcome != OutcomeConflict || res.ConflictPR != 8 {
+		t.Fatalf("Result = %+v, want conflict attributed to PR 8", res)
+	}
+	if !errors.Is(res.Err, forge.ErrConflict) {
+		t.Fatalf("Err = %v, want it to unwrap to ErrConflict", res.Err)
+	}
+	if count(f.Methods(), "CombinedStatus") != 0 {
+		t.Fatal("a conflicting build must not poll CI")
+	}
+	noTrainBranches(t, f)
+}
+
+func TestTrainBatchOfOneIsTheOldSpelling(t *testing.T) {
+	f, pr := trainSetup(t)
+	var got forge.TrainSpec
+	f.OnTrain(func(s forge.TrainSpec) (forge.TrainBranch, error) {
+		got = s
+		return forge.TrainBranch{SHA: trainSHA, Tree: "T", Changed: []string{"a.go"}}, nil
+	})
+	f.SetStatus(repo, trainSHA, "success")
+
+	if res := RunTrainBatch(context.Background(), f, cfg(nil), []PullRequest{pr}, "base"); res.Outcome != OutcomeGreen {
+		t.Fatalf("Result = %+v, want green", res)
+	}
+	if got.Branch != TrainBranchName(pr.Number) || len(got.Heads) != 0 {
+		t.Fatalf("spec = %+v, want train/7 with no Heads", got)
+	}
+	if got.Message != "merge train: #7 at "+head[:12] {
+		t.Fatalf("Message = %q, want the message the unbatched train always used", got.Message)
+	}
+	noTrainBranches(t, f)
+}

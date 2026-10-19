@@ -128,11 +128,24 @@ func (c *Client) clone(ctx context.Context, repo string) (string, error) {
 	return dir, nil
 }
 
-// CreateTrainBranch builds spec.BaseSHA + a squash of the PR head as one new
-// commit and pushes it to the new branch spec.Branch.
+// CreateTrainBranch builds spec.BaseSHA plus a squash of every pinned head,
+// folded in order, as one new commit and pushes it to the new branch
+// spec.Branch. With one head this is exactly the single-PR train commit;
+// with several (SPEC-0025 REQ-17) head i is folded onto the tree the heads
+// before it produced, and a rejection is attributed to that head as a
+// *forge.ConflictError.
 func (c *Client) CreateTrainBranch(ctx context.Context, repo string, spec forge.TrainSpec) (forge.TrainBranch, error) {
-	if spec.Branch == "" || spec.BaseSHA == "" || spec.HeadSHA == "" || spec.PR <= 0 {
-		return forge.TrainBranch{}, errors.New("gitea: CreateTrainBranch needs Branch, BaseSHA, HeadSHA and PR")
+	heads := spec.Heads
+	if len(heads) == 0 {
+		heads = []forge.PRHead{{PR: spec.PR, HeadSHA: spec.HeadSHA}}
+	}
+	if spec.Branch == "" || spec.BaseSHA == "" {
+		return forge.TrainBranch{}, errors.New("gitea: CreateTrainBranch needs Branch and BaseSHA")
+	}
+	for _, h := range heads {
+		if h.PR <= 0 || h.HeadSHA == "" {
+			return forge.TrainBranch{}, errors.New("gitea: CreateTrainBranch needs a PR number and head SHA for every head")
+		}
 	}
 	id, err := c.whoami(ctx)
 	if err != nil {
@@ -145,41 +158,71 @@ func (c *Client) CreateTrainBranch(ctx context.Context, repo string, spec forge.
 		return forge.TrainBranch{}, err
 	}
 	remote := c.gitURL(repo)
-	pullRef := "refs/mergetrain/pull/" + strconv.Itoa(spec.PR)
 
-	// Fetch every branch head and the PR head into private refs. Fetching
-	// the base by SHA would need uploadpack.allowReachableSHA1InWant on the
-	// server; the base is main's head, so fetching heads always brings it.
-	if _, err := c.git(ctx, dir, identity{}, "fetch", "--quiet", "--no-tags", "--prune", remote,
-		headsRefspec, "+refs/pull/"+strconv.Itoa(spec.PR)+"/head:"+pullRef); err != nil {
+	// Fetch every branch head and every pinned PR head into private refs.
+	// Fetching the base by SHA would need uploadpack.allowReachableSHA1InWant
+	// on the server; the base is main's head, so fetching heads always brings
+	// it.
+	refspecs := make([]string, 0, len(heads)+1)
+	refspecs = append(refspecs, headsRefspec)
+	for _, h := range heads {
+		refspecs = append(refspecs, "+refs/pull/"+strconv.Itoa(h.PR)+"/head:"+pullRef(h.PR))
+	}
+	if _, err := c.git(ctx, dir, identity{}, append([]string{"fetch", "--quiet", "--no-tags", "--prune", remote}, refspecs...)...); err != nil {
 		return forge.TrainBranch{}, err
 	}
 	if _, err := c.git(ctx, dir, identity{}, "cat-file", "-e", spec.BaseSHA+"^{commit}"); err != nil {
 		return forge.TrainBranch{}, fmt.Errorf("gitea: base %s is not on the remote: %w", spec.BaseSHA, forge.ErrStale)
 	}
-	got, err := c.revParse(ctx, dir, pullRef)
-	if err != nil {
-		return forge.TrainBranch{}, err
-	}
-	if got != spec.HeadSHA {
-		return forge.TrainBranch{}, forge.ErrStale
+	for _, h := range heads {
+		got, err := c.revParse(ctx, dir, pullRef(h.PR))
+		if err != nil {
+			return forge.TrainBranch{}, err
+		}
+		if got != h.HeadSHA {
+			return forge.TrainBranch{}, forge.ErrStale
+		}
 	}
 
-	out, err := c.git(ctx, dir, identity{}, "merge-tree", "--write-tree", "--no-messages", spec.BaseSHA, spec.HeadSHA)
-	var ge *gitError
-	if errors.As(err, &ge) && ge.code == 1 {
-		return forge.TrainBranch{}, forge.ErrConflict
+	// Fold the heads in order. merge-tree takes commits, not trees, so the
+	// tree folded so far travels in a local commit-tree whose parent is the
+	// base: merge-base(that commit, the next head) is then merge-base(base,
+	// the next head), which is exactly the squash the forge will apply onto
+	// the growing base. These fold commits are local plumbing; only the final
+	// commit is pushed.
+	tree := ""
+	for i, h := range heads {
+		side1 := spec.BaseSHA
+		if i > 0 {
+			// The bot identity, same as the final commit below: the child
+			// environment carries no git config (GIT_CONFIG_GLOBAL=/dev/null),
+			// so a commit-tree with identity{} depends on the runner's
+			// fallback email auto-detection and dies where that is absent.
+			out, err := c.git(ctx, dir, id, "commit-tree", tree, "-p", spec.BaseSHA, "-m", "merge train fold")
+			if err != nil {
+				return forge.TrainBranch{}, err
+			}
+			side1 = firstLine(out)
+		}
+		out, err := c.git(ctx, dir, identity{}, "merge-tree", "--write-tree", "--no-messages", side1, pullRef(h.PR))
+		var ge *gitError
+		if errors.As(err, &ge) && ge.code == 1 {
+			if len(heads) == 1 {
+				return forge.TrainBranch{}, forge.ErrConflict
+			}
+			return forge.TrainBranch{}, &forge.ConflictError{PR: h.PR}
+		}
+		if err != nil {
+			return forge.TrainBranch{}, err
+		}
+		tree = firstLine(out)
 	}
-	if err != nil {
-		return forge.TrainBranch{}, err
-	}
-	tree := firstLine(out)
 
 	msg := spec.Message
 	if msg == "" {
 		msg = "merge train: #" + strconv.Itoa(spec.PR)
 	}
-	out, err = c.git(ctx, dir, id, "commit-tree", tree, "-p", spec.BaseSHA, "-m", msg)
+	out, err := c.git(ctx, dir, id, "commit-tree", tree, "-p", spec.BaseSHA, "-m", msg)
 	if err != nil {
 		return forge.TrainBranch{}, err
 	}
@@ -192,12 +235,15 @@ func (c *Client) CreateTrainBranch(ctx context.Context, repo string, spec forge.
 
 	// A plain push creates the branch. It cannot rewrite one: a branch that
 	// already exists and is not an ancestor rejects it, and the driver
-	// deletes any leftover train/<pr> before building.
+	// deletes any leftover train branch before building.
 	if _, err := c.git(ctx, dir, identity{}, "push", "--quiet", remote, sha+":refs/heads/"+spec.Branch); err != nil {
 		return forge.TrainBranch{}, err
 	}
 	return forge.TrainBranch{SHA: sha, Tree: tree, Changed: changed, Deleted: deleted}, nil
 }
+
+// pullRef is the private ref a PR head is fetched into.
+func pullRef(pr int) string { return "refs/mergetrain/pull/" + strconv.Itoa(pr) }
 
 // diff lists paths from base to commit: added, modified or type-changed ones
 // in changed, deleted ones in deleted, both sorted. Renames are split into a

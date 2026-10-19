@@ -39,7 +39,7 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 | `ci_timeout` | give up a train whose CI has not finished after this long (comment, cause `timeout`) |
 | `forge_base_url` | the forge's API base |
 | `forge_token_env` | the **name** of the environment variable holding the forge token — the token itself never appears in `harness.toml`, logs, errors or argv |
-| `batch` | PRs per train commit, a whole number of at least 1 (default 1). Accepted but **not yet built**; see [Batching](#batching-specified-not-yet-in-the-binary) |
+| `batch` | PRs per train commit, a whole number of at least 1 (default 1). Above 1 batches heads onto one train commit and bisects on red; see [Batching](#batching) |
 
 A change to `[mergetrain]` takes effect at the next daemon restart. The train
 holds an exclusive per-repo lock
@@ -71,15 +71,17 @@ There is no per-poll CI line: `built` marks the start of the CI wait, and
 stopped between a merge and its verification. The merge stands unverified,
 and the train does not halt for it.
 
-## Batching (specified, not yet in the binary)
+## Batching
 
-`batch = N` (> 1) puts up to N heads on one train commit — one CI run for the
-whole batch — and bisects by halves on red until the failing PR is isolated.
-Merging, re-checking and verification stay per PR, so batching changes
-throughput, not safety. Specified as SPEC-0025 REQ-17 and not yet built.
+`batch = N` (> 1) puts up to N eligible PRs, in merge order, on one train
+commit — one CI run for the whole batch — and bisects a red batch by halves
+until a single PR is isolated and gets the usual `red` comment; halves that
+go green land. A conflict folds onto the heads before the first rejecting
+head, which gets the usual `conflict` comment. Merging, re-checking and
+verification stay per PR, so batching changes throughput, not safety
+(SPEC-0025 REQ-17). `batch = 1`, the default, is the one-PR-per-train
+behaviour exactly.
 
-Until it is, the daemon accepts `batch` so a table written against the spec
-loads: the value must be a whole number of at least 1 (`0`, a negative number
-or a string is a config error with its line). Every train still carries one
-PR. When `batch` is above 1 the daemon logs a warning at start:
-`merge train: batch is not implemented yet; each train carries one PR`.
+The value must be a whole number of at least 1 (`0`, a negative number or a
+string is a config error with its line). Batch train commits live on
+`train/batch/<pr>-<pr>…` branches, which are deleted when the attempt ends.

@@ -1320,10 +1320,10 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN" # the variable's NAME, required whe
   skips that repo rather than racing it.
 - **Restart to apply.** A change to `[mergetrain]` takes effect at the next
   daemon restart.
-- **`batch` is accepted, not yet built.** `batch = N` (a whole number, at
-  least 1; default 1) is SPEC-0025 REQ-17's PRs-per-train size. The train
-  still carries one PR per train, and the daemon logs a warning at start when
-  `batch` is above 1. See [Merge train](./merge-train#batching-specified-not-yet-in-the-binary).
+- **`batch` folds PRs onto one train commit.** `batch = N` (a whole number, at
+  least 1; default 1) is SPEC-0025 REQ-17's PRs-per-train size. Above 1 a
+  train folds up to N heads onto one commit and bisects a red batch by
+  halves. See [Merge train](./merge-train#batching).
 
 ## Notifications (`[notify]`)
 

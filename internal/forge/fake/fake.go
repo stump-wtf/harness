@@ -289,6 +289,15 @@ func (f *Fake) CreateTrainBranch(ctx context.Context, repo string, spec forge.Tr
 	if s.pr.HeadSHA != spec.HeadSHA {
 		return forge.TrainBranch{}, forge.ErrStale
 	}
+	for _, h := range spec.Heads {
+		hs, ok := r.prs[h.PR]
+		if !ok || hs.merged {
+			return forge.TrainBranch{}, fmt.Errorf("fake: pull %d: %w", h.PR, forge.ErrNotFound)
+		}
+		if hs.pr.HeadSHA != h.HeadSHA {
+			return forge.TrainBranch{}, forge.ErrStale
+		}
+	}
 	var tb forge.TrainBranch
 	if f.onTrain != nil {
 		var err error
@@ -304,6 +313,9 @@ func (f *Fake) CreateTrainBranch(ctx context.Context, repo string, spec forge.Tr
 	r.branches[spec.Branch] = tb.SHA
 	r.trees[tb.SHA] = tb.Tree
 	r.lastTrain[spec.PR] = tb
+	for _, h := range spec.Heads {
+		r.lastTrain[h.PR] = tb
+	}
 	return tb, nil
 }
 
