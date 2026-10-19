@@ -20,14 +20,16 @@ import (
 	"github.com/stump-wtf/harness/internal/forge"
 )
 
-// fixture is an origin repository with main and two PR heads:
+// fixture is an origin repository with main and three PR heads:
 //
 //	base ── main2 (adds other.txt)                       ← main
 //	  ├──── head  (f.txt b→B, adds exec n.txt, rm gone)   ← refs/pull/1/head
-//	  └──── clash (f.txt b→C)                            ← refs/pull/2/head
+//	  ├──── clash (f.txt b→C)                            ← refs/pull/2/head
+//	  └──── clean2 (adds two.txt)                        ← refs/pull/3/head
 type fixture struct {
 	origin                   string
 	base, main2, head, clash string
+	clean2                   string
 }
 
 func runGit(t *testing.T, dir string, args ...string) string {
@@ -81,6 +83,12 @@ func newFixture(t *testing.T) fixture {
 	runGit(t, work, "commit", "-qam", "clash")
 	fx.clash = runGit(t, work, "rev-parse", "HEAD")
 
+	runGit(t, work, "checkout", "-qb", "clean2", fx.base)
+	write(t, filepath.Join(work, "two.txt"), "2\n", 0o644)
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-qm", "clean2")
+	fx.clean2 = runGit(t, work, "rev-parse", "HEAD")
+
 	runGit(t, work, "checkout", "-q", "main")
 	write(t, filepath.Join(work, "other.txt"), "z\n", 0o644)
 	runGit(t, work, "add", ".")
@@ -88,7 +96,8 @@ func newFixture(t *testing.T) fixture {
 	fx.main2 = runGit(t, work, "rev-parse", "HEAD")
 
 	runGit(t, root, "init", "-q", "--bare", fx.origin)
-	runGit(t, work, "push", "-q", fx.origin, "main", fx.head+":refs/pull/1/head", fx.clash+":refs/pull/2/head")
+	runGit(t, work, "push", "-q", fx.origin, "main",
+		fx.head+":refs/pull/1/head", fx.clash+":refs/pull/2/head", fx.clean2+":refs/pull/3/head")
 	return fx
 }
 
@@ -184,6 +193,97 @@ func TestCreateTrainBranchStaleHead(t *testing.T) {
 	fx := newFixture(t)
 	c := gitClient(t, fx, "")
 	_, err := c.CreateTrainBranch(ctx, repo, forge.TrainSpec{Branch: "train/1", BaseSHA: fx.main2, PR: 1, HeadSHA: fx.clash})
+	if !errors.Is(err, forge.ErrStale) {
+		t.Fatalf("err = %v, want ErrStale", err)
+	}
+	if out := runGit(t, fx.origin, "for-each-ref", "refs/heads/train/"); out != "" {
+		t.Fatalf("a stale build left a branch: %s", out)
+	}
+}
+
+func TestCreateTrainBranchBatchGreen(t *testing.T) {
+	fx := newFixture(t)
+	c := gitClient(t, fx, "")
+	spec := forge.TrainSpec{
+		Branch:  "train/batch/1-3",
+		BaseSHA: fx.main2,
+		PR:      1,
+		HeadSHA: fx.head,
+		Heads:   []forge.PRHead{{PR: 1, HeadSHA: fx.head}, {PR: 3, HeadSHA: fx.clean2}},
+		Message: "merge train: #1,#3",
+	}
+	tb, err := c.CreateTrainBranch(ctx, repo, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := runGit(t, fx.origin, "rev-parse", "refs/heads/train/batch/1-3"); got != tb.SHA {
+		t.Fatalf("batch branch = %s, want %s", got, tb.SHA)
+	}
+	if parents := runGit(t, fx.origin, "rev-list", "--parents", "-n1", tb.SHA); parents != tb.SHA+" "+fx.main2 {
+		t.Fatalf("parents = %q, want only %s", parents, fx.main2)
+	}
+	// The folded tree carries both heads' work: PR 1's f.txt and n.txt, and
+	// PR 3's two.txt.
+	if got := runGit(t, fx.origin, "show", tb.SHA+":f.txt"); got != "a\nB\nc" {
+		t.Fatalf("f.txt = %q", got)
+	}
+	if got := runGit(t, fx.origin, "show", tb.SHA+":two.txt"); got != "2" {
+		t.Fatalf("two.txt = %q", got)
+	}
+	if !slices.Contains(tb.Changed, "two.txt") || !slices.Contains(tb.Changed, "f.txt") {
+		t.Fatalf("Changed = %q, want both heads' paths", tb.Changed)
+	}
+	if main := runGit(t, fx.origin, "rev-parse", "refs/heads/main"); main != fx.main2 {
+		t.Fatalf("main moved to %s", main)
+	}
+}
+
+func TestCreateTrainBranchBatchConflictAttribution(t *testing.T) {
+	fx := newFixture(t)
+	c := gitClient(t, fx, "")
+	// PR 1 and PR 2 edit the same line. Whichever folds second is the head
+	// the three-way merge rejects, and the conflict is attributed to it
+	// (SPEC-0025 REQ-17).
+	for _, tc := range []struct {
+		name  string
+		heads []forge.PRHead
+		want  int
+	}{
+		{"clash second", []forge.PRHead{{PR: 1, HeadSHA: fx.head}, {PR: 2, HeadSHA: fx.clash}}, 2},
+		{"head second", []forge.PRHead{{PR: 2, HeadSHA: fx.clash}, {PR: 1, HeadSHA: fx.head}}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := c.CreateTrainBranch(ctx, repo, forge.TrainSpec{
+				Branch:  "train/batch/1-2",
+				BaseSHA: fx.main2,
+				PR:      tc.heads[0].PR,
+				HeadSHA: tc.heads[0].HeadSHA,
+				Heads:   tc.heads,
+			})
+			if !errors.Is(err, forge.ErrConflict) {
+				t.Fatalf("err = %v, want a conflict", err)
+			}
+			var ce *forge.ConflictError
+			if !errors.As(err, &ce) || ce.PR != tc.want {
+				t.Fatalf("err = %v, want attribution to PR %d", err, tc.want)
+			}
+			if out := runGit(t, fx.origin, "for-each-ref", "refs/heads/train/"); out != "" {
+				t.Fatalf("a conflicting build left a branch: %s", out)
+			}
+		})
+	}
+}
+
+func TestCreateTrainBranchBatchStaleHead(t *testing.T) {
+	fx := newFixture(t)
+	c := gitClient(t, fx, "")
+	_, err := c.CreateTrainBranch(ctx, repo, forge.TrainSpec{
+		Branch:  "train/batch/1-3",
+		BaseSHA: fx.main2,
+		PR:      1,
+		HeadSHA: fx.head,
+		Heads:   []forge.PRHead{{PR: 1, HeadSHA: fx.head}, {PR: 3, HeadSHA: fx.clash}},
+	})
 	if !errors.Is(err, forge.ErrStale) {
 		t.Fatalf("err = %v, want ErrStale", err)
 	}

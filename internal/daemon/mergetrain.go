@@ -128,6 +128,7 @@ func StartMergeTrain(ctx context.Context, o MergeTrainOptions) (*MergeTrain, err
 			Mode:         mergetrain.Mode(c.Mode),
 			PollInterval: c.PollInterval,
 			CITimeout:    c.CITimeout,
+			Batch:        c.Batch,
 			LockDir:      root,
 			Log:          log,
 			TrainPollMin: o.TrainPollMin,
@@ -145,11 +146,7 @@ func StartMergeTrain(ctx context.Context, o MergeTrainOptions) (*MergeTrain, err
 	}
 
 	log.Warn("merge train enabled", "mode", c.Mode, "repos", strings.Join(c.Repos, ","), "as", as,
-		"running", len(m.drivers), "base_branch", c.BaseBranch)
-	if c.Batch > 1 {
-		log.Warn("merge train: batch is not implemented yet; each train carries one PR",
-			"batch", c.Batch, "spec", "SPEC-0025 REQ-17")
-	}
+		"running", len(m.drivers), "base_branch", c.BaseBranch, "batch", c.Batch)
 
 	rctx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel

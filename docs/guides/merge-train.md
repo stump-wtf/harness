@@ -5,9 +5,11 @@ sidebar_position: 9
 
 # Run the merge train
 
-The merge train lands approved pull requests one at a time. For each one it
-builds a `train/<pr>` branch (`main` plus a squash of the PR), waits for CI on
-that exact commit, squash-merges the PR, and then checks that the tree that
+The merge train lands approved pull requests one at a time — or, with
+`batch` above 1, up to `batch` of them on one train commit (SPEC-0025
+REQ-17). For each attempt it builds a `train/<pr>` branch (`main` plus a
+squash of the PR, or of the batch's PRs folded in order), waits for CI on
+that exact commit, squash-merges each PR, and then checks that the tree that
 landed is the tree that was tested. Reviewers approve and stop there. The
 train does the merging, and no LLM session merges anything. The design is
 ADR-0032 and the behaviour is SPEC-0025.
@@ -153,13 +155,6 @@ bypass that skipped step 3 still shows up in the daemon log.
 
 ## Known limits
 
-- **One PR per train (today).** The current binary spends one CI run per PR:
-  a 10-minute pipeline lands at most about six PRs an hour. Batching — up to
-  `batch` PRs sharing one train commit, bisecting by halves on red — is
-  specified as SPEC-0025 REQ-17 and is not yet in the binary. The daemon
-  accepts `batch` (at least 1) so the config loads, but still builds one PR
-  per train and logs `merge train: batch is not implemented yet` at start
-  when it is above 1.
 - **One attempt per (head, base).** The driver merges each PR once per (head,
   base) pair and records the result (success, would merge, merge refused,
   verified, etc.). A red attempt is retried only after the head or base

@@ -4,20 +4,23 @@ package mergetrain
 //
 // One driver per repo, holding the repo's lock for its lifetime. Each tick it
 // takes the first eligible PR, in Order, that it has not already attempted at
-// the same (head, base), and runs one train attempt. On green, and only in
-// merge mode, it re-reads the PR and the base branch, merges with the head
-// pinned, and verifies — real tree ids first, then bytes. A PR-level failure
-// gets exactly one comment per head, which is the author's todo; a
-// verification failure halts the driver, because an untested tree may be on
-// the base branch and nothing after that can be trusted. A cancelled context
-// is not a verification failure: a shutdown landing between the merge and its
-// verification reports the cancellation and stops, rather than halting.
+// the same (head, base), and runs one train attempt. With batch above 1
+// (SPEC-0025 REQ-17) it takes up to batch of them and puts their heads on one
+// train commit, bisecting a red batch by halves; every per-PR guarantee is
+// kept inside the batch. On green, and only in merge mode, it re-reads the PR
+// and the base branch, merges with the head pinned, and verifies — real tree
+// ids first, then bytes. A PR-level failure gets exactly one comment per
+// head, which is the author's todo; a verification failure halts the driver,
+// because an untested tree may be on the base branch and nothing after that
+// can be trusted. A cancelled context is not a verification failure: a
+// shutdown landing between the merge and its verification reports the
+// cancellation and stops, rather than halting.
 //
 // No code path here opens, closes or edits a pull request, or pushes to a PR's
 // branch: the Forge interface offers no way to (SPEC-0025 REQ-13).
 //
 // Governing: ADR-0032 (the loop, failure handling, singleton, author todo,
-// bypass audit), SPEC-0025 REQ-1, REQ-7..REQ-11, REQ-13..REQ-16.
+// bypass audit), SPEC-0025 REQ-1, REQ-7..REQ-11, REQ-13..REQ-17.
 
 import (
 	"context"
@@ -57,6 +60,12 @@ type DriverConfig struct {
 	CITimeout    time.Duration
 	LockDir      string
 	Log          Logger
+
+	// Batch is the number of PRs per train commit (SPEC-0025 REQ-17). 0 or 1
+	// keeps the one-PR-per-train behaviour byte-identical; above 1 a tick
+	// folds up to Batch eligible PRs onto one train commit and bisects a red
+	// batch by halves.
+	Batch int
 
 	// TrainPollMin overrides the derived first CI poll wait
 	// (max(PollInterval/4, 5s)); tests use it to run in milliseconds.
@@ -106,6 +115,9 @@ func NewDriver(cfg DriverConfig, f forge.Forge) (*Driver, error) {
 	}
 	if cfg.PollInterval <= 0 || cfg.CITimeout <= 0 {
 		return nil, errors.New("mergetrain: poll interval and CI timeout must be positive")
+	}
+	if cfg.Batch < 0 {
+		return nil, errors.New("mergetrain: batch must be at least 1")
 	}
 	if cfg.LockDir == "" {
 		return nil, errors.New("mergetrain: lock dir is required")
@@ -159,8 +171,9 @@ func (d *Driver) kv(extra ...any) []any {
 	return append([]any{"repo", d.cfg.Repo}, extra...)
 }
 
-// Tick runs at most one attempt. Its error is informational — the tick is
-// abandoned and the next retries — except ErrHalted, which is permanent.
+// Tick runs at most one attempt, which carries up to Batch PRs when
+// batching. Its error is informational — the tick is abandoned and the next
+// retries — except ErrHalted, which is permanent.
 func (d *Driver) Tick(ctx context.Context) error {
 	if d.halted != nil {
 		return d.halted
@@ -187,20 +200,48 @@ func (d *Driver) Tick(ctx context.Context) error {
 		d.lastQueue = q
 	}
 
-	var pr PullRequest
-	found := false
+	targets := d.targets(queue, base)
+	if len(targets) == 0 {
+		return nil
+	}
+	if len(targets) == 1 {
+		return d.attemptSingle(ctx, targets[0], base)
+	}
+	_, err = d.resolveBatch(ctx, targets, base)
+	return err
+}
+
+// targets returns the first not-yet-attempted PRs of the queue, up to the
+// batch size (SPEC-0025 REQ-17). A PR already attempted at this (head, base)
+// is skipped, never retried in this tick.
+func (d *Driver) targets(queue []PullRequest, base string) []PullRequest {
+	n := max(d.cfg.Batch, 1)
+	var out []PullRequest
 	for _, p := range queue {
-		if _, done := d.attempted[attemptKey{p.Number, p.HeadSHA, base}]; !done {
-			pr, found = p, true
+		if _, done := d.attempted[attemptKey{p.Number, p.HeadSHA, base}]; done {
+			continue
+		}
+		out = append(out, p)
+		if len(out) == n {
 			break
 		}
 	}
-	if !found {
-		return nil
-	}
-	key := attemptKey{pr.Number, pr.HeadSHA, base}
+	return out
+}
 
+// attemptSingle runs and judges one train attempt for pr: the REQ-1 through
+// REQ-16 path, unchanged by batching.
+func (d *Driver) attemptSingle(ctx context.Context, pr PullRequest, base string) error {
 	res := RunTrain(ctx, d.f, d.trainConfig(), pr, base)
+	_, err := d.attemptResult(ctx, pr, base, res)
+	return err
+}
+
+// attemptResult judges a finished single-PR attempt and returns whether the
+// PR landed. Landed means merged and verified; a report-mode "would merge"
+// is not a landing.
+func (d *Driver) attemptResult(ctx context.Context, pr PullRequest, base string, res Result) (bool, error) {
+	key := attemptKey{pr.Number, pr.HeadSHA, base}
 	switch res.Outcome {
 	case OutcomeGreen:
 	case OutcomeConflict:
@@ -208,33 +249,211 @@ func (d *Driver) Tick(ctx context.Context) error {
 		d.fail(ctx, key, pr, CauseConflict, fmt.Sprintf(
 			"`%s` does not merge cleanly onto `%s` at `%s`. Rebase it (the forge's rebase update, or locally) and push; the train picks it up again on the new head.",
 			short(pr.HeadSHA), d.cfg.BaseBranch, short(base)))
-		return nil
+		return false, nil
 	case OutcomeRed:
 		d.attempted[key] = res.Outcome
 		d.fail(ctx, key, pr, CauseRed, fmt.Sprintf(
 			"CI was `%s` on the train commit `%s` — this PR at `%s` squashed onto `%s` at `%s`. The PR's own CI was green, so this is an interaction with what landed since, or a flake; the train tries again when `%s` or this PR's head moves.",
 			res.Status, short(res.Train.SHA), short(pr.HeadSHA), d.cfg.BaseBranch, short(base), d.cfg.BaseBranch))
-		return nil
+		return false, nil
 	case OutcomeTimeout:
 		d.attempted[key] = res.Outcome
 		d.fail(ctx, key, pr, CauseTimeout, fmt.Sprintf(
 			"CI on the train commit `%s` did not finish within %s. The train tries again when `%s` or this PR's head moves.",
 			short(res.Train.SHA), d.cfg.CITimeout, d.cfg.BaseBranch))
-		return nil
+		return false, nil
 	case OutcomeStale:
-		return nil
+		return false, nil
 	case OutcomeCancelled:
-		return ctx.Err()
+		return false, ctx.Err()
 	default: // forge error, already logged by RunTrain
-		return res.Err
+		return false, res.Err
 	}
 
 	if d.cfg.Mode == ModeReport {
 		d.attempted[key] = res.Outcome
 		d.log.Info(event("would merge"), d.kv("pr", pr.Number, "head", pr.HeadSHA, "base", base, "train", res.Train.SHA, "tree", res.Train.Tree)...)
-		return nil
+		return false, nil
 	}
-	return d.merge(ctx, key, pr, res)
+	if err := d.merge(ctx, key, pr, res); err != nil {
+		return false, err
+	}
+	return d.attempted[key] == OutcomeGreen, nil
+}
+
+// resolveBatch carries cur, which must be non-empty and in merge order, on
+// one train commit (SPEC-0025 REQ-17). On green every PR merges, in order,
+// each with its own REQ-7 re-check and REQ-8 verification. On red or
+// timeout it bisects by halves and recurses: a half that goes green lands,
+// and the recursion narrows to the half that stayed red until a single PR
+// takes the usual REQ-9 comment and REQ-10 memory. On a build conflict the
+// first rejecting head gets the usual conflict comment and the batch shrinks
+// to the heads before it. It reports whether every PR in cur landed; a half
+// that did not land was judged on its own (a commented leaf, a stale or
+// failed build) and whatever came after it waits for the next tick.
+func (d *Driver) resolveBatch(ctx context.Context, cur []PullRequest, base string) (bool, error) {
+	if len(cur) == 1 {
+		res := RunTrain(ctx, d.f, d.trainConfig(), cur[0], base)
+		return d.attemptResult(ctx, cur[0], base, res)
+	}
+	res := RunTrainBatch(ctx, d.f, d.trainConfig(), cur, base)
+	switch res.Outcome {
+	case OutcomeGreen:
+		for _, p := range cur {
+			d.attempted[attemptKey{p.Number, p.HeadSHA, base}] = res.Outcome
+		}
+		if d.cfg.Mode == ModeReport {
+			d.log.Info(event("would merge"), d.kv("prs", queueString(cur), "base", base, "train", res.Train.SHA, "tree", res.Train.Tree)...)
+			return false, nil
+		}
+		return d.mergeBatch(ctx, cur, base, res)
+	case OutcomeConflict:
+		idx := conflictingIndex(cur, res.ConflictPR)
+		pr := cur[idx]
+		key := attemptKey{pr.Number, pr.HeadSHA, base}
+		d.attempted[key] = res.Outcome
+		d.fail(ctx, key, pr, CauseConflict, fmt.Sprintf(
+			"`%s` does not merge cleanly onto `%s` at `%s`, or onto the batched tree of the heads before it. Rebase it (the forge's rebase update, or locally) and push; the train picks it up again on the new head.",
+			short(pr.HeadSHA), d.cfg.BaseBranch, short(base)))
+		if idx == 0 {
+			return false, nil
+		}
+		return d.resolveBatch(ctx, cur[:idx], base)
+	case OutcomeRed, OutcomeTimeout:
+		first, rest := halves(cur)
+		landed, err := d.resolveBatch(ctx, first, base)
+		if err != nil {
+			return false, err
+		}
+		if !landed {
+			return false, nil
+		}
+		return d.resolveBatch(ctx, rest, d.lastMain)
+	case OutcomeStale:
+		return false, nil
+	case OutcomeCancelled:
+		return false, ctx.Err()
+	default: // forge error, already logged by RunTrainBatch
+		return false, res.Err
+	}
+}
+
+// mergeBatch lands a green batch, one PR at a time in merge order. Each
+// merge keeps its pinned head, its REQ-7 re-check and its REQ-8
+// verification; REQ-8's tree and content checks can only be conclusive on
+// the last merge, whose resulting tree is the batch tree CI tested, so an
+// intermediate merge is checked against the base branch head alone.
+func (d *Driver) mergeBatch(ctx context.Context, cur []PullRequest, base string, res Result) (bool, error) {
+	wantBase := res.Base
+	for i, pr := range cur {
+		final := i == len(cur)-1
+		key := attemptKey{pr.Number, pr.HeadSHA, base}
+		kv := d.kv("pr", pr.Number, "head", pr.HeadSHA, "base", wantBase, "train", res.Train.SHA, "batch", len(cur))
+
+		// REQ-7 per PR: still open, still at head, still eligible, and the
+		// base branch still exactly where the last step put it — the tested
+		// base for the first PR, our own merge for every one after it.
+		prs, err := d.f.ListOpenPRs(ctx, d.cfg.Repo)
+		if err != nil {
+			return false, d.tickFailed(ctx, err)
+		}
+		cand, open := findPR(prs, pr.Number)
+		now, err := d.f.BranchHead(ctx, d.cfg.Repo, d.cfg.BaseBranch)
+		if err != nil {
+			return false, d.tickFailed(ctx, err)
+		}
+		var why string
+		switch {
+		case !open:
+			why = "no longer open"
+		case cand.HeadSHA != pr.HeadSHA:
+			why = "head moved to " + cand.HeadSHA
+		case now != wantBase:
+			why = d.cfg.BaseBranch + " moved to " + now
+		default:
+			if ok, reason := Eligible(cand, d.cfg.BaseBranch); !ok {
+				why = "no longer eligible: " + reason
+			}
+		}
+		if why != "" {
+			d.log.Info(event("stale"), append(kv, "cause", why)...)
+			return false, nil
+		}
+
+		msg := fmt.Sprintf("Merge-Train: tested as %s (tree %s) on %s", res.Train.SHA, res.Train.Tree, res.Base)
+		merged, err := d.f.SquashMerge(ctx, d.cfg.Repo, pr.Number, pr.HeadSHA, "", msg)
+		if err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			if !forge.Transient(err) {
+				d.attempted[key] = OutcomeForgeError
+				d.log.Warn(event("merge refused"), append(kv, "err", err)...)
+				d.fail(ctx, key, pr, CauseMergeRefused, fmt.Sprintf(
+					"CI passed on the batch train commit `%s`, but the forge refused the squash merge (%s). Nothing was merged for this PR.",
+					short(res.Train.SHA), err))
+				return false, nil
+			}
+			// A 5xx on a merge is ambiguous. The last merge's proof is the
+			// tested tree, as in the single train; an intermediate merge has
+			// no tree evidence to lean on, so abandon the tick and let the
+			// next one read the forge.
+			head, herr := d.f.BranchHead(ctx, d.cfg.Repo, d.cfg.BaseBranch)
+			if herr != nil || head == wantBase {
+				return false, d.tickFailed(ctx, err)
+			}
+			if !final {
+				d.log.Warn(event("merge refused"), append(kv, "err", err, "cause", "ambiguous; nothing to verify an intermediate merge against")...)
+				return false, d.tickFailed(ctx, err)
+			}
+			d.log.Warn(event("merge refused"), append(kv, "err", err, "cause", "ambiguous; base branch moved, verifying")...)
+			merged = head
+		}
+		d.attempted[key] = OutcomeGreen
+		d.lastMain = merged
+		d.log.Info(event("merged"), append(kv, "merged", merged)...)
+
+		if err := d.verifyMerge(ctx, res, merged, final); err != nil {
+			if ctx.Err() != nil {
+				d.log.Warn(event("shutting down"), append(kv, "merged", merged, "err", err)...)
+				return false, ctx.Err()
+			}
+			d.halted = fmt.Errorf("%w: pr #%d: %v", ErrHalted, pr.Number, err)
+			d.log.Error(event("halted"), append(kv, "merged", merged, "err", err)...)
+			d.fail(ctx, key, pr, CauseVerifyFailed, fmt.Sprintf(
+				"This PR was merged as `%s`, but verification failed: %v. The tree that landed may not be the tree CI tested. **The merge train has halted** until its daemon is restarted; check `%s` and revert if needed.",
+				short(merged), err, d.cfg.BaseBranch))
+			return false, d.halted
+		}
+		if final {
+			d.log.Info(event("verified"), append(kv, "merged", merged, "tree", res.Train.Tree)...)
+		} else {
+			d.log.Info(event("verified"), append(kv, "merged", merged)...)
+		}
+		wantBase = merged
+	}
+	return true, nil
+}
+
+// halves splits a batch for the bisect: the first half is at least one PR
+// and strictly smaller than the batch, so the recursion always narrows.
+func halves(prs []PullRequest) (first, rest []PullRequest) {
+	mid := (len(prs) + 1) / 2
+	return prs[:mid], prs[mid:]
+}
+
+// conflictingIndex locates the head the fold rejected. A forge that cannot
+// say which head rejected loses the batch's last head only, so the heads
+// before it still get their batch.
+func conflictingIndex(prs []PullRequest, pr int) int {
+	if pr > 0 {
+		for i, p := range prs {
+			if p.Number == pr {
+				return i
+			}
+		}
+	}
+	return len(prs) - 1
 }
 
 // merge re-checks, merges and verifies one green train.
@@ -322,9 +541,19 @@ func (d *Driver) merge(ctx context.Context, key attemptKey, pr PullRequest, res 
 	return nil
 }
 
-// verify is SPEC-0025 REQ-8: the base branch is at the merge commit, the merge
-// commit's tree is the tested tree, and the changed paths' bytes landed.
+// verify is SPEC-0025 REQ-8 for a single-PR train: the base branch is at
+// the merge commit, the merge commit's tree is the tested tree, and the
+// changed paths' bytes landed.
 func (d *Driver) verify(ctx context.Context, res Result, merged string) error {
+	return d.verifyMerge(ctx, res, merged, true)
+}
+
+// verifyMerge is SPEC-0025 REQ-8. The base branch must be at the merge
+// commit whatever the train carried; the tree and content checks compare
+// against the tested tree and need checkTree, which a batch's intermediate
+// merges do not have — their trees are fold prefixes of the tested batch
+// tree, and the final merge's tree check is the conclusive one.
+func (d *Driver) verifyMerge(ctx context.Context, res Result, merged string, checkTree bool) error {
 	head, err := retry(ctx, d.cfg.RetryPause, func() (string, error) {
 		return d.f.BranchHead(ctx, d.cfg.Repo, d.cfg.BaseBranch)
 	})
@@ -333,6 +562,9 @@ func (d *Driver) verify(ctx context.Context, res Result, merged string) error {
 	}
 	if head != merged {
 		return fmt.Errorf("%s is at %s, not at the merge commit %s", d.cfg.BaseBranch, head, merged)
+	}
+	if !checkTree {
+		return nil
 	}
 	tree, err := retry(ctx, d.cfg.RetryPause, func() (string, error) {
 		return d.f.TreeOf(ctx, d.cfg.Repo, merged)

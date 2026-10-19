@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -35,33 +36,79 @@ func prAt(n int, approvedAfter time.Duration) PullRequest {
 // trainFor names the train commit the fake builds for pr on a given base.
 func trainFor(pr int, base string) string { return fmt.Sprintf("train-%d-on-%s", pr, base) }
 
-// world is a fake forge wired so every build yields trainFor(pr, base) with
-// one changed file whose bytes are "pr<n>", and CI is green unless red says
-// otherwise.
+// trainSet names the train commit the fake builds for a batch of prs on a
+// given base. For one PR it is trainFor, byte for byte.
+func trainSet(prs []int, base string) string {
+	nums := make([]string, len(prs))
+	for i, n := range prs {
+		nums[i] = strconv.Itoa(n)
+	}
+	return "train-" + strings.Join(nums, "+") + "-on-" + base
+}
+
+// specPRs lists the PR numbers a build spec carries, fold order first.
+func specPRs(s forge.TrainSpec) []int {
+	if len(s.Heads) == 0 {
+		return []int{s.PR}
+	}
+	out := make([]int, len(s.Heads))
+	for i, h := range s.Heads {
+		out[i] = h.PR
+	}
+	return out
+}
+
+// world is a fake forge wired so every build yields the train commit named
+// for its PR set and base, with one changed file per PR whose bytes are
+// "pr<n>", and CI is green unless red says otherwise: a train is red exactly
+// when it carries a red PR, which is what makes the bisect converge.
 type world struct {
 	*fake.Fake
 	mu  sync.Mutex
 	red map[int]bool
+	// sets maps a train commit's SHA to the PR numbers it carries.
+	sets map[string][]int
+	// conflict marks PRs whose head rejects the fold.
+	conflict map[int]bool
 }
 
 func newWorld(t *testing.T, prs ...PullRequest) *world {
 	t.Helper()
-	w := &world{Fake: fake.New(), red: map[int]bool{}}
+	w := &world{Fake: fake.New(), red: map[int]bool{}, sets: map[string][]int{}, conflict: map[int]bool{}}
 	w.SetBranch(repo, "main", "base0")
 	for _, p := range prs {
 		w.AddPR(repo, p)
 	}
 	w.OnTrain(func(s forge.TrainSpec) (forge.TrainBranch, error) {
-		sha := trainFor(s.PR, s.BaseSHA)
-		path := fmt.Sprintf("pr%d.txt", s.PR)
-		w.SetFile(repo, sha, path, []byte(fmt.Sprintf("pr%d", s.PR)))
-		return forge.TrainBranch{SHA: sha, Tree: "tree-" + sha, Changed: []string{path}}, nil
+		nums := specPRs(s)
+		sha := trainSet(nums, s.BaseSHA)
+		w.mu.Lock()
+		w.sets[sha] = nums
+		var reject int
+		for _, n := range nums {
+			if w.conflict[n] {
+				reject = n
+			}
+		}
+		w.mu.Unlock()
+		paths := make([]string, len(nums))
+		for i, n := range nums {
+			paths[i] = fmt.Sprintf("pr%d.txt", n)
+			w.SetFile(repo, sha, paths[i], []byte(fmt.Sprintf("pr%d", n)))
+		}
+		if reject > 0 {
+			if len(nums) == 1 {
+				return forge.TrainBranch{}, forge.ErrConflict
+			}
+			return forge.TrainBranch{}, &forge.ConflictError{PR: reject}
+		}
+		return forge.TrainBranch{SHA: sha, Tree: "tree-" + sha, Changed: paths}, nil
 	})
 	w.OnStatus(func(sha string, _ int) string {
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		for n, isRed := range w.red {
-			if isRed && strings.HasPrefix(sha, fmt.Sprintf("train-%d-on-", n)) {
+		for _, n := range w.sets[sha] {
+			if w.red[n] {
 				return "failure"
 			}
 		}
@@ -74,6 +121,13 @@ func (w *world) setRed(n int, red bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.red[n] = red
+}
+
+// conflictOn marks PR n's head as one the three-way fold rejects.
+func (w *world) conflictOn(n int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.conflict[n] = true
 }
 
 func driverCfg(t *testing.T, mode Mode, log Logger) DriverConfig {

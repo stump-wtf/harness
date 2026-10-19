@@ -147,6 +147,54 @@ func TestTrainBranchAndMerge(t *testing.T) {
 	}
 }
 
+func TestBatchTrainPinsEveryHead(t *testing.T) {
+	f := New()
+	f.AddPR(repo, pr(1, "h1"))
+	f.AddPR(repo, pr(2, "h2"))
+	f.SetBranch(repo, "main", "base")
+
+	spec := forge.TrainSpec{
+		Branch:  "train/batch/1-2",
+		BaseSHA: "base",
+		PR:      1,
+		HeadSHA: "h1",
+		Heads:   []forge.PRHead{{PR: 1, HeadSHA: "h1"}, {PR: 2, HeadSHA: "h2"}},
+	}
+	tb, err := f.CreateTrainBranch(ctx, repo, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Branches(repo)["train/batch/1-2"]; got != tb.SHA {
+		t.Fatalf("batch branch = %q, want %q", got, tb.SHA)
+	}
+	// A second PR moving makes the whole batch build stale.
+	f.AddPR(repo, forge.PullRequest{Number: 2, Author: "joestump", HeadSHA: "h2-moved",
+		BaseRef: "main", CIState: "success", Mergeable: true,
+		Reviews: []forge.Review{{Author: "joestump-agent", State: "APPROVED", CommitID: "h2-moved", SubmittedAt: time.Unix(0, 0)}}})
+	if _, err := f.CreateTrainBranch(ctx, repo, forge.TrainSpec{
+		Branch: "train/batch/1-2b", BaseSHA: "base", PR: 1, HeadSHA: "h1",
+		Heads: []forge.PRHead{{PR: 1, HeadSHA: "h1"}, {PR: 2, HeadSHA: "h2"}},
+	}); !errors.Is(err, forge.ErrStale) {
+		t.Fatalf("stale batch head err = %v, want ErrStale", err)
+	}
+	// A scripted conflict attributes itself to a PR and still matches the
+	// sentinel.
+	f.OnTrain(func(forge.TrainSpec) (forge.TrainBranch, error) {
+		return forge.TrainBranch{}, &forge.ConflictError{PR: 2}
+	})
+	_, err = f.CreateTrainBranch(ctx, repo, forge.TrainSpec{
+		Branch: "train/batch/1-2c", BaseSHA: "base", PR: 1, HeadSHA: "h1",
+		Heads: []forge.PRHead{{PR: 1, HeadSHA: "h1"}, {PR: 2, HeadSHA: "h2-moved"}},
+	})
+	if !errors.Is(err, forge.ErrConflict) {
+		t.Fatalf("conflict err = %v, want it to unwrap to ErrConflict", err)
+	}
+	var ce *forge.ConflictError
+	if !errors.As(err, &ce) || ce.PR != 2 {
+		t.Fatalf("err = %v, want attribution to PR 2", err)
+	}
+}
+
 func TestHooks(t *testing.T) {
 	f := New()
 	f.AddPR(repo, pr(1, "h1"))

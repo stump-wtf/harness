@@ -5,19 +5,23 @@ package mergetrain
 // RunTrain builds train/<pr> = base + a squash of the PR head as a new branch,
 // waits for CI on that exact commit, and deletes the branch — on every path,
 // including a panic and a cancelled context. It never merges; the driver
-// decides that from the typed Result.
+// decides that from the typed Result. RunTrainBatch is the same attempt with
+// up to batch heads folded onto one train commit in merge order
+// (SPEC-0025 REQ-17); with one PR it is byte-identical to RunTrain.
 //
 // The branch is deleted with a context detached from the attempt's, so a
 // daemon shutting down mid-poll still cleans up. A failed deletion is retried
 // within a 30 s budget and logged; it never changes the attempt's outcome.
 //
-// Governing: ADR-0032 (A1, failure handling), SPEC-0025 REQ-4, REQ-5, REQ-6.
+// Governing: ADR-0032 (A1, failure handling), SPEC-0025 REQ-4, REQ-5, REQ-6,
+// REQ-17.
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stump-wtf/harness/internal/forge"
@@ -64,6 +68,10 @@ type Result struct {
 	Base    string            // the base the train was built on
 	Train   forge.TrainBranch // zero unless the branch was built
 	Status  string            // the last combined status read
+	// ConflictPR is the PR whose head the in-order fold rejected first on a
+	// batch build that ended OutcomeConflict (SPEC-0025 REQ-17); 0 when the
+	// forge did not say or the train carried one PR.
+	ConflictPR int
 	// Want holds, on green, the bytes of every path the train commit adds or
 	// modifies, read from the train commit before its branch was deleted.
 	// VerifyLanded checks them on the base branch after the merge.
@@ -74,14 +82,68 @@ type Result struct {
 // TrainBranchName is the branch an attempt for pr uses.
 func TrainBranchName(pr int) string { return "train/" + strconv.Itoa(pr) }
 
-// RunTrain runs one attempt for pr on base.
-func RunTrain(ctx context.Context, f forge.Forge, cfg TrainConfig, pr PullRequest, base string) (res Result) {
+// trainBranchName is the branch an attempt for prs uses: the per-PR name for
+// one PR, a name naming every PR in the set for a batch, so a batch never
+// shares a ref with a single-PR train.
+func trainBranchName(prs []PullRequest) string {
+	if len(prs) == 1 {
+		return TrainBranchName(prs[0].Number)
+	}
+	nums := make([]string, len(prs))
+	for i, p := range prs {
+		nums[i] = strconv.Itoa(p.Number)
+	}
+	return "train/batch/" + strings.Join(nums, "-")
+}
+
+// trainMessage is the train commit's message. For one PR it is the message
+// the unbatched train has always used; a batch names every PR and head it
+// carries.
+func trainMessage(prs []PullRequest) string {
+	if len(prs) == 1 {
+		return fmt.Sprintf("merge train: #%d at %s", prs[0].Number, short(prs[0].HeadSHA))
+	}
+	nums := make([]string, len(prs))
+	shas := make([]string, len(prs))
+	for i, p := range prs {
+		nums[i] = "#" + strconv.Itoa(p.Number)
+		shas[i] = short(p.HeadSHA)
+	}
+	return fmt.Sprintf("merge train: %s at %s", strings.Join(nums, ","), strings.Join(shas, ","))
+}
+
+// headsOf pins every PR head of a batch, in merge order.
+func headsOf(prs []PullRequest) []forge.PRHead {
+	hs := make([]forge.PRHead, len(prs))
+	for i, p := range prs {
+		hs[i] = forge.PRHead{PR: p.Number, HeadSHA: p.HeadSHA}
+	}
+	return hs
+}
+
+// RunTrain runs one attempt for pr on base. It is RunTrainBatch with one PR,
+// the spelling SPEC-0025 REQ-17 keeps byte-identical.
+func RunTrain(ctx context.Context, f forge.Forge, cfg TrainConfig, pr PullRequest, base string) Result {
+	return RunTrainBatch(ctx, f, cfg, []PullRequest{pr}, base)
+}
+
+// RunTrainBatch runs one attempt carrying every PR in prs, which must be in
+// merge order, on one train commit (SPEC-0025 REQ-17). One PR behaves exactly
+// as RunTrain always did.
+func RunTrainBatch(ctx context.Context, f forge.Forge, cfg TrainConfig, prs []PullRequest, base string) (res Result) {
 	log := cfg.Log
 	if log == nil {
 		log = nopLogger{}
 	}
-	branch := TrainBranchName(pr.Number)
-	kv := []any{"repo", cfg.Repo, "pr", pr.Number, "head", pr.HeadSHA, "base", base}
+	branch := trainBranchName(prs)
+	kv := []any{"repo", cfg.Repo, "pr", prs[0].Number, "head", prs[0].HeadSHA, "base", base}
+	if len(prs) > 1 {
+		nums := make([]string, len(prs))
+		for i, p := range prs {
+			nums[i] = strconv.Itoa(p.Number)
+		}
+		kv = append(kv, "batch", strings.Join(nums, ","))
+	}
 	res.Base = base
 
 	// A leftover from a crashed attempt would make the push below fail. It is
@@ -95,18 +157,27 @@ func RunTrain(ctx context.Context, f forge.Forge, cfg TrainConfig, pr PullReques
 	defer cleanup(ctx, f, cfg, log, branch, kv)
 
 	log.Info(event("building"), append(kv, "train", branch)...)
-	tb, err := f.CreateTrainBranch(ctx, cfg.Repo, forge.TrainSpec{
+	spec := forge.TrainSpec{
 		Branch:  branch,
 		BaseSHA: base,
-		PR:      pr.Number,
-		HeadSHA: pr.HeadSHA,
-		Message: fmt.Sprintf("merge train: #%d at %s", pr.Number, short(pr.HeadSHA)),
-	})
+		PR:      prs[0].Number,
+		HeadSHA: prs[0].HeadSHA,
+		Message: trainMessage(prs),
+	}
+	if len(prs) > 1 {
+		spec.Heads = headsOf(prs)
+	}
+	tb, err := f.CreateTrainBranch(ctx, cfg.Repo, spec)
 	switch {
 	case err == nil:
 	case errors.Is(err, forge.ErrConflict):
 		log.Info(event("conflict"), kv...)
-		return Result{Outcome: OutcomeConflict, Base: base, Err: err}
+		res := Result{Outcome: OutcomeConflict, Base: base, Err: err}
+		var ce *forge.ConflictError
+		if errors.As(err, &ce) {
+			res.ConflictPR = ce.PR
+		}
+		return res
 	case errors.Is(err, forge.ErrStale):
 		log.Info(event("stale"), append(kv, "err", err)...)
 		return Result{Outcome: OutcomeStale, Base: base, Err: err}

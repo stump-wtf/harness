@@ -6,8 +6,8 @@ package daemon
 // when the train is disabled; an enabled train runs its drivers and stops
 // cleanly, releasing their locks; an enabled train with no token refuses; a
 // repo whose lock is held elsewhere is skipped, not raced. REQ-17: a batch
-// above 1 is warned about at start, since the driver still builds one PR per
-// train.
+// above 1 reaches the drivers as configured, without the old
+// "not implemented" warning.
 
 import (
 	"context"
@@ -176,32 +176,26 @@ func TestMergeTrainLockedRepoSkipped(t *testing.T) {
 	}
 }
 
-func TestMergeTrainWarnsUnimplementedBatch(t *testing.T) {
+func TestMergeTrainBatchNeedsNoWarning(t *testing.T) {
 	const warning = "WARN merge train: batch is not implemented yet"
-	for _, tc := range []struct {
-		batch int
-		warn  bool
-	}{
-		{batch: 1, warn: false},
-		{batch: 4, warn: true},
-	} {
-		t.Run(fmt.Sprint("batch=", tc.batch), func(t *testing.T) {
+	for _, batch := range []int{1, 4} {
+		t.Run(fmt.Sprint("batch=", batch), func(t *testing.T) {
 			f := fake.New()
 			f.SetBranch("stump.wtf/harness", "main", "base")
 			log := &recLog{}
 			c := enabledConfig("stump.wtf/harness")
-			c.Batch = tc.batch
+			c.Batch = batch
 			m, err := StartMergeTrain(context.Background(), opts(t, c, f, log))
 			if err != nil {
 				t.Fatal(err)
 			}
 			m.Stop()
 			txt := log.text()
-			if got := strings.Contains(txt, warning); got != tc.warn {
-				t.Fatalf("batch %d: warned = %v, want %v:\n%s", tc.batch, got, tc.warn, txt)
+			if strings.Contains(txt, warning) {
+				t.Fatalf("batch %d: the daemon still warns that batching is unimplemented:\n%s", batch, txt)
 			}
-			if tc.warn && !strings.Contains(txt, fmt.Sprintf("batch %d", tc.batch)) {
-				t.Fatalf("warning does not name the configured batch:\n%s", txt)
+			if !strings.Contains(txt, fmt.Sprintf("batch %d", batch)) {
+				t.Fatalf("enabled line does not name the configured batch:\n%s", txt)
 			}
 		})
 	}
