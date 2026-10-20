@@ -241,6 +241,15 @@ ever reading it. A relative path value SHALL resolve against the package's
 own directory inside the content-addressed store, never against the
 installing harness's `workdir`.
 
+An `argv` entry is a value, not a path value, and SHALL NOT be rewritten: the
+daemon resolves nothing in it, because an entry may be a flag or any other
+non-path text. A `command` package that ships a script names it with the
+SPEC-0017 REQ-7 `package.dir` context path (`argv = ["bash",
+"{{package.dir}}/watch.sh"]`), whose value the daemon derives from the harness's
+own pin, so no manifest string ever carries the content SHA that an upgrade
+changes (ADR-0047). The same containment rule still applies by construction:
+that path names only the package's own directory in the store.
+
 At config load the four prompt sources SHALL merge as one group, not key by
 key: when the harness table sets any prompt source, the package's prompt
 source SHALL NOT apply, whichever form either side uses (REQ-7's
@@ -351,6 +360,14 @@ will run with.
 - **WHEN** a manifest declares `prompt_file = "/home/op/.ssh/id_ed25519"`,
   or `prompt_template_file = "../../x.tmpl"`
 - **THEN** the package fails to load, naming the key
+
+#### Scenario: A package runs a script it bundles
+
+- **WHEN** a manifest declares `harness = "command"` and `argv = ["bash",
+  "{{package.dir}}/watch.sh"]`, with `watch.sh` bundled beside
+  `package.toml`, and the operator's table sets `source` to that package
+- **THEN** the run's process receives `watch.sh` at its absolute path inside
+  the pin's directory, and no `argv` entry was rewritten by the resolver
 
 #### Scenario: A local prompt overrides the package's prompt as a group
 

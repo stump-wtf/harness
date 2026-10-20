@@ -2158,5 +2158,9 @@ func checkCommandKeys(adapter string, rh rawHarness) error {
 	}
 	scheduled := strings.TrimSpace(rh.Schedule) != ""
 	triggered := scheduled || len(rh.Triggers) > 0
-	return core.CheckCommandTemplateContext(rh.Argv, strings.TrimSpace(rh.Model), scheduled, triggered)
+	// `source` survives applySource, so its presence is what says an
+	// installed package defines this harness — which is what decides whether
+	// {{package.dir}} can ever render (SPEC-0026 REQ-7).
+	packaged := strings.TrimSpace(rh.Source) != ""
+	return core.CheckCommandTemplateContext(rh.Argv, strings.TrimSpace(rh.Model), scheduled, triggered, packaged)
 }

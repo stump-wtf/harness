@@ -32,7 +32,9 @@ table may only select an adapter and supply values:
   other table.
 - **Paths stay inside the package.** A path a package names must be relative
   to it. An absolute path, a `~` path, or one that climbs out with `..` is
-  refused.
+  refused. Every path key resolves against the package's own installed
+  directory, and so does a bundled script named in `argv` — see
+  [Running a script you bundle](#running-a-script-you-bundle).
 - **Environment by name only.** A package can declare the environment
   variables it expects in `[[env]]` blocks, but never their values. You
   supply those in your harness table's `env_file` or the daemon's
@@ -273,6 +275,30 @@ first two are secret references (ADR-0038), and autostart is your call.
 Keep the manifest to keys every adapter accepts if you want operators to
 override `harness`. `system_prompt_file`, `mcp_config` and `allowed_tools`
 are Claude Code one-shot keys.
+
+### Running a script you bundle
+
+A plain script — scrape a metric, page, restart something — is a `command`
+harness, and its files travel with the package. `argv` entries are values, not
+paths, so nothing in them is rewritten; name the script with `{{package.dir}}`,
+which the daemon fills in from the pin your table points at:
+
+```toml
+[harness]
+harness = "command"
+argv = ["bash", "{{package.dir}}/watch.sh"]
+```
+
+The path is the daemon's, never the manifest's: it is derived from the
+harness's own `source`, so it always names this package's own installed files,
+and it survives an upgrade. Hard-coding the content SHA in `argv` works until
+the next release, so don't. `{{package.dir}}` renders only for a harness with a
+`source`; write `{{package.dir?}}` if the same `argv` should also load as a
+hand-written harness.
+
+Like any `command` harness, `argv[0]` is looked up on `PATH` (or against the
+workdir when it has a separator), so the interpreter is `bash` or `python3`
+rather than the script itself.
 
 Validate the stable before you publish it. From the root of your checkout:
 
