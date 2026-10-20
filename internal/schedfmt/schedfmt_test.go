@@ -247,7 +247,7 @@ func TestStateLabel(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := StateLabel(tc.state, tc.schedule, false, false); got != tc.want {
+			if got := StateLabel(tc.state, tc.schedule, false, false, false); got != tc.want {
 				t.Errorf("StateLabel(%q, %q, false, false) = %q, want %q", tc.state, tc.schedule, got, tc.want)
 			}
 			if got := IsArmed(tc.state, tc.schedule); got != tc.wantArmed {
@@ -287,7 +287,7 @@ func TestStateLabelHours(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := StateLabel(tc.state, "", tc.held, tc.closing); got != tc.want {
+			if got := StateLabel(tc.state, "", tc.held, tc.closing, false); got != tc.want {
 				t.Errorf("StateLabel(%q, \"\", %v, %v) = %q, want %q", tc.state, tc.held, tc.closing, got, tc.want)
 			}
 		})
@@ -436,5 +436,65 @@ func TestHoursExprLabel(t *testing.T) {
 				t.Errorf("HoursExprLabel(%q, %q) = %q, want %q", tc.operatingHours, tc.daemonZone, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestStateLabelDisarmed pins stump.wtf/harness#786's surface half: a stopped
+// harness whose firings an operator stop is suppressing must not read armed —
+// armed promises a firing the pause prevents. The schedule is intact, so the
+// word is disarmed, and only while stopped and suppressed: start clears the
+// suppression and the harness is armed again.
+func TestStateLabelDisarmed(t *testing.T) {
+	tests := []struct {
+		name       string
+		state      string
+		firing     string
+		held       bool
+		closing    bool
+		suppressed bool
+		want       string
+	}{
+		{
+			"suppressed scheduled stopped is disarmed",
+			"stopped", "0 */6 * * *", false, false, true, DisarmedLabel,
+		},
+		{
+			"suppressed trigger-only stopped is disarmed",
+			"stopped", TriggeredFiring, false, false, true, DisarmedLabel,
+		},
+		{
+			// The flag only ever rides on a firing harness; unscheduled and
+			// stopped is a real stop, whatever a stray flag says.
+			"suppressed unscheduled stopped stays stopped",
+			"stopped", "", false, false, true, "stopped",
+		},
+		{
+			// running is running even under a pending suppression, and
+			// closing still outranks everything.
+			"suppressed closing reads closing",
+			"running", "0 */6 * * *", false, true, true, ClosingLabel,
+		},
+		{
+			// Not suppressed: the ordinary armed wording survives.
+			"unsuppressed scheduled stopped stays armed",
+			"stopped", "0 */6 * * *", false, false, false, ArmedLabel,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := StateLabel(tc.state, tc.firing, tc.held, tc.closing, tc.suppressed); got != tc.want {
+				t.Errorf("StateLabel(%q, %q, %v, %v, %v) = %q, want %q",
+					tc.state, tc.firing, tc.held, tc.closing, tc.suppressed, got, tc.want)
+			}
+		})
+	}
+	if got := IsDisarmed("stopped", "0 */6 * * *", true); !got {
+		t.Error("IsDisarmed must agree with StateLabel's disarmed substitution")
+	}
+	if got := IsDisarmed("stopped", "0 */6 * * *", false); got {
+		t.Error("an unsuppressed harness is never disarmed")
+	}
+	if got := IsDisarmed("running", "0 */6 * * *", true); got {
+		t.Error("a running harness is never disarmed")
 	}
 }

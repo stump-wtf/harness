@@ -429,9 +429,11 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 	// Between firings a scheduled harness is "armed", not "stopped" — loaded
 	// and waiting, not switched off. A held gated harness is "off-hours" the
 	// same way, and one mid graceful close is "closing" (outranks off-hours).
-	// Shared with `harness list` via schedfmt so the surfaces never phrase the
-	// same harness two ways (SPEC-0012 REQ "Operating Hours Visibility").
-	state := schedfmt.StateLabel(h.State, firing, held, closing)
+	// One whose firings an operator stop is suppressing is "disarmed" (issue
+	// #786). Shared with `harness list` via schedfmt so the surfaces never
+	// phrase the same harness two ways (SPEC-0012 REQ "Operating Hours
+	// Visibility", SPEC-0008 REQ "Schedule Visibility").
+	state := schedfmt.StateLabel(h.State, firing, held, closing, h.ScheduleSuppressed)
 	switch {
 	case closing:
 		glyph = m.theme.ClosingStyle().Render(schedfmt.Glyph(h.State, firing))
@@ -786,7 +788,7 @@ func (m *Model) viewStatusBar() string {
 		// Schedule-aware, like every other listing surface: attached to an
 		// idle cron job this said "○ stopped" in pink while `harness list`
 		// and the dashboard row beside it both said "⏱ idle" in amber.
-		stateText = " " + m.theme.RenderHarnessState(h.State, schedfmt.Firing(h.Schedule, len(h.Triggers) > 0), schedfmt.HoursHeld(h.HoldReasons), h.ClosingUntil != "")
+		stateText = " " + m.theme.RenderHarnessState(h.State, schedfmt.Firing(h.Schedule, len(h.Triggers) > 0), schedfmt.HoursHeld(h.HoldReasons), h.ClosingUntil != "", h.ScheduleSuppressed)
 	}
 	// The hop flash reverses the identity segment briefly.
 	identStyle := m.theme.Ribbon()

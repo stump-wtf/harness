@@ -133,7 +133,7 @@ func TestScheduleColumnStylesSurviveWrapping(t *testing.T) {
 		tbl := NewTable(&buf, "NAME", "STATE", "SCHEDULE", "NEXT", "RESTARTS", "DESCRIPTION")
 		// Force the styled path: a real TTY colors, a *bytes.Buffer does not.
 		tbl.colored = true
-		tbl.Row("stumpcloud-sweep", tbl.stateCell("stopped", "CRON_TZ=UTC 0 10 * * *", false, false),
+		tbl.Row("stumpcloud-sweep", tbl.stateCell("stopped", "CRON_TZ=UTC 0 10 * * *", false, false, false),
 			tbl.scheduleCell("CRON_TZ=UTC 0 10 * * *", ""),
 			tbl.nextRunCell(protocol.HarnessInfo{Schedule: "CRON_TZ=UTC 0 10 * * *", NextRun: next}),
 			"0", tbl.dimPlain(base[:n]))
@@ -192,7 +192,7 @@ func TestStateCellArmedForScheduledStopped(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tbl.stateCell(tc.state, tc.schedule, false, false); got != tc.want {
+			if got := tbl.stateCell(tc.state, tc.schedule, false, false, false); got != tc.want {
 				t.Errorf("stateCell(%q, %q, false, false)\n got %q\nwant %q",
 					tc.state, tc.schedule,
 					strings.ReplaceAll(got, "\x1b", "<ESC>"),
@@ -208,10 +208,10 @@ func TestStateCellArmedForScheduledStopped(t *testing.T) {
 func TestStateCellUncoloredArmedLabel(t *testing.T) {
 	tbl := NewTable(&bytes.Buffer{}, "NAME", "STATE")
 	tbl.colored = false
-	if got, want := tbl.stateCell("stopped", "0 */6 * * *", false, false), schedfmt.ScheduleGlyph+" armed"; got != want {
+	if got, want := tbl.stateCell("stopped", "0 */6 * * *", false, false, false), schedfmt.ScheduleGlyph+" armed"; got != want {
 		t.Errorf("stateCell = %q, want %q", got, want)
 	}
-	if got, want := tbl.stateCell("stopped", "", false, false), core.StateStopped.Glyph()+" stopped"; got != want {
+	if got, want := tbl.stateCell("stopped", "", false, false, false), core.StateStopped.Glyph()+" stopped"; got != want {
 		t.Errorf("stateCell = %q, want %q", got, want)
 	}
 }
@@ -293,4 +293,77 @@ func bootScheduledDaemon(t *testing.T) string {
 		mgr.Close()
 	})
 	return socket
+}
+
+// TestPrintHarnessTableSuppressedSchedule is #786's list-surface half: after
+// `harness stop` paused a scheduled harness, the row must say so — a live
+// countdown and an armed label together advertised firings that would never
+// happen, which is how an operator's pause went unnoticed for hours. The
+// daemon marks the projection schedule_suppressed; the table renders the
+// pause in its place (SPEC-0008 REQ "Schedule Visibility").
+func TestPrintHarnessTableSuppressedSchedule(t *testing.T) {
+	var buf bytes.Buffer
+	hs := []protocol.HarnessInfo{
+		{
+			Name: "switchboard-worker", State: "stopped",
+			Schedule:           "CRON_TZ=UTC */30 * * * *",
+			NextRun:            time.Now().Add(24 * time.Minute).Format(time.RFC3339),
+			ScheduleSuppressed: true,
+			Description:        "claims queue items",
+		},
+		{
+			Name: "nightly", State: "stopped",
+			Schedule:    "CRON_TZ=UTC 0 10 * * *",
+			NextRun:     time.Now().Add(2 * time.Hour).Format(time.RFC3339),
+			Description: "reaps old runs",
+		},
+	}
+	if err := printHarnessTable(&buf, hs); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	lines := strings.Split(out, "\n")
+	var stopped, live string
+	for _, l := range lines {
+		switch {
+		case strings.Contains(l, "switchboard-worker"):
+			stopped = l
+		case strings.Contains(l, "nightly"):
+			live = l
+		}
+	}
+	if stopped == "" || live == "" {
+		t.Fatalf("expected both rows in table:\n%s", out)
+	}
+	if !strings.Contains(stopped, schedfmt.DisarmedLabel) {
+		t.Errorf("suppressed row must read disarmed, not armed/stopped:\n%s", stopped)
+	}
+	if strings.Contains(stopped, schedfmt.ScheduleGlyph+" "+schedfmt.ArmedLabel) {
+		t.Errorf("suppressed row still says armed:\n%s", stopped)
+	}
+	if !strings.Contains(stopped, schedfmt.SuppressedNextLabel) {
+		t.Errorf("suppressed row must replace the countdown with the pause:\n%s", stopped)
+	}
+	if strings.Contains(stopped, "in 24m") {
+		t.Errorf("suppressed row still counts down to a firing that will not happen:\n%s", stopped)
+	}
+	// The untouched scheduled row keeps its honest countdown — the pause is
+	// per-harness, not a global relabel.
+	if !strings.Contains(live, "armed") || !strings.Contains(live, "in 2h") {
+		t.Errorf("unsuppressed row lost its armed label or countdown:\n%s", live)
+	}
+}
+
+// TestNextRunCellSuppressed pins the NEXT column's decision order: the pause
+// outranks every countdown, so even a stale NextRun from the scheduler cannot
+// resurrect a firing the operator stopped.
+func TestNextRunCellSuppressed(t *testing.T) {
+	tbl := NewTable(&bytes.Buffer{}, "NAME", "NEXT")
+	next := time.Now().Add(90 * time.Minute).Format(time.RFC3339)
+	if got, want := tbl.nextRunCell(protocol.HarnessInfo{Schedule: "@hourly", NextRun: next, ScheduleSuppressed: true}), schedfmt.SuppressedNextLabel; got != want {
+		t.Errorf("nextRunCell suppressed = %q, want %q", got, want)
+	}
+	if got := tbl.nextRunCell(protocol.HarnessInfo{Triggers: []protocol.TriggerBinding{{Source: "channel.sb"}}, ScheduleSuppressed: true}); got != schedfmt.SuppressedNextLabel {
+		t.Errorf("a suppressed trigger-only row must not read %q", got)
+	}
 }

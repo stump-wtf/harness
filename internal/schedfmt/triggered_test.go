@@ -32,12 +32,12 @@ func TestTriggeredHarnessPresentation(t *testing.T) {
 		if g := Glyph("stopped", firing); g != tc.glyph {
 			t.Errorf("Glyph(stopped, %q) = %q, want %q", firing, g, tc.glyph)
 		}
-		if l := StateLabel("stopped", firing, false, false); l != tc.label {
+		if l := StateLabel("stopped", firing, false, false, false); l != tc.label {
 			t.Errorf("StateLabel(stopped, %q) = %q, want %q", firing, l, tc.label)
 		}
 	}
 	// Running is running, triggered or not.
-	if l := StateLabel("running", TriggeredFiring, false, false); l != "running" {
+	if l := StateLabel("running", TriggeredFiring, false, false, false); l != "running" {
 		t.Errorf("a running triggered harness reads %q", l)
 	}
 	if got := TriggersLabel([]string{"webhook.ci", "channel.sb"}); got != "webhook.ci, channel.sb" {

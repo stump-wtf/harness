@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/protocol"
+	"github.com/stump-wtf/harness/internal/schedfmt"
 )
 
 // TestFilterByProfile verifies the dashboard list is filtered to the active
@@ -210,4 +211,21 @@ func names(hs []protocol.HarnessInfo) []string {
 		out = append(out, h.Name)
 	}
 	return out
+}
+
+// TestNextActionTextSuppressedSchedule is #786's cockpit half: a scheduled
+// harness paused by `harness stop` must not show the dashboard counting down
+// to a firing that cannot happen (SPEC-0008 REQ "Schedule Visibility").
+func TestNextActionTextSuppressedSchedule(t *testing.T) {
+	next := time.Now().Add(2 * time.Hour).Format(time.RFC3339)
+	h := protocol.HarnessInfo{Schedule: "@daily", NextRun: next, ScheduleSuppressed: true}
+	if got, want := nextActionText(h), schedfmt.SuppressedNextLabel; got != want {
+		t.Errorf("nextActionText = %q, want %q — a suppressed schedule shows the pause, not a countdown", got, want)
+	}
+	// A suppressed harness whose restart backoff is somehow still live
+	// says "retry in …": a pending respawn outranks the schedule column.
+	h.NextRetryInMs = 5000
+	if got := nextActionText(h); got != "retry in "+humanizeMs(5000) {
+		t.Errorf("nextActionText = %q, want the retry countdown", got)
+	}
 }

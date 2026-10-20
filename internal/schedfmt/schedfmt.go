@@ -377,6 +377,29 @@ func cronDayName(dow string) string {
 // schedule was removed.
 const ArmedLabel = "armed"
 
+// DisarmedLabel is what a stopped harness reads when an operator stop is
+// suppressing its firings (stump.wtf/harness#786). Calling it "armed" would
+// promise a firing that the pause prevents, which is the misreport the issue
+// was filed for: SPEC-0008 REQ "Schedule Visibility" asks every surface to
+// render the suppression. "disarmed" is armed's established opposite, and it
+// is honest in both directions — the schedule is intact and untouched, and
+// `harness start` re-arms the harness without a reload. It is a presentation
+// label only, exactly like ArmedLabel: no core.State is involved, and the
+// wire still says "stopped".
+//
+// A harness with trigger sources reads disarmed too, so the surfaces do not
+// claim a pause they did not make: event sources still fire while an operator
+// stop holds the schedule (SPEC-0008 REQ "Firing And Overlap"), and every
+// surface that can show trigger sources shows them alongside this label.
+const DisarmedLabel = "disarmed"
+
+// SuppressedNextLabel replaces the countdown on any surface listing a schedule
+// an operator stop is suppressing (SPEC-0008 REQ "Schedule Visibility"): the
+// firing the countdown counts down to will not happen until something re-arms
+// the schedule. One word because the CLI table's NEXT column is ten cells:
+// the row's disarmed label and intact SCHEDULE column carry the rest.
+const SuppressedNextLabel = "suppressed"
+
 // Triggered Harness Presentation
 //
 // A harness fired only by trigger sources (SPEC-0014 `triggers`, no
@@ -430,6 +453,15 @@ func IsArmed(state, firing string) bool {
 	return firing != "" && core.State(state) == core.StateStopped
 }
 
+// IsDisarmed reports whether this state/firing pair is a stopped harness an
+// operator stop has paused (SPEC-0008 REQ "Firing And Overlap"): loaded and
+// with a firing source configured, but suppressed until the next explicit
+// start. Callers label it DisarmedLabel and render SuppressedNextLabel in
+// place of a countdown. suppressed is the projection's schedule_suppressed.
+func IsDisarmed(state, firing string, suppressed bool) bool {
+	return suppressed && IsArmed(state, firing)
+}
+
 // OffHoursLabel is what a held gated harness is called instead of "stopped".
 //
 // stopped is the same latch a give-up produces (core.StateStopped), and
@@ -478,13 +510,18 @@ func IsOffHours(state string, held bool) bool {
 // only once the process actually stops) but its true state is not yet
 // StateStopped, so IsOffHours never matches it anyway — the order here just
 // keeps that reasoning in one place instead of relying on it implicitly.
-// held means held for its hours (HoursHeld).
-func StateLabel(state, firing string, held, closing bool) string {
+// held means held for its hours (HoursHeld). suppressed means an operator
+// stop is holding the harness's firings (SPEC-0008 REQ "Firing And Overlap");
+// it renames armed to disarmed, because waiting for a firing the pause
+// prevents is not armed.
+func StateLabel(state, firing string, held, closing, suppressed bool) string {
 	switch {
 	case closing:
 		return ClosingLabel
 	case IsOffHours(state, held):
 		return OffHoursLabel
+	case IsDisarmed(state, firing, suppressed):
+		return DisarmedLabel
 	case IsArmed(state, firing):
 		return ArmedLabel
 	}

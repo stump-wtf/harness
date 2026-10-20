@@ -318,7 +318,7 @@ func printJobsTable(w io.Writer, jobs []protocol.JobInfo, now time.Time) error {
 		t.Row(
 			j.Name,
 			// A triggered one-shot is never gated (ADR-0019 exclusions).
-			t.stateCell(j.State, schedfmt.Firing(j.Schedule, len(j.Triggers) > 0), false, false),
+			t.stateCell(j.State, schedfmt.Firing(j.Schedule, len(j.Triggers) > 0), false, false, false),
 			schedule,
 			jobTriggersCell(j),
 			jobNextCell(j, now),
