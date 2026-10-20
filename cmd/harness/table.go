@@ -606,12 +606,19 @@ func (t *Table) bold(s string) string {
 // sources fire reads "armed" with the trigger glyph exactly as a scheduled one
 // reads "armed" with the clock (SPEC-0014 REQ "Trigger Visibility").
 //
+// suppressed is the projection's schedule_suppressed: an operator stop is
+// holding this harness's firings, so a harness that would read armed reads
+// disarmed instead (stump.wtf/harness#786). The color stays amber either way —
+// the harness is loaded, only its own initiative is paused — and the NEXT
+// column carries the suppression phrasing (SPEC-0008 REQ "Schedule
+// Visibility").
+//
 // Governing: ADR-0019, SPEC-0012 REQ "Operating Hours Visibility"; SPEC-0014
 // REQ "Trigger Visibility".
-func (t *Table) stateCell(state, firing string, held, closing bool) string {
+func (t *Table) stateCell(state, firing string, held, closing, suppressed bool) string {
 	s := core.State(state)
 	glyph := schedfmt.Glyph(state, firing)
-	label := schedfmt.StateLabel(state, firing, held, closing)
+	label := schedfmt.StateLabel(state, firing, held, closing, suppressed)
 	if !t.colored {
 		return fmt.Sprintf("%s %s", glyph, label)
 	}
@@ -670,10 +677,15 @@ func (t *Table) firingCell(h protocol.HarnessInfo) string {
 // 13:00", "lease until 21:00", or "stops by 13:15" — reusing the same column
 // rather than adding one (#343; design.md § "Presentation reuses the
 // schedule machinery"). Neither resolved yet, or neither applies, shows an
-// em dash rather than a placeholder.
+// em dash rather than a placeholder. A schedule an operator stop is
+// suppressing shows the pause instead of a countdown: the firing it counts
+// down to will not happen (stump.wtf/harness#786; SPEC-0008 REQ "Schedule
+// Visibility").
 func (t *Table) nextRunCell(h protocol.HarnessInfo) string {
 	var s string
 	switch {
+	case h.ScheduleSuppressed:
+		s = schedfmt.SuppressedNextLabel
 	case h.Schedule != "":
 		s = schedfmt.NextIn(h.NextRun)
 	case h.OperatingHours != "":

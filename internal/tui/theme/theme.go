@@ -267,7 +267,12 @@ func (t *Theme) RenderState(s core.State) string {
 //
 // firing is schedfmt.Firing's key: the schedule, or the triggered marker for a
 // harness only trigger sources fire (SPEC-0014 REQ "Trigger Visibility").
-func (t *Theme) RenderHarnessState(state, firing string, held, closing bool) string {
+//
+// suppressed is the projection's schedule_suppressed: an operator stop is
+// holding this harness's firings, and it reads disarmed rather than armed
+// (stump.wtf/harness#786, SPEC-0008 REQ "Schedule Visibility"). The amber
+// stays: the harness is loaded, only its own initiative is paused.
+func (t *Theme) RenderHarnessState(state, firing string, held, closing, suppressed bool) string {
 	style := t.StateStyle(core.State(state))
 	switch {
 	case closing:
@@ -277,7 +282,7 @@ func (t *Theme) RenderHarnessState(state, firing string, held, closing bool) str
 	case schedfmt.IsArmed(state, firing):
 		style = t.IdleStyle()
 	}
-	return style.Render(schedfmt.Glyph(state, firing) + " " + schedfmt.StateLabel(state, firing, held, closing))
+	return style.Render(schedfmt.Glyph(state, firing) + " " + schedfmt.StateLabel(state, firing, held, closing, suppressed))
 }
 
 // RenderGlyph renders just the colored glyph (row-leading marker). Even alone

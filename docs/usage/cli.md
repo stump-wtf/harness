@@ -92,10 +92,14 @@ will fire on its own; `harness describe` reports `armed` instead of an
 
 `harness stop <name>` on a scheduled one-shot pauses the schedule itself: the
 process stops, and the cron stops firing — `harness describe` reads
-**`next run: suppressed by harness stop (harness start re-arms it)`** — until
-an explicit `harness start`, which re-arms it (`harness trigger` runs once
-without re-arming). The pause survives a daemon restart. Windows that pass
-while stopped leave a skipped run record instead of firing.
+**`next run: suppressed by harness stop (harness start re-arms it)`**, and in
+`harness list` the row reads **`⏱ disarmed`** with **`suppressed`** in its NEXT
+column instead of a countdown — until an explicit `harness start`, which
+re-arms it (`harness trigger` runs once without re-arming). The pause survives
+a daemon restart. Windows that pass while stopped leave a skipped run record
+instead of firing. A harness with trigger sources reads `disarmed` the same
+way while its schedule is paused; event sources still fire, and the SCHEDULE
+column keeps listing them.
 
 A harness fired by trigger sources (`triggers`, see
 [Trigger sources](#trigger-sources)) is a one-shot too, and reads the same

@@ -79,6 +79,11 @@ func nextActionText(h protocol.HarnessInfo) string {
 	switch {
 	case h.NextRetryInMs > 0:
 		return "retry in " + humanizeMs(h.NextRetryInMs)
+	case h.ScheduleSuppressed:
+		// The pause the operator asked for (stump.wtf/harness#786): a
+		// countdown would advertise a firing that will not happen
+		// (SPEC-0008 REQ "Schedule Visibility").
+		return schedfmt.SuppressedNextLabel
 	case h.OperatingHours != "":
 		return schedfmt.HoursNext(schedfmt.HoursHeld(h.HoldReasons), h.ClosingUntil != "", h.LeaseUntil, h.ClosingUntil, h.HoursNext)
 	default:
