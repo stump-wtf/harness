@@ -55,6 +55,12 @@ type rawHarness struct {
 	PromptTemplate     string `toml:"prompt_template"`
 	PromptTemplateFile string `toml:"prompt_template_file"`
 	Model              string `toml:"model"`
+	// ModelPin is the fail-closed model pin sub-table (SPEC-0020 REQ-1):
+	// [harness.<name>.model_pin] decodes here, inside the harness's own
+	// primitive, so it is legal wherever a harness table is — global file,
+	// project file, and drop-in alike. Mutually exclusive with Model,
+	// checked by buildModelPin.
+	ModelPin *rawModelPin `toml:"model_pin"`
 	// SPEC-0018 REQ-11: claude-code one-shot persona keys. Valid only on
 	// harness = "claude-code" WITH a prompt source; see the validation block
 	// in registerHarness. Paths resolve against the declaring file, exactly
@@ -636,6 +642,12 @@ func ParseWith(data []byte, filename string, opts ParseOptions) (*core.Config, e
 				return nil, err
 			}
 
+		case len(h.parts) == 3 && h.parts[0] == "harness" && h.parts[2] == "model_pin":
+			// The model pin sub-table decodes inside its harness's own
+			// primitive (SPEC-0020 REQ-1); there is nothing to do at its
+			// header beyond not rejecting it as unknown nesting.
+			continue
+
 		case len(h.parts) == 2 && h.parts[0] == "harness":
 			name := h.parts[1]
 			var rh rawHarness
@@ -1035,6 +1047,19 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		// checkCommandKeys has already refused one that does not.
 		return newError(filename, line,
 			"harness %q: \"model\" requires a prompt source (\"prompt\", \"prompt_file\", \"prompt_template\" or \"prompt_template_file\") (a cmd harness passes --model through its own args)", name)
+	}
+
+	// `model_pin` is the fail-closed alternative to `model`: one table
+	// naming model, route, providers and data policy, valid on resident and
+	// one-shot harnesses alike. Every unsupported combination — with
+	// `model`, on a client that does not render the route, on a `command`
+	// harness with nothing to attest from, at an attestation depth the
+	// client cannot evidence — is a load error (SPEC-0020 REQ-1, REQ-2,
+	// REQ-8). The table itself carries no runtime behavior yet; the
+	// renderer stories build on core.Harness.ModelPin.
+	pin, _, err := buildModelPin(filename, name, line, rh, adapter)
+	if err != nil {
+		return err
 	}
 
 	// `auto_accept` is config truth only, same contract as `model`: stored on
@@ -1618,6 +1643,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		AutoAccept:           autoAccept,
 		MaxTurns:             maxTurns,
 		Model:                model,
+		ModelPin:             pin,
 		Prompt:               prompt,
 		PromptFile:           promptFilePath,
 		PromptTemplate:       promptTemplate,
@@ -1874,6 +1900,9 @@ func parseHarnessDFile(cfg *core.Config, st *loadState, data []byte, filename st
 			if err := checkSourceNamespaceParent(md, filename, h.line, h.parts[0]); err != nil {
 				return err
 			}
+
+		case len(h.parts) == 3 && h.parts[0] == "harness" && h.parts[2] == "model_pin":
+			continue // decodes inside its harness's primitive (SPEC-0020 REQ-1)
 
 		case len(h.parts) == 2 && h.parts[0] == "harness":
 			name := h.parts[1]
@@ -2162,5 +2191,16 @@ func checkCommandKeys(adapter string, rh rawHarness) error {
 	// installed package defines this harness — which is what decides whether
 	// {{package.dir}} can ever render (SPEC-0026 REQ-7).
 	packaged := strings.TrimSpace(rh.Source) != ""
-	return core.CheckCommandTemplateContext(rh.Argv, strings.TrimSpace(rh.Model), scheduled, triggered, packaged)
+	// A pin supplies model_pin.model as the {{model}} value while rendering
+	// nothing else into argv (SPEC-0020 REQ-2), so on a pinned harness the pin
+	// is what makes a required {{model}} renderable.
+	model := strings.TrimSpace(rh.Model)
+	// A pin supplies model_pin.model as the {{model}} value and nothing else
+	// (SPEC-0020 REQ-2), so it satisfies a required reference — but it is not a
+	// `model` key, so an argv that never references the model still loads with a
+	// pin on it, which is the ordinary attestation-only command pin.
+	if model == "" && rh.ModelPin != nil && core.CommandArgvUsesModel(rh.Argv) {
+		model = strings.TrimSpace(rh.ModelPin.Model)
+	}
+	return core.CheckCommandTemplateContext(rh.Argv, model, scheduled, triggered, packaged)
 }

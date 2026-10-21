@@ -25,6 +25,7 @@ import (
 
 	"github.com/stump-wtf/harness/internal/config"
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/modelpin"
 )
 
 // ErrInvalidProjectDef is the sentinel for a project_up carrying an invalid
@@ -471,6 +472,12 @@ func validateHarnessDef(src string, h core.Harness) error {
 		return fmt.Errorf("%s: harness %q: %w: negative restart delay",
 			src, h.Name, ErrInvalidProjectDef)
 	}
+	// The wire re-validates the pin through the same rules the config
+	// parsers run (SPEC-0020 REQ-18): a pin that could not load from a
+	// file cannot register over the socket.
+	if err := config.ValidateModelPin(h.Name, h.Adapter, h.Model, h.Transcripts, h.ModelPin); err != nil {
+		return fmt.Errorf("%s: %w: %v", src, ErrInvalidProjectDef, err)
+	}
 	if err := checkCommandDef(h); err != nil {
 		return fmt.Errorf("%s: harness %q: %w: %v", src, h.Name, ErrInvalidProjectDef, err)
 	}
@@ -516,7 +523,7 @@ func checkCommandDef(h core.Harness) error {
 	// could never render. A wire harness carries its `source` too, so
 	// {{package.dir}} follows the same rule.
 	// Governing: SPEC-0017 REQ-7, REQ-14; SPEC-0026 REQ-7.
-	return core.CheckCommandTemplateContext(h.Argv, h.Model, h.Schedule != "", h.Triggered(), h.PackageSource != "")
+	return core.CheckCommandTemplateContext(h.Argv, h.CommandModel(), h.Schedule != "", h.Triggered(), h.PackageSource != "")
 }
 
 // harnessDefEqual reports whether two definitions are identical field-for-
@@ -544,6 +551,7 @@ func harnessDefEqual(a, b core.Harness) bool {
 		a.Description == b.Description &&
 		a.Enabled == b.Enabled &&
 		a.TmuxSocket == b.TmuxSocket &&
+		modelpin.Equal(a.ModelPin, b.ModelPin) &&
 		a.Schedule == b.Schedule &&
 		a.CatchUp == b.CatchUp &&
 		a.Timeout == b.Timeout &&

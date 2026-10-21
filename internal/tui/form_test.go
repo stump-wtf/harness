@@ -1010,6 +1010,11 @@ var harnessFormFields = []string{
 	"SkillPaths", "UseDefaultSkillPaths",
 	// Budget is the SPEC-0021 REQ-1 key set, carried whole (#465).
 	"Budget",
+	// ModelPin is the SPEC-0020 REQ-1 pin sub-table, carried typed with no
+	// widget yet — the budget convention (#513). The form writes it back whole
+	// and shows it read-only, because dropping it would silently unpin the
+	// harness on the next unrelated edit.
+	"ModelPin",
 	// HoursExpr is OperatingHours parsed (internal/hours), not a config key of
 	// its own — config.Parse derives it fresh from OperatingHours on every
 	// load, so there is nothing for the form's save path to carry or drop; it
@@ -1210,6 +1215,30 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				`restart = "on-failure"`,
 				`operating_hours = "Mon-Fri 09:00-17:00"`,
 				`description = "nightly report"`,
+			},
+		},
+		{
+			// A model pin is the harness table's one sub-table (SPEC-0020
+			// REQ-1), and REQ-18 makes every writer round-trip it: the form has
+			// no pin widgets yet, so an edit of an unrelated field must leave
+			// the table's meaning untouched — and must not write it twice, which
+			// is what removeHarnessTOML's sub-table rule exists to prevent.
+			// attest is "model" because a litellm gateway's transcripts
+			// evidence the served model, not the upstream provider (REQ-8).
+			name: "pinned command harness",
+			table: []string{
+				"[harness.pinned]",
+				`harness = "command"`,
+				`argv = ["/usr/local/bin/run"]`,
+				`transcripts = "claude-code"`,
+				"enabled = true",
+				"[harness.pinned.model_pin]",
+				`route = "litellm"`,
+				`model = "z-ai/glm-5.3-flash"`,
+				`providers = ["deepinfra"]`,
+				`gateway_model = "glm-pinned"`,
+				`gateway_url = "https://gateway.example.internal"`,
+				`attest = "model"`,
 			},
 		},
 		{

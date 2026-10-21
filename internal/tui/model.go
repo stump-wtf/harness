@@ -28,6 +28,7 @@ import (
 	"github.com/stump-wtf/agent-trace/tail"
 	"github.com/stump-wtf/harness/internal/adapter"
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/modelpin"
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/runtrace"
 	"github.com/stump-wtf/harness/internal/tui/chatroom"
@@ -172,6 +173,14 @@ type formInputs struct {
 	// the round-trip reason triggers is: a dropped key silently lifts a
 	// spend cap.
 	budget core.Budget
+	// modelPin is the harness's [harness.<name>.model_pin] table (SPEC-0020
+	// REQ-1), carried typed from the file to the save with no widget yet — the
+	// same convention as budget above. Carried for the same round-trip reason:
+	// the `e` save path rewrites the harness's table, so a pin the form drops
+	// would silently unpin the harness the next time someone edited its
+	// description. The form shows it read-only rather than editing it, and a
+	// whole-table form is a later story (#513).
+	modelPin *modelpin.Pin
 	// healthCmd/healthInterval/healthFailures/healthAction are the issue
 	// #960 health probe keys, carried typed with no widget yet — same
 	// convention as budget above. Zero interval/failures and an empty
