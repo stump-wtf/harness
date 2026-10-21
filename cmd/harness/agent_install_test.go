@@ -460,3 +460,77 @@ remote = "https://x/y.git"
 		t.Fatalf("the installed table must be gone:\n%s", data)
 	}
 }
+
+// A manifest the schema accepts but config load refuses: argv is a
+// harness = "command" key, so the table this package merges into cannot
+// load (issue #955).
+const genericArgvPkg = `[package]
+name = "qwatch"
+version = "1.0.0"
+description = "watches a directory"
+
+[harness]
+harness = "generic"
+argv = ["bash", "watch.sh"]
+`
+
+// The same package with the key spelled the way a generic harness takes it,
+// which loads.
+const genericArgsPkg = `[package]
+name = "qwatch"
+version = "1.0.0"
+description = "watches a directory"
+
+[harness]
+harness = "generic"
+args = ["-c", "true"]
+`
+
+// REQ-6 through the loader: a package whose merged table config load
+// rejects is refused, and the refusal is the loader's own error naming the
+// key. Nothing is written (no table, no pin), so every other harness in
+// the file keeps loading (harness#955).
+func TestAgentInstallRefusesUnloadableTable(t *testing.T) {
+	e := newAgentEnv(t)
+	e.writeFile("harness.toml", "[server]\nenabled = false\n\n[harness.hand]\nharness = \"generic\"\nargs = [\"true\"]\n")
+	remote, _ := agentRemote(t, map[string]string{"packages/qwatch/package.toml": genericArgvPkg})
+	if _, _, err := e.run("stable", "add", "spike", remote); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := e.run("agent", "install", "spike/qwatch", "--yes")
+	if err == nil {
+		t.Fatalf("a package whose merged table cannot load must not install (out: %s)", out)
+	}
+	if !strings.Contains(err.Error(), `"argv" is only accepted on harness = "command"`) {
+		t.Fatalf("the refusal must name the offending key through the loader's error, got %v", err)
+	}
+	if data, _ := os.ReadFile(e.cfgPath); strings.Contains(string(data), "[harness.qwatch]") {
+		t.Fatalf("a refused install writes no table:\n%s", data)
+	}
+	if _, err := config.Load(e.cfgPath); err != nil {
+		t.Fatalf("the config must still load after the refusal: %v", err)
+	}
+	sha := strings.TrimSpace(agentGit(t, agentpkg.StableDir("spike"), "rev-parse", "HEAD"))
+	if _, err := os.Stat(agentpkg.PinDir(agentpkg.Source{Stable: "spike", Package: "qwatch", SHA: sha})); err == nil {
+		t.Fatal("a refused install leaves no materialization behind")
+	}
+}
+
+// The refusal is the loader's verdict and not a ban on the shape: the same
+// package declaring the key the way its own kind accepts it installs, and
+// the merged table loads.
+func TestAgentInstallAcceptsLoadableMergedTable(t *testing.T) {
+	e := newAgentEnv(t)
+	e.writeFile("harness.toml", "[server]\nenabled = false\n")
+	remote, _ := agentRemote(t, map[string]string{"packages/qwatch/package.toml": genericArgsPkg})
+	if _, _, err := e.run("stable", "add", "spike", remote); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := e.run("agent", "install", "spike/qwatch", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if src := installedSource(t, e.cfgPath, "qwatch"); src.Stable != "spike" || src.Package != "qwatch" {
+		t.Fatalf("the installed source is %q", src.String())
+	}
+}

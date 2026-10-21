@@ -354,6 +354,7 @@ mcp_allow = ["read"]`, 1)
 func TestAgentUpgradePinRelativePathIsNotAChange(t *testing.T) {
 	e := newAgentEnv(t)
 	v1 := strings.Replace(agentPkg, `harness = "claude-code"`, `harness = "claude-code"
+prompt = "review the diff"
 system_prompt_file = "system.md"`, 1)
 	remote, work := agentRemote(t, map[string]string{
 		"packages/pr-reviewer/package.toml": v1,
@@ -533,6 +534,7 @@ func TestReviewFlagsAnOverrideOnlyWhenThePackageMovesIt(t *testing.T) {
 func TestAgentUpgradeLocalOverrideBlocksOnlyOnAMove(t *testing.T) {
 	e := newAgentEnv(t)
 	v1 := strings.Replace(agentPkg, `harness = "claude-code"`, `harness = "claude-code"
+prompt = "review the diff"
 model = "sonnet"`, 1)
 	remote, work := agentRemote(t, map[string]string{"packages/pr-reviewer/package.toml": v1})
 	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
@@ -628,6 +630,7 @@ func TestAgentPruneKeepsAPinAKeptPathPointsInto(t *testing.T) {
 		t.Run(tc.key, func(t *testing.T) {
 			e := newAgentEnv(t)
 			v1 := strings.Replace(agentPkg, `harness = "claude-code"`, `harness = "claude-code"
+prompt = "review the diff"
 `+tc.key+` = "`+tc.file+`"`, 1)
 			remote, work := agentRemote(t, map[string]string{
 				"packages/pr-reviewer/package.toml": v1,
