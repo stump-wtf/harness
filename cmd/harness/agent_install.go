@@ -27,6 +27,11 @@ package main
 // @joestump-agent 10/10/2026 - install asks about the manifest's [defaults]
 // after the gate and writes the chosen ones beside source (harness#931);
 // --yes accepts none of them and says so, --accept-defaults accepts all.
+//
+// @joestump-agent 10/21/2026 - install loads the merged table before it
+// places a pin or writes a file, so a package whose values join the
+// operator's table into something config load rejects is refused instead of
+// breaking every other harness until it is uninstalled (harness#955).
 
 import (
 	"errors"
@@ -34,6 +39,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -217,6 +223,54 @@ func runAgentInstall(cmd *cobra.Command, o verbOpts, io installOpts, ref string)
 		return err
 	}
 
+	// The write this install is about to make, staged on an editor over a
+	// copy of the file: the source key, and a new table where the file does
+	// not declare this name yet, plus the confirmed grant that lands with it
+	// (issue #882). Both loader checks below stage exactly this edit, so what
+	// is validated is what is written.
+	name := io.as
+	if name == "" {
+		name = pkg
+	}
+	var grant [][2]any
+	if len(man.Requests.MCPAllow) > 0 {
+		grant = append(grant, [2]any{"mcp_allow", man.Requests.MCPAllow})
+	}
+	writeTable := func(ed *tomledit.Editor) error {
+		keys := make([][2]any, 0, len(grant)+1)
+		keys = append(keys, [2]any{"source", src.String()})
+		keys = append(keys, grant...)
+		if _, ok := cfg.Harnesses[name]; ok {
+			for _, kv := range keys {
+				if err := ed.SetHarnessKey(name, kv[0].(string), kv[1]); err != nil {
+					return fmt.Errorf("agent: stage %s on [harness.%s]: %w", kv[0], name, err)
+				}
+			}
+			return nil
+		}
+		return ed.AddHarness(name, keys)
+	}
+
+	// The merged table has to load before anything is written (SPEC-0026
+	// REQ-6, REQ-7; harness#955). The manifest schema only says the package
+	// is well-formed on its own; config load is what layers its [harness]
+	// values under the operator's table and applies the cross-key rules
+	// there, so a package that merges into something unloadable is refused
+	// here, before the pin is placed and before the file is touched, so a
+	// refused install leaves neither a materialization behind nor a config
+	// every other harness fails to read. The pin being installed resolves
+	// from wherever it currently sits (the materialization for a new one,
+	// the store for one already there); every other source resolves from
+	// the store, as it does at load.
+	if err := loadCandidate(o.configPath, writeTable, func(s agentpkg.Source) string {
+		if s == src {
+			return srcDir
+		}
+		return agentpkg.PinDir(s)
+	}); err != nil {
+		return fmt.Errorf("agent: refusing install of %s/%s: the config it would write does not load: %w", src.Stable, src.Package, err)
+	}
+
 	// Place the pin: adopt the materialization, or reuse what is there.
 	if tmp != "" {
 		if _, err := agentpkg.Place(src, tmp); err != nil {
@@ -230,21 +284,12 @@ func runAgentInstall(cmd *cobra.Command, o verbOpts, io installOpts, ref string)
 	// source against the pin store, so the pin has to be materialized for
 	// the candidate config to load at all. Only keys the target table does
 	// not already set are offered.
-	name := io.as
-	if name == "" {
-		name = pkg
-	}
 	outcomes, err := decideDefaults(cmd, defaultsAsk{
-		ConfigPath: o.configPath,
-		Table:      name,
-		Man:        man,
-		Cfg:        cfg,
-		Candidate: func(ed *tomledit.Editor) error {
-			if _, ok := cfg.Harnesses[name]; ok {
-				return ed.SetHarnessKey(name, "source", src.String())
-			}
-			return ed.AddHarness(name, [][2]any{{"source", src.String()}})
-		},
+		ConfigPath:     o.configPath,
+		Table:          name,
+		Man:            man,
+		Cfg:            cfg,
+		Candidate:      writeTable,
 		Yes:            io.yes,
 		AcceptDefaults: io.acceptDefaults,
 		Interactive:    cliui.IsTTY(os.Stdin),
@@ -260,10 +305,7 @@ func runAgentInstall(cmd *cobra.Command, o verbOpts, io installOpts, ref string)
 	// (issue #882): the effective mcp_allow is visible and hand-editable,
 	// one place, never split between table and manifest. A package that
 	// declares no scopes writes nothing — the default grant is the default.
-	var extra [][2]any
-	if len(man.Requests.MCPAllow) > 0 {
-		extra = append(extra, [2]any{"mcp_allow", man.Requests.MCPAllow})
-	}
+	extra := slices.Clone(grant)
 	for _, d := range outcomes {
 		if d.Status == defaultWritten {
 			extra = append(extra, [2]any{d.Key, d.Value})

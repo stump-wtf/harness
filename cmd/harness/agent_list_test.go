@@ -197,6 +197,7 @@ description = "reviews pull requests"
 
 [harness]
 harness = "claude-code"
+prompt = "review the diff"
 model = "pkg-model"
 `
 	remote, _ := agentRemote(t, map[string]string{"packages/pr-reviewer/package.toml": manifest})
