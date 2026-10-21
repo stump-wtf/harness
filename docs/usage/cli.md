@@ -75,6 +75,32 @@ surface; reach for `describe` or `--json` when you need it.
 `describe` additionally lists the harness's **live attach sessions** — who is
 attached right now, and whether each session is read-only.
 
+### Is it working, or just running?
+
+`state: running` is truthful about the **process**. It says nothing about
+whether the agent inside it is making progress, and an agent blocked for hours
+inside one tool call — a hung `grep`, an MCP server that stopped answering —
+looks healthy here. `describe` answers that with two kinds of row:
+
+```
+last call     23h ago (2026-10-19 22:23:15)
+child         pid 636314 · sleep · up 23h · cpu 0s
+```
+
+`last call` is the harness's last successful model call — the same instant
+`/metrics` exports as `harness_last_successful_call_timestamp`, so the socket
+and Prometheus cannot disagree (see [Metrics](metrics.md)). A harness the
+daemon has never seen call says `none since the daemon started` rather than
+printing a date from the epoch. Each `child` row is a direct child of the
+supervised process: how long it has been alive and the CPU it has burned. A
+child `up 23h` with `cpu 0s` is stuck, not busy.
+
+Children are named only while the harness is running, and are omitted when the
+daemon cannot read the process table (a container with no `ps`) — absence means
+unknown, never "none". `harness list --json` and `describe --json` carry both
+as `last_successful_call_at` and `children`, so a script can alert on "running,
+no call in 30m" without scraping `/metrics`.
+
 `--json` on any of these emits the same data as structured JSON.
 
 ## Scheduled jobs

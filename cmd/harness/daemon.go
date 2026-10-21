@@ -573,6 +573,14 @@ func runDaemon(o daemonOpts) {
 	stallGuard := startDaemonStallGuard(mgr, observer, notifier, stallguard.Options{})
 	log.Info("stall watchdog active", "interval", stallguard.DefaultInterval, "restart_limit", stallguard.DefaultRestartLimit)
 
+	// Issue #958: the progress clock the watchdog judges stalls by is the same
+	// one /metrics exports as harness_last_successful_call_timestamp, so
+	// handing it to the control server makes list/describe and /metrics give
+	// one answer about whether an agent is making calls. The watchdog exists
+	// only after the observer does, which is why this is a setter and not an
+	// Option.
+	srv.SetProgress(stallGuard)
+
 	// harness#459: fold that activity into each harness's open run in the
 	// run ledger (SPEC-0022 REQ-8): model calls, error classes, sessions and
 	// their trace links.

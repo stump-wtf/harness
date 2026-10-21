@@ -54,6 +54,13 @@ type Server struct {
 	// triggers is the trigger source manager, nil when the daemon runs none
 	// (triggers.go).
 	triggers TriggerSources
+	// progress answers "when did this harness last make a model call?" for
+	// list and describe (issue #958; ADR-0048). nil when the daemon wired no
+	// source, which leaves the field off the snapshot rather than reporting a
+	// zero an operator would read as 1970. Guarded by progressMu because the
+	// watchdog is built after the server starts serving.
+	progressMu sync.RWMutex
+	progress   ProgressSource
 	// skills is the skill serving manager, nil when no skill repo is
 	// declared (skills.go). It owns the serving clones' FTS5 index and the
 	// retrieval-count store (SPEC-0007).
@@ -63,6 +70,10 @@ type Server struct {
 	configPath string
 	version    string
 	started    time.Time
+	// procs samples the process table so list and describe can name each
+	// running harness's children without shelling out on the request path
+	// (issue #958; ADR-0048).
+	procs *procSampler
 
 	// pingInterval / livenessTimeout are the heartbeat knobs, seeded from the
 	// defaults above and fixed for the Server's lifetime. They are fields
@@ -157,6 +168,17 @@ type Options struct {
 	// notify_test (SPEC-0003 REQ "Operator Notification"). Optional: nil
 	// reports notify as off.
 	Notifier Notifier
+
+	// Progress reports each harness's last successful model call, the signal
+	// harness_last_successful_call_timestamp exports (ADR-0020; issue #958).
+	// The stall watchdog satisfies it, since it already derives that clock from
+	// the agent event feed. Optional: nil leaves the field off the snapshot.
+	Progress ProgressSource
+
+	// ChildrenInterval overrides how often the server re-reads the process
+	// table for list/describe's children (issue #958). Zero — the production
+	// case — means defaultChildrenInterval; tests shrink it.
+	ChildrenInterval time.Duration
 }
 
 // NewServer builds a Server. It does not listen until Listen is called.
@@ -187,6 +209,8 @@ func NewServer(opts Options) *Server {
 		socketPath:      opts.SocketPath,
 		configPath:      opts.ConfigPath,
 		version:         opts.Version,
+		progress:        opts.Progress,
+		procs:           newProcSampler(opts.ChildrenInterval),
 		started:         time.Now(),
 		pingInterval:    ping,
 		livenessTimeout: liveness,
@@ -212,6 +236,24 @@ func (s *Server) Listen() error { return s.bind() }
 
 // SocketPath returns the bound socket path.
 func (s *Server) SocketPath() string { return s.socketPath }
+
+// SetProgress wires the source list and describe read a harness's last
+// successful model call from (issue #958; ADR-0048). The daemon's stall
+// watchdog satisfies it; call with nil to leave the field off the snapshot.
+// Safe after Serve: the stall watchdog exists only after the observer is built,
+// which is later than NewServer.
+func (s *Server) SetProgress(p ProgressSource) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	s.progress = p
+}
+
+// progressSource is the guarded read of SetProgress.
+func (s *Server) progressSource() ProgressSource {
+	s.progressMu.RLock()
+	defer s.progressMu.RUnlock()
+	return s.progress
+}
 
 // SetRemote records the running remote SSH server's bind address and allowlist
 // size for daemon_info. Call with an empty addr to mark it as not running.
@@ -241,6 +283,7 @@ func (s *Server) Remote() (string, int) {
 func (s *Server) Serve() {
 	s.goInternal(s.relayLoop)
 	s.goInternal(s.watchSocket)
+	s.procs.Start()
 	for {
 		ln := s.listener()
 		if ln == nil {
@@ -304,6 +347,7 @@ func (s *Server) goInternal(fn func()) bool {
 func (s *Server) Close() {
 	s.once.Do(func() {
 		close(s.done)
+		s.procs.Close()
 		if ln := s.listener(); ln != nil {
 			_ = ln.Close()
 		}

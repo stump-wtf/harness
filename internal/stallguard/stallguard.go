@@ -241,6 +241,26 @@ func (g *Guard) Restarts(name string) int {
 	return 0
 }
 
+// LastCall reports when the observer last saw this harness make a tool call —
+// the same signal harness_last_successful_call_timestamp exports, which is why
+// list/describe and /metrics cannot disagree about it (issue #958; ADR-0048).
+// The guard keeps it for every harness the observer reports on, whether or not
+// that harness configured a stall_timeout, and unlike the metrics listener it
+// is running whenever the daemon is, so an operator who never enabled /metrics
+// still gets an answer. False when this daemon has seen no call from it.
+func (g *Guard) LastCall(name string) (time.Time, bool) {
+	if g == nil {
+		return time.Time{}, false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	w := g.watches[name]
+	if w == nil || w.lastCall.IsZero() {
+		return time.Time{}, false
+	}
+	return w.lastCall, true
+}
+
 func (g *Guard) loop() {
 	defer close(g.done)
 	t := time.NewTicker(g.interval)

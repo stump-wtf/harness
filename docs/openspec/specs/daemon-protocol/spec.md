@@ -75,6 +75,23 @@ of reflowing it.
 - **THEN** the daemon replies success and the harness's projection carries the
   lease end as `lease_until`
 
+#### Scenario: A running harness reports its progress, not only its state
+
+- **WHEN** a client requests `list` or `describe` for any harness
+- **THEN** its projection carries `last_successful_call_at`, the instant
+  `/metrics` exports as `harness_last_successful_call_timestamp` (ADR-0020), so
+  an operator polling the socket can see an agent blocked inside one tool call
+  instead of only `state: running`, and the two surfaces cannot give two
+  answers about one harness (ADR-0048)
+- **AND** for a running harness it also names that process's direct children
+  with their `pid`, command, start time and cumulative CPU, so the hung child
+  is visible without reaching for `ps`
+- **AND** a harness the daemon has never observed calling carries no timestamp
+  rather than a zero an operator would read as 1970
+- **AND** a harness that is not running, or a daemon that cannot read the
+  process table, carries no `children` at all rather than an empty list claiming
+  none exist
+
 #### Scenario: Structured failure
 
 - **WHEN** a control request references an unknown harness
