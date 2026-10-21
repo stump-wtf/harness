@@ -18,6 +18,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/stump-wtf/harness/internal/modelpin"
 )
 
 // PackageMeta is the [package] table: identity plus optional provenance
@@ -36,10 +38,9 @@ type PackageMeta struct {
 
 // HarnessValues is the per-harness value subset a manifest may carry. The
 // fields are exactly the keys today's harness schema parses (rawHarness in
-// internal/config); model_pin, skill_paths, use_default_skill_paths,
-// mcp_bridge, mcp_exclusive and mcp_policy join this struct in the PRs that
-// add them to the schema itself — until then they fail as unknown keys, which
-// is the honest error.
+// internal/config); use_default_skill_paths, mcp_bridge, mcp_exclusive and
+// mcp_policy join this struct in the PRs that add them to the schema itself
+// — until then they fail as unknown keys, which is the honest error.
 type HarnessValues struct {
 	Harness    string
 	Args       []string
@@ -64,6 +65,11 @@ type HarnessValues struct {
 	// config load. Values here point INTO the bundle — the merge tier they
 	// contribute at is #816's.
 	SkillPaths []string
+	// ModelPin is the package's fail-closed model pin (SPEC-0026 REQ-3,
+	// SPEC-0020 REQ-1): a [harness.model_pin] table that loads and
+	// validates exactly like a hand-written one — the manifest supplies
+	// the values, the schema owns the rules.
+	ModelPin *modelpin.Pin
 }
 
 // Requests is the itemized [requests] table (REQ-4 renders every entry).

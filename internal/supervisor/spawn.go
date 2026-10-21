@@ -539,8 +539,8 @@ func renderContext(h core.Harness, workdir string, run RunEnv, now time.Time) tm
 		core.PathRunStartedAt:   started.UTC().Format(time.RFC3339),
 		core.PathRunDate:        started.In(scheduleZone(h.Schedule)).Format(time.DateOnly),
 	}
-	if h.Model != "" {
-		v[core.PathModel] = h.Model
+	if model := h.CommandModel(); model != "" {
+		v[core.PathModel] = model
 	}
 	if dir, ok := agentpkg.InstalledPackageDir(h.PackageSource); ok {
 		v[core.PathPackageDir] = dir

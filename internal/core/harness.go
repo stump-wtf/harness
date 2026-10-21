@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/hours"
+	"github.com/stump-wtf/harness/internal/modelpin"
 )
 
 // Backend selects how a harness's process is hosted: natively under the
@@ -304,6 +305,13 @@ type Harness struct {
 	// Governing: ADR-0011; issue #57 (add `model` field for model selection);
 	// SPEC-0017 REQ-3.
 	Model string
+	// ModelPin is a validated fail-closed model pin: the parsed
+	// [harness.<name>.model_pin] table. Mutually exclusive with Model (the
+	// pin supplies the model), and valid on resident and one-shot harnesses
+	// alike. Nil means unpinned. The table carries no runtime behavior yet;
+	// the renderer stories build on it.
+	// Governing: ADR-0026, SPEC-0020 REQ-1.
+	ModelPin *modelpin.Pin
 	// AutoAccept enables unattended/yolo mode for a prompt harness, bypassing
 	// the agent CLI's permission prompts. Config truth only, and it requires
 	// Prompt (validation enforces it — there is no vendor-agnostic place to
@@ -571,6 +579,26 @@ type Harness struct {
 // a triggered harness as an ordinary resident one.
 // Governing: ADR-0021; SPEC-0014 REQ "Triggers Key".
 func (h Harness) Triggered() bool { return h.Schedule != "" || len(h.Triggers) > 0 }
+
+// CommandModel is the {{model}} value for a command harness: `model`, or the
+// pinned model when the harness pins instead of naming one. A pin renders
+// nothing into argv on its own — the operator's argv owns routing and the
+// daemon only attests — but model_pin.model is what {{model}} resolves to, so a
+// required {{model}} is satisfiable by a pin alone. A pin on an argv that never
+// references the model contributes nothing: it is attestation, not an unused
+// `model` key. Other adapters keep their own model handling — their pin
+// renderers are later stories, and until one exists a pin must not appear in a
+// template as a model nothing passes to the client.
+// Governing: SPEC-0017 REQ-3; SPEC-0020 REQ-2.
+func (h Harness) CommandModel() string {
+	if model := strings.TrimSpace(h.Model); model != "" {
+		return model
+	}
+	if h.Adapter == AdapterCommand && h.ModelPin != nil && CommandArgvUsesModel(h.Argv) {
+		return strings.TrimSpace(h.ModelPin.Model)
+	}
+	return ""
+}
 
 // ReadPromptFile reads the instruction text a PromptFile names. It is the one
 // place that decides what makes a prompt file usable, so the config parser's

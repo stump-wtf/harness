@@ -176,6 +176,21 @@ type ArgvRef struct {
 	tmpl.Ref
 }
 
+// CommandArgvUsesModel reports whether argv references {{model}} at all. A
+// model pin supplies model_pin.model as that value and nothing else
+// (SPEC-0020 REQ-2), so a pin only counts as a model for an argv that asks for
+// one: a pin beside an argv that never references the model is that pin doing
+// its attestation job, not an unused `model` key.
+// Governing: SPEC-0017 REQ-3; SPEC-0020 REQ-2.
+func CommandArgvUsesModel(argv []string) bool {
+	for _, r := range CommandArgvRefs(argv) {
+		if r.Path == PathModel {
+			return true
+		}
+	}
+	return false
+}
+
 // CheckCommandTemplateContext applies the rules that depend on the rest of the
 // harness, not on argv alone: whether `model` is set, whether the harness is
 // scheduled or triggered at all, and whether an installed package defines it.

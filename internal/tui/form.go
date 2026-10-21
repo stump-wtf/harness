@@ -31,6 +31,7 @@ import (
 	"github.com/stump-wtf/harness/internal/config"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/hours"
+	"github.com/stump-wtf/harness/internal/modelpin"
 	"github.com/stump-wtf/harness/internal/protocol"
 )
 
@@ -211,6 +212,14 @@ type HarnessForm struct {
 	// Writers" requires a harness rewrite to leave them byte-identical, so
 	// the only safe thing to do with them here is nothing.
 	Triggers []string
+	// ModelPin is the harness's [harness.<name>.model_pin] table (SPEC-0020
+	// REQ-1). A round-trip field carried typed with no widget yet, like Budget
+	// below: the save path rewrites the harness's table, so a form that dropped
+	// the pin would silently unpin the harness on the next unrelated edit.
+	// The form shows a pinned harness's pin read-only and refuses `model`
+	// beside it (Validate mirrors the parser); a form for the whole table is a
+	// later story (#513).
+	ModelPin *modelpin.Pin
 	// Budget is the harness's budget keys (SPEC-0021 REQ-1). The form has
 	// no widgets for them yet, but it must carry them: the save path
 	// rewrites the whole table, so a form that dropped them would lift an
@@ -294,6 +303,13 @@ func (f HarnessForm) Validate() error {
 		if strings.ContainsFunc(model, unicode.IsSpace) {
 			return fmt.Errorf("model must be a single token (no whitespace)")
 		}
+	}
+	// Mirror the parser's refusal (SPEC-0020 REQ-1): saving `model` beside a pin
+	// would write a harness.toml the daemon rejects on reload. The pin itself is
+	// round-trip only — the form shows it read-only and offers no editor — so
+	// the only thing the form can do to a pin is keep it.
+	if f.ModelPin != nil && strings.TrimSpace(f.Model) != "" {
+		return fmt.Errorf("model and model_pin are mutually exclusive: the pin supplies the model, so clear model to keep the pin or remove the [harness.%s.model_pin] table to set one", f.Name)
 	}
 	if f.AutoAccept && !promptSet {
 		return fmt.Errorf("auto_accept requires prompt (for a long-running harness, pass the tool's flag in args)")
@@ -784,7 +800,56 @@ func (f HarnessForm) TOML() string {
 		fmt.Fprintf(&b, "export_telemetry = %s\n", et)
 	}
 	writeBudgetTOML(&b, f.Budget)
+	writeModelPinTOML(&b, f.Name, f.ModelPin)
 	return b.String()
+}
+
+// writeModelPinTOML emits the harness's pin (SPEC-0020 REQ-1) as its own
+// [harness.<name>.model_pin] sub-table, after every key of the harness table so
+// the sub-table header ends the block. A nil pin writes nothing: an unpinned
+// harness is not an empty table. Keys holding their parsed default are omitted,
+// the same "blank means the parser default" convention as the budget keys above,
+// so an untouched edit neither grows nor shrinks what the pin means; route and
+// model are always written because the parser requires both.
+// Governing: SPEC-0020 REQ-1, REQ-18; SPEC-0001 REQ "Lossless Edit Round-Trip".
+func writeModelPinTOML(b *strings.Builder, name string, pin *modelpin.Pin) {
+	if pin == nil {
+		return
+	}
+	quotedList := func(items []string) string {
+		parts := make([]string, len(items))
+		for i, s := range items {
+			parts[i] = strconv.Quote(s)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	}
+	fmt.Fprintf(b, "\n[harness.%s.model_pin]\n", name)
+	fmt.Fprintf(b, "route = %s\n", strconv.Quote(string(pin.Route)))
+	fmt.Fprintf(b, "model = %s\n", strconv.Quote(pin.Model))
+	if len(pin.Providers) > 0 {
+		fmt.Fprintf(b, "providers = %s\n", quotedList(pin.Providers))
+	}
+	if pin.AllowFallbacks {
+		fmt.Fprintf(b, "allow_fallbacks = true\n")
+	}
+	if pin.DataPolicy != modelpin.DataPolicyProviderDefault {
+		fmt.Fprintf(b, "data_policy = %s\n", strconv.Quote(pin.DataPolicy))
+	}
+	if pin.Attest != modelpin.AttestFull {
+		fmt.Fprintf(b, "attest = %s\n", strconv.Quote(pin.Attest))
+	}
+	if pin.OnMismatch != modelpin.OnMismatchHold {
+		fmt.Fprintf(b, "on_mismatch = %s\n", strconv.Quote(pin.OnMismatch))
+	}
+	if len(pin.AcceptServed) > 0 {
+		fmt.Fprintf(b, "accept_served = %s\n", quotedList(pin.AcceptServed))
+	}
+	if pin.GatewayModel != "" {
+		fmt.Fprintf(b, "gateway_model = %s\n", strconv.Quote(pin.GatewayModel))
+	}
+	if pin.GatewayURL != "" {
+		fmt.Fprintf(b, "gateway_url = %s\n", strconv.Quote(pin.GatewayURL))
+	}
 }
 
 // writeBudgetTOML emits the SPEC-0021 REQ-1 budget keys that are set, each in
@@ -912,6 +977,10 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	// carries a space, so a plain space join would split it on save.
 	fi.allowedTools = shellQuoteJoin(h.AllowedTools)
 	fi.model = h.Model
+	// Round-trip only (see the ModelPin field doc): the pin travels from the
+	// file through the daemon's projection to the save untouched, so an edit of
+	// an unrelated field cannot unpin the harness (SPEC-0020 REQ-18).
+	fi.modelPin = h.ModelPin
 	fi.autoAccept = h.AutoAccept
 	fi.quiet = h.Quiet
 	fi.maxTurns = strconv.Itoa(h.MaxTurns)
@@ -1048,6 +1117,7 @@ func (fi formInputs) toForm() HarnessForm {
 		HoursShutdownTimeout: strings.TrimSpace(fi.hoursShutdownTimeout),
 		ExportTelemetry:      strings.TrimSpace(fi.exportTelemetry),
 		Budget:               fi.budget,
+		ModelPin:             fi.modelPin,
 		HealthCmd:            strings.TrimSpace(fi.healthCmd),
 		HealthInterval:       fi.healthInterval,
 		HealthFailures:       fi.healthFailures,

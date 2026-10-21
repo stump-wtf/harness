@@ -145,6 +145,7 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		info.PromptTemplate = h.PromptTemplate
 		info.PromptTemplateFile = h.PromptTemplateFile
 		info.Model = h.Model
+		info.ModelPin = h.ModelPin
 		info.AutoAccept = h.AutoAccept
 		info.MaxTurns = h.MaxTurns
 		info.SystemPromptFile = h.SystemPromptFile

@@ -360,13 +360,23 @@ func (m *Model) onConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // an unbound key is one the `e` save path silently deletes from harness.toml
 // (issue #161), which TestEditPreservesEveryConfigKey pins.
 func buildHarnessForm(fi *formInputs) *huh.Form {
+	// A pinned harness's pin is shown read-only on the model row (SPEC-0020
+	// REQ-18): the form carries the table untouched and offers no editor for it
+	// yet, so the pin is stated rather than edited, and `model` beside it is
+	// refused by Validate exactly as the parser refuses it.
+	modelField := huh.NewInput().Title("model (agent model id; requires prompt)").Value(&fi.model)
+	if fi.modelPin != nil {
+		modelField = modelField.Description("pinned by model_pin: route=" + string(fi.modelPin.Route) +
+			" model=" + fi.modelPin.Model +
+			" (read-only here — clear model to keep the pin, or edit harness.toml to change the pin)")
+	}
 	return huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().Title("name").Value(&fi.name),
 			huh.NewInput().Title("harness — required (crush/claude-code/codex/pi/omp/generic/command)").Value(&fi.harness),
 			huh.NewInput().Title("prompt (agent one-shot; instead of cmd/args)").Value(&fi.prompt),
 			huh.NewInput().Title("prompt_file (path to the instruction; instead of prompt)").Value(&fi.promptFile),
-			huh.NewInput().Title("model (agent model id; requires prompt)").Value(&fi.model),
+			modelField,
 			huh.NewConfirm().Title("auto_accept (agent yolo mode; requires prompt)").Value(&fi.autoAccept),
 			huh.NewInput().Title("max_turns (agent turn budget; requires prompt; 0 = unlimited)").Value(&fi.maxTurns),
 			huh.NewConfirm().Title("quiet (run headless; yes = suppress agent output; requires prompt)").Value(&fi.quiet),

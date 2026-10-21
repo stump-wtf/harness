@@ -143,15 +143,19 @@ func (m *Model) deleteHarnessCmd(name string) tea.Cmd {
 // tableHeaderRe matches any TOML table header line.
 var tableHeaderRe = regexp.MustCompile(`^\s*\[`)
 
-// removeHarnessTOML drops the [harness.<name>] (or bare [<name>]) table and its
-// body from a harness.toml source, up to the next table header or EOF. It is a
-// line-oriented edit that preserves the rest of the file (ADR-0006).
+// removeHarnessTOML drops the [harness.<name>] (or bare [<name>]) table, its
+// sub-tables, and their bodies from a harness.toml source, up to the next table
+// header or EOF. It is a line-oriented edit that preserves the rest of the file
+// (ADR-0006). The sub-tables go with the table because the save path re-emits
+// the harness whole: leaving one behind would write it twice, which TOML
+// refuses. model_pin (SPEC-0020 REQ-1) is the sub-table that matters today.
 func removeHarnessTOML(body, name string) string {
 	lines := strings.Split(body, "\n")
 	want := map[string]bool{
 		"[harness." + name + "]": true,
 		"[" + name + "]":         true,
 	}
+	sub := []string{"[harness." + name + ".", "[" + name + "."}
 	var out []string
 	skipping := false
 	for _, ln := range lines {
@@ -159,6 +163,14 @@ func removeHarnessTOML(body, name string) string {
 		if tableHeaderRe.MatchString(ln) {
 			// A new table header ends any skip and decides whether to start one.
 			skipping = want[trimmed]
+			if !skipping {
+				for _, p := range sub {
+					if strings.HasPrefix(trimmed, p) {
+						skipping = true
+						break
+					}
+				}
+			}
 			if skipping {
 				continue
 			}

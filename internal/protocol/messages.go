@@ -10,6 +10,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+
+	"github.com/stump-wtf/harness/internal/modelpin"
 )
 
 // ProtoMajor / ProtoMinor are this build's protocol version. The MAJOR must
@@ -335,6 +337,10 @@ type ProjectHarness struct {
 	// prompt (parse validation enforces it); the daemon folds it into the
 	// synthesized argv at spawn (ADR-0011, issue #57).
 	Model string `json:"model,omitempty"`
+	// ModelPin mirrors the schema's [harness.<name>.model_pin] table. The
+	// wire carries it and the daemon re-validates it (SPEC-0020 REQ-18);
+	// mutually exclusive with Model, enforced there.
+	ModelPin *modelpin.Pin `json:"model_pin,omitempty"`
 	// AutoAccept mirrors the schema's agent `auto_accept` unattended mode: set
 	// only alongside prompt (parse validation enforces it); the daemon folds
 	// the vendor's yolo flag into the synthesized argv at spawn (ADR-0011,
@@ -552,6 +558,10 @@ type HarnessInfo struct {
 	// Model is the agent model selection for a prompt harness, folded into the
 	// synthesized argv at spawn (issue #57). Empty for cmd harnesses.
 	Model string `json:"model,omitempty"`
+	// ModelPin is a pinned harness's validated pin, projected so an edit of
+	// an unrelated field can round-trip the table even when the config file
+	// cannot be re-read (SPEC-0020 REQ-18). The form shows it read-only.
+	ModelPin *modelpin.Pin `json:"model_pin,omitempty"`
 	// AutoAccept is the agent unattended/yolo mode for a prompt harness,
 	// folded into the synthesized argv at spawn (issue #58). Always false for
 	// cmd harnesses.

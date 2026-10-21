@@ -82,6 +82,26 @@ func applySource(filename, name string, line int, rh rawHarness, pinDirFn func(a
 		rh.Model = hv.Model
 		fromPackage("model")
 	}
+	// A package's pin merges as a table, not key by key: a pin is one
+	// decision (model + route + who may serve it), and key-by-key merging
+	// would let a table setting `model` half-inherit the package's pin.
+	// buildModelPin then validates the merged table exactly like a
+	// hand-written one (SPEC-0026 REQ-3, SPEC-0020 REQ-1).
+	if rh.ModelPin == nil && hv.ModelPin != nil {
+		rh.ModelPin = &rawModelPin{
+			Route:          string(hv.ModelPin.Route),
+			Model:          hv.ModelPin.Model,
+			Providers:      hv.ModelPin.Providers,
+			AllowFallbacks: hv.ModelPin.AllowFallbacks,
+			DataPolicy:     hv.ModelPin.DataPolicy,
+			Attest:         hv.ModelPin.Attest,
+			OnMismatch:     hv.ModelPin.OnMismatch,
+			AcceptServed:   hv.ModelPin.AcceptServed,
+			GatewayModel:   hv.ModelPin.GatewayModel,
+			GatewayURL:     hv.ModelPin.GatewayURL,
+		}
+		fromPackage("model_pin")
+	}
 	if rh.AutoAccept == nil && hv.AutoAccept != nil {
 		rh.AutoAccept = hv.AutoAccept
 		fromPackage("auto_accept")

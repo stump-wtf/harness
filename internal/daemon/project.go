@@ -213,6 +213,7 @@ func harnessFromWire(ph protocol.ProjectHarness) core.Harness {
 		Prompt:           ph.Prompt,
 		PromptFile:       ph.PromptFile,
 		Model:            ph.Model,
+		ModelPin:         ph.ModelPin,
 		AutoAccept:       ph.AutoAccept,
 		MaxTurns:         ph.MaxTurns,
 		SystemPromptFile: ph.SystemPromptFile,
