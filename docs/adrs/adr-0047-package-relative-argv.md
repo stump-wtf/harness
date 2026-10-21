@@ -100,9 +100,11 @@ Details that were choices:
 * The guide's "paths stay inside the package" sentence becomes true for `argv`
   as well, and the guide now says how to name one.
 * Nothing about the "data, never code" boundary changes here, and this ADR does
-  not claim otherwise: a bundled script is still not listed by `agent info` or
-  the install confirmation, because non-markdown bundled files are not
-  surfaced yet. That is stump.wtf/harness#956, and it still gates how visible
-  this feature should be.
+  not claim otherwise: a bundled script is listed by `agent info` and the
+  install confirmation, because install copies the whole package tree into the
+  pin, and it is marked `not scanned` there, since the scan reads only the
+  manifest, `.md`/`.txt` and the named prompts. That visibility is
+  stump.wtf/harness#956; what it does not do is certify the script, so reading
+  it before you run the package stays the operator's job.
 * `package.dir` joins a closed allow set. Any future package-scoped path is a
   decision of the same kind, not a new key on the manifest.

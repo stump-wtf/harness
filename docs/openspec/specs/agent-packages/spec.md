@@ -139,8 +139,9 @@ trusted stables or the named one, every package whose name or
 `[package].description` matches `query` case-insensitively (or every
 package, when `query` is omitted), reading only local clones.
 `harness agent info <stable>/<package>` SHALL print the package's manifest,
-its `[requests]` table, and the list of bundled files, without installing
-it, reading only the local clone. Both commands SHALL fail, naming the stable,
+its `[requests]` table, and the list of every bundled file, each marked
+scanned or not scanned per REQ-5, without installing it, reading only the
+local clone. Both commands SHALL fail, naming the stable,
 when the named stable is not registered.
 
 #### Scenario: Search across all trusted stables
@@ -516,6 +517,16 @@ severity and SHALL be documented as a heuristic tripwire, not a
 certification: the CLI output and `harness agent info` SHALL both state
 that a clean scan is not a guarantee of safety.
 
+Install copies the package's whole tree into the pin, so the file list the
+operator confirms SHALL be every file that lands there, not the scanned
+subset. `harness agent info` and the `install` and `upgrade` confirmation
+SHALL list each of those files and mark it `scanned` or `not scanned` against
+the scope above, and where any file was not scanned they SHALL say so and
+name what the scan covers (harness #956). The marker SHALL be drawn from the
+scan's own notion of its scope, so the list cannot claim more coverage than
+the scan has. A file outside that scope SHALL NOT by itself be a finding: a
+package may bundle a script, and the marker is what makes it visible.
+
 A `high`-severity finding SHALL block `install` and `upgrade` unless
 `--force-unsafe` is given together with a re-typed `<stable>/<package>`; when
 given, the install record SHALL retain the finding and the fact that it was
@@ -592,6 +603,15 @@ it being called out specifically.
   in content
 - **THEN** the upgrade's diff output marks that finding as new relative to
   the installed pin
+
+#### Scenario: A bundled script is listed and marked unscanned
+
+- **WHEN** a package bundles `watch.sh` beside its manifest and a `README.md`
+- **THEN** `info` and the install confirmation list both, `watch.sh` marked
+  `not scanned` and `README.md` marked `scanned`, and name the files marked
+  unscanned together with what the scan covers
+- **AND** every file present in the pin store after the install appears in
+  the list the operator confirmed
 
 ### Requirement: REQ-6 — Install: Resolution And Pinning
 

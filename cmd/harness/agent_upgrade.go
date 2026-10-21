@@ -242,6 +242,13 @@ func upgradeOne(cmd *cobra.Command, o verbOpts, uo upgradeOpts, cfg *core.Config
 		if err != nil {
 			return err
 		}
+		// The candidate's scan scope, so a file the new version adds that the
+		// scan never reads is marked in the list below (SPEC-0026 REQ-5,
+		// harness#956).
+		scanned, err := scan.ScannedFiles(newDir, newMan)
+		if err != nil {
+			return err
+		}
 		// The candidate's README. A change since the installed pin already
 		// showed as a README.md hunk in the diff above (harness#929).
 		readme, err := agentpkg.LoadReadme(newDir, tmp == "")
@@ -255,6 +262,7 @@ func upgradeOne(cmd *cobra.Command, o verbOpts, uo upgradeOpts, cfg *core.Config
 			Findings:     newFindingsAll,
 			NewFindings:  newFindings,
 			BundledFiles: files,
+			Scanned:      scanned,
 			Readme:       readme,
 			ReadmeFull:   uo.readmeFull,
 		})

@@ -42,6 +42,37 @@ func Scan(pkgDir string, man *agentpkg.Manifest) ([]agentpkg.Finding, error) {
 		return nil, fmt.Errorf("scan: read %s: %w", ManifestFile, err)
 	}
 
+	files, err := scanTargets(pkgDir, man)
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("scan: read %s: %w", relPath(pkgDir, path), err)
+		}
+		findings = append(findings, scanLines(relPath(pkgDir, path), string(raw), homepageHost(man))...)
+	}
+	readme, err := readmeFindings(pkgDir)
+	if err != nil {
+		return nil, fmt.Errorf("scan: %w", err)
+	}
+	findings = append(findings, readme...)
+	sort.SliceStable(findings, func(i, j int) bool {
+		if findings[i].File != findings[j].File {
+			return findings[i].File < findings[j].File
+		}
+		return findings[i].Line < findings[j].Line
+	})
+	return findings, nil
+}
+
+// scanTargets lists, sorted, every file besides the manifest that Scan reads:
+// each bundled .md or .txt file, and each file the manifest names as a prompt
+// whatever its extension. It is the scan's scope in one place, so the file
+// list a human confirms can mark against the same rule Scan follows
+// (SPEC-0026 REQ-5, harness#956). Paths are absolute.
+func scanTargets(pkgDir string, man *agentpkg.Manifest) ([]string, error) {
 	if _, err := os.ReadDir(pkgDir); err != nil {
 		if isNotExist(err) {
 			return nil, fmt.Errorf("scan: package directory %s does not exist", pkgDir)
@@ -59,6 +90,7 @@ func Scan(pkgDir string, man *agentpkg.Manifest) ([]agentpkg.Finding, error) {
 			}
 		}
 	}
+	manPath := filepath.Join(pkgDir, ManifestFile)
 	var files []string
 	err := filepath.WalkDir(pkgDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -76,26 +108,32 @@ func Scan(pkgDir string, man *agentpkg.Manifest) ([]agentpkg.Finding, error) {
 		return nil, fmt.Errorf("scan: walk %s: %w", pkgDir, err)
 	}
 	sort.Strings(files)
-	for _, path := range files {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("scan: read %s: %w", relPath(pkgDir, path), err)
-		}
-		rel := filepath.ToSlash(strings.TrimPrefix(path, pkgDir+string(filepath.Separator)))
-		findings = append(findings, scanLines(rel, string(raw), homepageHost(man))...)
-	}
-	readme, err := readmeFindings(pkgDir)
+	return files, nil
+}
+
+// ScannedFiles reports the sorted, package-relative paths of every file Scan
+// reads in pkgDir: the manifest, every bundled .md or .txt file, and every
+// file the manifest names as a prompt. The confirmation report and
+// `harness agent info` mark each bundled file against it, so a file that
+// lands in the pin store unread is visible as one (SPEC-0026 REQ-5,
+// harness#956). A manifest that is not present is not reported: Scan reads
+// what exists.
+func ScannedFiles(pkgDir string, man *agentpkg.Manifest) ([]string, error) {
+	targets, err := scanTargets(pkgDir, man)
 	if err != nil {
-		return nil, fmt.Errorf("scan: %w", err)
+		return nil, err
 	}
-	findings = append(findings, readme...)
-	sort.SliceStable(findings, func(i, j int) bool {
-		if findings[i].File != findings[j].File {
-			return findings[i].File < findings[j].File
-		}
-		return findings[i].Line < findings[j].Line
-	})
-	return findings, nil
+	out := make([]string, 0, len(targets)+1)
+	if _, err := os.Stat(filepath.Join(pkgDir, ManifestFile)); err == nil {
+		out = append(out, ManifestFile)
+	} else if !isNotExist(err) {
+		return nil, fmt.Errorf("scan: stat %s: %w", ManifestFile, err)
+	}
+	for _, path := range targets {
+		out = append(out, relPath(pkgDir, path))
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // scanLines lints one file's text, recording findings at 1-based lines. The
