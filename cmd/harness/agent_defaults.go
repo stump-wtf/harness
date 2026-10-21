@@ -281,28 +281,45 @@ func tableKeyValues(path, name string) (map[string]any, error) {
 	return out, nil
 }
 
-// checkCandidate loads the table this write would produce: a copy of the
-// file carrying the write's own changes plus these keys, run through the
-// daemon's own loader. Its error is exactly the error REQ-6 says to name
-// when a suggestion is skipped, so the operator reads why rather than a
+// checkCandidate loads the table this write would produce, resolving every
+// source from the content-addressed store, because the defaults are decided
+// after the pin is placed. Its error is exactly the error REQ-6 says to name when
+// a suggestion is skipped, so the operator reads why rather than a
 // second-guessed rule.
 func checkCandidate(ask defaultsAsk, keys [][2]any) error {
-	raw, err := os.ReadFile(ask.ConfigPath)
+	return loadCandidate(ask.ConfigPath, func(ed *tomledit.Editor) error {
+		if ask.Candidate != nil {
+			if err := ask.Candidate(ed); err != nil {
+				return err
+			}
+		}
+		for _, kv := range keys {
+			if err := ed.SetHarnessKey(ask.Table, kv[0].(string), kv[1]); err != nil {
+				return fmt.Errorf("agent: stage %s on [harness.%s]: %w", kv[0], ask.Table, err)
+			}
+		}
+		return nil
+	}, nil)
+}
+
+// loadCandidate parses the config one write would produce: a copy of the
+// file at path carrying apply's changes, run through the daemon's own
+// loader, so the merged result is judged by the rules a hand-written table
+// meets (SPEC-0026 REQ-3, REQ-7). resolve says where a `source` resolves
+// from instead of the pin store; nil is the store. The error is the
+// loader's own: the file, line, harness and offending key.
+func loadCandidate(path string, apply func(ed *tomledit.Editor) error, resolve func(agentpkg.Source) string) error {
+	raw, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("agent: read %s: %w", ask.ConfigPath, err)
+		return fmt.Errorf("agent: read %s: %w", path, err)
 	}
 	ed := tomledit.New(raw)
-	if ask.Candidate != nil {
-		if err := ask.Candidate(ed); err != nil {
+	if apply != nil {
+		if err := apply(ed); err != nil {
 			return err
 		}
 	}
-	for _, kv := range keys {
-		if err := ed.SetHarnessKey(ask.Table, kv[0].(string), kv[1]); err != nil {
-			return fmt.Errorf("agent: stage %s on [harness.%s]: %w", kv[0], ask.Table, err)
-		}
-	}
-	if _, err := config.Parse(ed.Bytes(), ask.ConfigPath); err != nil {
+	if _, err := config.ParseWith(ed.Bytes(), path, config.ParseOptions{PinDir: resolve}); err != nil {
 		return err
 	}
 	return nil
