@@ -468,6 +468,12 @@ func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string, readmeFull bool) e
 	if err != nil {
 		return err
 	}
+	// Which of the bundled files that scan actually read, so the list below
+	// can mark the rest (SPEC-0026 REQ-5, harness#956).
+	scanned, err := scan.ScannedFiles(agentpkg.PackageDir(stable, pkg), man)
+	if err != nil {
+		return err
+	}
 	// The clone outlives this command, so a truncated README can name it.
 	readme, err := agentpkg.LoadReadme(agentpkg.PackageDir(stable, pkg), true)
 	if err != nil {
@@ -573,9 +579,7 @@ func runAgentInfo(cmd *cobra.Command, o verbOpts, ref string, readmeFull bool) e
 		fmt.Fprintf(out, "  %s  %s  %s\n", f.Where(), f.PatternID, f.Severity)
 	}
 	fmt.Fprintf(out, "bundled files:\n")
-	for _, f := range files {
-		fmt.Fprintf(out, "  %s\n", f)
-	}
+	agentpkg.RenderBundledFiles(out, files, scanned)
 	fmt.Fprintf(out, "%s\n", agentpkg.NoGuarantee)
 	return nil
 }

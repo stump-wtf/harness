@@ -173,6 +173,13 @@ func runAgentInstall(cmd *cobra.Command, o verbOpts, io installOpts, ref string)
 	if err != nil {
 		return err
 	}
+	// The scan's scope over the same tree the report lists below, so a file
+	// that lands in the pin store unread is marked as one (SPEC-0026 REQ-5,
+	// harness#956).
+	scanned, err := scan.ScannedFiles(srcDir, man)
+	if err != nil {
+		return err
+	}
 
 	manifestRaw, err := os.ReadFile(filepath.Join(srcDir, "package.toml"))
 	if err != nil {
@@ -190,6 +197,7 @@ func runAgentInstall(cmd *cobra.Command, o verbOpts, io installOpts, ref string)
 		Man:          man,
 		Findings:     findings,
 		BundledFiles: files,
+		Scanned:      scanned,
 		Readme:       readme,
 		ReadmeFull:   io.readmeFull,
 	})

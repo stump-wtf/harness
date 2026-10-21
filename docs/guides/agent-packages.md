@@ -72,7 +72,18 @@ harness agent info stump-wtf/pr-reviewer
 
 `info` prints the manifest, the itemised `[requests]`, the environment
 variables the package declares, the package's `README.md`, the content-scan
-findings and the bundled files, without installing anything.
+findings and every bundled file, each marked `scanned` or `not scanned`,
+without installing anything.
+
+Install copies the package's whole tree into the pin store, so that list is
+everything you are about to have on disk, not only the files the scan opened.
+The scan reads the manifest, every `.md` and `.txt` file, and every file the
+manifest names as a prompt (`prompt_file`, `prompt_template_file`,
+`system_prompt_file`) whatever its extension. Anything else, such as a script
+a `command` harness runs through `{{package.dir}}`, is listed and marked
+`not scanned`, with a note naming those files. The mark says nothing was
+wrong with them: it says nobody read them, so they are the ones worth opening
+yourself before you run the package.
 
 The README is where a package says what you must provide that its manifest
 cannot carry: environment variables, tokens, logins. Harness treats it as
@@ -103,8 +114,9 @@ Install does the following, in order:
    `.txt` file, and every prompt file the manifest names. A `high` finding
    blocks the install. `--force-unsafe` overrides it, and asks you to retype
    the package name.
-3. **Confirms.** It shows the manifest, the requests, the README and the
-   findings, then asks. Without a terminal it refuses unless you pass `--yes`, and `--yes`
+3. **Confirms.** It shows the manifest, the requests, the README, the
+   findings and every file that will land in the store, each marked `scanned`
+   or `not scanned`, then asks. Without a terminal it refuses unless you pass `--yes`, and `--yes`
    never clears a `high` finding or a `mcp_allow = ["write"]` request.
 4. **Binds.** It writes `source = "stump-wtf/pr-reviewer@<sha>"` onto a
    `[harness.pr-reviewer]` table. `--as NAME` picks another table name.
@@ -165,6 +177,9 @@ Upgrade re-scans the new commit and shows you three things:
   change to the package's terms, plus a `README.md` diff when the README
   changed between the two commits;
 - any **new** scan finding, flagged as new;
+- the candidate's full file list, each file marked `scanned` or
+  `not scanned`, so a script the new version adds is visible even though
+  nothing about it scans;
 - every change to the harness's effective values.
 
 Review those effective-value changes one by one:

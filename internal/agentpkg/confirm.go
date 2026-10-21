@@ -43,8 +43,15 @@ type ReportInput struct {
 	// NewFindings, on an upgrade, is NewSince(installed, candidate); each
 	// renders with a (new) marker.
 	NewFindings []Finding
-	// BundledFiles is the package's bundled file list.
+	// BundledFiles is the package's bundled file list: every file that lands
+	// in the pin store, not only the ones the scan reads.
 	BundledFiles []string
+	// Scanned names, of BundledFiles, the files the content scan actually
+	// read (scan.ScannedFiles). When it is nil the list renders unmarked, as
+	// it did before a caller supplied a scan scope; every file is still
+	// listed. When it is present each file is marked, and any file the scan
+	// skipped is called out (SPEC-0026 REQ-5, harness#956).
+	Scanned []string
 	// Readme is the package's README.md, rendered after the requests
 	// (harness#929). The zero value renders as "no README".
 	Readme Readme
@@ -57,8 +64,9 @@ type ReportInput struct {
 // [requests] table as itemized lines with absent keys stated explicitly, the
 // mcp_allow "write" sibling warning, the package README (sanitized and
 // capped, harness#929), the findings as file:line pattern
-// severity, the bundled files, and — every time, last — the no-guarantee
-// statement (SPEC-0026 REQ-4, REQ-5).
+// severity, every bundled file that lands in the pin store (each marked
+// scanned or not scanned when a scan scope was supplied), and, every time and
+// last, the no-guarantee statement (SPEC-0026 REQ-4, REQ-5).
 func RenderReport(w io.Writer, in ReportInput) {
 	fmt.Fprintf(w, "agent: %s\n", in.Ref)
 	if in.Man != nil {
@@ -108,10 +116,49 @@ func RenderReport(w io.Writer, in ReportInput) {
 	}
 
 	fmt.Fprintf(w, "bundled files:\n")
-	for _, f := range in.BundledFiles {
-		fmt.Fprintf(w, "  %s\n", f)
-	}
+	RenderBundledFiles(w, in.BundledFiles, in.Scanned)
 	fmt.Fprintf(w, "%s\n", NoGuarantee)
+}
+
+// ScannedMark and UnscannedMark label a bundled file in the confirmation and
+// `agent info` file list, so a file that lands in the pin store unread is
+// visible as one (SPEC-0026 REQ-5, harness#956).
+const (
+	ScannedMark   = "scanned"
+	UnscannedMark = "not scanned"
+)
+
+// ScanScopeCovers states what the content scan reads, for the note that names
+// the files it skipped. scan.ScannedFiles is the scope's implementation.
+const ScanScopeCovers = "the manifest, every .md and .txt file, and every file the manifest names as a prompt"
+
+// RenderBundledFiles writes the file list. Every file is listed, whether or
+// not the scan read it; a nil scan scope (an output built without one) leaves
+// the list unmarked rather than claim a scope it was not given.
+func RenderBundledFiles(w io.Writer, files, scanned []string) {
+	if scanned == nil {
+		for _, f := range files {
+			fmt.Fprintf(w, "  %s\n", f)
+		}
+		return
+	}
+	read := make(map[string]bool, len(scanned))
+	for _, f := range scanned {
+		read[f] = true
+	}
+	var skipped []string
+	for _, f := range files {
+		mark := ScannedMark
+		if !read[f] {
+			mark = UnscannedMark
+			skipped = append(skipped, f)
+		}
+		fmt.Fprintf(w, "  %s  (%s)\n", f, mark)
+	}
+	if len(skipped) > 0 {
+		fmt.Fprintf(w, "note: not scanned: %s. These files are copied into the pin store without being read; the scan covers %s.\n",
+			strings.Join(skipped, ", "), ScanScopeCovers)
+	}
 }
 
 // RenderRequests itemizes the [requests] table, stating each absent key
