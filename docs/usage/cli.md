@@ -89,7 +89,7 @@ child         pid 636314 · sleep · up 23h · cpu 0s
 
 `last call` is the harness's last successful model call — the same instant
 `/metrics` exports as `harness_last_successful_call_timestamp`, so the socket
-and Prometheus cannot disagree (see [Metrics](metrics.md)). A harness the
+and Prometheus cannot disagree (see [Metrics](./metrics)). A harness the
 daemon has never seen call says `none since the daemon started` rather than
 printing a date from the epoch. Each `child` row is a direct child of the
 supervised process: how long it has been alive and the CPU it has burned. A
