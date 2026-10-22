@@ -26,6 +26,7 @@ import (
 	"github.com/stump-wtf/harness/internal/budget"
 	"github.com/stump-wtf/harness/internal/config"
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/proctree"
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/skillmerge"
 	"github.com/stump-wtf/harness/internal/supervisor"
@@ -96,6 +97,14 @@ func (c *conn) respond(req protocol.ControlReq, data any) {
 		return
 	}
 	_ = c.pc.WriteJSON(protocol.TypeControlResp, &protocol.ControlResp{ID: req.ID, Op: req.Op, Data: raw})
+}
+
+// ProgressSource answers when one harness last made a successful model call.
+// The stall watchdog satisfies it (it derives the same clock from the agent
+// event feed for its stall judgement), which is why the control socket and
+// /metrics report one value and not two readings of progress.
+type ProgressSource interface {
+	LastCall(name string) (time.Time, bool)
 }
 
 // infoFor projects a snapshot + config record onto the wire HarnessInfo.
@@ -211,6 +220,28 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 		info.Waiting = true
 		info.WaitingFor = hit.Label
 		info.IdleMs = idle.Milliseconds()
+	}
+	// Wedged-progress projection (issue #958; ADR-0048). State is truthful
+	// about the process, and an agent blocked inside one tool call has had a
+	// healthy-looking state for hours. What it takes to see that from the
+	// control socket is when the agent last made a call — the instant the
+	// Prometheus gauge carries (ADR-0020) — and what the processes it spawned
+	// have been doing since.
+	if src := c.srv.progressSource(); src != nil {
+		if at, ok := src.LastCall(snap.Name); ok {
+			info.LastSuccessfulCallAt = at.Format(time.RFC3339Nano)
+		}
+	}
+	// Only a running process has children to name; a stopped one's pid is
+	// stale, and an absent sample reads as unknown, never as an empty list.
+	if snap.State == core.StateRunning && snap.PID > 0 {
+		for _, ch := range c.srv.procs.current().Children(snap.PID, proctree.ChildLimit) {
+			kid := protocol.ChildProcess{PID: ch.PID, Command: ch.Command, CPUMs: ch.CPU.Milliseconds()}
+			if !ch.StartedAt.IsZero() {
+				kid.StartedAt = ch.StartedAt.Format(time.RFC3339Nano)
+			}
+			info.Children = append(info.Children, kid)
+		}
 	}
 	return info
 }

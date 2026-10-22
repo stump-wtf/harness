@@ -318,3 +318,39 @@ func TestStallReportRefusedIsNotRetried(t *testing.T) {
 		t.Fatalf("harness log lines = %v, want one", logged)
 	}
 }
+
+// TestLastCallReportsTheProgressClock: the guard's progress clock is what
+// list and describe publish as last_successful_call_at (issue #958; ADR-0048),
+// so it must name the latest observed call, say nothing for a harness the
+// observer has never reported on, and never rewind on an item delivered late.
+func TestLastCallReportsTheProgressClock(t *testing.T) {
+	f := newFix(t, []supervisor.Snapshot{running("worker", hourAgo())},
+		map[string]core.Harness{"worker": {}}, Options{})
+
+	if _, ok := f.g.LastCall("worker"); ok {
+		t.Fatal("LastCall answered before the observer reported anything")
+	}
+	if _, ok := f.g.LastCall("never-seen"); ok {
+		t.Fatal("LastCall answered for a harness the observer never reported on")
+	}
+
+	at := clock.Add(-time.Minute)
+	f.call(t, "worker", at)
+	got, ok := f.g.LastCall("worker")
+	if !ok || !got.Equal(at) {
+		t.Fatalf("LastCall = %v,%v, want %v", got, ok, at)
+	}
+
+	// An error mark is not progress, and a tool call delivered out of order
+	// must not rewind the instant an operator measures staleness from.
+	f.g.note(observe.Event{Harness: "worker", Kind: observe.KindMark, Time: clock})
+	f.g.note(observe.Event{Harness: "worker", Kind: observe.KindTool, Time: at.Add(-2 * time.Minute)})
+	if again, _ := f.g.LastCall("worker"); !again.Equal(at) {
+		t.Fatalf("LastCall = %v, want the latest call %v to stand", again, at)
+	}
+
+	var nilGuard *Guard
+	if _, ok := nilGuard.LastCall("worker"); ok {
+		t.Fatal("a nil guard answered a progress question")
+	}
+}

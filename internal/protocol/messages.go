@@ -144,7 +144,14 @@ const (
 	// (issue #960): the health_cmd probe's ok|failing verdict and its last
 	// outputs. Additive only: an older daemon omits both, an older client
 	// ignores them.
-	ProtoMinor = 27
+	// ProtoMinor 28 added last_successful_call_at and children on HarnessInfo
+	// (issue #958; ADR-0048): the progress timestamp /metrics already exports,
+	// and the supervised process's direct children with their age and CPU, so
+	// an operator polling the control socket can see a harness blocked for
+	// hours inside one tool call. Additive only: an older daemon omits both,
+	// and an older client keeps reading `state: running` as health, which is
+	// what it reads today.
+	ProtoMinor = 28
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -660,9 +667,41 @@ type HarnessInfo struct {
 	WaitingFor string `json:"waiting_for,omitempty"`
 	IdleMs     int64  `json:"idle_ms,omitempty"`
 
+	// Wedged-progress projection (issue #958; ADR-0048). LastSuccessfulCallAt
+	// is the instant the harness's agent last made a successful model call —
+	// the same value harness_last_successful_call_timestamp exports
+	// (ADR-0020), so the control socket and /metrics cannot disagree. State
+	// describes the PROCESS; this describes whether anything is happening, and
+	// a running harness whose value is hours old is exactly the case #958
+	// reports. Empty when this daemon has observed no call from the harness
+	// yet, which for a running harness is itself the finding.
+	LastSuccessfulCallAt string `json:"last_successful_call_at,omitempty"`
+	// Children are the supervised process's direct children while it is
+	// running, eldest first (issue #958): the hung grep, the MCP server that
+	// never answered. Omitted when the harness is not running or the daemon
+	// cannot read the process table — never an empty list claiming none exist.
+	Children []ChildProcess `json:"children,omitempty"`
+
 	// HealthProbes is the health probe's last results, oldest first, output
 	// tails capped (issue #960). Describe only; list carries Health alone.
 	HealthProbes []HealthProbeInfo `json:"health_probes,omitempty"`
+}
+
+// ChildProcess is one direct child of a supervised process on the wire
+// (issue #958; ADR-0048). Command is the executable name the process table
+// reports, never the child's argv: arguments can carry whatever the agent
+// passed to them, including secrets, and the name is what names the hung
+// operation anyway.
+type ChildProcess struct {
+	PID     int    `json:"pid"`
+	Command string `json:"command,omitempty"`
+	// StartedAt is RFC 3339, to the second — accurate to what the process
+	// table's elapsed column reports.
+	StartedAt string `json:"started_at,omitempty"`
+	// CPUMs is the child's cumulative user+system time in milliseconds.
+	// StartedAt plus a CPUMs near zero is the wedged child: alive for hours,
+	// has done almost nothing.
+	CPUMs int64 `json:"cpu_ms,omitempty"`
 }
 
 // HealthProbeInfo is one health probe result on the wire (issue #960).

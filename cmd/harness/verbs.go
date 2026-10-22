@@ -56,6 +56,21 @@ func waitingCell(h protocol.HarnessInfo) string {
 	return "waiting for input" + idle
 }
 
+// childCell phrases one supervised child for describe's FIELD row: who it is,
+// how long it has been alive, and the CPU it has burned — the pair that tells
+// a 23-hour-old hung grep from a 23-hour-old worker making progress
+// (issue #958; ADR-0048).
+func childCell(kid protocol.ChildProcess) string {
+	cell := "pid " + strconv.Itoa(kid.PID)
+	if kid.Command != "" {
+		cell += " · " + kid.Command
+	}
+	if at, err := time.Parse(time.RFC3339Nano, kid.StartedAt); err == nil {
+		cell += " · up " + schedfmt.ShortDuration(time.Since(at))
+	}
+	return cell + " · cpu " + schedfmt.ShortDuration(time.Duration(kid.CPUMs)*time.Millisecond)
+}
+
 // cmdCapture prints a harness's current terminal screen without an interactive
 // TTY (issue #735; ADR-0040). Plain text is the default — one row per line,
 // trailing blank rows trimmed, exactly what a sweep greps. --ansi emits the
@@ -209,6 +224,23 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	// to "why has this harness printed nothing for an hour?".
 	if h.Waiting {
 		t.Row("waiting", t.amberBold(waitingCell(h)))
+	}
+	// Wedged-progress projection (issue #958; ADR-0048). STATE is truthful
+	// about the PROCESS, and a worker blocked inside one tool call for hours
+	// has a healthy-looking one. These rows are the answer to "what is it
+	// doing right now?": when the agent last made a model call — the same
+	// instant /metrics exports — and how long each child it spawned has been
+	// sitting there, with the CPU it has burned. A child up 23h with cpu 0s is
+	// the hung grep that issue #958 is about.
+	if h.LastSuccessfulCallAt != "" {
+		if at, err := time.Parse(time.RFC3339Nano, h.LastSuccessfulCallAt); err == nil {
+			t.Row("last call", t.faintPlain(schedfmt.ShortDuration(time.Since(at))+" ago ("+at.Format("2006-01-02 15:04:05")+")"))
+		}
+	} else if h.State == string(core.StateRunning) {
+		t.Row("last call", t.faintPlain("none since the daemon started"))
+	}
+	for _, kid := range h.Children {
+		t.Row("child", t.faintPlain(childCell(kid)))
 	}
 	// A triggered harness is always enabled = false (SPEC-0008 REQ "Schedule
 	// Exclusions", SPEC-0014 REQ "Triggered Harness Exclusions"), so printing
