@@ -6,7 +6,8 @@
 // The token is taken once, by the constructor, and reaches only the
 // Authorization header and a git child's environment. It is never logged,
 // never put in argv or a URL, and never interpolated into an error; a non-2xx
-// response becomes a forge.StatusError, which carries no body.
+// response becomes a forge.StatusError carrying only a bounded,
+// credential-redacted body summary.
 //
 // Governing: ADR-0032 (merge train), SPEC-0025 REQ-12, design.md "The Gitea
 // implementation".
@@ -133,7 +134,8 @@ func escapeSegments(p string) string {
 }
 
 // do performs one REST call. method names the Forge method for errors. A
-// non-2xx status is a *forge.StatusError; the body is never read into it.
+// non-2xx status is a *forge.StatusError carrying a bounded,
+// credential-redacted body summary (ADR-0049).
 func (c *Client) do(ctx context.Context, method, repo, verb, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
@@ -167,7 +169,8 @@ func (c *Client) do(ctx context.Context, method, repo, verb, path string, in, ou
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &forge.StatusError{Method: method, Status: resp.StatusCode, Repo: repo}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, forge.BodyLimit))
+		return &forge.StatusError{Method: method, Status: resp.StatusCode, Repo: repo, Body: forge.SanitizeBody(c.token, body)}
 	}
 	if out == nil {
 		return nil
@@ -419,8 +422,8 @@ func (c *Client) FileContentAtRef(ctx context.Context, repo, path, ref string) (
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBody))
-		return nil, notFound(&forge.StatusError{Method: "FileContentAtRef", Status: resp.StatusCode, Repo: repo})
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, forge.BodyLimit))
+		return nil, notFound(&forge.StatusError{Method: "FileContentAtRef", Status: resp.StatusCode, Repo: repo, Body: forge.SanitizeBody(c.token, body)})
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
