@@ -121,11 +121,13 @@ var (
 	ErrNotFound = errors.New("forge: not found")
 )
 
-// StatusError is a non-2xx response. It never carries the response body.
+// StatusError is a non-2xx response. It carries the response body only as a
+// bounded, credential-redacted summary (ADR-0049, amending SPEC-0025 REQ-12).
 type StatusError struct {
 	Method string // the Forge method, e.g. "SquashMerge"
 	Status int
 	Repo   string
+	Body   string // SanitizeBody of the response body; empty when there was none
 }
 
 // Transient reports whether err is worth retrying on a later tick: a 5xx,

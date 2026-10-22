@@ -17,6 +17,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
+	"unicode/utf8"
 )
 
 // statusTooManyRequests is HTTP 429. Spelled out rather than imported: this
@@ -109,16 +112,66 @@ var (
 	ErrNotFound = errors.New("forge: not found")
 )
 
-// StatusError is a non-2xx forge response. It deliberately carries no
-// response body: a body can echo a credential (SPEC-0025 REQ-12).
+// StatusError is a non-2xx forge response. It carries the response body only
+// as a bounded, credential-redacted summary (ADR-0049, amending SPEC-0025
+// REQ-12): a raw body can echo a credential.
 type StatusError struct {
 	Method string // the Forge method, e.g. "SquashMerge"
 	Status int
 	Repo   string
+	Body   string // SanitizeBody of the response body; empty when there was none
 }
 
 func (e *StatusError) Error() string {
-	return fmt.Sprintf("forge: %s on %s: HTTP %d", e.Method, e.Repo, e.Status)
+	if e.Body == "" {
+		return fmt.Sprintf("forge: %s on %s: HTTP %d", e.Method, e.Repo, e.Status)
+	}
+	return fmt.Sprintf("forge: %s on %s: HTTP %d: %s", e.Method, e.Repo, e.Status, e.Body)
+}
+
+// BodyLimit bounds the response-body summary carried in a StatusError.
+const BodyLimit = 512
+
+// authSchemeRe matches a scheme and credential in free text: Bearer xyz,
+// token xyz, Basic xyz.
+var authSchemeRe = regexp.MustCompile(`(?i)\b(bearer|basic|token)\s+([A-Za-z0-9\-._~+/]+=*)`)
+
+// authJSONRe matches a credential-bearing field and its value in a JSON
+// object: "Authorization":"token xyz", "api_key":"xyz".
+var authJSONRe = regexp.MustCompile(`(?i)"(authorization|proxy-authorization|cookie|x-api-key|api[_-]key|x-csrf-token|x-xsrf-token)"\s*:\s*("[^"]*"|[^,}\s]+)`)
+
+// authPlainRe matches the same fields in a header or query form:
+// Cookie: abc, api-key=xyz, api_key=xyz.
+var authPlainRe = regexp.MustCompile(`(?i)\b(authorization|proxy-authorization|cookie|x-api-key|api[_-]key|x-csrf-token|x-xsrf-token)\s*[:=]\s*(?:"[^"]*"|'[^']*'|\S+)`)
+
+// SanitizeBody reduces a non-2xx response body to the bounded summary a
+// StatusError carries. A hostile or broken forge can echo the Authorization
+// header or a query token in an error body, so the client's own token is
+// replaced and credential-bearing scheme, JSON and plain field values are
+// redacted (ADR-0049, amending SPEC-0025 REQ-12).
+func SanitizeBody(token string, body []byte) string {
+	s := string(body)
+	if token != "" {
+		s = strings.ReplaceAll(s, token, "[redacted]")
+	}
+	// The scheme first: a field value that begins with a scheme word would
+	// otherwise leave the credential behind it standing.
+	s = authSchemeRe.ReplaceAllString(s, "$1 [redacted]")
+	s = authJSONRe.ReplaceAllString(s, `"$1":"[redacted]"`)
+	s = authPlainRe.ReplaceAllString(s, "$1: [redacted]")
+	return truncateBody(s)
+}
+
+// truncateBody caps s at BodyLimit without splitting a UTF-8 rune.
+func truncateBody(s string) string {
+	if len(s) <= BodyLimit {
+		return s
+	}
+	cut := BodyLimit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 // Transient reports whether err is worth retrying on a later tick rather than

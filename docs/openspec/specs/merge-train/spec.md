@@ -228,7 +228,11 @@ Every forge interaction SHALL go through the `forge.Forge` interface
 named by `forge_token_env` and SHALL NOT appear in `harness.toml`, in any log
 line, in any error string, or in any process argv; git SHALL receive it through
 the environment. A non-2xx response SHALL become an error naming the method,
-the status code and the repo, and SHALL NOT include the response body.
+the status code and the repo, and SHALL carry the response body only as a
+bounded, credential-redacted summary (ADR-0049): the raw body SHALL NOT be
+included, because a hostile or broken forge can echo the `Authorization`
+header in an error body, and the error string reaches log lines and, for a
+merge refusal, a public pull request comment.
 
 ### Requirement: REQ-13 No replays, no PR-branch writes
 

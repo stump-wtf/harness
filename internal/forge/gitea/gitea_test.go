@@ -3,9 +3,10 @@ package gitea
 // Gitea REST Tests
 //
 // Governing tests: #600 and SPEC-0025 REQ-12 — each method issues the
-// documented verb and path; a 500 becomes an error with the status and no
-// token; the token rides only in the Authorization header; SquashMerge sends
-// "Do":"squash" with the head pinned. No test contacts a real host.
+// documented verb and path; a 500 becomes an error with the status and a
+// bounded, credential-redacted body summary and no token; the token rides
+// only in the Authorization header; SquashMerge sends "Do":"squash" with the
+// head pinned. No test contacts a real host.
 
 import (
 	"context"
@@ -261,7 +262,7 @@ func TestListOpenPRs(t *testing.T) {
 	}
 }
 
-func TestErrorsCarryStatusNotTokenOrBody(t *testing.T) {
+func TestErrorsCarryStatusAndRedactedBody(t *testing.T) {
 	s, c := newServer(t)
 	// A body that echoes the credential, as some proxies do.
 	leak := `{"message":"bad header: token ` + token + `"}`
@@ -292,8 +293,11 @@ func TestErrorsCarryStatusNotTokenOrBody(t *testing.T) {
 		if !strings.Contains(msg, "500") || !strings.Contains(msg, name) || !strings.Contains(msg, repo) {
 			t.Errorf("%s: error %q does not name method, status and repo", name, msg)
 		}
-		if strings.Contains(msg, token) || strings.Contains(msg, "bad header") {
-			t.Errorf("%s: error leaks the token or the body: %q", name, msg)
+		if strings.Contains(msg, token) {
+			t.Errorf("%s: error leaks the token: %q", name, msg)
+		}
+		if !strings.Contains(msg, "bad header") || !strings.Contains(msg, "[redacted]") {
+			t.Errorf("%s: error %q does not carry the refusal body with the credential redacted", name, msg)
 		}
 		if !forge.Transient(err) {
 			t.Errorf("%s: a 500 is not Transient", name)
@@ -306,6 +310,35 @@ func TestErrorsCarryStatusNotTokenOrBody(t *testing.T) {
 		if strings.Contains(r.Path+"?"+r.Query, token) {
 			t.Fatalf("token in URL: %s?%s", r.Path, r.Query)
 		}
+	}
+}
+
+// TestSquashMergeRefusalCarriesRedactedBody is the regression for
+// stump.wtf/harness#975: a 405 refusal of the train's squash used to reduce
+// to "SquashMerge ... HTTP 405" with the reason lost.
+func TestSquashMergeRefusalCarriesRedactedBody(t *testing.T) {
+	s, c := newServer(t)
+	leak := `{"message":"please try again later","authorization":"token ` + token + `"}`
+	s.route("POST /api/v1/repos/stump.wtf/harness/pulls/1/merge", 405, leak)
+	_, err := c.SquashMerge(ctx, repo, 1, "h", "t", "m")
+	if err == nil {
+		t.Fatal("a 405 succeeded")
+	}
+	var se *forge.StatusError
+	if !errors.As(err, &se) || se.Status != 405 {
+		t.Fatalf("err = %v, want *StatusError with status 405", err)
+	}
+	if !strings.Contains(se.Body, "please try again later") {
+		t.Errorf("Body = %q, want the refusal message", se.Body)
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Errorf("error leaks the token: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "[redacted]") {
+		t.Errorf("error does not mark the redacted credential: %q", err.Error())
+	}
+	if forge.Transient(err) {
+		t.Error("a 405 refusal is Transient")
 	}
 }
 
