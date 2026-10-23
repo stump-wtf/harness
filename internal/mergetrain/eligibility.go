@@ -53,9 +53,34 @@ func Eligible(pr PullRequest, base string) (ok bool, reason string) {
 }
 
 // qualifies reports whether r is a qualifying approval of pr: APPROVED, by
-// someone other than the author, on the current head.
+// someone other than the author, on the current head, and not one the forge
+// reports as counting toward nothing. An approval whose officiality the forge
+// never reported still qualifies: silence is not evidence, and the 405
+// approvals refusal is the backstop for it (ADR-0050).
 func qualifies(pr PullRequest, r Review) bool {
-	return r.State == StateApproved && r.Author != pr.Author && r.CommitID == pr.HeadSHA
+	return r.State == StateApproved && r.Author != pr.Author && r.CommitID == pr.HeadSHA &&
+		(r.Official == nil || *r.Official)
+}
+
+// UnofficialApproval returns the earliest approval of pr that is left on its
+// current head by someone other than the author but which the forge reports as
+// not counting, and false when the PR holds no such approval. It is the state
+// a review re-request leaves behind (Gitea clears the official flag of the
+// requested reviewer's earlier reviews), and it is worth naming in a log line
+// because its cure is a fresh approval rather than another verification
+// (#977).
+func UnofficialApproval(pr PullRequest) (Review, bool) {
+	var first Review
+	found := false
+	for _, r := range pr.Reviews {
+		if r.State != StateApproved || r.Author == pr.Author || r.CommitID != pr.HeadSHA {
+			continue
+		}
+		if r.Official != nil && !*r.Official && (!found || r.SubmittedAt.Before(first.SubmittedAt)) {
+			first, found = r, true
+		}
+	}
+	return first, found
 }
 
 // firstQualifyingApproval returns the earliest qualifying approval of pr, by

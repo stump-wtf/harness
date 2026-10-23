@@ -80,3 +80,29 @@ func TestTransient(t *testing.T) {
 		}
 	}
 }
+
+// The merge train tells a reviewer to approve again only when the forge said
+// the approvals are what is missing (#977), so the match has to be on the body
+// and not on the status alone.
+func TestInsufficientApprovals(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"gitea wording", &StatusError{Method: "SquashMerge", Status: 405, Body: `{"message":"Does not have enough approvals"}`}, true},
+		{"case and prose", &StatusError{Status: 405, Body: "HTTP 405: does NOT have enough APPROVALS to merge"}, true},
+		{"not enough", &StatusError{Status: 405, Body: "not enough approvals"}, true},
+		{"wrapped", fmt.Errorf("merge: %w", &StatusError{Status: 405, Body: "Does not have enough approvals"}), true},
+		{"no body", &StatusError{Method: "SquashMerge", Status: 405}, false},
+		{"other refusal", &StatusError{Status: 405, Body: `{"message":"Pull request is not mergeable"}`}, false},
+		{"conflict at 409", &StatusError{Status: 409, Body: "Does not have enough approvals"}, false},
+		{"nil", nil, false},
+		{"plain error", errors.New("does not have enough approvals"), false},
+	}
+	for _, tc := range cases {
+		if got := InsufficientApprovals(tc.err); got != tc.want {
+			t.Errorf("%s: InsufficientApprovals = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

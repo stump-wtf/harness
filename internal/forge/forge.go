@@ -26,6 +26,19 @@ import (
 // package stays free of net/http (#599), which belongs to forge/gitea.
 const statusTooManyRequests = 429
 
+// statusMethodNotAllowed is HTTP 405, the status Gitea answers a squash merge
+// it will not perform with. It is also the status GitHub uses for a merge it
+// refuses, so matching on the status alone never identifies a reason: the body
+// carries that (#977).
+const statusMethodNotAllowed = 405
+
+// approvalsRefusalRE matches the wording a forge uses to refuse a merge
+// because it counts too few approvals. Gitea's is "Does not have enough
+// approvals", and it is the answer a PR gets when its APPROVED reviews are no
+// longer official, which is a state the reviewer can produce without touching
+// the code (ADR-0050).
+var approvalsRefusalRE = regexp.MustCompile(`(?i)(not enough |insufficient |does not have (enough|sufficient) )approvals`)
+
 // Forge is what the merge train needs from a code forge. repo is always
 // "owner/name".
 type Forge interface {
@@ -192,4 +205,18 @@ func Transient(err error) bool {
 		return false
 	}
 	return true
+}
+
+// InsufficientApprovals reports whether err is the forge refusing a merge
+// because the approvals it counts do not meet the branch's requirement, as
+// opposed to refusing it for any other reason. Only a refusal whose body says
+// so matches: a 405 with no body, or with a body that says something else, is
+// not an approvals refusal, because the caller's advice differs and being
+// wrong about it costs a reviewer a round trip (ADR-0050).
+func InsufficientApprovals(err error) bool {
+	var se *StatusError
+	if !errors.As(err, &se) || se.Status != statusMethodNotAllowed {
+		return false
+	}
+	return approvalsRefusalRE.MatchString(se.Body)
 }

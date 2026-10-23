@@ -115,6 +115,12 @@ in the forge, where no agent's judgment can get around them:
 - **An author can't approve their own pull request.** Forges refuse it; separate
   identities make that refusal apply.
 - **Stale approvals are dismissed** when new commits are pushed.
+- **A review request voids earlier approvals.** On Gitea, requesting review
+  from someone clears the official mark on the reviews they had already left,
+  and only official approvals satisfy an approval requirement. A lane that
+  comments on a PR and then re-requests review has therefore just deleted its
+  own approval, and the PR looks approved and green to every reader while the
+  forge refuses to merge it.
 - **The reviewer arms auto-merge only after approving a finished PR.** An
   auto-merge armed before a late push merges the SHA that was armed, and silently
   drops the push. After any push to a PR you thought had merged, check the change
@@ -130,6 +136,9 @@ Put it in the reviewer's prompt (`REVIEW.md` above):
   redesign someone else's change.
 - **Never merge your own PR**, and never approve one you pushed fixes to without
   reading the result.
+- **Post your review last.** Send any review re-request before you review, never
+  after: the request clears the official mark on the reviews the requested
+  reviewer already left, which silently voids the approval you just posted.
 
 ## Claiming: one review, one reviewer
 

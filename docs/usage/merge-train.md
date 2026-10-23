@@ -66,6 +66,10 @@ Every transition is one structured line, message `mergetrain <event>`, with
 `would comment`, `merged`, `verified`, `merge refused`, `commented`,
 `tick failed`, `bypass detected`, `halted`, `shutting down`, `stopped`.
 
+A stale line carries one more key, note, when its ineligibility has a reading
+no other field shows: an approval still left on the head that the forge no
+longer counts. See the merge-train guide for what to do about it.
+
 There is no per-poll CI line: `built` marks the start of the CI wait, and
 `green`, `red` or `timeout` its end. `shutting down` (warn) means the daemon
 stopped between a merge and its verification. The merge stands unverified,

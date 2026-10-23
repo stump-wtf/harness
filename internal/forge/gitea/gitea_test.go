@@ -228,8 +228,10 @@ func TestListOpenPRs(t *testing.T) {
 	}
 	s.routes["GET /api/v1/repos/stump.wtf/harness/pulls/99/reviews"] = func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode([]map[string]any{
-			{"user": map[string]any{"login": "joestump-agent"}, "state": "APPROVED", "commit_id": "h99", "submitted_at": "2026-09-23T01:35:09-04:00"},
+			{"user": map[string]any{"login": "joestump-agent"}, "state": "APPROVED", "commit_id": "h99", "submitted_at": "2026-09-23T01:35:09-04:00", "official": true},
 			{"user": map[string]any{"login": "rev"}, "state": "APPROVED", "commit_id": "h99", "submitted_at": "2026-09-23T01:36:00-04:00", "dismissed": true},
+			{"user": map[string]any{"login": "re-requested"}, "state": "APPROVED", "commit_id": "h99", "submitted_at": "2026-09-23T01:37:00-04:00", "official": false},
+			{"user": map[string]any{"login": "old-gitea"}, "state": "APPROVED", "commit_id": "h99", "submitted_at": "2026-09-23T01:38:00-04:00"},
 		})
 	}
 	for n := 1; n <= pageSize; n++ {
@@ -250,9 +252,21 @@ func TestListOpenPRs(t *testing.T) {
 	if last.CIState != "pending" {
 		t.Fatalf("zero statuses CIState = %q, want pending", last.CIState)
 	}
-	if len(last.Reviews) != 2 || last.Reviews[0].State != "APPROVED" || last.Reviews[0].Author != "joestump-agent" ||
+	if len(last.Reviews) != 4 || last.Reviews[0].State != "APPROVED" || last.Reviews[0].Author != "joestump-agent" ||
 		last.Reviews[0].CommitID != "h99" || last.Reviews[0].SubmittedAt.IsZero() {
 		t.Fatalf("reviews = %+v", last.Reviews)
+	}
+	// official true, false, and absent: an absent flag is the forge saying
+	// nothing, which is not the same as it saying the approval does not count
+	// (ADR-0050).
+	if last.Reviews[0].Official == nil || !*last.Reviews[0].Official {
+		t.Fatalf("review 0 official = %v, want true", last.Reviews[0].Official)
+	}
+	if last.Reviews[2].Official == nil || *last.Reviews[2].Official {
+		t.Fatalf("review 2 official = %v, want false", last.Reviews[2].Official)
+	}
+	if last.Reviews[3].Official != nil {
+		t.Fatalf("review 3 official = %v, want the forge not saying", *last.Reviews[3].Official)
 	}
 	if last.Reviews[1].State == "APPROVED" {
 		t.Fatal("a dismissed approval kept state APPROVED")

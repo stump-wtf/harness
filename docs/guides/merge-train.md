@@ -153,6 +153,28 @@ trees.
 The train logs `bypass detected` for any `main` head it did not produce, so a
 bypass that skipped step 3 still shows up in the daemon log.
 
+## When the forge refuses a merge
+
+A refused squash merge gets one `merge-refused` comment naming the PR's author,
+and the `(pr, head, base)` triple is remembered, so nothing is attempted at that
+head again until the head or base moves. Most refusals are a PR that stopped
+being eligible mid-flight, and the comment quotes the forge's own answer.
+
+The refusal worth reading twice is the approvals one: `Does not have enough
+approvals`. The train only queues a PR whose approval the forge still counts, so
+this answer means the approval went unofficial between that check and the merge.
+Gitea clears the official mark on a reviewer's earlier reviews whenever review is
+requested from them, so a review lane that re-requests review after posting its
+review deletes its own approval; nothing about the change changed, and every
+re-verification of it is wasted work. The cure is a fresh `APPROVED` review from
+someone with approval rights. Because the triple is already remembered, the
+approval alone will not re-trigger the merge: push a commit, or wait for the base
+branch to move.
+
+A `stale` line whose cause is `no longer eligible: no approval on current head`
+and which carries a `note` about an unofficial approval is the same state caught
+before the doomed merge attempt, and needs the same cure.
+
 ## Known limits
 
 - **One attempt per (head, base).** The driver merges each PR once per (head,
