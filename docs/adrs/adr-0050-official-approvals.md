@@ -8,8 +8,8 @@ related: [SPEC-0025, ADR-0032, ADR-0049]
 
 # ADR-0050: an approval qualifies only while the forge marks it official
 
-> **Not yet accepted.** Proposed in the PR that closes stump.wtf/harness#977 by
-> the l lane; no maintainer decision exists yet. The issue records the failure
+> **Not yet accepted.** Proposed in the PR that closes stump.wtf/harness#977;
+> no maintainer decision exists yet. The issue records the failure
 > and proposes two fixes; what it does not settle is what "a qualifying
 > approval" means once the forge holds an `APPROVED` review that counts toward
 > nothing. This ADR is that settlement.
@@ -95,7 +95,7 @@ answers with the approvals refusal anyway.
   and when it still happens it explains itself.
 - A re-approval now suffices on its own. Nothing is remembered as refused at a
   head the train never attempted, so the PR is queued again on the next tick
-  after a fresh approval. Before this change, unstuck required a head or base
+  after a fresh approval. Before this change, getting unstuck required a head or base
   change or a daemon restart.
 - A PR parked on an unofficial approval produces no forge-visible signal: the
   daemon log's stale line, with its `note`, is where it shows. Deciding whether
