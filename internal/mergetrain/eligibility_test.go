@@ -18,6 +18,13 @@ const (
 
 var t0 = time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 
+// yes and no are what a forge reports about an approval's officiality; a nil
+// Official, which the fixtures leave by default, means the forge did not say.
+var (
+	yes = true
+	no  = false
+)
+
 // ready returns a PR that passes every rule; each case breaks one thing.
 func ready() PullRequest {
 	return PullRequest{
@@ -52,6 +59,8 @@ func TestEligible(t *testing.T) {
 		{"approval on a stale sha", func(p *PullRequest) { p.Reviews[0].CommitID = stale }, false, ReasonNoApproval},
 		{"self-approval only", func(p *PullRequest) { p.Reviews[0].Author = p.Author }, false, ReasonNoApproval},
 		{"comment is not an approval", func(p *PullRequest) { p.Reviews[0].State = "COMMENT" }, false, ReasonNoApproval},
+		{"approval the forge no longer counts", func(p *PullRequest) { p.Reviews[0].Official = &no }, false, ReasonNoApproval},
+		{"approval reported official", func(p *PullRequest) { p.Reviews[0].Official = &yes }, true, ""},
 		{
 			"approved, then changes requested on the same sha",
 			func(p *PullRequest) {
@@ -96,5 +105,50 @@ func TestEligible(t *testing.T) {
 				t.Fatalf("Eligible = (%v, %q), want (%v, %q)", ok, reason, tc.ok, tc.reason)
 			}
 		})
+	}
+}
+
+// An approval a review re-request left behind is the one ineligibility the
+// reason alone cannot explain: the review is on the head, by the right person,
+// and counts for nothing (#977).
+func TestUnofficialApproval(t *testing.T) {
+	cases := []struct {
+		name   string
+		review Review
+		want   bool
+	}{
+		{"de-officialized on the head", Review{Author: "joestump-agent", State: StateApproved, CommitID: head, Official: &no}, true},
+		{"official", Review{Author: "joestump-agent", State: StateApproved, CommitID: head, Official: &yes}, false},
+		{"officiality unreported", Review{Author: "joestump-agent", State: StateApproved, CommitID: head}, false},
+		{"by the author", Review{Author: "joestump", State: StateApproved, CommitID: head, Official: &no}, false},
+		{"on a stale head", Review{Author: "joestump-agent", State: StateApproved, CommitID: stale, Official: &no}, false},
+		{"a comment, not an approval", Review{Author: "joestump-agent", State: "COMMENT", CommitID: head, Official: &no}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := ready()
+			pr.Reviews = []Review{tc.review}
+			got, ok := UnofficialApproval(pr)
+			if ok != tc.want {
+				t.Fatalf("UnofficialApproval ok = %v, want %v (%+v)", ok, tc.want, got)
+			}
+			if ok && got != tc.review {
+				t.Fatalf("UnofficialApproval = %+v, want %+v", got, tc.review)
+			}
+		})
+	}
+}
+
+// Two unofficial approvals on one head: the note a driver logs names the one a
+// reviewer should act on first.
+func TestUnofficialApprovalIsTheEarliest(t *testing.T) {
+	pr := ready()
+	pr.Reviews = []Review{
+		{Author: "late", State: StateApproved, CommitID: head, Official: &no, SubmittedAt: t0.Add(time.Hour)},
+		{Author: "early", State: StateApproved, CommitID: head, Official: &no, SubmittedAt: t0},
+	}
+	got, ok := UnofficialApproval(pr)
+	if !ok || got.Author != "early" {
+		t.Fatalf("UnofficialApproval = %+v (%v), want the earliest", got, ok)
 	}
 }

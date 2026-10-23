@@ -376,7 +376,7 @@ func (d *Driver) mergeBatch(ctx context.Context, cur []PullRequest, base string,
 			}
 		}
 		if why != "" {
-			d.log.Info(event("stale"), append(kv, "cause", why)...)
+			d.log.Info(event("stale"), staleKV(kv, cand, why)...)
 			return false, nil
 		}
 
@@ -389,9 +389,8 @@ func (d *Driver) mergeBatch(ctx context.Context, cur []PullRequest, base string,
 			if !forge.Transient(err) {
 				d.attempted[key] = OutcomeForgeError
 				d.log.Warn(event("merge refused"), append(kv, "err", err)...)
-				d.fail(ctx, key, pr, CauseMergeRefused, fmt.Sprintf(
-					"CI passed on the batch train commit `%s`, but the forge refused the squash merge (%s). Nothing was merged for this PR.",
-					short(res.Train.SHA), err))
+				d.fail(ctx, key, pr, CauseMergeRefused, d.mergeRefusedDetail(
+					"batch train commit `"+short(res.Train.SHA)+"`", err, "Nothing was merged for this PR."))
 				return false, nil
 			}
 			// A 5xx on a merge is ambiguous. The last merge's proof is the
@@ -484,7 +483,7 @@ func (d *Driver) merge(ctx context.Context, key attemptKey, pr PullRequest, res 
 		}
 	}
 	if why != "" {
-		d.log.Info(event("stale"), append(kv, "cause", why)...)
+		d.log.Info(event("stale"), staleKV(kv, cur, why)...)
 		return nil
 	}
 
@@ -500,9 +499,8 @@ func (d *Driver) merge(ctx context.Context, key attemptKey, pr PullRequest, res 
 		if !forge.Transient(err) {
 			d.attempted[key] = OutcomeForgeError
 			d.log.Warn(event("merge refused"), append(kv, "err", err)...)
-			d.fail(ctx, key, pr, CauseMergeRefused, fmt.Sprintf(
-				"CI passed on the train commit `%s`, but the forge refused the squash merge (%s). Nothing was merged.",
-				short(res.Train.SHA), err))
+			d.fail(ctx, key, pr, CauseMergeRefused, d.mergeRefusedDetail(
+				"train commit `"+short(res.Train.SHA)+"`", err, "Nothing was merged."))
 			return nil
 		}
 		// A 5xx on a merge is ambiguous: it may have landed. If the base
@@ -583,6 +581,40 @@ func (d *Driver) verifyMerge(ctx context.Context, res Result, merged string, che
 		return fmt.Errorf("content differs from the tested tree for %s", strings.Join(mismatched, ", "))
 	}
 	return nil
+}
+
+// staleKV is a stale line's fields. The cause stays word for word what
+// SPEC-0025 REQ-2 spells; the extra note is for the one ineligibility a reader
+// cannot diagnose from that cause alone: a PR whose approval is still standing
+// on the head but which the forge no longer counts, which a review re-request
+// produces without anyone touching the code (#977). Without the note the only
+// honest reading of "no approval on current head" is that nobody has reviewed
+// it yet, and the lane re-verifies instead of re-approving.
+func staleKV(kv []any, pr PullRequest, why string) []any {
+	out := append(kv, "cause", why)
+	if !strings.HasSuffix(why, ReasonNoApproval) {
+		return out
+	}
+	if r, ok := UnofficialApproval(pr); ok {
+		out = append(out, "note", "approval by "+r.Author+" on this head is not official; a reviewer needs to approve again")
+	}
+	return out
+}
+
+// mergeRefusedDetail is the body of a merge-refused comment: what was tested,
+// what the forge answered, and, when the answer is the approvals refusal, what
+// actually fixes it. That case is named apart because re-verifying cannot fix
+// it: the forge counts only approvals it marks official, and requesting review
+// from a reviewer clears that mark on the reviews they had already left, so an
+// APPROVED review can be sitting on the head counting nothing. The (pr, head,
+// base) triple is remembered as refused at this point, so a fresh approval
+// alone will not re-trigger the merge either (#977, ADR-0032 REQ-10).
+func (d *Driver) mergeRefusedDetail(tested string, err error, nothing string) string {
+	detail := fmt.Sprintf("CI passed on the %s, but the forge refused the squash merge (%s). %s", tested, err, nothing)
+	if !forge.InsufficientApprovals(err) {
+		return detail
+	}
+	return detail + " The forge counts only approvals it marks official, and it clears that mark when review is requested from the reviewer who left one, so an approval on this head may be counting nothing even though the review is still there. A reviewer needs to post a fresh APPROVED review; reviewing or re-verifying the change again will not help. This head is remembered as refused, so the fresh approval alone will not re-trigger the merge: it needs a new commit on the PR, or `" + d.cfg.BaseBranch + "` to move."
 }
 
 // fail tells pr's author, once per head, that the train could not land it.

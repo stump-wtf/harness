@@ -590,3 +590,94 @@ func TestDriverCancelDuringVerifyDoesNotHalt(t *testing.T) {
 		t.Fatalf("the driver halted anyway: %v", err)
 	}
 }
+
+// logs reports whether any recorded line contains want.
+func logs(l *logRec, want string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.ContainsFunc(l.lines, func(s string) bool { return strings.Contains(s, want) })
+}
+
+// A review re-request posted after a review leaves that review on the head and
+// counting nothing, which is the state that made the train spend a merge the
+// forge then refused for want of approvals (#977). Catching it at the re-check
+// also means nothing is remembered as refused, so the next approval lands it.
+func TestDriverApprovalDeOfficializedBeforeMerge(t *testing.T) {
+	pr := prAt(1, 0)
+	w := newWorld(t, pr)
+	var once sync.Once
+	w.OnStatus(func(string, int) string {
+		once.Do(func() {
+			unofficial := prAt(1, 0)
+			unofficial.Reviews[0].Official = &no
+			w.AddPR(repo, unofficial)
+		})
+		return "success"
+	})
+	log := &logRec{}
+	d := newDriver(t, w, driverCfg(t, ModeMerge, log))
+	ticks(t, d, 1)
+	if w.Merged(repo, 1) || slices.Contains(w.Methods(), "SquashMerge") {
+		t.Fatal("attempted a merge the forge counts no approvals for")
+	}
+	if cs := w.Comments(repo, 1); len(cs) != 0 {
+		t.Fatalf("an ineligibility was commented on: %q", cs)
+	}
+	if !logs(log, "approval by joestump-agent on this head is not official") {
+		t.Fatalf("the stale line does not say what to do about it:\n%s", strings.Join(log.lines, "\n"))
+	}
+
+	// A fresh approval is enough on its own: the triple was never remembered.
+	approved := prAt(1, 0)
+	approved.Reviews[0].Official = &yes
+	w.AddPR(repo, approved)
+	ticks(t, d, 1)
+	if !w.Merged(repo, 1) {
+		t.Fatal("a re-approval did not land the PR")
+	}
+}
+
+// The approvals refusal is the one merge refusal whose cure is not another
+// look at the diff, so the comment says so; every other 405 keeps the wording
+// that points at the change (#977).
+func TestDriverApprovalsRefusalNamesTheCure(t *testing.T) {
+	w := newWorld(t, prAt(1, 0))
+	w.Err("SquashMerge", &forge.StatusError{
+		Method: "SquashMerge", Status: 405, Repo: repo,
+		Body: `{"message":"Does not have enough approvals"}`,
+	})
+	d := newDriver(t, w, driverCfg(t, ModeMerge, nil))
+	ticks(t, d, 1)
+	cs := w.Comments(repo, 1)
+	if len(cs) != 1 {
+		t.Fatalf("comments = %q, want one merge-refused", cs)
+	}
+	for _, want := range []string{"cause=" + CauseMergeRefused, "fresh APPROVED review", "will not re-trigger the merge"} {
+		if !strings.Contains(cs[0], want) {
+			t.Fatalf("the comment never says %q:\n%s", want, cs[0])
+		}
+	}
+}
+
+func TestDriverOtherRefusalsAreNotCalledAnApprovalsProblem(t *testing.T) {
+	cases := map[string]*forge.StatusError{
+		"405 with no body":  {Method: "SquashMerge", Status: 405, Repo: repo},
+		"405 with another":  {Method: "SquashMerge", Status: 405, Repo: repo, Body: `{"message":"Pull request is not mergeable"}`},
+		"409 with the body": {Method: "SquashMerge", Status: 409, Repo: repo, Body: `{"message":"Does not have enough approvals"}`},
+	}
+	for name, refusal := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t, prAt(1, 0))
+			w.Err("SquashMerge", refusal)
+			d := newDriver(t, w, driverCfg(t, ModeMerge, nil))
+			ticks(t, d, 1)
+			cs := w.Comments(repo, 1)
+			if len(cs) != 1 || !strings.Contains(cs[0], "cause="+CauseMergeRefused) {
+				t.Fatalf("comments = %q, want one merge-refused", cs)
+			}
+			if strings.Contains(cs[0], "APPROVED") {
+				t.Fatalf("advice about approvals given for a refusal that did not say so:\n%s", cs[0])
+			}
+		})
+	}
+}

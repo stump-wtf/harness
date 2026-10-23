@@ -19,6 +19,13 @@ type Review struct {
 	State       string // "APPROVED", "REQUEST_CHANGES", "COMMENT"
 	CommitID    string // head SHA the review was left on
 	SubmittedAt time.Time
+	// Official reports whether the forge counts this review toward the
+	// approvals its merge gate requires. nil means the forge did not say,
+	// which is not evidence either way and so never blocks a merge: a review
+	// the forge reports as not official cannot satisfy an approval
+	// requirement, and Gitea clears that flag when review is requested from
+	// the reviewer who left it (ADR-0050).
+	Official *bool
 }
 
 // PullRequest is an open pull request as the train sees it.

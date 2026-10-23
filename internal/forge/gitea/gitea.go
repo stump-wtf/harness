@@ -215,6 +215,9 @@ type apiReview struct {
 	CommitID    string    `json:"commit_id"`
 	SubmittedAt time.Time `json:"submitted_at"`
 	Dismissed   bool      `json:"dismissed"`
+	// Official is a pointer so a Gitea that reports nothing stays "the forge
+	// did not say" rather than "this approval does not count" (ADR-0050).
+	Official *bool `json:"official"`
 }
 
 type apiStatus struct {
@@ -278,7 +281,7 @@ func (c *Client) reviews(ctx context.Context, repo, rp string, n int) ([]forge.R
 			if r.Dismissed {
 				state = stateDismissed
 			}
-			out = append(out, forge.Review{Author: r.User.Login, State: state, CommitID: r.CommitID, SubmittedAt: r.SubmittedAt})
+			out = append(out, forge.Review{Author: r.User.Login, State: state, CommitID: r.CommitID, SubmittedAt: r.SubmittedAt, Official: r.Official})
 		}
 		if len(batch) < pageSize {
 			return out, nil
