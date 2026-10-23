@@ -156,6 +156,19 @@ of reflowing it.
 - **AND** a run id the harness's history does not hold is an `unknown_run`
   ERROR
 
+#### Scenario: A pinned harness carries its pin
+
+- **WHEN** a client requests `list` or `describe` for a harness whose
+  configuration declares a `[harness.<name>.model_pin]` table
+- **THEN** its projection carries the table as `model_pin` (SPEC-0020 REQ-1),
+  an additive field a daemon without model pins omits and a client without
+  them ignores, and the `runs` op's records can carry the outcomes
+  `model_mismatch` and `model_unattested`, the skip reason `model_hold`, and
+  the `mismatch` detail of the first mismatching call (REQ-13)
+- **AND** a project re-up that registers or edits a pinned harness round-trips
+  the table unchanged and refuses a pin that would not load from a file
+  (REQ-18)
+
 ### Requirement: Event Subscription
 
 After a `HELLO` that includes `wants: ["events"]`, the daemon SHALL push
@@ -163,9 +176,13 @@ After a `HELLO` that includes `wants: ["events"]`, the daemon SHALL push
 `harness_flapping`, `config_reloaded`, `profile_changed`, the scheduled-run
 events `job_run_started`, `job_run_finished` and `job_schedule_changed` of
 SPEC-0008 REQ "Lifecycle Events", the operating-hours event
-`harness_hours_changed` of SPEC-0012 REQ "Operating Hours Visibility", and the
+`harness_hours_changed` of SPEC-0012 REQ "Operating Hours Visibility", the
 trigger-source event `trigger_source_changed` of SPEC-0014 REQ "Trigger
-Visibility") so the
+Visibility", and the model-pinning surface of SPEC-0020: a `job_run_finished`
+with outcome `model_mismatch` or `model_unattested` (REQ-13), a
+`harness_hold_changed` whose `hold_reasons` carry `model_hold` (REQ-12,
+SPEC-0021 REQ-19), and the `harness_state_changed` a pinned resident harness
+makes to `failed` (REQ-10)) so the
 TUI re-renders reactively without polling. One-shot CLI invocations MAY skip the
 subscription entirely.
 
