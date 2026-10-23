@@ -1047,6 +1047,37 @@ One gateway also means one set of spend and latency metrics instead of
 per-provider guesswork — useful even when quota exhaustion is not your primary
 risk.
 
+## Model pins
+
+The opposite of failover: a `[harness.<name>.model_pin]` sub-table pins the
+harness to one model on one route, with an explicit list of the providers
+allowed to serve it, and no fallbacks. The pin is fail-closed by design — a
+call the pin does not approve stops the harness instead of proceeding — and
+in this release the table loads, validates and round-trips; the runtime
+enforcement (rendering, scrubbing, attestation, the mismatch stop) ships
+with the adapter renderer work, as [SPEC-0020](/specs/model-pinning/spec)
+specifies.
+
+```toml
+[harness.implementer.model_pin]
+route       = "openrouter"
+model       = "z-ai/glm-5.3-flash"
+providers   = ["deepinfra"]
+data_policy = "zdr"
+```
+
+The pin is valid on resident and one-shot harnesses alike, in the global
+file, a drop-in, or a project `harness.toml`, and it is mutually exclusive
+with `model` (the pin supplies the model). Validation runs at config load —
+`allow_fallbacks = true`, an auto-router or routing variant in `model`,
+`providers` on the `anthropic` route, a `litellm` pin missing
+`gateway_model`/`gateway_url`, or `attest = "full"` on a client whose
+transcripts evidence only the model are all located load errors. The key
+table, the per-client route offers, and how the pin surfaces in the daemon
+protocol and the TUI are in [Model pins](./model-pins); the decision is
+[ADR-0026](/decisions/adr-0026-fail-closed-model-pinning) and the behaviour
+is [SPEC-0020](/specs/model-pinning/spec).
+
 ## Trajectory harvesting & facade scope
 
 :::note Reserved, not yet active
