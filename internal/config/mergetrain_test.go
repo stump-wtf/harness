@@ -63,6 +63,26 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 	}
 }
 
+// SPEC-0025 REQ-18: an explicit empty list disables the sequence check, and an
+// absent key keeps the watched defaults. That difference is why the key is a
+// pointer, like the other tuning keys.
+func TestMergeTrainSequencePathsEmptyDisables(t *testing.T) {
+	cfg, err := Parse([]byte("[mergetrain]\nsequence_paths = []\n"), "t.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MergeTrain.SequencePaths) != 0 {
+		t.Fatalf("sequence_paths = [] watches %v, want the check disabled", cfg.MergeTrain.SequencePaths)
+	}
+	absent, err := Parse([]byte("[mergetrain]\n"), "t.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(absent.MergeTrain.SequencePaths, core.DefaultMergeTrainSequencePaths) {
+		t.Fatalf("absent key watches %v, want the defaults", absent.MergeTrain.SequencePaths)
+	}
+}
+
 func TestMergeTrainEnabledDefaultsFalseAndModeReport(t *testing.T) {
 	cfg, err := Parse([]byte("[mergetrain]\nrepos = [\"a/b\"]\n"), "t.toml")
 	if err != nil {

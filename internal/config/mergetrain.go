@@ -41,10 +41,11 @@ type rawMergeTrain struct {
 	CITimeout    *string  `toml:"ci_timeout"`
 	Batch        *int64   `toml:"batch"`
 	// SequencePaths replaces the watched directories of the sequence check
-	// (ADR-0052). Absent or empty keeps the defaults.
-	SequencePaths []string `toml:"sequence_paths"`
-	ForgeBaseURL  string   `toml:"forge_base_url"`
-	ForgeTokenEnv string   `toml:"forge_token_env"`
+	// (ADR-0052). A pointer, like the other tuning keys: an absent key keeps
+	// the defaults, an explicit empty list disables the check (REQ-18).
+	SequencePaths *[]string `toml:"sequence_paths"`
+	ForgeBaseURL  string    `toml:"forge_base_url"`
+	ForgeTokenEnv string    `toml:"forge_token_env"`
 
 	// Token is decoded only so its presence can be refused.
 	Token any `toml:"token"`
@@ -120,9 +121,9 @@ func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (
 		mc.Repos = append(mc.Repos, r)
 	}
 
-	if len(rm.SequencePaths) > 0 {
+	if rm.SequencePaths != nil {
 		var paths []string
-		for _, p := range rm.SequencePaths {
+		for _, p := range *rm.SequencePaths {
 			p = strings.TrimSuffix(strings.TrimSpace(p), "/")
 			if p == "" || !sequencePathRe.MatchString(p) || hasDotSegment(p) {
 				return fail("sequence_paths", "must be a repo-relative directory such as \"docs/adrs\", with no leading slash and no \".\" or \"..\" segment (got %q)", p)
