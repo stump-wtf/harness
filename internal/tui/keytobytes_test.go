@@ -19,6 +19,7 @@ package tui
 // change the wire bytes.
 
 import (
+	"fmt"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -236,5 +237,153 @@ func TestKeyToBytesControlKeysBeatText(t *testing.T) {
 	got := keyToBytes(tea.KeyPressMsg{Code: tea.KeyEnter, Text: "\n"})
 	if string(got) != "\r" {
 		t.Errorf("Enter carrying Text=%q encoded as %q, want %q — the Code switch must precede the Text fallthrough", "\n", got, "\r")
+	}
+}
+
+// TestKeyToBytesModifiedCursorKeys is the #953 regression. Shift and Ctrl were
+// dropped from the cursor and editing keys, so Ctrl+Right reached the guest as
+// a plain Right (no moving by word) and Shift+Tab as a plain Tab (Claude Code's
+// "shift+tab to cycle" permission switch did nothing). A modified key carries
+// its modifiers in xterm's modifier parameter, m = 1 + shift + 2*alt + 4*ctrl,
+// which is exactly what a real terminal puts on the wire for them.
+func TestKeyToBytesModifiedCursorKeys(t *testing.T) {
+	cursorKeys := []struct {
+		name  string
+		code  rune
+		final string
+	}{
+		{"up", tea.KeyUp, "A"},
+		{"down", tea.KeyDown, "B"},
+		{"right", tea.KeyRight, "C"},
+		{"left", tea.KeyLeft, "D"},
+		{"home", tea.KeyHome, "H"},
+		{"end", tea.KeyEnd, "F"},
+	}
+	modifierSets := []struct {
+		name string
+		mod  tea.KeyMod
+		m    int
+	}{
+		{"shift", tea.ModShift, 2},
+		{"ctrl", tea.ModCtrl, 5},
+		{"ctrl+shift", tea.ModCtrl | tea.ModShift, 6},
+		{"alt+ctrl", tea.ModAlt | tea.ModCtrl, 7},
+		{"alt+ctrl+shift", tea.ModAlt | tea.ModCtrl | tea.ModShift, 8},
+	}
+	for _, mm := range modifierSets {
+		for _, k := range cursorKeys {
+			msg := tea.KeyPressMsg{Code: k.code, Mod: mm.mod}
+			want := fmt.Sprintf("\x1b[1;%d%s", mm.m, k.final)
+			if got := string(keyToBytes(msg)); got != want {
+				t.Errorf("%s+%s = %q, want %q (CSI 1;%d%s)", mm.name, k.name, got, want, mm.m, k.final)
+			}
+		}
+	}
+	// A Kitty-protocol terminal reports Alt+<arrow> with the Shift bit set
+	// alongside Alt. The parameter already carries Alt, so the ESC prefix the
+	// bare Alt chord uses must not be added on top of it.
+	for _, k := range cursorKeys {
+		msg := tea.KeyPressMsg{Code: k.code, Mod: tea.ModAlt | tea.ModShift}
+		if got, want := string(keyToBytes(msg)), fmt.Sprintf("\x1b[1;4%s", k.final); got != want {
+			t.Errorf("alt+shift+%s = %q, want %q", k.name, got, want)
+		}
+	}
+}
+
+// TestKeyToBytesModifiedTildeKeys covers the CSI <n> ; m ~ family: the
+// modifier goes after the key number, not in place of it.
+func TestKeyToBytesModifiedTildeKeys(t *testing.T) {
+	for _, k := range []struct {
+		name string
+		code rune
+		n    int
+	}{
+		{"delete", tea.KeyDelete, 3},
+		{"pgup", tea.KeyPgUp, 5},
+		{"pgdown", tea.KeyPgDown, 6},
+	} {
+		for _, mm := range []struct {
+			name string
+			mod  tea.KeyMod
+			m    int
+		}{
+			{"shift", tea.ModShift, 2},
+			{"ctrl", tea.ModCtrl, 5},
+			{"ctrl+shift", tea.ModCtrl | tea.ModShift, 6},
+			{"alt+shift", tea.ModAlt | tea.ModShift, 4},
+			{"alt+ctrl", tea.ModAlt | tea.ModCtrl, 7},
+		} {
+			msg := tea.KeyPressMsg{Code: k.code, Mod: mm.mod}
+			want := fmt.Sprintf("\x1b[%d;%d~", k.n, mm.m)
+			if got := string(keyToBytes(msg)); got != want {
+				t.Errorf("%s+%s = %q, want %q", mm.name, k.name, got, want)
+			}
+		}
+	}
+}
+
+// TestKeyToBytesShiftTabIsBacktab pins the encoding Claude Code reads to cycle
+// its permission mode: CSI Z, with the modifier parameter form once another
+// modifier joins Shift.
+func TestKeyToBytesShiftTabIsBacktab(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  tea.KeyPressMsg
+		want string
+	}{
+		{"shift+tab", tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}, "\x1b[Z"},
+		{"ctrl+shift+tab", tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModCtrl | tea.ModShift}, "\x1b[1;6Z"},
+		{"alt+ctrl+shift+tab", tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModAlt | tea.ModCtrl | tea.ModShift}, "\x1b[1;8Z"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := string(keyToBytes(tt.msg)); got != tt.want {
+				t.Errorf("keyToBytes(%v%+v) = %q, want %q", tt.msg.Code, tt.msg.Mod, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestKeyToBytesModifierKeysStillPlain pins the half of the matrix that must
+// not change: an unmodified key keeps its short form, Alt alone keeps the ESC
+// prefix from #178 (a terminal sends ESC ESC [ D for Alt+Left), Ctrl over Tab
+// stays a bare Tab, and keys with no agreed encoding still produce nothing
+// rather than a plausible guess.
+func TestKeyToBytesModifierKeysStillPlain(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  tea.KeyPressMsg
+		want string
+	}{
+		{"left", tea.KeyPressMsg{Code: tea.KeyLeft}, "\x1b[D"},
+		{"delete", tea.KeyPressMsg{Code: tea.KeyDelete}, "\x1b[3~"},
+		{"alt+left keeps the ESC prefix", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt}, "\x1b\x1b[D"},
+		{"alt+delete keeps the ESC prefix", tea.KeyPressMsg{Code: tea.KeyDelete, Mod: tea.ModAlt}, "\x1b\x1b[3~"},
+		{"alt+pgup keeps the ESC prefix", tea.KeyPressMsg{Code: tea.KeyPgUp, Mod: tea.ModAlt}, "\x1b\x1b[5~"},
+		{"alt+home keeps the ESC prefix", tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModAlt}, "\x1b\x1b[H"},
+		{"ctrl+tab is a tab", tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModCtrl}, "\t"},
+		{"alt+tab keeps the ESC prefix", tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModAlt}, "\x1b\t"},
+		{"shift+enter is still CR", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}, "\r"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := string(keyToBytes(tt.msg)); got != tt.want {
+				t.Errorf("keyToBytes(%v%+v) = %q, want %q", tt.msg.Code, tt.msg.Mod, got, tt.want)
+			}
+		})
+	}
+	// Insert and the function keys are left for a separate change (the guest
+	// has to ask for them before they can be sent), so they must keep encoding
+	// to nothing: a nil lets the caller skip the PTY write entirely.
+	for _, msg := range []tea.KeyPressMsg{
+		{Code: tea.KeyInsert},
+		{Code: tea.KeyInsert, Mod: tea.ModShift},
+		{Code: tea.KeyF5},
+		{Code: tea.KeyF5, Mod: tea.ModShift},
+		{Code: tea.KeyF12, Mod: tea.ModCtrl},
+	} {
+		if got := keyToBytes(msg); got != nil {
+			t.Errorf("keyToBytes(%v%+v) = %#v, want nil", msg.Code, msg.Mod, got)
+		}
 	}
 }

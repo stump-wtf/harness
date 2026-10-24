@@ -5,6 +5,7 @@ package tui
 // TOML table deletion for the delete confirm — ADR-0006 file-is-truth).
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
@@ -18,7 +19,8 @@ import (
 // keyToBytes encodes a keystroke into the bytes a PTY expects, so attached
 // interactive input forwards faithfully (SPEC-0001 scenario "Driving a live
 // agent"). It covers the common control keys and arrow escapes; printable runes
-// pass through verbatim.
+// pass through verbatim, and Shift/Ctrl on a cursor, editing or Tab key goes
+// out as xterm's modifier parameter instead of being dropped (#953).
 func keyToBytes(msg tea.KeyPressMsg) []byte {
 	// Modifiers are decided up front and applied uniformly (#178). Bubble Tea
 	// v2 reports the modifier set as a bitmask: legacy terminals and tmux
@@ -39,6 +41,13 @@ func keyToBytes(msg tea.KeyPressMsg) []byte {
 	// prefixes ESC, which is what a terminal delivers for Alt+Ctrl chords.
 	if ctrl && msg.Code >= 'a' && msg.Code <= 'z' {
 		return altPrefix(alt, []byte{byte(msg.Code - 'a' + 1)})
+	}
+	// Modified cursor, editing and Tab keys carry their modifiers inside the
+	// escape sequence (#953): the plain forms below drop Shift and Ctrl, so
+	// Ctrl+Right reached the guest as a bare Right and Shift+Tab as a bare Tab,
+	// which is how "Claude Code can't move by word or cycle modes" starts.
+	if b, ok := modifierParamBytes(msg); ok {
+		return b
 	}
 	var base []byte
 	switch msg.Code {
@@ -78,6 +87,71 @@ func keyToBytes(msg tea.KeyPressMsg) []byte {
 	// Alt/Meta prefixes ESC — what a real terminal sends for an Alt chord
 	// (#178: this used to forward Alt+a as a bare "a", losing the modifier).
 	return altPrefix(alt, base)
+}
+
+// cursorKeyFinals are the keys whose modifiers travel as xterm's modifier
+// parameter: CSI 1 ; m <final> (#953).
+var cursorKeyFinals = map[rune]byte{
+	tea.KeyUp:    'A',
+	tea.KeyDown:  'B',
+	tea.KeyRight: 'C',
+	tea.KeyLeft:  'D',
+	tea.KeyHome:  'H',
+	tea.KeyEnd:   'F',
+}
+
+// tildeKeyNumbers are the CSI <n> ~ keys that take the same parameter after
+// their number: CSI <n> ; m ~.
+var tildeKeyNumbers = map[rune]int{
+	tea.KeyDelete: 3,
+	tea.KeyPgUp:   5,
+	tea.KeyPgDown: 6,
+}
+
+// xtermModParam is xterm's modifier parameter, m = 1 + shift + 2*alt + 4*ctrl.
+// Alt and Meta stay one bit on the wire, as everywhere else in this file.
+func xtermModParam(mod tea.KeyMod) int {
+	m := 1
+	if mod&tea.ModShift != 0 {
+		m++
+	}
+	if mod&(tea.ModAlt|tea.ModMeta) != 0 {
+		m += 2
+	}
+	if mod&tea.ModCtrl != 0 {
+		m += 4
+	}
+	return m
+}
+
+// modifierParamBytes encodes the keys whose modifiers belong inside the escape
+// sequence rather than dropped from it: the cursor keys (CSI 1 ; m A), the
+// "~" family (CSI n ; m ~), and Shift+Tab (CSI Z, or CSI 1 ; m Z once another
+// modifier joins Shift). ok is false for everything the plain path already got
+// right, so an unmodified key and a bare Alt chord (ESC plus the plain form,
+// #178) keep their exact bytes.
+func modifierParamBytes(msg tea.KeyPressMsg) ([]byte, bool) {
+	m := xtermModParam(msg.Mod)
+	// m == 1 is no modifier at all and m == 3 is Alt alone, which a real
+	// terminal sends as ESC plus the plain sequence rather than as a parameter.
+	// Both belong to the plain path, and encoding them here would double the
+	// ESC a terminal already puts on an Alt chord.
+	if m == 1 || m == 3 {
+		return nil, false
+	}
+	if final, ok := cursorKeyFinals[msg.Code]; ok {
+		return []byte(fmt.Sprintf("\x1b[1;%d%c", m, final)), true
+	}
+	if n, ok := tildeKeyNumbers[msg.Code]; ok {
+		return []byte(fmt.Sprintf("\x1b[%d;%d~", n, m)), true
+	}
+	if msg.Code == tea.KeyTab && msg.Mod&tea.ModShift != 0 {
+		if m == 2 {
+			return []byte("\x1b[Z"), true
+		}
+		return []byte(fmt.Sprintf("\x1b[1;%dZ", m)), true
+	}
+	return nil, false
 }
 
 // altPrefix prepends the ESC byte an Alt/Meta chord carries on the wire.
