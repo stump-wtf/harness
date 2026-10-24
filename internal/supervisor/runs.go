@@ -142,6 +142,14 @@ const (
 	// Governing: SPEC-0017 REQ-11 "Rendering", REQ-17 (the SPEC-0008 and
 	// SPEC-0014 skip-reason amendment).
 	ReasonTemplateUnresolved RunReason = "template_unresolved"
+	// ReasonPreRun and ReasonPostRun name the run lifecycle hooks: the run
+	// ended because the program the operator runs AROUND a run ended it, not
+	// because the harness process failed. ReasonWorkdir names the run whose
+	// per-run directory could not be made.
+	// Governing: ADR-0051 (proposed); stump.wtf/harness#980.
+	ReasonPreRun  RunReason = "pre_run"
+	ReasonPostRun RunReason = "post_run"
+	ReasonWorkdir RunReason = "workdir"
 )
 
 // RunOutcome is how a run ended — or, for the outcomes that start no process,
@@ -405,6 +413,17 @@ type activeRun struct {
 	// envelope the event file was written from, across respawns of the run.
 	// Governing: SPEC-0017 REQ-7, REQ-8.
 	event *trigger.Envelope
+	// workdir is the directory this run was given. It is empty for a harness
+	// whose "workdir" is a plain path, where spawn keeps using the configured
+	// value, and set for one whose workdir is a template, so every spawn and
+	// every hook of this run names the same directory (ADR-0051).
+	workdir string
+	// dataDir is this run's agent data directory, inside workdir.
+	dataDir string
+	// preRan records that pre_run succeeded, which is the only condition under
+	// which the harness process is spawned — and the reason post_run is asked
+	// its verdict afterwards: a run that never started has no verdict to check.
+	preRan bool
 }
 
 // decisionRecord builds the record of a decision that starts no process.
@@ -642,21 +661,34 @@ func (s *Supervisor) runEnv() RunEnv {
 	if s.run == nil {
 		return RunEnv{}
 	}
-	re := RunEnv{
-		RunID:     s.run.rec.RunID,
-		Trigger:   s.run.rec.Trigger,
-		Source:    s.run.rec.Source,
-		EventFile: s.run.eventFile,
-		StartedAt: s.run.rec.StartedAt,
+	return runEnvOf(s.run)
+}
+
+// runEnvOf is runEnv read straight off a run, so a hook that runs after the
+// supervisor has detached the run (post_run finishes the record once s.run is
+// already cleared) still renders that run's context instead of an empty one.
+// Governing: ADR-0051 (proposed); SPEC-0017 REQ-7.
+func runEnvOf(run *activeRun) RunEnv {
+	if run == nil {
+		return RunEnv{}
 	}
-	if s.run.event != nil {
+	re := RunEnv{
+		RunID:     run.rec.RunID,
+		Trigger:   run.rec.Trigger,
+		Source:    run.rec.Source,
+		EventFile: run.eventFile,
+		StartedAt: run.rec.StartedAt,
+		Workdir:   run.workdir,
+		DataDir:   run.dataDir,
+	}
+	if run.event != nil {
 		re.Event = &EventContext{
-			File:       s.run.eventFile,
-			ID:         s.run.event.TemplateID(),
-			Kind:       string(s.run.event.Kind),
-			Source:     s.run.event.Source,
-			ReceivedAt: s.run.event.ReceivedAt.UTC().Format(time.RFC3339),
-			Typed:      s.run.event.Typed,
+			File:       run.eventFile,
+			ID:         run.event.TemplateID(),
+			Kind:       string(run.event.Kind),
+			Source:     run.event.Source,
+			ReceivedAt: run.event.ReceivedAt.UTC().Format(time.RFC3339),
+			Typed:      run.event.Typed,
 		}
 	}
 	return re
@@ -821,6 +853,18 @@ func (s *Supervisor) finishRunWith(outcome RunOutcome, code *int, reason RunReas
 	if code != nil {
 		c := *code
 		run.rec.ExitCode = &c
+	}
+	// post_run is the run's mechanical verdict check, and it runs HERE because
+	// this is the last moment its verdict can still change: the record is not
+	// sealed yet, the run's log file is still open to receive the hook's output,
+	// and nothing has been journalled or published. A run whose pre_run never
+	// succeeded is not asked — it never started, so there is no verdict to
+	// confirm (ADR-0051).
+	if run.preRan && len(s.harness.PostRun) > 0 && outcome == OutcomeSuccess {
+		if next, why := s.runPostRun(run, outcome, code); next != outcome {
+			outcome, reason = next, why
+			run.rec.Outcome, run.rec.Reason = next, why
+		}
 	}
 	kv := []any{"run_id", run.rec.RunID, "outcome", string(outcome)}
 	if reason != "" {

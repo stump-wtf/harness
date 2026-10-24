@@ -1432,6 +1432,64 @@ probe that is itself broken (exit 127, say) is readable instead of silent.
 Like the `[notify]` hook, the probe is a daemon-side hook, not a supervised
 harness: no PTY, no restart policy, no run record.
 
+## Run lifecycle hooks and per-run work directories
+
+A one-shot's `workdir` is a directory every run of that harness shares, which
+means a run inherits whatever its last run left behind: stale plan files,
+another run's uncommitted edits, an agent's scratch from three weeks ago
+(issue #980). Four keys close that.
+
+```toml
+[harness.sweep]
+harness = "crush"
+prompt = "sweep the inbox and report"
+schedule = "0 6 * * *"
+workdir = "~/sweeps/{{harness.name}}/runs/{{run.id}}"
+workdir_retain = 10
+pre_run  = ["/usr/local/bin/prepare-workspace.sh"]
+post_run = ["/usr/local/bin/check-workspace.sh", "{{run.outcome}}", "{{run.exit_code}}"]
+```
+
+`workdir` is a template rendered per run and created `0700` before the spawn,
+so a run starts clean instead of clean-ish. It may name `harness.name`, `model`,
+`package.dir`, `run.id`, `run.trigger`, `run.source`, `run.date` and
+`run.started_at` — identifiers and dates, never an event field or untrusted
+text, because where a process is born is never an outside party's decision. It
+requires a one-shot: a resident harness is one process, not one directory per
+run.
+
+`workdir_retain` keeps the newest N run directories and removes the rest, the
+run in flight always among them. With a cap set, the template may vary only in
+its LAST element, and pruning removes only directories that match the
+template's own shape, are real directories rather than symlinks, and carry the
+daemon's `.harness-run-dir` mark — so a cap can never reach a directory that
+was there before harness created it.
+
+`pre_run` runs after the run's record is open and before the harness process
+spawns; `post_run` runs after it is reaped and before the record closes, so the
+run's verdict is already known and a failing `post_run` can still change it.
+Each element is templated like a `command` harness's argv and exec'd directly —
+never through a shell — with ten minutes to finish. A hook sees the daemon's
+environment plus `HARNESS_NAME`, `HARNESS_WORKDIR`, `HARNESS_RUN_DATADIR` and
+the run's `HARNESS_RUN_*` variables, and for `post_run` also
+`HARNESS_RUN_OUTCOME` and `HARNESS_RUN_EXIT_CODE`. Its own output lands in the
+run's log.
+
+A failed `pre_run` means the harness never spawns: the run closes `failed` with
+reason `pre_run_failed`, because a hook that sets a run up is worth nothing if
+the run proceeds without it having been set up. A failed `post_run` demotes a
+`success` to `failed` with reason `post_run_failed` and leaves every other
+outcome exactly as the process earned it. `{{run.datadir}}` names a fresh
+directory inside the run's workdir for whatever the agent leaves behind,
+exported to hooks as `HARNESS_RUN_DATADIR`; under a plain shared workdir it is
+nested by run id and bounded by `keep_runs`.
+
+Hooks are valid only on a one-shot — a prompt harness, or a `command` harness
+with a schedule or triggers. Like `[notify]` and `health_cmd` they are
+daemon-side hooks, not supervised harnesses: no PTY, no run record, no restart
+policy (ADR-0051, proposed). `success_check` (#493) is the designed post-run
+verifier with a report attached; it will build on the same slot.
+
 ## The stall watchdog
 
 `restart` fires when a process **exits**. A worker that stays alive and stops
