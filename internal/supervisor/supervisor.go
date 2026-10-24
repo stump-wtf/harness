@@ -1274,6 +1274,15 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 	loop := len(s.crashTimes) >= s.policy.CrashThreshold
 	if loop {
 		s.flapping = true
+	}
+	// Once flapping has tripped, every restart attempt escalates the backoff —
+	// not just ones that land inside a fresh in-window crash cluster. The
+	// curve is otherwise self-limiting: as the delay passes CrashWindow/2,
+	// three exits can no longer fit inside the window, the cluster stops
+	// tripping, and the attempt counter freezes below BackoffCap (issue #335).
+	// Recovery still clears it: a run surviving CrashWindow resets the crash
+	// state above, and give-up keys on consecFailures, not this counter.
+	if s.flapping {
 		s.flapAttempts++
 	}
 

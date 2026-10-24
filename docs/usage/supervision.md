@@ -188,8 +188,11 @@ Two launchd specifics worth knowing:
 ## Flapping a.k.a. crash-loop protection
 
 Under repeated quick restarts, the daemon escalates backoff so a crash-looping
-harness can't burn the CPU. `harness describe <name>` surfaces this with a
-`flapping` field and, when applicable, a `restart to apply` config prompt.
+harness can't burn the CPU. Once flapping is detected, the delay keeps doubling
+on every further restart — even once the crashes space themselves out beyond
+the detection window — up to the 30s cap; a run that survives the window
+resets the escalation (ADR-0052). `harness describe <name>` surfaces this with
+a `flapping` field and, when applicable, a `restart to apply` config prompt.
 
 ## Logs on disk
 
