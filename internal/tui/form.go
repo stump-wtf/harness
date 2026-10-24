@@ -131,6 +131,13 @@ type HarnessForm struct {
 	// would then write a command harness with no argv at all.
 	argvErr error
 	Workdir string
+	// The issue #980 run lifecycle keys (ADR-0051), carried typed with no widget
+	// yet, the budget convention: the save path rewrites the whole table, so a
+	// hand written pre_run or workdir_retain would otherwise vanish the next
+	// time the operator edits something else.
+	WorkdirRetain int
+	PreRun        []string
+	PostRun       []string
 	// EnvFile is the harness's env_file list in order (SPEC-0018 REQ-12).
 	// A one-element list round-trips as the historical string form; a longer
 	// one is written as a TOML list.
@@ -667,6 +674,29 @@ func (f HarnessForm) TOML() string {
 	if f.Workdir != "" {
 		fmt.Fprintf(&b, "workdir = %s\n", strconv.Quote(f.Workdir))
 	}
+	// The issue #980 run lifecycle keys, emitted only where they differ from
+	// the parser default, so an untouched edit grows no keys (the keep_runs rule
+	// above). A hook is written one TOML string per element, never joined into a
+	// shell string (SPEC-0017 REQ-15).
+	if f.WorkdirRetain > 0 {
+		fmt.Fprintf(&b, "workdir_retain = %d\n", f.WorkdirRetain)
+	}
+	for _, hook := range []struct {
+		key  string
+		argv []string
+	}{
+		{"pre_run", f.PreRun},
+		{"post_run", f.PostRun},
+	} {
+		if len(hook.argv) == 0 {
+			continue
+		}
+		parts := make([]string, len(hook.argv))
+		for i, arg := range hook.argv {
+			parts[i] = strconv.Quote(arg)
+		}
+		fmt.Fprintf(&b, "%s = [%s]\n", hook.key, strings.Join(parts, ", "))
+	}
 	if len(f.EnvFile) == 1 {
 		fmt.Fprintf(&b, "env_file = %s\n", strconv.Quote(f.EnvFile[0]))
 	} else if len(f.EnvFile) > 1 {
@@ -1020,6 +1050,11 @@ func editInputsFor(path string, sel protocol.HarnessInfo) formInputs {
 	fi.argv = formatArgvInput(h.Argv)
 	fi.transcripts = h.Transcripts
 	fi.workdir = h.Workdir
+	// Typed carry (ADR-0051): no widget edits these, so the file's own values
+	// travel to the save untouched.
+	fi.workdirRetain = h.WorkdirRetain
+	fi.preRun = h.PreRun
+	fi.postRun = h.PostRun
 	fi.envFile = strings.Join(h.EnvFiles, ", ")
 	if h.RestartDelay > 0 {
 		fi.delay = strconv.Itoa(int(h.RestartDelay / time.Second))
@@ -1104,6 +1139,9 @@ func (fi formInputs) toForm() HarnessForm {
 		Timeout:            strings.TrimSpace(fi.timeout),
 		OnOverlap:          strings.TrimSpace(fi.onOverlap),
 		Workdir:            strings.TrimSpace(fi.workdir),
+		WorkdirRetain:      fi.workdirRetain,
+		PreRun:             fi.preRun,
+		PostRun:            fi.postRun,
 		EnvFile:            splitEnvFileInput(fi.envFile),
 		Restart:            strings.TrimSpace(fi.restart),
 		Backend:            strings.TrimSpace(fi.backend),

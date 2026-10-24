@@ -362,8 +362,26 @@ type Harness struct {
 	// (SPEC-0018 REQ-11), each entry its own argv element after
 	// --allowedTools. Entries never start with "-" (validation enforces it).
 	AllowedTools []string
-	// Workdir is the process working directory (may contain a leading ~).
+	// Workdir is the process working directory (may contain a leading ~, and
+	// may be a template, in which case the daemon renders it per run and gives
+	// each run a directory of its own (ADR-0051)).
 	Workdir string
+	// WorkdirRetain caps how many per-run workdir directories the daemon keeps
+	// for this harness, newest first, the run in flight always among them.
+	// Zero means no pruning. It requires a templated Workdir whose last
+	// element is the varying one.
+	// Governing: ADR-0051 (proposed); stump.wtf/harness#980.
+	WorkdirRetain int
+	// PreRun and PostRun are argv lists the daemon execs around a one-shot
+	// run: pre_run after the run's record is open and before the harness
+	// process spawns, post_run after the process is reaped and before the
+	// record closes, so a failing post_run can demote the outcome. Each
+	// element is a template (see internal/core/hooktmpl.go); neither is
+	// exec'd through a shell, and neither is a supervised harness — like
+	// health_cmd and [notify] they are daemon-side hooks (ADR-0033).
+	// Governing: ADR-0051 (proposed); stump.wtf/harness#980.
+	PreRun  []string
+	PostRun []string
 	// EnvFiles are files of KEY=VALUE pairs sourced before launch, in order,
 	// a later file winning a key collision (ADR-0008; secrets stay here, out
 	// of the config; SPEC-0018 REQ-12 accepts a list of env_file). Nil and a

@@ -114,6 +114,13 @@ type formInputs struct {
 	// argv is a command harness's argv (SPEC-0017 REQ-2), edited as the TOML
 	// array the file holds (formatArgvInput / parseArgvInput).
 	argv string
+	// preRun/postRun/workdirRetain are the issue #980 run lifecycle keys
+	// (ADR-0051), carried typed for the edit round trip with no widget yet, the
+	// budget convention: the file's own values need no input encoding to
+	// survive.
+	preRun        []string
+	postRun       []string
+	workdirRetain int
 	// transcripts is a command harness's transcript binding (SPEC-0017
 	// REQ-4), carried so an edit round-trips it.
 	transcripts string

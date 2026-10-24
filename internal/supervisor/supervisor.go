@@ -895,6 +895,15 @@ func (s *Supervisor) beginStart(adm *admission) {
 	// REQ-3, REQ-6). A one-shot's is the run beginRun opened.
 	s.openResident(adm)
 
+	// The run's own directories and its pre_run hook, before anything of the
+	// harness's is exec'd: a hook exists to put the run in a state the agent
+	// can be trusted with, so a harness that spawned anyway would be exactly
+	// the failure the hook was written to prevent. A no-op for a harness with
+	// a plain workdir and no hooks (runhooks.go, ADR-0051).
+	if !s.prepareRun(s.run) {
+		return
+	}
+
 	// Born at the attached viewport, not 80×24: a restart (manual, crash, or
 	// `^b s` from attached mode) must land in a PTY the size of the client
 	// that's watching it (ADR-0003; see spawn's note).
