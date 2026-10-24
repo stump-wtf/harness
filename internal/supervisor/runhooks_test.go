@@ -237,6 +237,45 @@ func TestRetentionNeverTouchesWhatIsNotARunDir(t *testing.T) {
 	}
 }
 
+// TestRetentionSkipsAnotherHarnessRunDir pins the mark's content, not just its
+// existence: two harnesses that share a workdir parent prune only their own
+// directories, so a sibling's runs and an unmarked stranger both survive a
+// cap that spends this harness's stale one.
+func TestRetentionSkipsAnotherHarnessRunDir(t *testing.T) {
+	dir := t.TempDir()
+	old := time.Now().Add(-24 * time.Hour)
+	for name, marked := range map[string]string{
+		"stale":   "report",
+		"foreign": "nightly",
+		"plain":   "",
+		"current": "report",
+	} {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(p, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if marked != "" {
+			if err := markRunDir(p, marked); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := pruneRunDirs(dir, "*", "report", 1, "current"); got != 1 {
+		t.Fatalf("pruneRunDirs removed %d directories, want only report's own stale one", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "stale")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("report's stale run directory survived its own cap: %v", err)
+	}
+	for _, name := range []string{"foreign", "plain", "current"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s was removed by report's retention: %v", name, err)
+		}
+	}
+}
+
 func TestHooksOnASharedWorkdirGetTheirOwnDataDir(t *testing.T) {
 	e := newRunsEnv(t)
 	dir := t.TempDir()

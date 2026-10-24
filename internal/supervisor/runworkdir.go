@@ -18,8 +18,8 @@ package supervisor
 //
 // Retention deletes only what it can prove is a run directory: an entry under
 // the parent the template renders into, matching the template's own literal
-// shape, that is a real directory and not a symlink, and is not the directory
-// of the run in flight. That proof is why config requires a retained template
+// shape, that is a real directory and not a symlink, carries this harness's
+// own mark, and is not the directory of the run in flight. That proof is why config requires a retained template
 // to vary only in its last element: `~/src/{{harness.name}}` plus a retain
 // would otherwise point pruning at directories that were there before
 // harness ever ran.
@@ -185,7 +185,7 @@ func prepareRunDirs(h core.Harness, run RunEnv, now time.Time) (workdir, dataDir
 	if h.WorkdirRetain > 0 && templated {
 		parent, glob, ok := core.RunDirGlob(expandHome(h.Workdir), tmpl.Map{Values: workdirValues(h, run, now)})
 		if ok {
-			pruned = pruneRunDirs(parent, glob, h.WorkdirRetain, filepath.Base(workdir))
+			pruned = pruneRunDirs(parent, glob, h.Name, h.WorkdirRetain, filepath.Base(workdir))
 		}
 	}
 	if !templated && run.RunID > 0 && h.KeepRuns > 0 {
@@ -209,18 +209,22 @@ func markRunDir(dir, harnessName string) error {
 	return nil
 }
 
-// isMarkedRunDir reports whether dir carries the daemon's run-directory mark.
-func isMarkedRunDir(dir string) bool {
-	_, err := os.Stat(filepath.Join(dir, runDirMarker))
-	return err == nil
+// isMarkedRunDir reports whether dir carries the daemon's run-directory mark
+// for harnessName. The mark names the harness that claimed the directory, so
+// two harnesses that share a workdir parent cannot prune each other's run
+// directories: a mark by anyone else is not this harness's to spend.
+func isMarkedRunDir(dir, harnessName string) bool {
+	b, err := os.ReadFile(filepath.Join(dir, runDirMarker))
+	return err == nil && strings.TrimSpace(string(b)) == harnessName
 }
 
 // pruneRunDirs removes all but the newest keep run directories in parent
 // matching glob, never keepingDir. An entry is a run directory only when it is
 // a real directory (not a symlink), the template's own shape matches its name,
-// and it carries the daemon's mark; anything else is left alone no matter how
-// old. It reports how many it removed.
-func pruneRunDirs(parent, glob string, keep int, keepingDir string) int {
+// and it carries this harness's own mark; anything else is left alone no
+// matter how old, another harness's run directories included. It reports how
+// many it removed.
+func pruneRunDirs(parent, glob, harnessName string, keep int, keepingDir string) int {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
 		return 0
@@ -242,8 +246,8 @@ func pruneRunDirs(parent, glob string, keep int, keepingDir string) int {
 				continue
 			}
 		}
-		if !isMarkedRunDir(filepath.Join(parent, e.Name())) {
-			continue // not a directory the daemon created for a run
+		if !isMarkedRunDir(filepath.Join(parent, e.Name()), harnessName) {
+			continue // not a directory this harness created for a run
 		}
 		info, err := e.Info()
 		if err != nil {
