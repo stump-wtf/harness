@@ -20,6 +20,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/stump-wtf/harness/internal/forge"
@@ -441,6 +442,50 @@ func (f *Fake) TreeOf(ctx context.Context, repo, sha string) (string, error) {
 		return "", fmt.Errorf("fake: commit %s: %w", sha, forge.ErrNotFound)
 	}
 	return tree, nil
+}
+
+// TreePaths returns the paths set at ref (a sha, or a branch name that names
+// one) lying under one of prefixes, sorted. A ref with no files at all is
+// ErrNotFound, as it is for FileContentAtRef.
+func (f *Fake) TreePaths(ctx context.Context, repo, ref string, prefixes []string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin(ctx, "TreePaths", repo, ref, prefixes); err != nil {
+		return nil, err
+	}
+	r := f.repo(repo)
+	files := r.files[ref]
+	if files == nil {
+		if sha, ok := r.branches[ref]; ok {
+			files = r.files[sha]
+		}
+	}
+	if files == nil {
+		return nil, fmt.Errorf("fake: tree at %s: %w", ref, forge.ErrNotFound)
+	}
+	var out []string
+	for p := range files {
+		if underAnyPrefix(p, prefixes) {
+			out = append(out, p)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// underAnyPrefix reports whether path lies under one of the directory
+// prefixes; an empty list matches everything.
+func underAnyPrefix(path string, prefixes []string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	for _, prefix := range prefixes {
+		prefix = strings.TrimSuffix(prefix, "/")
+		if prefix == "" || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // clonePR deep-copies pr so a caller cannot mutate the fake's state.

@@ -123,16 +123,17 @@ func StartMergeTrain(ctx context.Context, o MergeTrainOptions) (*MergeTrain, err
 	m := &MergeTrain{}
 	for _, repo := range c.Repos {
 		d, err := mergetrain.NewDriver(mergetrain.DriverConfig{
-			Repo:         repo,
-			BaseBranch:   c.BaseBranch,
-			Mode:         mergetrain.Mode(c.Mode),
-			PollInterval: c.PollInterval,
-			CITimeout:    c.CITimeout,
-			Batch:        c.Batch,
-			LockDir:      root,
-			Log:          log,
-			TrainPollMin: o.TrainPollMin,
-			RetryPause:   o.RetryPause,
+			Repo:          repo,
+			BaseBranch:    c.BaseBranch,
+			Mode:          mergetrain.Mode(c.Mode),
+			PollInterval:  c.PollInterval,
+			CITimeout:     c.CITimeout,
+			Batch:         c.Batch,
+			SequencePaths: c.SequencePaths,
+			LockDir:       root,
+			Log:           log,
+			TrainPollMin:  o.TrainPollMin,
+			RetryPause:    o.RetryPause,
 		}, f)
 		if err != nil {
 			if errors.Is(err, mergetrain.ErrLocked) {

@@ -62,7 +62,7 @@ for the same repo fails to start rather than racing.
 Every transition is one structured line, message `mergetrain <event>`, with
 `repo` and where applicable `pr`, `head`, `base`, `train`, `tree`, `cause`,
 `err`: `started`, `queue`, `building`, `built`, `green`, `red`, `conflict`,
-`timeout`, `stale`, `deleted`, `delete failed`, `would merge`,
+`timeout`, `stale`, `sequence conflict`, `deleted`, `delete failed`, `would merge`,
 `would comment`, `merged`, `verified`, `merge refused`, `commented`,
 `tick failed`, `bypass detected`, `halted`, `shutting down`, `stopped`.
 
@@ -89,3 +89,21 @@ behaviour exactly.
 The value must be a whole number of at least 1 (`0`, a negative number or a
 string is a config error with its line). Batch train commits live on
 `train/batch/<pr>-<pr>…` branches, which are deleted when the attempt ends.
+
+## Sequence collisions
+
+Two pull requests that each add an ADR, a spec or a migration with the same
+number merge cleanly, because their paths differ, and `main` ends up holding
+both. Renaming one afterwards is a push, which dismisses approvals and re-runs
+CI, so the train refuses that commit instead and logs `sequence conflict`: it
+reads the watched directories at the train commit before CI is asked to run on
+it, and names in the PR comment which files claim the number and which pull
+request brings each (SPEC-0025 REQ-18, ADR-0052).
+
+A claim is the first run of two or more digits in a file's name, scoped to
+the directory holding it, so an ADR and a migration may share a number. The
+watched directories are `docs/adrs/`, `docs/openspec/specs/` and
+`migrations/`, overridable per daemon with `sequence_paths`
+([configuration](./configuration#merge-train-mergetrain)). A duplicate the
+base branch already holds is not blamed on the next attempt: it is cleaned up
+on `main` like any other broken thing on the base branch.

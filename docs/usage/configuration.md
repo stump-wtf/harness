@@ -1339,6 +1339,7 @@ repos = ["stump.wtf/harness"]                # required when enabled
 base_branch = "main"                         # default "main"
 poll_interval = "60s"                        # default 60s, minimum 5s
 ci_timeout = "30m"                           # default 30m
+sequence_paths = ["docs/adrs", "migrations"] # watched for colliding numbers; default below
 forge_base_url = "https://gitea.stump.rocks" # required when enabled
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN" # the variable's NAME, required when enabled
 ```
@@ -1357,6 +1358,13 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN" # the variable's NAME, required whe
   least 1; default 1) is SPEC-0025 REQ-17's PRs-per-train size. Above 1 a
   train folds up to N heads onto one commit and bisects a red batch by
   halves. See [Merge train](./merge-train#batching).
+- **`sequence_paths` says where a number in a file name is its identity.**
+  Each entry is a repo-relative directory (default `docs/adrs`,
+  `docs/openspec/specs`, `migrations`); the train refuses a train commit where
+  two files under them claim the same number, since that lands a duplicate and
+  the rename afterwards would cost a PR its approvals. An entry that is empty,
+  absolute, or carries a `.` or `..` segment is a config error with its line.
+  See [Merge train](./merge-train#sequence-collisions).
 
 ## Notifications (`[notify]`)
 

@@ -178,8 +178,9 @@ NOT be used as evidence of anything.
 
 ### Requirement: REQ-9 One comment per failure per head
 
-On `conflict`, `red`, `timeout`, `merge-refused` and `verify-failed`, the
-driver SHALL post exactly one comment on the PR that @mentions the PR's author,
+On `conflict`, `red`, `timeout`, `merge-refused`, `verify-failed` and
+`sequence-conflict`, the driver SHALL post exactly one comment on the PR that
+@mentions the PR's author,
 states the cause and the train commit or head, and ends with the marker
 
 ```text
@@ -245,7 +246,7 @@ push to a PR's head branch. The only writes are: creating and deleting
 Every transition SHALL produce one structured log line whose message is
 `mergetrain <event>` with keys `repo` and, where they apply, `pr`, `head`,
 `base`, `train`, `tree`, `cause`, `err`. Events: `started`, `queue`,
-`building`, `built`, `green`, `red`, `conflict`, `timeout`, `stale`,
+`building`, `built`, `green`, `red`, `conflict`, `timeout`, `stale`, `sequence conflict`,
 `deleted`, `delete failed`, `would merge`, `would comment`, `merged`, `verified`,
 `merge refused`, `commented`, `tick failed`, `bypass detected`, `halted`,
 `shutting down`, `stopped`. `shutting down` is logged at warn when the
@@ -279,6 +280,7 @@ stateDiagram-v2
     [*] --> queue
     queue --> building: next eligible PR
     building --> testing: build ok
+    building --> sequenceConflict:::danger: two files claim one number (REQ-18)
     building --> conflict:::danger: merge conflict
     building --> stale: head moved
     testing --> recheck: CI success
@@ -305,6 +307,7 @@ on every exit from `testing`.
 | queue | `ListOpenPRs` | `GET /repos/{r}/pulls?state=open`, `GET …/pulls/{n}/reviews`, `GET …/commits/{head}/status` |
 | queue → building | `BranchHead` | `GET /repos/{r}/branches/{base}` |
 | building → testing | `CreateTrainBranch` | git: fetch, `merge-tree --write-tree`, `commit-tree`, push `refs/heads/train/<pr>` |
+| building, watched paths | `TreePaths` (train commit and base) | git: `ls-tree -r --name-only <sha> -- <dir>…` (REQ-18) |
 | testing | `CombinedStatus` (repeated) | `GET /repos/{r}/commits/{train}/status` |
 | testing → green | `FileContentAtRef` per changed path | `GET /repos/{r}/raw/{path}?ref={train}` |
 | leave testing | `DeleteBranch` | `DELETE /repos/{r}/branches/train%2F<pr>` |
@@ -357,3 +360,49 @@ merge of `base` and every head in order, and wait for CI on that commit.
 
 - **WHEN** `batch` is unset or 1
 - **THEN** behaviour is identical to REQ-1 through REQ-16 as written
+
+## Requirement: REQ-18 Sequence collisions
+
+Two files that each add an ADR, a spec or a migration numbered the same merge
+cleanly, because their paths differ, and the base branch ends up holding both.
+The fix afterwards is a rename, which is a push, which costs a PR its
+approvals and its CI run, so the train SHALL refuse such a train commit
+instead of landing it (ADR-0052).
+
+A file claims a sequence number with the first run of two or more digits in
+its base name, scoped to the directory holding it, so an ADR and a migration
+may share a number and a file whose name carries none is ignored. The watched
+directories come from `sequence_paths` (REQ-1); an empty list disables the
+check.
+
+- The check SHALL run on the built train commit, before CI is asked to run on
+  it, and SHALL read the watched directories at the train commit and at the
+  base.
+- A colliding pair the base branch already holds in full SHALL NOT be a
+  verdict on the attempt: that duplicate is `main`'s own cleanup, and refusing
+  every later attempt over it would stop the train forever.
+- The attempt ends `sequence conflict`, and the driver SHALL NOT merge it. The
+  PR that brings a colliding file gets the REQ-9 comment with cause
+  `sequence-conflict`, naming every colliding file and which PR brings it, or
+  that it is already on the base branch.
+- In a batch the collision SHALL be bisected by halves like a red batch, so
+  the PRs claiming distinct numbers land and the colliding one is isolated and
+  commented.
+
+#### Scenario: Two PRs claim one number
+
+- **WHEN** one PR adds `docs/adrs/adr-0051-a.md` and another adds
+  `docs/adrs/adr-0051-b.md`, and both are eligible for the same train commit
+- **THEN** the attempt ends `sequence conflict`, neither lands, and each PR is
+  told which two files claim 0051
+
+#### Scenario: A claim already on the base branch
+
+- **WHEN** the base branch already holds both `adr-0051-a.md` and a second
+  file numbered 0051, and this attempt touches neither
+- **THEN** the attempt is judged on CI alone, because the duplicate predates it
+
+#### Scenario: A near miss
+
+- **WHEN** one PR adds `adr-0051-a.md` and another adds `adr-0052-b.md`
+- **THEN** nothing is refused, since no number is claimed twice

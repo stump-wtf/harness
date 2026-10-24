@@ -11,7 +11,8 @@ package forge
 // The interface first sketched in #599 is amended by SPEC-0025 design.md, each
 // change forced by ADR-0032: CreateBranch became CreateTrainBranch (the train
 // commit does not exist on the forge until the train makes it), SquashMerge
-// pins the head, and BranchHead, ListComments and TreeOf were added.
+// pins the head, and BranchHead, ListComments and TreeOf were added. TreePaths
+// came later, for the train's sequence-collision check (ADR-0052).
 
 import (
 	"context"
@@ -72,6 +73,11 @@ type Forge interface {
 	// TreeOf returns the git tree id of commit sha. It must come from git
 	// itself: Gitea's REST API reports the commit id in its tree fields.
 	TreeOf(ctx context.Context, repo, sha string) (string, error)
+	// TreePaths returns every file path in commit sha's tree that lies under
+	// one of prefixes, sorted. A prefix names a directory; an empty list
+	// means the whole tree. The train needs it to see a sequence claim the
+	// diff alone does not reveal (ADR-0052).
+	TreePaths(ctx context.Context, repo, sha string, prefixes []string) ([]string, error)
 }
 
 // TrainSpec says what train commit to build.

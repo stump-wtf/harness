@@ -18,7 +18,10 @@ package core
 // documented `batch` key, so a [mergetrain] table copied from the spec failed
 // the whole config load.
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // Merge train defaults.
 const (
@@ -34,6 +37,15 @@ const (
 	MinMergeTrainPollInterval = 5 * time.Second
 )
 
+// DefaultMergeTrainSequencePaths are the directories whose files carry a
+// sequence number in their names, and where a collision between two pull
+// requests lands a duplicate instead of a conflict (ADR-0052).
+var DefaultMergeTrainSequencePaths = []string{
+	"docs/adrs/",
+	"docs/openspec/specs/",
+	"migrations/",
+}
+
 // MergeTrainConfig is the global [mergetrain] table.
 type MergeTrainConfig struct {
 	Enabled      bool
@@ -45,6 +57,9 @@ type MergeTrainConfig struct {
 	// Batch is the PRs-per-train size (SPEC-0025 REQ-17), at least 1. Above
 	// 1 a tick batches that many heads onto one train commit.
 	Batch int
+	// SequencePaths are the directories the train watches for two files
+	// claiming the same sequence number (ADR-0052). Empty disables the check.
+	SequencePaths []string
 	// ForgeBaseURL is the forge's root, e.g. "https://gitea.stump.rocks".
 	ForgeBaseURL string
 	// ForgeTokenEnv is the NAME of the environment variable holding the
@@ -56,10 +71,11 @@ type MergeTrainConfig struct {
 // disabled, report mode, the documented intervals.
 func DefaultMergeTrainConfig() MergeTrainConfig {
 	return MergeTrainConfig{
-		Mode:         DefaultMergeTrainMode,
-		BaseBranch:   DefaultMergeTrainBaseBranch,
-		PollInterval: DefaultMergeTrainPollInterval,
-		CITimeout:    DefaultMergeTrainCITimeout,
-		Batch:        DefaultMergeTrainBatch,
+		Mode:          DefaultMergeTrainMode,
+		BaseBranch:    DefaultMergeTrainBaseBranch,
+		PollInterval:  DefaultMergeTrainPollInterval,
+		CITimeout:     DefaultMergeTrainCITimeout,
+		Batch:         DefaultMergeTrainBatch,
+		SequencePaths: slices.Clone(DefaultMergeTrainSequencePaths),
 	}
 }

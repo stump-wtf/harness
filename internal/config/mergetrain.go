@@ -33,13 +33,16 @@ import (
 // rawMergeTrain mirrors [mergetrain] before validation. Tuning keys are
 // pointers so an absent key takes its default and an explicit zero is refused.
 type rawMergeTrain struct {
-	Enabled       bool     `toml:"enabled"`
-	Mode          *string  `toml:"mode"`
-	Repos         []string `toml:"repos"`
-	BaseBranch    *string  `toml:"base_branch"`
-	PollInterval  *string  `toml:"poll_interval"`
-	CITimeout     *string  `toml:"ci_timeout"`
-	Batch         *int64   `toml:"batch"`
+	Enabled      bool     `toml:"enabled"`
+	Mode         *string  `toml:"mode"`
+	Repos        []string `toml:"repos"`
+	BaseBranch   *string  `toml:"base_branch"`
+	PollInterval *string  `toml:"poll_interval"`
+	CITimeout    *string  `toml:"ci_timeout"`
+	Batch        *int64   `toml:"batch"`
+	// SequencePaths replaces the watched directories of the sequence check
+	// (ADR-0052). Absent or empty keeps the defaults.
+	SequencePaths []string `toml:"sequence_paths"`
 	ForgeBaseURL  string   `toml:"forge_base_url"`
 	ForgeTokenEnv string   `toml:"forge_token_env"`
 
@@ -50,7 +53,20 @@ type rawMergeTrain struct {
 var (
 	envNameRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	repoNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	// sequencePathRe is a repo-relative directory: no leading slash, no
+	// backslash, nothing empty.
+	sequencePathRe = regexp.MustCompile(`^[^/.\\][^\\]*$`)
 )
+
+// hasDotSegment reports whether p contains a "." or ".." path segment.
+func hasDotSegment(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "." || seg == ".." || seg == "" {
+			return true
+		}
+	}
+	return false
+}
 
 // buildMergeTrain validates rm into a core.MergeTrainConfig.
 func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (core.MergeTrainConfig, error) {
@@ -102,6 +118,21 @@ func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (
 			return fail("repos", "lists %q twice", r)
 		}
 		mc.Repos = append(mc.Repos, r)
+	}
+
+	if len(rm.SequencePaths) > 0 {
+		var paths []string
+		for _, p := range rm.SequencePaths {
+			p = strings.TrimSuffix(strings.TrimSpace(p), "/")
+			if p == "" || !sequencePathRe.MatchString(p) || hasDotSegment(p) {
+				return fail("sequence_paths", "must be a repo-relative directory such as \"docs/adrs\", with no leading slash and no \".\" or \"..\" segment (got %q)", p)
+			}
+			if slices.Contains(paths, p+"/") {
+				return fail("sequence_paths", "lists %q twice", p)
+			}
+			paths = append(paths, p+"/")
+		}
+		mc.SequencePaths = paths
 	}
 
 	durations := []struct {

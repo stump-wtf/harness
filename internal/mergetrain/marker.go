@@ -22,6 +22,9 @@ const (
 	CauseTimeout      = "timeout"
 	CauseMergeRefused = "merge-refused"
 	CauseVerifyFailed = "verify-failed"
+	// CauseSequenceConflict says the train commit would put two files with
+	// the same sequence number on the base branch (ADR-0052).
+	CauseSequenceConflict = "sequence-conflict"
 )
 
 var markerRE = regexp.MustCompile(`<!-- harness-mergetrain v1 pr=(\d+) head=([0-9a-f]+) cause=([a-z-]+) -->`)

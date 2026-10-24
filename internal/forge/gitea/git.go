@@ -7,6 +7,8 @@ package gitea
 // conflict) and `git commit-tree`, then pushes it to a new branch. TreeOf
 // reads a real tree id, which Gitea's REST API does not expose: its commit and
 // tree endpoints both report the commit id (ADR-0032 "Why tested == merged").
+// TreePaths lists what a commit holds under a directory, which REST can answer
+// only with a recursive tree read (ADR-0052).
 //
 // The token reaches git as an http.extraHeader through GIT_CONFIG_COUNT /
 // GIT_CONFIG_KEY_0 / GIT_CONFIG_VALUE_0 in the child's environment — never in
@@ -276,12 +278,53 @@ func (c *Client) TreeOf(ctx context.Context, repo, sha string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if _, err := c.git(ctx, dir, identity{}, "cat-file", "-e", sha+"^{commit}"); err != nil {
-		if _, err := c.git(ctx, dir, identity{}, "fetch", "--quiet", "--no-tags", "--prune", c.gitURL(repo), headsRefspec); err != nil {
-			return "", err
-		}
+	if err := c.ensureCommit(ctx, dir, repo, sha); err != nil {
+		return "", err
 	}
 	return c.revParse(ctx, dir, sha+"^{tree}")
+}
+
+// TreePaths lists the files under prefixes at commit sha, sorted. The train
+// uses it to read a whole watched directory, which a diff of one head cannot
+// show: the other claimant of a sequence number is usually not in the diff at
+// all (ADR-0052).
+func (c *Client) TreePaths(ctx context.Context, repo, sha string, prefixes []string) ([]string, error) {
+	unlock := c.lockRepo(repo)
+	defer unlock()
+	dir, err := c.clone(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.ensureCommit(ctx, dir, repo, sha); err != nil {
+		return nil, err
+	}
+	args := []string{"ls-tree", "-r", "-z", "--name-only", sha}
+	if len(prefixes) > 0 {
+		args = append(args, "--")
+		for _, p := range prefixes {
+			args = append(args, strings.TrimSuffix(p, "/"))
+		}
+	}
+	out, err := c.git(ctx, dir, identity{}, args...)
+	if err != nil {
+		return nil, err
+	}
+	paths := strings.FieldsFunc(string(out), func(r rune) bool { return r == 0 })
+	for i, p := range paths {
+		paths[i] = strings.TrimSuffix(p, "\n")
+	}
+	slices.Sort(paths)
+	return paths, nil
+}
+
+// ensureCommit fetches the remote's branch heads unless commit sha is already
+// in the clone.
+func (c *Client) ensureCommit(ctx context.Context, dir, repo, sha string) error {
+	if _, err := c.git(ctx, dir, identity{}, "cat-file", "-e", sha+"^{commit}"); err == nil {
+		return nil
+	}
+	_, err := c.git(ctx, dir, identity{}, "fetch", "--quiet", "--no-tags", "--prune", c.gitURL(repo), headsRefspec)
+	return err
 }
 
 func (c *Client) revParse(ctx context.Context, dir, rev string) (string, error) {

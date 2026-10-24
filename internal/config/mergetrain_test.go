@@ -45,6 +45,7 @@ base_branch = "trunk"
 poll_interval = "90s"
 ci_timeout = "45m"
 batch = 3
+sequence_paths = ["docs/adrs", "migrations/"]
 forge_base_url = "https://gitea.stump.rocks/"
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 `
@@ -56,6 +57,7 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 	if !mc.Enabled || mc.Mode != "merge" || mc.BaseBranch != "trunk" ||
 		!slices.Equal(mc.Repos, []string{"stump.wtf/harness", "stump.wtf/switchboard"}) ||
 		mc.PollInterval != 90*time.Second || mc.CITimeout != 45*time.Minute || mc.Batch != 3 ||
+		!slices.Equal(mc.SequencePaths, []string{"docs/adrs/", "migrations/"}) ||
 		mc.ForgeBaseURL != "https://gitea.stump.rocks" || mc.ForgeTokenEnv != "HARNESS_MERGETRAIN_TOKEN" {
 		t.Fatalf("parsed = %+v", mc)
 	}
@@ -94,6 +96,10 @@ func TestMergeTrainRejects(t *testing.T) {
 		{"negative batch", "[mergetrain]\nbatch = -2\n", `"batch": must be a whole number of at least 1`},
 		{"string batch", "[mergetrain]\nbatch = \"2\"\n", "batch"},
 		{"float batch", "[mergetrain]\nbatch = 2.5\n", "batch"},
+		{"absolute sequence path", "[mergetrain]\nsequence_paths = [\"/etc\"]\n", "sequence_paths"},
+		{"parent hop in sequence path", "[mergetrain]\nsequence_paths = [\"docs/../secrets\"]\n", "sequence_paths"},
+		{"empty sequence path", "[mergetrain]\nsequence_paths = [\"  \"]\n", "sequence_paths"},
+		{"dup sequence path", "[mergetrain]\nsequence_paths = [\"docs/adrs\", \"docs/adrs/\"]\n", "twice"},
 		{"unknown key", "[mergetrain]\nenabeld = true\n", "enabeld"},
 		{"duplicate table", "[mergetrain]\n[mergetrain]\n", "already been defined"},
 	}
