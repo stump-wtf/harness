@@ -199,6 +199,11 @@ func (s *Supervisor) hold(reason core.HoldReason, enable bool, mode core.HoursSh
 				closeAt = time.Now()
 			}
 			s.closeAt = closeAt
+			// A close begun here is the gate's: it ends in a hold rather than in
+			// an operator's stop, and it is capped by hours_shutdown_timeout
+			// rather than by a --graceful cap (hours.go).
+			s.closeOrigin = closeOriginHours
+			s.closeCap = 0
 		}
 		s.closing = true
 		if !wasHeld {

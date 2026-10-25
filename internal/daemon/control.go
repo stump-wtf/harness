@@ -59,6 +59,8 @@ func (c *conn) handleControl(payload []byte) {
 		c.opReload(req)
 	case protocol.OpDaemonInfo:
 		c.respond(req, c.opDaemonInfo())
+	case protocol.OpArmShutdown:
+		c.opArmShutdown(req)
 	case protocol.OpProjectUp:
 		c.opProjectUp(req)
 	case protocol.OpProjectDown:
@@ -442,9 +444,25 @@ func (c *conn) opLifecycle(req protocol.ControlReq) {
 		}
 		ok, refused = c.srv.mgr.StartChecked(req.Name, c.peer)
 	case protocol.OpStop:
-		ok = c.srv.mgr.StopPeer(req.Name, c.peer)
+		wait, bad := c.gracefulWait(req)
+		if bad {
+			return
+		}
+		if req.Graceful == "" {
+			ok = c.srv.mgr.StopPeer(req.Name, c.peer)
+		} else {
+			ok = c.srv.mgr.StopGracefulPeer(req.Name, c.peer, wait)
+		}
 	case protocol.OpRestart:
-		ok, refused = c.srv.mgr.RestartChecked(req.Name, c.peer)
+		wait, bad := c.gracefulWait(req)
+		if bad {
+			return
+		}
+		if req.Graceful == "" {
+			ok, refused = c.srv.mgr.RestartChecked(req.Name, c.peer)
+		} else {
+			ok, refused = c.srv.mgr.RestartGracefulPeer(req.Name, c.peer, wait)
+		}
 	}
 	if !ok {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
@@ -456,6 +474,37 @@ func (c *conn) opLifecycle(req protocol.ControlReq) {
 	// Reply with the fresh snapshot so the client can render the new state.
 	snap, _ := c.srv.mgr.Snapshot(req.Name)
 	c.respond(req, c.infoFor(snap))
+}
+
+// gracefulWait parses a lifecycle request's --graceful cap (stump.wtf/harness#871):
+// empty means the caller asked for nothing graceful and the op runs as it always
+// did; a duration bounds the wait for the current turn, and "0" bounds it with
+// the harness's configured shutdown timeout instead. A malformed value is
+// answered here, and bad reports that it was.
+func (c *conn) gracefulWait(req protocol.ControlReq) (wait time.Duration, bad bool) {
+	if req.Graceful == "" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(req.Graceful)
+	if err != nil || d < 0 {
+		_ = c.pc.WriteError(req.ID, protocol.ErrBadRequest,
+			"graceful must be a duration (e.g. 5m) or 0 for the configured cap, got %q", req.Graceful)
+		return 0, true
+	}
+	return d, false
+}
+
+// opArmShutdown arms the daemon-wide turn drain that Manager.Close then honors
+// before stopping anything (stump.wtf/harness#871). `harness daemon stop
+// --graceful` calls this, and only then sends the SIGTERM, so a daemon that is
+// not asked to drain shuts down on exactly the old timing.
+func (c *conn) opArmShutdown(req protocol.ControlReq) {
+	wait, bad := c.gracefulWait(req)
+	if bad {
+		return
+	}
+	c.srv.mgr.ArmShutdownDrain(wait)
+	c.respond(req, c.opDaemonInfo())
 }
 
 // writeRefusal answers req with the structured error a start admission

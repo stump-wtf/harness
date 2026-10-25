@@ -166,6 +166,15 @@ type Manager struct {
 	watch        TurnBridge
 	armedCloseAt map[string]time.Time
 
+	// closeTick is how often a close entered outside the gate pass is stepped
+	// while the caller waits (DefaultCloseTick; tests shorten it).
+	// drainArmed/drainCap are the daemon-wide turn drain an
+	// `harness daemon stop --graceful` asks for before it sends the SIGTERM that
+	// reaches Close (manager_drain.go, stump.wtf/harness#871).
+	closeTick  time.Duration
+	drainArmed bool
+	drainCap   time.Duration
+
 	// holdClearers are ManagerOptions.HoldClearers, read-only after
 	// NewManager (manager_holds.go). The budget reason's is the Manager's
 	// own (budgetHoldCleared) unless a test supplies one.
@@ -291,6 +300,7 @@ func NewManager(cfg *core.Config, opts ManagerOptions) *Manager {
 		expiredLease:  make(map[string]time.Time),
 		armedCloseAt:  make(map[string]time.Time),
 		watch:         opts.Watch,
+		closeTick:     DefaultCloseTick,
 		holdClearers:  maps.Clone(opts.HoldClearers),
 		nowFn:         opts.Now,
 		bud:           budgetBook{runs: make(map[string]int), skips: make(map[string]time.Time)},
@@ -881,17 +891,17 @@ func (m *Manager) clearDormant(name string) {
 }
 
 // Stop gracefully stops a single harness and clears its enabled intent.
-func (m *Manager) Stop(name string) bool { return m.stopBy(name, "verb:stop", "") }
+func (m *Manager) Stop(name string) bool { return m.stopBy(name, "verb:stop", "", nil) }
 
 // StopPeer is Stop naming the socket peer the platform reported for the verb
 // (issue #835).
-func (m *Manager) StopPeer(name, peer string) bool { return m.stopBy(name, "verb:stop", peer) }
+func (m *Manager) StopPeer(name, peer string) bool { return m.stopBy(name, "verb:stop", peer, nil) }
 
 // StopBy is Stop naming the path that clears the intent (issue #835): the
 // loop guard passes "guard", so a guard stop does not masquerade as a verb.
-func (m *Manager) StopBy(name, source string) bool { return m.stopBy(name, source, "") }
+func (m *Manager) StopBy(name, source string) bool { return m.stopBy(name, source, "", nil) }
 
-func (m *Manager) stopBy(name, source, peer string) bool {
+func (m *Manager) stopBy(name, source, peer string, g *gracefulClose) bool {
 	if s := m.get(name); s != nil {
 		// A stop discards any after-hours lease in every gate state — leased,
 		// held, closing, whatever (SPEC-0012 REQ "After-Hours Lease"): the
@@ -905,8 +915,21 @@ func (m *Manager) stopBy(name, source, peer string) bool {
 		if had {
 			m.markDirty()
 		}
-		m.unfollowWatch(name) // a stop never waits on turn state (SPEC-0012)
-		s.StopBy(source, peer)
+		if g == nil {
+			m.unfollowWatch(name) // a stop never waits on turn state (SPEC-0012)
+			s.StopBy(source, peer)
+			return true
+		}
+		// The graceful variant: the SIGTERM moves to the end of the wait, so the
+		// watch is armed instead of torn down, and the close's steps come from
+		// here rather than from a gate pass that is not looking for one.
+		s.StopGracefulBy(source, peer, g.cap)
+		if s.Snapshot().Closing {
+			m.armWatch(name)
+			m.stepCloses([]string{name})
+		} else {
+			m.unfollowWatch(name) // nothing was running: nothing to wait for
+		}
 		return true
 	}
 	return false
@@ -1305,6 +1328,11 @@ func (m *Manager) addEphemeralSupervisorLocked(h core.Harness) {
 // and still have a t.Cleanup close it again.
 func (m *Manager) Close() {
 	m.closeOnce.Do(func() {
+		// First: an armed daemon-shutdown drain gets every harness the turn it was
+		// asked to wait for, bounded, before anything is signaled
+		// (manager_drain.go, stump.wtf/harness#871). Nothing armed means no wait,
+		// so the shutdown sequence below is what it always was.
+		m.drainTurns()
 		for _, s := range m.snapshotSupervisors() {
 			s.Shutdown()
 		}

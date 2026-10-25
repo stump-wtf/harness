@@ -201,6 +201,13 @@ const (
 	OpReload     Op = "reload"
 	OpDaemonInfo Op = "daemon_info"
 
+	// OpArmShutdown arms the daemon-wide graceful turn drain that daemon shutdown
+	// then honors before stopping any harness (stump.wtf/harness#871). It is the
+	// daemon-wide form of a lifecycle request's Graceful field, and the only way
+	// `harness daemon stop --graceful` can say so before sending the SIGTERM that
+	// reaches Manager.Close.
+	OpArmShutdown Op = "arm_shutdown"
+
 	// Project compose ops. Governing: ADR-0009 (project-scoped compose),
 	// SPEC-0004 REQ "Project Control Operations" and REQ "Remove".
 	// project_up registers and starts (or reconciles) a project's harnesses
@@ -275,6 +282,13 @@ type ControlReq struct {
 	// IncludeAmbiguous adds sessions more than one harness could have
 	// written, flagged as ambiguous. Off by default: correlation fails closed.
 	IncludeAmbiguous bool `json:"include_ambiguous,omitempty"`
+
+	// Graceful asks stop/restart to wait for the harness's current turn to end
+	// before signaling it, bounded by this duration string ("5m"; "0" means the
+	// harness's configured shutdown timeout). Empty is today's behavior: signal
+	// at once. Governing: SPEC-0012 REQ "Graceful Shutdown" as extended by
+	// stump.wtf/harness#871; it is ignored by every other op.
+	Graceful string `json:"graceful,omitempty"`
 
 	// Run selects one run of a scheduled harness by run id (issue #120). On
 	// logs it scopes the reply to that run: the raw view reads the run's own
