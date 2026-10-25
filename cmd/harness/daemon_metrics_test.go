@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,13 @@ func sample(fams map[string]*dto.MetricFamily, name string, kv ...string) (float
 	return 0, false
 }
 
+// freePort reserves a loopback port and hands back the number, closing the
+// probe listener first. Two concurrent probes can be handed the same number,
+// and the daemon that binds second then loses with EADDRINUSE, which is why
+// a spawned daemon whose /metrics is under test binds 127.0.0.1:0 and reads
+// the real address back with boundAddr (harness#857). Reserving is still the
+// right tool where the port is only named for a refusal, or to prove that
+// nothing answers on it.
 func freePort(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -107,6 +115,66 @@ func freePort(t *testing.T) string {
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
 	_ = ln.Close()
 	return port
+}
+
+// spawnDaemonWithLog is runDaemonBinary with the daemon's log also appended
+// to logPath. exec copies the daemon's stderr into a buffer a test may only
+// read once the process exits, so a wait that polls while the daemon still
+// runs would race that copy; a per-spawn log file is the same record, is
+// readable at any moment, and belongs to this spawn alone: no other test's
+// daemon writes it.
+func spawnDaemonWithLog(t *testing.T, bin, cfgBody, logPath string, extraEnv ...string) (*exec.Cmd, string) {
+	t.Helper()
+	env, _ := isolatedEnv(t)
+	env = append(env, extraEnv...)
+	dir := shortSockDir(t)
+	socket := filepath.Join(dir, "h.sock")
+	cfg := filepath.Join(dir, "harness.toml")
+	if err := os.WriteFile(cfg, []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bin, "daemon", "start", "--socket", socket, "--config", cfg, "--log-file", logPath)
+	cmd.Env = env
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start daemon: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	return cmd, socket
+}
+
+// boundAddr waits for the daemon to log the address it actually bound for
+// its metrics listener, and returns it. Asked for 127.0.0.1:0, the listener
+// took a port the kernel handed this daemon alone; binding a reserved number
+// two probes were each told about is the collision harness#857 saw on main.
+func boundAddr(t *testing.T, logPath, listener string) string {
+	t.Helper()
+	line := regexp.MustCompile(regexp.QuoteMeta(listener) + "\\s+addr=([^ ]+)")
+	deadline := time.Now().Add(daemonStartupCeiling(t))
+	for {
+		raw, err := os.ReadFile(logPath)
+		if err == nil {
+			if m := line.FindSubmatch(raw); m != nil {
+				return string(m[1])
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the daemon never logged %q with a bound address.\ndaemon log:\n%s", listener, logged(logPath))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// logged is the daemon's own log, for failure messages: a startup line that
+// never arrived is the finding, so the log is the evidence.
+func logged(logPath string) string {
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		return fmt.Sprintf("the daemon log is unreadable: %v", err)
+	}
+	return string(raw)
 }
 
 // The daemon's own construction — real Manager, the observer the daemon
@@ -335,16 +403,17 @@ func TestDaemonServesMetricsOnConfiguredListener(t *testing.T) {
 		t.Skip("builds a binary; skipped under -short")
 	}
 	bin := buildHarnessBinary(t)
-	addr := "127.0.0.1:" + freePort(t)
-	cfg := fmt.Sprintf(`[server]
-metrics_listen = %q
+	logPath := filepath.Join(shortSockDir(t), "daemon.log")
+	cfg := `[server]
+metrics_listen = "127.0.0.1:0"
 
 [harness.demo]
 harness = "generic"
 args = ["-c", "sleep 600"]
 enabled = false
-`, addr)
-	_, out, _ := runDaemonBinary(t, bin, cfg)
+`
+	spawnDaemonWithLog(t, bin, cfg, logPath)
+	addr := boundAddr(t, logPath, "metrics listening")
 
 	deadline := time.Now().Add(daemonStartupCeiling(t))
 	for {
@@ -354,7 +423,7 @@ enabled = false
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("metrics listener never came up on %s\n%s", addr, out)
+			t.Fatalf("metrics listener never came up on %s\n%s", addr, logged(logPath))
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -406,9 +475,9 @@ func TestDaemonServesEveryMandatedFamily(t *testing.T) {
 	if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	addr := "127.0.0.1:" + freePort(t)
+	logPath := filepath.Join(shortSockDir(t), "daemon.log")
 	cfg := fmt.Sprintf(`[server]
-metrics_listen = %q
+metrics_listen = "127.0.0.1:0"
 metrics_token_file = %q
 
 [harness.script]
@@ -431,12 +500,13 @@ prompt = "sweep"
 # unroutable port, and it still reports (SPEC-0014 REQ "Trigger Metrics").
 [channel.idle]
 url = "http://127.0.0.1:9/mcp"
-`, addr, tokenFile, work, work)
-	_, out, _ := runDaemonBinary(t, bin, cfg,
+`, tokenFile, work, work)
+	spawnDaemonWithLog(t, bin, cfg, logPath,
 		"HOME="+home,
 		"PATH="+fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"XDG_DATA_HOME=", "CRUSH_GLOBAL_DATA=")
 
+	addr := boundAddr(t, logPath, "metrics listening")
 	url := "http://" + addr + "/metrics"
 	deadline := time.Now().Add(daemonStartupCeiling(t))
 	for {
@@ -454,7 +524,7 @@ url = "http://127.0.0.1:9/mcp"
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("metrics listener never came up on %s\n%s", addr, out)
+			t.Fatalf("metrics listener never came up on %s\n%s", addr, logged(logPath))
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -611,12 +681,12 @@ func TestDaemonCountsBootTransitionsAndHeldIsStopped(t *testing.T) {
 		t.Skip("builds a binary; skipped under -short")
 	}
 	bin := buildHarnessBinary(t)
-	addr := "127.0.0.1:" + freePort(t)
+	logPath := filepath.Join(shortSockDir(t), "daemon.log")
 	// A one-minute window twelve hours away is closed now, whenever now is.
 	open := time.Now().UTC().Add(12 * time.Hour)
 	hours := fmt.Sprintf("TZ=UTC %s-%s", open.Format("15:04"), open.Add(time.Minute).Format("15:04"))
 	cfg := fmt.Sprintf(`[server]
-metrics_listen = %q
+metrics_listen = "127.0.0.1:0"
 
 [harness.eager]
 harness = "generic"
@@ -628,8 +698,9 @@ harness = "generic"
 args = ["-c", "sleep 600"]
 enabled = true
 operating_hours = %q
-`, addr, hours)
-	_, out, _ := runDaemonBinary(t, bin, cfg)
+`, hours)
+	spawnDaemonWithLog(t, bin, cfg, logPath)
+	addr := boundAddr(t, logPath, "metrics listening")
 
 	// The first scrape that answers at all is the one under test: the
 	// listener only binds after Autostart has run.
@@ -643,13 +714,13 @@ operating_hours = %q
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("metrics listener never came up on %s\n%s", addr, out)
+			t.Fatalf("metrics listener never came up on %s\n%s", addr, logged(logPath))
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	for _, to := range []string{"starting", "running"} {
 		if v, ok := sample(fams, "harness_state_transitions_total", "harness", "eager", "to", to); !ok || v < 1 {
-			t.Errorf("eager transitions to %s = %v (present %v) on the first scrape, want >= 1: Autostart's transitions were not counted\n%s", to, v, ok, out)
+			t.Errorf("eager transitions to %s = %v (present %v) on the first scrape, want >= 1: Autostart's transitions were not counted\n%s", to, v, ok, logged(logPath))
 		}
 	}
 	if v, _ := sample(fams, "harness_harness_state", "harness", "eager", "state", "running"); v != 1 {
@@ -663,7 +734,7 @@ operating_hours = %q
 		stopped, _ := sample(fams, "harness_harness_state", "harness", "afterhours", "state", "stopped")
 		failed, okF := sample(fams, "harness_harness_state", "harness", "afterhours", "state", "failed")
 		if !okF {
-			t.Fatalf("afterhours has no state=failed series\n%s", out)
+			t.Fatalf("afterhours has no state=failed series\n%s", logged(logPath))
 		}
 		if failed != 0 {
 			t.Fatalf("held harness reads failed = %v; the gate holding it is not a failure", failed)
@@ -672,7 +743,7 @@ operating_hours = %q
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("held harness never read stopped; state series %v\n%s", fams["harness_harness_state"], out)
+			t.Fatalf("held harness never read stopped; state series %v\n%s", fams["harness_harness_state"], logged(logPath))
 		}
 		time.Sleep(50 * time.Millisecond)
 		fams = scrapeURL(t, "http://"+addr+"/metrics")
