@@ -63,6 +63,7 @@ type verbOpts struct {
 	eventFile  string // trigger --event: an event envelope to replay (SPEC-0014)
 	limit      int    // runs --limit
 	forDur     string // start --for: after-hours lease length (SPEC-0012)
+	graceful   string // stop|restart --graceful: wait out the current turn first, bounded (stump.wtf/harness#871); empty means do not wait
 	ansi       bool   // capture --ansi: the styled ANSI repaint (issue #735)
 	// cmd is the invoking command, for doctor's settings report: only its
 	// flag set knows whether --config or --socket was typed, which the
@@ -174,10 +175,13 @@ func lifecycle(verb string) func(*client.Client, verbOpts) error {
 		// harness gets the same treatment --all does — spinner while the
 		// daemon works, then the SPEC-0003 transition record (verb_render.go).
 		// Pipes and scripts keep the plain one-line contract below.
-		if !o.json && cliui.WriterIsTTY(os.Stdout) {
+		// Pipes and scripts keep the plain one-line contract below. A graceful
+		// stop keeps it too: its wait can run to minutes, and a spinner that says
+		// nothing about the cap would read like a hung daemon.
+		if !o.json && o.graceful == "" && cliui.WriterIsTTY(os.Stdout) {
 			return runLifecycleOneAnimated(c, verb, o.name, o.forDur)
 		}
-		info, err := callLifecycle(c, verb, o.name, o.forDur)
+		info, err := callLifecycle(c, verb, o.name, o.forDur, o.graceful)
 		if err != nil {
 			return err
 		}
@@ -206,7 +210,7 @@ func lifecycleAll(c *client.Client, o verbOpts, verb string) error {
 	// renders through the Bubble Tea lifecycle view — spinner on the harness
 	// being acted on, SPEC-0003 state per completed row, overall progress.
 	// Pipes and scripts keep the plain line-per-harness contract.
-	if !o.json && cliui.WriterIsTTY(os.Stdout) {
+	if o.graceful == "" && !o.json && cliui.WriterIsTTY(os.Stdout) {
 		return runLifecycleAnimated(verb, c, harnessNames(hs))
 	}
 	var (
@@ -214,7 +218,7 @@ func lifecycleAll(c *client.Client, o verbOpts, verb string) error {
 		errs    []string
 	)
 	for _, h := range hs {
-		info, e := callLifecycle(c, verb, h.Name, "")
+		info, e := callLifecycle(c, verb, h.Name, "", o.graceful)
 		if e != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", h.Name, e))
 			continue

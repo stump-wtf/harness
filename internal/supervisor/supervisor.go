@@ -64,6 +64,10 @@ const (
 	// the park clears (holds.go; SPEC-0021 REQ-13).
 	cmdSeedQuotaSkipped
 	cmdSettleQuota
+	// Arm a graceful close for a daemon shutdown drain (Manager.Close): mark the
+	// close in flight and return, leaving the stop to the close step
+	// (stump.wtf/harness#871).
+	cmdArmDrain
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -137,6 +141,12 @@ type command struct {
 	// (SPEC-0021 REQ-19). Nil for a quota hold whose park is not known.
 	park *ParkInfo
 	step *closeStepReq // cmdCloseStep payload
+	// graceful is set on cmdStop and cmdRestart by the --graceful variants: the
+	// close is entered instead of the immediate stop, and the step that ends it
+	// performs this command's own stop (hours.go, stump.wtf/harness#871).
+	graceful *gracefulClose
+	// cmdArmDrain payload: the cap bounding a daemon-shutdown drain.
+	drain *gracefulClose
 	// cmdLogEvent payload: logEvent is loop-owned state (s.evlog), so a
 	// lifecycle line decided outside the loop — an after-hours lease start/end
 	// (Manager.LogLifecycle) — is written on the loop like every other
@@ -325,6 +335,12 @@ type Supervisor struct {
 	// instant the harness went out of hours, which anchors the deadline.
 	closing bool
 	closeAt time.Time
+	// closeCap and closeOrigin qualify a close in flight: closeCap overrides
+	// hours_shutdown_timeout for a close an operator asked for by flag (zero
+	// falls back to the configured timeout), and closeOrigin decides which stop
+	// ends it (hours.go).
+	closeCap    time.Duration
+	closeOrigin closeOrigin
 
 	// suppressPersist temporarily blocks markDirty during a transient start
 	// (issue #159): the state transitions publish snapshots, but those must
@@ -541,6 +557,31 @@ func (s *Supervisor) StopBy(source, peer string) {
 	s.send(command{kind: cmdStop, source: source, peer: peer})
 }
 
+// StopGracefulBy is StopBy that first waits out the harness's current turn,
+// bounded by cap (zero: the harness's hours_shutdown_timeout), then stops it the
+// same way an immediate stop does (stump.wtf/harness#871). It returns as soon as
+// the close is entered; the Manager that asked drives the steps and waits for the
+// harness to be down.
+func (s *Supervisor) StopGracefulBy(source, peer string, cap time.Duration) {
+	s.send(command{kind: cmdStop, source: source, peer: peer,
+		graceful: &gracefulClose{cap: cap, origin: closeOriginStop}})
+}
+
+// RestartGracefulBy is RestartBy that waits out the current turn first, then
+// restarts (stump.wtf/harness#871).
+func (s *Supervisor) RestartGracefulBy(source, peer string, cap time.Duration) {
+	s.send(command{kind: cmdRestart, source: source, peer: peer,
+		graceful: &gracefulClose{cap: cap, origin: closeOriginRestart}})
+}
+
+// ArmDrain marks a daemon-shutdown drain in flight for this harness: the close is
+// stepped by Manager.Close, which shuts the harness down normally if the drain
+// runs past its cap. A no-op when no process is up, so an armed drain costs an
+// idle harness nothing.
+func (s *Supervisor) ArmDrain(cap time.Duration) {
+	s.send(command{kind: cmdArmDrain, drain: &gracefulClose{cap: cap, origin: closeOriginShutdown}})
+}
+
 // Restart clears any failed latch, resets crash-loop state, and begins a fresh
 // start cycle (SPEC-0003 REQ "Backoff Give-Up" manual recovery). Blocks until
 // processed.
@@ -690,19 +731,12 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		// schedule is (#159, #266) — so the suppression gets its own flag,
 		// cleared by the next explicit start or restart.
 		s.stoppedByOperator = true
-		s.holds = 0       // stopped by the operator now, for no hold reason (SPEC-0012, SPEC-0021 REQ-15)
-		s.closing = false // a stop never waits on turn state (SPEC-0012)
-		s.cancelRestartTimer()
-		s.dropQueued(OutcomeCancelled, ReasonOperator)
-		if s.hasProcess() {
-			s.gracefulStop()
-			s.finishRunWith(OutcomeCancelled, &s.lastExitCode, ReasonOperator)
-		} else if s.state != core.StateFailed {
-			s.transition(core.StateStopped)
-		} else {
-			// Failed with no process: honor intent, keep the failed marker.
-			s.publishChangeUnchanged()
+		if c.graceful != nil && s.beginGraceful(c.graceful) {
+			s.logEvent("graceful stop waiting for turn", "cap", gracefulCap(s.closeCap))
+			s.publishSnapshot()
+			break // finishStop does the rest once the close ends
 		}
+		s.stopNow()
 	case cmdRestart:
 		s.setIntent(true, c.source, c.peer)
 		s.stoppedByOperator = false // a restart is an explicit start
@@ -714,18 +748,12 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		// ever releases (SPEC-0012 REQ "Gate Enforcement": only a held
 		// harness is started when hours open).
 		s.closing = false
-		s.cancelRestartTimer()
-		s.clearFailLatch()
-		s.resetCrashState()
-		var d RunDecision
-		if s.hasProcess() {
-			// Admitted before the stop (admit.go): a refused restart keeps
-			// the process it would have replaced.
-			d = s.restartRunning()
-		} else {
-			s.startTrigger = TriggerManual
-			d = s.startProcess(RunRequest{Trigger: TriggerManual})
+		if c.graceful != nil && s.beginGraceful(c.graceful) {
+			s.logEvent("graceful restart waiting for turn", "cap", gracefulCap(s.closeCap))
+			s.publishSnapshot()
+			break // restartNow does the rest once the close ends
 		}
+		d := s.restartNow()
 		if c.decided != nil {
 			*c.decided = d
 		}
@@ -809,6 +837,11 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		// ignores it, a guest with one re-reads a size that is already correct.
 		if s.hasProcess() {
 			s.proc.signalGroup(c.sig)
+		}
+	case cmdArmDrain:
+		if c.drain != nil && s.beginGraceful(c.drain) {
+			s.logEvent("daemon shutdown drain waiting for turn", "cap", gracefulCap(s.closeCap))
+			s.publishSnapshot()
 		}
 	case cmdShutdown:
 		// Shutdown must NOT touch `enabled`. The daemon cannot tell why it is
@@ -1353,6 +1386,50 @@ func (s *Supervisor) handleSurvival(gen uint64) {
 }
 
 // ---- graceful stop -------------------------------------------------------
+
+// stopNow carries out the stop half of cmdStop: intent is already set, so this
+// is what a stop does once anything it was waiting for is finished (a graceful
+// close, hours.go). It is also what an immediate stop does at once.
+func (s *Supervisor) stopNow() {
+	s.holds = 0       // stopped by the operator now, for no hold reason (SPEC-0012, SPEC-0021 REQ-15)
+	s.closing = false // the close, if there was one, is over
+	s.cancelRestartTimer()
+	s.dropQueued(OutcomeCancelled, ReasonOperator)
+	if s.hasProcess() {
+		s.gracefulStop()
+		s.finishRunWith(OutcomeCancelled, &s.lastExitCode, ReasonOperator)
+	} else if s.state != core.StateFailed {
+		s.transition(core.StateStopped)
+	} else {
+		// Failed with no process: honor intent, keep the failed marker.
+		s.publishChangeUnchanged()
+	}
+}
+
+// restartNow carries out the stop-and-come-back-up half of cmdRestart, once
+// anything the restart was waiting for is finished.
+func (s *Supervisor) restartNow() RunDecision {
+	s.cancelRestartTimer()
+	s.clearFailLatch()
+	s.resetCrashState()
+	if s.hasProcess() {
+		// Admitted before the stop (admit.go): a refused restart keeps
+		// the process it would have replaced.
+		return s.restartRunning()
+	}
+	s.startTrigger = TriggerManual
+	return s.startProcess(RunRequest{Trigger: TriggerManual})
+}
+
+// gracefulCap renders a graceful close's cap for a durable-log line: the
+// configured timeout stands in when the caller gave none, but which one that is
+// belongs to the harness, so the line says so rather than guessing.
+func gracefulCap(cap time.Duration) string {
+	if cap <= 0 {
+		return "configured"
+	}
+	return cap.String()
+}
 
 // gracefulStop runs the SPEC-0003 REQ "Graceful Stop" sequence: SIGTERM → grace
 // → SIGKILL if needed → PTY teardown → stopped. enabled is left as the caller

@@ -33,6 +33,12 @@ package supervisor
 //
 // @joestump 10/04/2026 - Hold and release moved to holds.go, generalized from
 // a held flag to a set of reasons (stump.wtf/harness#468).
+//
+// @joestump-agent 10/25/2026 - The close is now entered from three more paths
+// than the hours tick: `harness stop --graceful`, `harness restart --graceful`
+// and an armed daemon-shutdown drain (stump.wtf/harness#871). What is
+// hours-shaped here stays here; what the close looks like when it ends depends
+// on who asked for it, which closeOrigin records.
 
 import (
 	"time"
@@ -49,6 +55,29 @@ const (
 	closeSettle = 10 * time.Second
 	closeQuiet  = 2 * time.Minute
 )
+
+// closeOrigin records which path entered a graceful close, and so what ending
+// it when it completes: the hours gate's close leaves the harness held with its
+// intent untouched, while an operator's graceful stop clears intent, a graceful
+// restart brings the harness straight back up, and a daemon drain ends the run
+// as interrupted. Zero is the hours gate, which is what a harness has always
+// been able to enter, so a close begun by Hold needs no new plumbing.
+type closeOrigin uint8
+
+const (
+	closeOriginHours closeOrigin = iota
+	closeOriginStop
+	closeOriginRestart
+	closeOriginShutdown
+)
+
+// gracefulClose is the request to wait out the current turn before stopping:
+// cap bounds the wait (zero means the harness's own hours_shutdown_timeout,
+// which falls back to core.DefaultHoursShutdownTimeout), origin says who asked.
+type gracefulClose struct {
+	cap    time.Duration
+	origin closeOrigin
+}
 
 // CloseStep advances a graceful close by one observation: the manager samples
 // the turn-state watch and hands the answer to the loop, which stops the
@@ -105,6 +134,23 @@ func (s *Supervisor) hoursExpr() hours.Expr {
 // restart, no restart-count increment, `enabled` untouched. The durable log
 // records which condition ended the close (SPEC-0012 REQ "Graceful
 // Shutdown").
+// beginGraceful enters the close state machine from a path other than the hours
+// gate: the deadline is anchored to now rather than to a window that closed,
+// and the close is stepped by the Manager that started it rather than by the
+// gate pass. It reports false, meaning the caller should stop right now as it
+// always did, when there is no live process to wait for, since then there is no
+// turn that could still be running.
+func (s *Supervisor) beginGraceful(g *gracefulClose) bool {
+	if g == nil || !s.hasProcess() {
+		return false
+	}
+	s.closeAt = time.Now()
+	s.closeCap = g.cap
+	s.closeOrigin = g.origin
+	s.closing = true
+	return true
+}
+
 func (s *Supervisor) closeStep(req *closeStepReq) {
 	if !s.closing || req == nil {
 		return // the close was cancelled (release, start, stop) before this step
@@ -114,7 +160,10 @@ func (s *Supervisor) closeStep(req *closeStepReq) {
 		now = time.Now()
 	}
 	mode := s.shutdownMode()
-	timeout := s.shutdownTimeout()
+	timeout := s.closeCap
+	if timeout <= 0 {
+		timeout = s.shutdownTimeout()
+	}
 	if timeout <= 0 {
 		timeout = core.DefaultHoursShutdownTimeout
 	}
@@ -122,9 +171,10 @@ func (s *Supervisor) closeStep(req *closeStepReq) {
 
 	stop, reason := false, ""
 	switch {
-	case mode != core.HoursShutdownGraceful:
+	case s.closeOrigin == closeOriginHours && mode != core.HoursShutdownGraceful:
 		// A reload to immediate mid-close applies on the next tick
-		// (SPEC-0012 REQ "Shutdown Mode").
+		// (SPEC-0012 REQ "Shutdown Mode"). A close the operator asked for by
+		// flag is graceful whatever hours_shutdown says: the flag is the ask.
 		stop, reason = true, "hours_shutdown=immediate"
 	case !req.ok:
 		// Nothing attributable to the run — a generic adapter, no workdir,
@@ -143,9 +193,34 @@ func (s *Supervisor) closeStep(req *closeStepReq) {
 	}
 	s.closing = false
 	s.logEvent("close ended", "reason", reason, "deadline", deadline.Format(time.RFC3339))
-	s.gracefulStop()
-	s.finishRunWith(OutcomeCancelled, &s.lastExitCode, holdRunReason(s.holds))
+	s.finishClose()
 	s.publishSnapshot()
+}
+
+// finishClose ends a close whose conditions were met, the way the path that
+// began it would have stopped the harness: identical to what cmdStop, cmdRestart
+// and cmdShutdown do with no close in flight, so the only thing waiting for the
+// turn changed is WHEN the stop happens.
+func (s *Supervisor) finishClose() {
+	origin := s.closeOrigin
+	s.closeOrigin = closeOriginHours
+	s.closeCap = 0
+	switch origin {
+	case closeOriginStop:
+		s.stopNow()
+	case closeOriginRestart:
+		s.restartNow()
+	case closeOriginShutdown:
+		s.cancelRestartTimer()
+		s.dropQueued(OutcomeInterrupted, ReasonShutdown)
+		if s.hasProcess() {
+			s.gracefulStop()
+			s.finishRunWith(OutcomeInterrupted, &s.lastExitCode, ReasonShutdown)
+		}
+	default:
+		s.gracefulStop()
+		s.finishRunWith(OutcomeCancelled, &s.lastExitCode, holdRunReason(s.holds))
+	}
 }
 
 // nextHoursTransition renders the next operating-hours flip for a durable-log

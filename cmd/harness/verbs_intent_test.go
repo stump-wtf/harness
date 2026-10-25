@@ -82,7 +82,7 @@ func TestDescribeShowsLastIntentChange(t *testing.T) {
 		t.Fatalf("fresh describe shows a last intent change: %+v", h)
 	}
 
-	if _, err := callLifecycle(c, "start", "demo", ""); err != nil {
+	if _, err := callLifecycle(c, "start", "demo", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	// Scaled by testwait.Budget, not the shared 5s: this test boots a whole
@@ -108,7 +108,7 @@ func TestDescribeShowsLastIntentChange(t *testing.T) {
 		t.Fatalf("socket verb peer = %q, want one iff the platform reports peers (%v)", h.LastIntentPeer, daemon.ReportsPeerCredentials)
 	}
 
-	if _, err := callLifecycle(c, "stop", "demo", ""); err != nil {
+	if _, err := callLifecycle(c, "stop", "demo", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitIntentState(t, c, "demo", "stopped", testwait.Budget(t, 30*time.Second))

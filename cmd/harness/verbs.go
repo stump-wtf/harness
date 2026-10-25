@@ -617,7 +617,13 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 // `harness daemon --detach`: the pair gives you stop-daemon → daemon --detach
 // as a clean restart cycle. The daemon's own signal handler does the graceful
 // shutdown (close socket, stop harnesses, flush state).
-func cmdStopDaemon(o verbOpts) error {
+//
+// drain, when set, first asks that daemon to let every harness finish the turn
+// it is in, bounded by that duration, before its shutdown signals anything
+// (stump.wtf/harness#871). It is a separate request rather than a signal
+// argument because SIGTERM carries no arguments: a `systemctl stop`, a plain
+// SIGTERM and an unflagged `daemon stop` all keep the old, immediate timing.
+func cmdStopDaemon(o verbOpts, drain string) error {
 	c, err := client.Dial(o.socket, buildinfo.Version, nil)
 	if err != nil {
 		return err
@@ -629,6 +635,13 @@ func cmdStopDaemon(o verbOpts) error {
 	}
 	if di.PID <= 0 {
 		return fmt.Errorf("daemon reported PID %d — cannot stop", di.PID)
+	}
+	if drain != "" {
+		if err := c.ArmShutdown(drain); err != nil {
+			// The daemon stays untouched: an operator who asked for a drain and
+			// got an error should decide, not get a silent immediate stop.
+			return fmt.Errorf("arm shutdown drain on daemon pid %d: %w", di.PID, err)
+		}
 	}
 	p, err := os.FindProcess(di.PID)
 	if err != nil {

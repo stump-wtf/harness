@@ -127,6 +127,28 @@ instead of firing. A harness with trigger sources reads `disarmed` the same
 way while its schedule is paused; event sources still fire, and the SCHEDULE
 column keeps listing them.
 
+Every stop path can wait for the turn in progress instead of cutting it short,
+with `--graceful`:
+
+```bash
+harness stop demo --graceful         # wait for the turn, capped by hours_shutdown_timeout
+harness stop demo --graceful=2m      # ... and never longer than two minutes
+harness restart demo --graceful=5m   # drain the turn, then start it again
+harness daemon stop --graceful       # every harness drains before the daemon exits
+```
+
+This is the operating-hours graceful close (ADR-0019) asked for by hand rather than
+by a window closing, so it stops the harness at the first of: the agent's turn
+ending and settling, its output going quiet for two minutes where the adapter has
+no turn markers to settle on, or the cap. Without the flag nothing waits, and the
+stop is the `SIGTERM` → `stop_grace` → `SIGKILL` sequence it has always been; a
+plain `SIGTERM` to the daemon, including `systemctl stop`, keeps that timing too,
+since a signal carries no arguments. A harness whose agent cannot be attributed to
+a session (a `generic` command, an ambiguous workdir) degrades the way the hours
+gate already degrades: it stops at once, and its durable log says graceful was
+unavailable. The command blocks for as long as the wait takes, so prefer an
+explicit cap in scripts.
+
 A harness fired by trigger sources (`triggers`, see
 [Trigger sources](#trigger-sources)) is a one-shot too, and reads the same
 way: `↯ armed` between firings, never `stopped` or `(disabled)`. Its SCHEDULE
