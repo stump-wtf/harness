@@ -32,7 +32,11 @@
 //     plain text.
 //   - anything unmodeled (unknown event kinds, non-JSON terminal output,
 //     escape sequences) passes through byte-for-byte, so the transform can
-//     never lose or corrupt output it does not understand.
+//     never lose or corrupt output it does not understand;
+//   - only a line that starts with '{' can be an event, so only such a line
+//     is ever buffered. Everything else — a resident session's full-screen
+//     repaints, their blank rows, their cursor moves — is forwarded in the
+//     chunk it arrived in (#951).
 //
 // @joestump-agent 09/26/2026 - Implemented the stream-json peek formatter
 // for the claude-code adapter, plus the TUI wiring and tests.
@@ -82,17 +86,32 @@ func (a *ClaudeCode) PeekFormatter() PeekFormatter {
 	return &streamJSONRenderer{}
 }
 
-// streamJSONLineCap bounds the partial-line buffer. A guest that writes
+// streamJSONLineCap bounds the event-line buffer. A guest that writes
 // endlessly without ever emitting a newline (a full-screen TUI redraw, or
-// binary traffic) must not pin memory or wedge the renderer; past the cap
-// the buffered bytes pass through untouched and the line buffer restarts.
+// binary traffic) must not pin memory or wedge the renderer; past the cap the
+// buffered bytes pass through untouched and the rest of that line follows them
+// as it arrives.
 const streamJSONLineCap = 64 << 10
 
-// streamJSONRenderer is the claude-code PeekFormatter. It buffers partial
-// lines across chunks, renders the modeled Claude Code event kinds, and
-// passes everything else through verbatim.
+// streamJSONRenderer is the claude-code PeekFormatter. It buffers only the
+// lines that could be Claude Code events, renders the modeled event kinds, and
+// passes everything else through verbatim as it arrives.
 type streamJSONRenderer struct {
+	// buf holds a line that started with '{' and is still waiting for the
+	// newline that completes it. It is the only buffer: a line that cannot be
+	// an event is never held.
 	buf []byte
+
+	// raw marks the line in flight as the guest's own terminal output, to be
+	// forwarded as it arrives instead of waiting for a newline. A line earns
+	// it by not starting with '{', by showing an ESC before its newline (raw
+	// JSON cannot contain one), or by running past the line cap.
+	raw bool
+
+	// crPending records that the bytes just emitted ended with a CR, so a
+	// CR LF pair split across two reads is not widened into CRLF plus a
+	// stray CR.
+	crPending bool
 
 	// Heartbeat tally. A heartbeat paints a tally line once and then
 	// rewrites it in place on every ping (the cursor stays at the line's
@@ -142,30 +161,92 @@ type blockInput struct {
 	Description string `json:"description"`
 }
 
-// FormatPTY renders a chunk of the guest's PTY output.
+// FormatPTY renders a chunk of the guest's PTY output. Only a line that could
+// be a stream-json event is ever held: everything else leaves in the chunk it
+// arrived in, because a full-screen app repaints with cursor moves that count
+// rows, and bytes withheld until some later newline make the screen the
+// emulator draws disagree with the frame the app believes it painted (#951).
 func (r *streamJSONRenderer) FormatPTY(chunk []byte) []byte {
 	var out []byte
-	r.buf = append(r.buf, chunk...)
-	for {
-		i := bytes.IndexByte(r.buf, '\n')
-		if i < 0 {
-			break
+	for len(chunk) > 0 {
+		switch {
+		case r.raw:
+			out, chunk = r.forwardRaw(out, chunk)
+		case len(r.buf) > 0:
+			out, chunk = r.finishEventLine(out, chunk)
+		default:
+			out, chunk = r.beginLine(out, chunk)
 		}
-		line := r.buf[:i]
-		r.buf = r.buf[i+1:]
-		out = append(out, r.renderLine(line)...)
 	}
-	if len(r.buf) > streamJSONLineCap {
-		// The tally line, if one is live, must not bleed into the
-		// passthrough bytes: close it first.
-		out = append(out, r.closeTally()...)
-		out = append(out, r.buf...)
+	// The PTY's ONLCR ends every guest line with CRLF and the renderers below
+	// emit bare LFs, so put the CR back before the bytes reach the emulator,
+	// where a bare LF means "down one row" only (#877). A CR that led this
+	// chunk was already emitted as the last byte of the previous one.
+	out = onlcr(out)
+	if r.crPending && bytes.HasPrefix(out, []byte("\r\n")) {
+		out = out[1:]
+	}
+	if n := len(out); n > 0 {
+		r.crPending = out[n-1] == '\r'
+	}
+	return out
+}
+
+// beginLine opens a new guest line: a brace starts a candidate event, anything
+// else is terminal output the preview mirrors.
+func (r *streamJSONRenderer) beginLine(out []byte, chunk []byte) ([]byte, []byte) {
+	if chunk[0] == '{' {
+		r.buf = append(r.buf, '{')
+		return out, chunk[1:]
+	}
+	r.raw = true
+	return r.forwardRaw(out, chunk)
+}
+
+// finishEventLine continues a line that started with '{'. Its newline completes
+// an event; an ESC before that newline says the line is not JSON after all, so
+// the buffered bytes and the rest of the line go out as they came.
+func (r *streamJSONRenderer) finishEventLine(out []byte, chunk []byte) ([]byte, []byte) {
+	nl := bytes.IndexByte(chunk, '\n')
+	esc := bytes.IndexByte(chunk, 0x1b)
+	if nl >= 0 && (esc < 0 || nl < esc) {
+		r.buf = append(r.buf, chunk[:nl]...)
+		out = append(out, r.renderEvent(r.buf)...)
 		r.buf = r.buf[:0]
+		return out, chunk[nl+1:]
 	}
-	// The PTY's ONLCR ended every guest line with CRLF and renderLine
-	// consumed that CR, so put it back before the bytes reach the
-	// emulator, where a bare LF means "down one row" only (#877).
-	return onlcr(out)
+	if esc >= 0 {
+		r.buf = append(r.buf, chunk[:esc]...)
+		return r.release(out, chunk[esc:]), nil
+	}
+	r.buf = append(r.buf, chunk...)
+	if len(r.buf) > streamJSONLineCap {
+		return r.release(out, nil), nil
+	}
+	return out, nil
+}
+
+// forwardRaw copies terminal output straight through: to and including the
+// newline that ends the line, or all of it while the line has no end. Nothing
+// is reordered and nothing is held, which is what keeps a full-screen app's
+// repaints landing where the app meant them.
+func (r *streamJSONRenderer) forwardRaw(out []byte, chunk []byte) ([]byte, []byte) {
+	out = append(out, r.closeTally()...)
+	if nl := bytes.IndexByte(chunk, '\n'); nl >= 0 {
+		r.raw = false
+		return append(out, chunk[:nl+1]...), chunk[nl+1:]
+	}
+	return append(out, chunk...), nil
+}
+
+// release gives up on the line it has been buffering: the tally line must not
+// bleed into it, and the rest of the same line is terminal output too.
+func (r *streamJSONRenderer) release(out []byte, rest []byte) []byte {
+	out = append(out, r.closeTally()...)
+	out = append(out, r.buf...)
+	r.buf = r.buf[:0]
+	r.raw = true
+	return append(out, rest...)
 }
 
 // onlcr translates every bare \n into \r\n, leaving existing \r\n pairs
@@ -193,18 +274,10 @@ func onlcr(p []byte) []byte {
 	return out
 }
 
-// renderLine renders one complete PTY line. The trailing \r of a CRLF pair
-// is stripped before anything looks at the content.
-func (r *streamJSONRenderer) renderLine(line []byte) []byte {
+// renderEvent renders one complete line that started with '{'. The trailing \r
+// of a CRLF pair is stripped before anything looks at the content.
+func (r *streamJSONRenderer) renderEvent(line []byte) []byte {
 	line = bytes.TrimRight(line, "\r")
-	if len(bytes.TrimSpace(line)) == 0 {
-		return nil
-	}
-	if line[0] != '{' {
-		// Terminal escape output, a shell error, anything that is not
-		// JSON: the preview is a faithful mirror for it.
-		return r.passthrough(line)
-	}
 	var ev streamEvent
 	if err := json.Unmarshal(line, &ev); err != nil {
 		// Looks like JSON but is not parseable: passthrough keeps the
