@@ -18,7 +18,9 @@ import (
 	"github.com/stump-wtf/harness/internal/protocol"
 )
 
-// waitForFrames polls until the collector holds a frame containing sub.
+// waitForFrames polls until the collector holds a frame containing sub. A
+// snapshot counts, which is what a "the client saw this byte" wait wants; a
+// wait about the replay must use waitForReplay instead.
 func waitForFrames(t *testing.T, c *collector, sub string) [][]byte {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -35,11 +37,42 @@ func waitForFrames(t *testing.T, c *collector, sub string) [][]byte {
 	return nil
 }
 
+// waitForReplay polls until the replay — every frame after the screen
+// snapshot — holds sub, then returns all frames. It deliberately avoids the
+// two things a plain "some frame contains sub" wait checks:
+//
+// The snapshot is not part of the replay. The live writer races Attach, and
+// when it wins, the newest live line is already on the screen the snapshot
+// renders, so a wait over every frame is satisfied by frame 0 alone, while the
+// pump has delivered no replay byte yet. That is #984: the caller then joins
+// frames[1:], sees zero bytes, and reports an empty replay.
+//
+// Frames are storage chunks, not messages, so the bytes sought can straddle a
+// frame boundary: the search runs over the replay joined, not one frame at a
+// time.
+func waitForReplay(t *testing.T, c *collector, sub string) [][]byte {
+	t.Helper()
+	needle := []byte(sub)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		frames := c.all()
+		if len(frames) > 1 && bytes.Contains(bytes.Join(frames[1:], nil), needle) {
+			return frames
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("replay never contained %q within timeout", sub)
+	return nil
+}
+
 // TestAttachChunkedTailOrdering attaches while another goroutine is writing.
 // Everything after the snapshot must be one contiguous, line-aligned run of the
 // stream the writer produced: tail frames first, live frames after, nothing
 // missing, repeated or reordered between them. Runs under -race, which also
-// checks that sending views of the ring's storage never races the writer.
+// checks that sending views of the ring's storage never races the writer. The
+// writer may also finish before Attach gets the lock; then the tail carries
+// the live bytes and no live frame follows. Either way the replay must be one
+// contiguous suffix of the stream, which is what is asserted.
 func TestAttachChunkedTailOrdering(t *testing.T) {
 	lim := RingLimits{Bytes: 64 << 10, chunkSize: 1 << 10}
 	m := newMuxLimits("h", lim, nil, nil, nil)
@@ -78,7 +111,7 @@ func TestAttachChunkedTailOrdering(t *testing.T) {
 	defer m.Detach(s)
 	<-done
 
-	frames := waitForFrames(t, c, fmt.Sprintf("live %05d", live-1))
+	frames := waitForReplay(t, c, fmt.Sprintf("live %05d", live-1))
 	if !bytes.HasPrefix(frames[0], snapshotPrefix) {
 		t.Fatalf("first frame is not the snapshot: %q", frames[0][:min(len(frames[0]), 40)])
 	}
