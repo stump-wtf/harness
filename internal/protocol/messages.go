@@ -151,7 +151,14 @@ const (
 	// hours inside one tool call. Additive only: an older daemon omits both,
 	// and an older client keeps reading `state: running` as health, which is
 	// what it reads today.
-	ProtoMinor = 28
+	// ProtoMinor 29 added OpArmShutdown and ControlReq.Graceful
+	// (stump.wtf/harness#871): `harness stop|restart --graceful` and the
+	// daemon-wide shutdown drain armed by `harness daemon stop --graceful`.
+	// Additive only: an older daemon ignores the Graceful field and answers
+	// arm_shutdown with an unknown-op error, which the CLI reports instead of
+	// silently stopping; an older client sends neither, and keeps the
+	// immediate lifecycle timing it has always had.
+	ProtoMinor = 29
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
