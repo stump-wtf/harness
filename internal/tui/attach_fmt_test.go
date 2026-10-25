@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/vt"
 )
 
 // attachModelWithAdapter is attachedFake with the first harness's adapter
@@ -115,5 +116,68 @@ func TestAttachRawToggleIsANoOpWithoutAFormatter(t *testing.T) {
 	}
 	if got := ansi.Strip(m.viewStatusBar()); strings.Contains(got, "RAW") {
 		t.Errorf("status bar badges a raw mode that does not exist:\n%s", got)
+	}
+}
+
+// inkTrustDialog paints Claude Code's folder-trust dialog the way a resident
+// Ink app does — eight rows, two of them blank — and ends with the
+// cursor-parking tail that has no newline after it. inkSelectionMoved is the
+// repaint after a Down keypress: Ink counts rows, blank ones included, to walk
+// back up to the options and rewrite them with the marker one row lower (#951).
+func inkTrustDialog(markerRow int) string {
+	paint := func(n int, text string) string {
+		mark := " "
+		if n == markerRow {
+			mark = "❯"
+		}
+		return mark + text + "\r\n"
+	}
+	var b strings.Builder
+	b.WriteString("\x1b[?2026h\x1b[H")
+	b.WriteString(paint(0, " Quick safety check: Is this a project you created or"))
+	b.WriteString(paint(1, " well-known open source project, or work from your team"))
+	b.WriteString("\r\n")
+	b.WriteString(paint(3, " Yes, I trust this folder"))
+	b.WriteString(paint(4, " No, exit"))
+	b.WriteString("\r\n")
+	b.WriteString(paint(6, " Claude Code will be able to read, edit, and execute files here."))
+	b.WriteString(paint(7, " Security guide"))
+	b.WriteString("\x1b[?2026l\x1b[1C\x1b[3A")
+	return b.String()
+}
+
+const inkSelectionMoved = "\x1b[?2026h\x1b[3A" +
+	"\r\n" +
+	"   Yes, I trust this folder\r\n" +
+	" ❯ No, exit\r\n" +
+	"\x1b[?2026l\x1b[1C\x1b[1A"
+
+// TestAttachInteractiveClaudeRendersLikeTheMirror is the reported bug as an
+// assertion: attaching to a resident claude-code session and watching its
+// repaints must leave the same screen `harness capture` shows, which is the
+// same bytes given to the emulator unformed. If the readable view reshapes
+// Ink's frames — dropping the blank rows Ink's relative moves count, or
+// withholding its cursor-parking tail — the redraw lands on the wrong rows and
+// the options paint over each other.
+func TestAttachInteractiveClaudeRendersLikeTheMirror(t *testing.T) {
+	m, _ := attachModelWithAdapter(t, "claude-code")
+	drain(m.attachTo(m.harnesses[0], 0))
+	if m.att.fmt == nil {
+		t.Fatal("attaching to a claude-code harness opened without a formatter")
+	}
+
+	frame, repaint := inkTrustDialog(3), inkSelectionMoved
+	m.Update(attachDataMsg{sessionID: m.att.sessionID, data: []byte(frame)})
+	m.Update(attachDataMsg{sessionID: m.att.sessionID, data: []byte(repaint)})
+
+	mirror := vt.NewEmulator(m.att.view.cols, m.att.view.rows)
+	mirror.Write([]byte(frame + repaint))
+
+	for y := 0; y < m.att.view.rows; y++ {
+		got := rowText(m.att.view.term, y, m.att.view.cols)
+		want := rowText(mirror, y, m.att.view.cols)
+		if got != want {
+			t.Fatalf("row %d of the attached view is not what the daemon's emulator shows:\n attach: %q\n mirror: %q", y, got, want)
+		}
 	}
 }
