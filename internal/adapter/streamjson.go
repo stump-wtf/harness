@@ -36,10 +36,20 @@
 //   - only a line that starts with '{' can be an event, so only such a line
 //     is ever buffered. Everything else — a resident session's full-screen
 //     repaints, their blank rows, their cursor moves — is forwarded in the
-//     chunk it arrived in (#951).
+//     chunk it arrived in (#951);
+//   - the one seam where the transform is not strictly byte-identical: a guest
+//     CRLF that follows a rendered event line loses its CR, because the event's
+//     LF already ended the previous output with the CR the emulator needed
+//     (#877). Visually equivalent — the lost CR is immediately followed by its
+//     own LF — but an assertion of byte identity across an event→raw seam
+//     fails by design (ADR-0052);
 //
 // @joestump-agent 09/26/2026 - Implemented the stream-json peek formatter
 // for the claude-code adapter, plus the TUI wiring and tests.
+//
+// @joestump-agent 10/25/2026 - Documented the event→raw seam exception to
+// byte-identity in the guard comment, the rendering rules, and ADR-0052,
+// per the #951 review.
 package adapter
 
 import (
@@ -182,6 +192,13 @@ func (r *streamJSONRenderer) FormatPTY(chunk []byte) []byte {
 	// emit bare LFs, so put the CR back before the bytes reach the emulator,
 	// where a bare LF means "down one row" only (#877). A CR that led this
 	// chunk was already emitted as the last byte of the previous one.
+	//
+	// That strip is also the one place the transform is not byte-identical:
+	// when a chunk opens on a guest CRLF right after a rendered event line,
+	// the guest's CR is dropped because the previous output already ended
+	// with the CR the emulator needed. Visually equivalent — the lost CR is
+	// immediately followed by its own LF — but an assertion of byte identity
+	// across an event→raw seam fails by design (ADR-0052).
 	out = onlcr(out)
 	if r.crPending && bytes.HasPrefix(out, []byte("\r\n")) {
 		out = out[1:]

@@ -56,6 +56,11 @@ default; interpretation is the exception, bounded to bytes the adapter can name.
 - One behavior change for one-shots: a blank line in stream-json output is
   forwarded instead of dropped. `claude -p` does not emit one, so no run is
   expected to notice.
+- One seam is not strictly byte-identical: a guest CRLF that follows a rendered
+  event line loses its CR, because the rendered line's LF already ended the
+  previous output with the CR the emulator needed (#877). The lost CR is
+  immediately followed by its own LF, so the screen is the same — but a future
+  assertion of byte identity across an event→raw seam fails by design.
 - Any future formatter (a codex or crush readable preview, if one is added)
   inherits this rule: pass through anything it cannot name.
 
