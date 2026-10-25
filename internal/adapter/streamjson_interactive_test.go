@@ -169,3 +169,28 @@ func TestStreamJSONStreamOneShotStillRenders(t *testing.T) {
 		t.Errorf("one-shot stream-json rendering changed:\n got %q\nwant %q", got, want)
 	}
 }
+
+// An escape that releases a buffered line releases the rest of that line, not
+// the rest of the chunk: once the released line's newline has passed, a
+// well-formed event in the same chunk renders, and the next chunk is not still
+// raw. Both edges depend on where the kernel split the read, which is exactly
+// what byte-faithfulness may not do.
+func TestStreamJSONEscapeReleaseDoesNotSwallowFollowingLines(t *testing.T) {
+	event := `{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.01}`
+	rendered := "✓ result · success · 1 turns · 1s · $0.01\r\n"
+
+	r := &streamJSONRenderer{}
+	got := string(r.FormatPTY([]byte("{not json \x1b[31mred\r\n" + event + "\r\n")))
+	want := "{not json \x1b[31mred\r\n" + rendered
+	if got != want {
+		t.Errorf("lines after an ESC release were mirrored instead of rendered:\n got %q\nwant %q", got, want)
+	}
+
+	r = &streamJSONRenderer{}
+	got = string(r.FormatPTY([]byte("{not json \x1b[31mred\r\nnext line\r\n"))) +
+		string(r.FormatPTY([]byte(event+"\r\n")))
+	want = "{not json \x1b[31mred\r\nnext line\r\n" + rendered
+	if got != want {
+		t.Errorf("the renderer was still raw after the released line ended:\n got %q\nwant %q", got, want)
+	}
+}

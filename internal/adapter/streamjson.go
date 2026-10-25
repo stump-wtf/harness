@@ -217,7 +217,12 @@ func (r *streamJSONRenderer) finishEventLine(out []byte, chunk []byte) ([]byte, 
 	}
 	if esc >= 0 {
 		r.buf = append(r.buf, chunk[:esc]...)
-		return r.release(out, chunk[esc:]), nil
+		// Release only the bytes already buffered and let the loop take the
+		// rest through forwardRaw: the ADR releases the rest of that line, and
+		// forwardRaw is what clears raw at its newline, so a well-formed event
+		// later in the same chunk still renders instead of being mirrored and
+		// the next chunk does not open still raw (#992 review).
+		return r.release(out, nil), chunk[esc:]
 	}
 	r.buf = append(r.buf, chunk...)
 	if len(r.buf) > streamJSONLineCap {
