@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 
+	"github.com/stump-wtf/harness/internal/mousectl"
 	"github.com/stump-wtf/harness/internal/protocol"
 )
 
@@ -78,6 +79,13 @@ type Mux struct {
 	// Guarded by mu: written from the EnableMode/DisableMode callbacks, which
 	// fire under term.Write in Mux.Write, and read in Input.
 	bracketedPaste bool
+	// mouse shadows the guest's mouse-reporting DEC modes for the same reason
+	// bracketedPaste does: a client attaches to a screen snapshot, so a guest
+	// that enabled the mouse before the attach would otherwise stay invisible to
+	// it, and the client would keep the wheel for its own scrollback while the
+	// guest is waiting for events. Guarded by mu; serialized into every
+	// snapshot. Governing: ADR-0055.
+	mouse mousectl.Shadow
 
 	// sizeMu guards the authoritative viewport, and only that. It is
 	// deliberately not mu: the supervisor's actor loop reads the size (through
@@ -138,12 +146,16 @@ func newMuxLimits(name string, lim RingLimits, onResize func(cols, rows int), on
 			EnableMode: func(mode ansi.Mode) {
 				if mode == ansi.ModeBracketedPaste {
 					m.bracketedPaste = true
+					return
 				}
+				m.mouse.Note(mode, true)
 			},
 			DisableMode: func(mode ansi.Mode) {
 				if mode == ansi.ModeBracketedPaste {
 					m.bracketedPaste = false
+					return
 				}
+				m.mouse.Note(mode, false)
 			},
 		})
 	}
@@ -350,7 +362,7 @@ func (m *Mux) Attach(id uint32, mode protocol.AttachMode, cols, rows int, write 
 		createdAt: time.Now(),
 	}
 	m.mu.Lock()
-	s.enqueueLocked(renderScreen(m.term)) // 1. screen snapshot
+	s.enqueueLocked(m.snapshotLocked()) // 1. screen snapshot + the modes it cannot show
 	for _, f := range m.ring.tailFrames() {
 		s.enqueueLocked(f) // 2. scrollback tail, one storage chunk per frame
 	}
@@ -450,8 +462,22 @@ func (m *Mux) setSize(cols, rows int) {
 	m.sizeMu.Unlock()
 }
 
-// renderSnapshotLocked renders the current screen. Caller holds mu.
-func (m *Mux) renderSnapshotLocked() []byte { return renderScreen(m.term) }
+// renderSnapshotLocked renders the current screen for a coalesced client.
+// Caller holds mu.
+func (m *Mux) renderSnapshotLocked() []byte { return m.snapshotLocked() }
+
+// snapshotLocked is the attach snapshot: the screen repaint plus the guest's
+// mouse-reporting modes. Cells, cursor and SGR survive a repaint; a DECSET does
+// not, so a client that attaches after the guest enabled the mouse (a
+// long-running Claude Code turns it on once, at startup) would otherwise be
+// deaf to it forever. The modes go last so the client paints the screen before
+// its own input routing learns who owns the wheel.
+//
+// Governing: SPEC-0002 REQ "Attach Session", ADR-0055. Deliberately absent from
+// Mux.AnsiScreen, whose bytes are written to a real terminal by capture.
+func (m *Mux) snapshotLocked() []byte {
+	return append(renderScreen(m.term), m.mouse.Serialize()...)
+}
 
 // applyResizeLocked recomputes the authoritative PTY size as the smallest
 // viewport across attached sessions and, if it changed, resizes the emulator
