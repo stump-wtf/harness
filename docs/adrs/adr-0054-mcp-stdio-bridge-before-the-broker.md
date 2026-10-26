@@ -74,10 +74,13 @@ already do everything the read tools report.
    activity entries) or `raw` (the log tail). A summary carries `next_cursor`,
    the stable `LogEntry.ID` of its newest kept entry, and a `cursor` argument
    returns only newer entries; an aged-out cursor says so and returns the tail
-   rather than nothing. A raw payload pages by byte `offset` with `next_offset`.
-   Both are size-capped (256 KiB default) and say `truncated`. A cursor is an
-   entry id, not an offset, because ids are stable across requests and offsets
-   are not. Real subscriptions (`harness://<name>/runs/<id>/log`) stay with the
+   rather than nothing. A raw payload pages by byte `offset` with
+   `next_offset`, and an offset past the returned tail repeats the whole tail
+   with a `note`: the tail is a window, so an empty answer there would read as
+   "caught up" to a poller that had in fact skipped output. Both are size-capped
+   (256 KiB default) and say `truncated`. A cursor is an entry id, not an
+   offset, because ids are stable across requests and offsets are not. Real
+   subscriptions (`harness://<name>/runs/<id>/log`) stay with the
    broker, where the daemon can push.
 6. **One control call at a time.** The MCP session answers requests concurrently
    so a followed trigger cannot stall the session, but the control connection is

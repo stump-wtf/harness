@@ -474,7 +474,11 @@ default ([ADR-0054](/decisions/adr-0054-mcp-stdio-bridge-before-the-broker)).
   newer, which is the polling pattern an agent wants and `logs --follow` cannot
   serve.
 - `raw`: the durable log tail, exactly as `harness logs --raw` prints it. Page
-  past a truncation with the returned `next_offset` as `offset`.
+  past a truncation with the returned `next_offset` as `offset`. A raw offset is
+  only meaningful against the tail it came from: pass one that is past what this
+  call returns and the answer repeats the whole tail with a `note`, rather than
+  coming back empty and reading as "caught up" to a poller that missed output.
+  To poll for what is new, use the `summary` cursor, whose entry ids are stable.
 
 Both are capped (256 KiB by default, `max_bytes` to lower it) and say
 `truncated` when they cut. A summary of a run whose adapter records no native

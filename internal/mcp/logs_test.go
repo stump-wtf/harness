@@ -131,6 +131,65 @@ func TestRawPagesWithOffsetAndCap(t *testing.T) {
 	}
 }
 
+func TestRawOffsetPastTheReturnedTailSaysSo(t *testing.T) {
+	// The tail is a window, so a poller's offset can end up past what the next
+	// call returns (the window rolled, or it asked for fewer lines). An empty
+	// answer there reads as "caught up" and silently loses output.
+	d := &fakeDaemon{logs: protocol.LogsData{Name: "web", Text: strings.Repeat("x", 900)}}
+	first, err := readLogs(t, d, LogsArgs{Name: "web", Format: FormatRaw})
+	if err != nil {
+		t.Fatalf("ReadLogs: %v", err)
+	}
+	if first.NextOffset != 900 || first.Note != "" {
+		t.Fatalf("first window: next=%d note=%q", first.NextOffset, first.Note)
+	}
+
+	d.logs.Text = strings.Repeat("y", 400)
+	scrolled, err := readLogs(t, d, LogsArgs{Name: "web", Format: FormatRaw, Offset: first.NextOffset})
+	if err != nil {
+		t.Fatalf("ReadLogs(offset): %v", err)
+	}
+	if scrolled.Text != d.logs.Text {
+		t.Errorf("text = %q, want the whole tail rather than nothing", scrolled.Text)
+	}
+	if scrolled.Note == "" {
+		t.Error("a cursor past the tail was answered as if it were current")
+	}
+	if scrolled.NextOffset != 400 {
+		t.Errorf("next_offset = %d, want the end of the returned tail", scrolled.NextOffset)
+	}
+}
+
+func TestRawOffsetAtTheEndOfAnUnchangedTailMeansCaughtUp(t *testing.T) {
+	// The other side of that line: a poll of a settled run has nothing new, and
+	// re-sending the tail every poll would flood the caller's context.
+	text := strings.Repeat("x", 300)
+	d := &fakeDaemon{logs: protocol.LogsData{Name: "web", Text: text}}
+	res, err := readLogs(t, d, LogsArgs{Name: "web", Format: FormatRaw, Offset: len(text)})
+	if err != nil {
+		t.Fatalf("ReadLogs: %v", err)
+	}
+	if res.Text != "" || res.Note != "" || res.NextOffset != len(text) {
+		t.Fatalf("caught-up poll: text=%q note=%q next=%d", res.Text, res.Note, res.NextOffset)
+	}
+}
+
+func TestSummaryNotesKeepBothReasons(t *testing.T) {
+	// A generic adapter answers a summary with the raw tail; if the caller's
+	// offset is also stale, the note has to say both.
+	d := &fakeDaemon{logs: protocol.LogsData{Name: "tool", Text: "make: *** [test] Error 1"}}
+	res, err := readLogs(t, d, LogsArgs{Name: "tool", Offset: 4096})
+	if err != nil {
+		t.Fatalf("ReadLogs: %v", err)
+	}
+	if !strings.Contains(res.Note, "raw tail") || !strings.Contains(res.Note, "offset is past") {
+		t.Errorf("note = %q, want both the fallback and the stale cursor", res.Note)
+	}
+	if !strings.Contains(res.Text, "Error 1") {
+		t.Errorf("text = %q, want the tail", res.Text)
+	}
+}
+
 func TestSummaryHonoursTheSizeCapWithTheNewestLines(t *testing.T) {
 	specs := make([][3]string, 0, 60)
 	for i := range 60 {

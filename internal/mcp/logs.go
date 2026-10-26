@@ -75,6 +75,18 @@ type LogsResult struct {
 	Note       string  `json:"note,omitempty"`
 }
 
+// setNote records a caveat on the result, keeping one the same call already
+// set rather than replacing it: a caller reading the note needs every reason
+// the payload is not what it asked for.
+func (r *LogsResult) setNote(msg string) {
+	switch {
+	case r.Note == "":
+		r.Note = msg
+	case !strings.Contains(r.Note, msg):
+		r.Note += "; " + msg
+	}
+}
+
 // ReadLogs fetches and shapes one run's output. It makes the same control call
 // `harness logs` makes (with --run when a run id is given) and only then
 // reshapes the reply, so the tool can never show more than the verb does.
@@ -187,13 +199,18 @@ func afterCursor(entries []protocol.LogEntry, id string) []protocol.LogEntry {
 }
 
 // fillRaw pages through the log tail by bytes, so a caller that hit the cap can
-// ask for the next window rather than re-reading the whole thing.
+// ask for the next window rather than re-reading the whole thing. The tail is a
+// window over the log, not a seekable file, so an offset past what came back is
+// a cursor that has aged out: the whole tail is returned with a note, the way
+// an aged-out summary cursor is, because an empty answer here reads as
+// "caught up" to a poller that has in fact missed output.
 func fillRaw(out *LogsResult, text string, offset, maxBytes int) {
+	if offset > len(text) {
+		offset = 0
+		out.setNote("offset is past the returned tail; the full tail is included")
+	}
 	if offset < 0 {
 		offset = 0
-	}
-	if offset > len(text) {
-		offset = len(text)
 	}
 	rest := text[offset:]
 	if len(rest) > maxBytes {
