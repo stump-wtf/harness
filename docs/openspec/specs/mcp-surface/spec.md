@@ -7,7 +7,7 @@ requires: [SPEC-0002, SPEC-0003, SPEC-0004]
 
 # SPEC-0005: Local MCP Surface (facade, broker, prompts)
 
-> **Partly implemented.** The facade's trajectory handlers and its read/write capability classes exist in `internal/facade`. No MCP endpoint, broker, prompt side-loading or caller identity is built yet, and the `[mcp.*]` tables are a config parse error. Tracked by the SPEC-0005 epic in the Harness issue tracker.
+> **Partly implemented.** The facade's trajectory handlers and its read/write capability classes exist in `internal/facade`, and `harness mcp` now serves the facade's control tools over stdio as a thin daemon client (`internal/mcp`, ADR-0054) — read tools on by default, the state-changing ones behind `--allow-control`. No broker, prompt side-loading or caller identity is built yet: calls are unattributed, per-harness `mcp_allow` is not evaluated, and the `[mcp.*]` tables are a config parse error. Tracked by the SPEC-0005 epic in the Harness issue tracker.
 
 ## Overview
 

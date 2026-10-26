@@ -431,6 +431,90 @@ full-screen prompt that repaints in place never scrolls, so it never reaches
 the log. When a screen has never received any output, `capture` answers
 `no screen` rather than pretending it is blank.
 
+## MCP server (`harness mcp`)
+
+```sh
+harness mcp                     # read-only tools over stdio
+harness mcp --allow-control     # also serve the tools that change state
+harness --socket PATH mcp       # serve a daemon other than the default one
+```
+
+`mcp` serves Harness's control plane as an [MCP](https://modelcontextprotocol.io)
+server over stdio, so an agent drives the daemon with named tools instead of a
+shell loop over `harness list`, `runs`, `logs` and `trigger`. It is a thin client
+like every other verb ([ADR-0002](/decisions/adr-0002-daemon-client-architecture)):
+each tool delegates to the same control call its verb makes, so a tool can never
+show more than the CLI does, and there is no second implementation to keep in
+step. It adds no listener and no trust boundary: whoever can reach the daemon
+socket can already do everything the read tools report.
+
+An agent's configuration launches it the way it launches any stdio server:
+
+```toml
+# The agent CLI starts and stops this process; the session ends when it closes
+# the pipe.
+command = "harness"
+args = ["mcp"]
+```
+
+### Tools
+
+| Tool | Returns |
+| --- | --- |
+| `harness_list` | every harness with state, enabled/held flags and last exit |
+| `harness_describe` | one harness in detail (config, state, children, sessions) |
+| `harness_runs` | run history: outcome, exit, duration, trigger, skip reason; with no `name`, across all harnesses with the ledger's filters |
+| `harness_logs` | one run's output, `summary` or `raw` (see below) |
+| `harness_jobs` | triggered harnesses with sources, next run, recent results |
+| `harness_triggers` | trigger sources with state, last event and error, counters |
+| `harness_daemon_info` | daemon version, protocol, uptime, socket, counts |
+| `harness_trigger` | run a triggered harness now; `wait` follows it to its outcome |
+| `harness_start`, `harness_stop`, `harness_restart` | the lifecycle verbs, returning the new state |
+
+The last four change state, so they are absent unless the server was started
+with `--allow-control`. A read-only server is what you hand a monitoring agent:
+its tool list contains nothing that can touch a run, and a call to a control
+tool is refused with `not_permitted` before the daemon is asked. That split is
+the reason this exists: a permission system can allow one tool name and gate
+another, where a shell command that both reads and acts gets one verdict for
+both. Per-harness grants (`mcp_allow`) arrive with the broker's caller identity
+([ADR-0035](/decisions/adr-0035-mcp-gateway));
+until then the startup flag is the whole grant, which is why control is off by
+default ([ADR-0054](/decisions/adr-0054-mcp-stdio-bridge-before-the-broker)).
+
+### Reading logs without flooding the context
+
+`harness_logs` answers in one of two formats:
+
+- `summary` (default): the run's activity as ordered entries (lifecycle
+  transitions, tool calls, marks) with session bookkeeping collapsed out. Each
+  answer carries `next_cursor`; pass it back as `cursor` to get only what is
+  newer, which is the polling pattern an agent wants and `logs --follow` cannot
+  serve.
+- `raw`: the durable log tail, exactly as `harness logs --raw` prints it. Page
+  past a truncation with the returned `next_offset` as `offset`. A raw offset is
+  only meaningful against the tail it came from: pass one that is past what this
+  call returns and the answer repeats the whole tail with a `note`, rather than
+  coming back empty and reading as "caught up" to a poller that missed output.
+  To poll for what is new, use the `summary` cursor, whose entry ids are stable.
+
+Both are capped (256 KiB by default, `max_bytes` to lower it) and say
+`truncated` when they cut. A summary of a run whose adapter records no native
+trajectory answers with the raw tail and a `note` saying why, because for those
+harnesses the log is the record ([ADR-0007](/decisions/adr-0007-state-persistence-scrollback)).
+
+Errors stay inside the tool result with a stable `code` (`unknown_harness`,
+`not_permitted`, `unknown_tool`) so a caller branches on the code instead of
+matching prose, and the session stays usable after a refusal.
+
+### Not in this slice
+
+Editing `harness.toml` stays a file edit plus `reload`. Upstream MCP servers,
+the broker's per-harness endpoints, caller attribution by token, prompt
+side-loading and log subscriptions belong to the gateway design
+([ADR-0035](/decisions/adr-0035-mcp-gateway)),
+not to this bridge.
+
 ## Waiting for input
 
 A harness frozen at an interactive prompt — a permission dialog, a workspace
