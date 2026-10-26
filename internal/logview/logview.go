@@ -350,6 +350,11 @@ func (s *Style) LabelColor(e protocol.LogEntry) (color.Color, bool) {
 			return s.c.Coral, true
 		case "user-message", "user":
 			return s.c.Accent, true
+		case "result":
+			if e.Error {
+				return s.c.Coral, true
+			}
+			return s.c.Mint, true
 		}
 	}
 	return s.c.Dim, true
@@ -382,7 +387,7 @@ func (s *Style) Detail(e protocol.LogEntry, d string) string {
 		parts[0] = s.Paint(s.c.Fg, true, parts[0])
 		return strings.Join(parts, s.Faint(" · "))
 	case protocol.LogEntryMark:
-		if e.Action == "error" {
+		if e.Action == "error" || (e.Action == "result" && e.Error) {
 			return s.Paint(s.c.Coral, false, d)
 		}
 	case protocol.LogEntryTool:

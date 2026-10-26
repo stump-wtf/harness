@@ -118,6 +118,16 @@ func (c *conn) activity(req protocol.ControlReq, snap supervisor.Snapshot, lines
 	for _, perr := range parseErrs {
 		data.Notices = append(data.Notices, perr.Error())
 	}
+	// A pipe run's session is not in the trace store until live ingest lands
+	// (#915): its stream file is the run's own record, and the readable
+	// entries come from it (streamlog.go; #993).
+	var streamEntries []protocol.LogEntry
+	if len(events) == 0 {
+		if se, note := c.pipeRunStreamEvents(ctx, req, w, h); se != nil {
+			streamEntries = se
+			data.Notices = append(data.Notices, note)
+		}
+	}
 	for _, x := range att.Excluded {
 		data.Excluded = append(data.Excluded, protocol.LogExclusion{
 			Session:   x.Session.Meta.ID,
@@ -135,6 +145,13 @@ func (c *conn) activity(req protocol.ControlReq, snap supervisor.Snapshot, lines
 	for _, e := range events {
 		entries = append(entries, orderedEntry{at: e.Time, entry: agentEntry(e)})
 	}
+	for _, e := range streamEntries {
+		at := w.Start
+		if t, err := time.Parse(time.RFC3339Nano, e.Time); err == nil {
+			at = t
+		}
+		entries = append(entries, orderedEntry{at: at, entry: e})
+	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].at.Before(entries[j].at) })
 	if lines > 0 && len(entries) > lines {
 		entries = entries[len(entries)-lines:]
@@ -144,7 +161,7 @@ func (c *conn) activity(req protocol.ControlReq, snap supervisor.Snapshot, lines
 		data.Entries = append(data.Entries, e.entry)
 	}
 
-	if len(events) == 0 {
+	if len(events) == 0 && len(streamEntries) == 0 {
 		// Deliberately no durable-log tail here. The tail of a full-screen
 		// agent is its idle screen — splash art, box-drawing chrome, a
 		// farewell line — and appending it made `harness logs` look like it
@@ -163,6 +180,38 @@ func (c *conn) activity(req protocol.ControlReq, snap supervisor.Snapshot, lines
 			"no agent-trace session is attributable to this run; run `harness logs "+req.Name+" --raw` to read the durable log itself")
 	}
 	return data, nil
+}
+
+// pipeRunStreamEvents renders the stream file of the run w describes through
+// agent-trace, for a pipe run whose session the trace store has no record of
+// (streamlog.go; #993, slice 1 of #915). It returns nil entries when the run
+// is not a pipe run or its stream parses to nothing, and the caller keeps its
+// no-agent-activity notices.
+func (c *conn) pipeRunStreamEvents(ctx context.Context, req protocol.ControlReq, w runtrace.Window, h core.Harness) ([]protocol.LogEntry, string) {
+	mgr := c.srv.mgr
+	var rec supervisor.RunRecord
+	var ok bool
+	if req.Run > 0 {
+		rec, ok = c.findRun(req.Name, req.Run)
+	} else {
+		// A latest-run request: the record whose start opens the window.
+		for _, r := range mgr.Runs(req.Name) {
+			if absDuration(r.StartedAt.Sub(w.Start)) <= runtrace.Slack {
+				rec, ok = r, true
+				break
+			}
+		}
+	}
+	if !ok {
+		return nil, ""
+	}
+	streamPath := supervisor.StreamPathFor(runLogOf(mgr, req.Name, rec))
+	entries, ok := pipeStreamEntries(ctx, h, streamPath, rec.StartedAt)
+	if !ok {
+		return nil, ""
+	}
+	note := fmt.Sprintf("run %d's entries are rendered from its stream file %s; no agent-trace session is attributable to it", rec.RunID, streamPath)
+	return entries, note
 }
 
 // runWindow picks the run a structured logs request describes, in order of

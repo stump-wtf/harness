@@ -6,6 +6,7 @@ package daemon
 // records"; SPEC-0017 REQ-18; SPEC-0008 REQ "Per-Run Logs".
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/logview"
 	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/testwait"
 )
@@ -35,16 +37,24 @@ func fakeClaude(t *testing.T, body string) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-// `harness logs NAME --run N --raw` on a finished pipe run prints the stream,
-// masked, and then the run log with the agent's stderr, each under a header;
-// the durable log's raw tail says where the stdout went.
+// `harness logs NAME --run N --raw` on a finished pipe run shows the
+// stream's parsed entries — the session, each tool call, the run's result —
+// and then the run log with the agent's stderr, each under a header; the
+// durable log's raw tail says where the stdout went.
 func TestLogsRunShowsAPipeRunsStream(t *testing.T) {
-	fakeClaude(t, `echo '{"type":"system","subtype":"init"}'
+	dir := t.TempDir()
+	const sid = "01234567-89ab-cdef-0123-456789abcdef"
+	// A one-shot that reads a file and lists pulls with a credential on the
+	// command line, recording the stream a real claude would.
+	fakeClaude(t, `echo '{"type":"system","subtype":"init","cwd":"`+dir+`","session_id":"`+sid+`"}'
 echo 'warning: from stderr' >&2
-echo '{"type":"tool_use","input":{"command":"GITEA_TOKEN=abc123 tea pr ls"}}'
-echo '{"type":"result","subtype":"success"}'
+echo '{"type":"assistant","message":{"role":"assistant","model":"claude-test-9","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"`+dir+`/note.txt"}}]},"session_id":"`+sid+`"}'
+echo '{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"hello"}]},"session_id":"`+sid+`"}'
+echo '{"type":"assistant","message":{"role":"assistant","model":"claude-test-9","content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"GITEA_TOKEN=abc123 tea pr ls"}}]},"session_id":"`+sid+`"}'
+echo '{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_2","type":"tool_result","content":"(none)"}]},"session_id":"`+sid+`"}'
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"duration_ms":1500,"total_cost_usd":0.05,"result":"triaged the queue","session_id":"`+sid+`"}'
 `)
-	td, _, _ := newJobsDaemon(t, pipeOneShot("sweep", t.TempDir()))
+	td, _, _ := newJobsDaemon(t, pipeOneShot("sweep", dir))
 	c := td.dial(t, nil)
 	if _, err := c.Trigger("sweep"); err != nil {
 		t.Fatal(err)
@@ -57,15 +67,24 @@ echo '{"type":"result","subtype":"success"}'
 	}
 	text := ld.Text
 	iStream := strings.Index(text, ".stream.jsonl <==")
-	iInit := strings.Index(text, `{"type":"system","subtype":"init"}`)
-	iResult := strings.Index(text, `{"type":"result","subtype":"success"}`)
+	iSess := strings.Index(text, "01234567")
+	iRead := strings.Index(text, "note.txt")
+	iBash := strings.Index(text, "GITEA_TOKEN=[REDACTED] tea pr ls")
+	iResult := strings.Index(text, "success · 3 turns")
+	iFinal := strings.Index(text, "triaged the queue")
 	iLog := strings.Index(text, "/1.log <==")
 	iWarn := strings.Index(text, "warning: from stderr")
-	if iStream < 0 || iInit < iStream || iResult < iInit || iLog < iResult || iWarn < iLog {
-		t.Fatalf("want the stream (init … result) then the run log (stderr), each under a header:\n%s", text)
+	if iStream < 0 || iSess <= iStream || iRead < iSess || iBash < iRead || iResult < iBash || iFinal < iResult || iLog < iFinal || iWarn < iLog {
+		t.Fatalf("want the stream's entries (session, read, bash, result) then the run log (stderr), each under a header:\n%s", text)
 	}
-	if strings.Contains(text, "abc123") || !strings.Contains(text, "GITEA_TOKEN=[REDACTED]") {
+	if !strings.Contains(text, "claude-test-9") {
+		t.Errorf("the session entry does not name the run's model:\n%s", text)
+	}
+	if strings.Contains(text, "abc123") {
 		t.Errorf("the stream's credential is not masked:\n%s", text)
+	}
+	if strings.Contains(text, `{"type":"`) {
+		t.Errorf("the raw view shows the stream's JSON instead of its entries:\n%s", text)
 	}
 
 	raw, err := c.Logs("sweep", 100)
@@ -80,16 +99,18 @@ echo '{"type":"result","subtype":"success"}'
 	}
 }
 
-// While a pipe run is live its text is the stream alone, so a `trigger
-// --wait` that prints each poll's new suffix sees the stream grow, then the
-// run log appended once, at the end: every poll's text extends the last.
+// While a pipe run is live its text is the stream's entries alone, so a
+// `trigger --wait` that prints each poll's new suffix sees the stream grow,
+// then the run log appended once, at the end: every poll's text extends the
+// last.
 func TestLogsRunPipeTextOnlyGrows(t *testing.T) {
 	dir := t.TempDir()
 	gate := filepath.Join(dir, "go")
-	fakeClaude(t, `echo '{"type":"system"}'
+	const sid = "fedcba98-7654-3210-fedc-ba9876543210"
+	fakeClaude(t, `echo '{"type":"system","subtype":"init","session_id":"`+sid+`"}'
 echo 'early stderr' >&2
 while [ ! -e '`+gate+`' ]; do sleep 0.02; done
-echo '{"type":"result"}'
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"done","session_id":"`+sid+`"}'
 `)
 	td, _, _ := newJobsDaemon(t, pipeOneShot("sweep", dir))
 	c := td.dial(t, nil)
@@ -98,7 +119,7 @@ echo '{"type":"result"}'
 	}
 	var live string
 	deadline := time.Now().Add(testwait.Budget(t, 5*time.Second))
-	for !strings.Contains(live, `{"type":"system"}`) {
+	for !strings.Contains(live, "fedcba98") {
 		if time.Now().After(deadline) {
 			t.Fatalf("the live run's stream never showed:\n%s", live)
 		}
@@ -122,6 +143,52 @@ echo '{"type":"result"}'
 	}
 	if !strings.HasPrefix(ld.Text, live) || !strings.Contains(ld.Text[len(live):], "early stderr") {
 		t.Errorf("the finished text does not extend the live text with the run log:\nlive:\n%s\nfinished:\n%s", live, ld.Text)
+	}
+}
+
+// A recorded stream read through the renderer a pipe run's logs view uses
+// comes out the way a traced run's session renders: the session, each call
+// with its target, the result with its numbers; the credential on the
+// command line masked by the reader, as ADR-0008 requires.
+func TestPipeStreamEntriesRender(t *testing.T) {
+	h := core.Harness{Adapter: "claude-code"}
+	start := time.Date(2026, 9, 25, 6, 30, 0, 0, time.UTC)
+	entries, ok := pipeStreamEntries(context.Background(), h, filepath.Join("testdata", "pipe-run.stream.jsonl"), start)
+	if !ok {
+		t.Fatal("the fixture's stream parsed to nothing")
+	}
+	if len(entries) != 5 {
+		t.Fatalf("got %d entries, want the session, the two calls, the turn-end and the result: %+v", len(entries), entries)
+	}
+	sess, read, bash, turnEnd, result := entries[0], entries[1], entries[2], entries[3], entries[4]
+	if sess.Kind != protocol.LogEntrySession || sess.Action != "session" || sess.Session != "5f0c2a4e-0000-4000-8000-000000000132" {
+		t.Errorf("session entry = %+v", sess)
+	}
+	if !strings.Contains(sess.Summary, "claude-sonnet-4-5-20250929") {
+		t.Errorf("the session entry does not name the model: %q", sess.Summary)
+	}
+	if read.Kind != protocol.LogEntryTool || read.Action != "read" || read.Target != "note.txt" {
+		t.Errorf("read entry = %+v", read)
+	}
+	if bash.Tool != "Bash" || !strings.Contains(bash.Summary, "GITEA_TOKEN=[REDACTED]") || strings.Contains(bash.Summary, "abc123") {
+		t.Errorf("bash entry = %+v", bash)
+	}
+	if turnEnd.Kind != protocol.LogEntryMark || turnEnd.Action != "turn-end" {
+		t.Errorf("turn-end mark = %+v", turnEnd)
+	}
+	if result.Kind != protocol.LogEntryMark || result.Action != "result" || result.Error {
+		t.Errorf("result entry = %+v", result)
+	}
+	if !strings.Contains(result.Summary, "success · 3 turns") || !strings.Contains(result.Summary, "only open pull") {
+		t.Errorf("result summary = %q", result.Summary)
+	}
+	var b strings.Builder
+	for _, e := range entries {
+		b.WriteString(logview.FormatEntry(e))
+		b.WriteString("\n")
+	}
+	if strings.Contains(b.String(), `{"type":"`) {
+		t.Errorf("the rendering carries the stream's JSON:\n%s", b.String())
 	}
 }
 
