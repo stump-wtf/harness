@@ -33,7 +33,14 @@ func (m *Model) View() tea.View {
 	v := tea.NewView(m.content())
 	v.AltScreen = true
 	if !m.mouseReleased {
+		// Cell motion is enough for harness's own scrollback and for a guest
+		// that enabled 1000/1002. Only a guest that asked for 1003 is owed
+		// hover, so that is the one case where the client asks its terminal for
+		// every motion (ADR-0055).
 		v.MouseMode = tea.MouseModeCellMotion
+		if m.guestWantsAllMotion() {
+			v.MouseMode = tea.MouseModeAllMotion
+		}
 	}
 	return v
 }
