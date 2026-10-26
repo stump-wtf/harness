@@ -126,6 +126,12 @@ type Manager struct {
 	// Snapshot (issue #960).
 	health *HealthProber
 
+	// streamUsage, when set (SetStreamUsageSink at daemon boot), folds a
+	// pipe run's own stream file into its ledger record at run end (issue
+	// #994): the daemon passes a sink that reads the stream's final result
+	// and folds it into the ledger's usage accumulator.
+	streamUsage StreamUsageSink
+
 	mu                sync.Mutex
 	cfg               *core.Config
 	supervisors       map[string]*Supervisor

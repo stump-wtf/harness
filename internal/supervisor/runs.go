@@ -363,6 +363,14 @@ type exitCloser interface {
 	CloseExitedRun(name string, rec RunRecord) error
 }
 
+// streamUsageJournal is a RunJournal that folds a pipe run's own stream into
+// its ledger record at the run's end, before the record is closed (issue
+// #994). The Manager is one, through its sink; a journal with no sink — a
+// test's stub, or a Manager the daemon never wired — folds nothing.
+type streamUsageJournal interface {
+	FoldRunStreamUsage(name, kind string, runID int, streamPath string)
+}
+
 // errNoRunToCoalesce is CoalesceRun's answer when the open record has gone
 // (pruned, or a history reset) — the one case in which the skip must open a
 // new record. It is distinct from a failed Save, after which the increment
@@ -885,6 +893,12 @@ func (s *Supervisor) finishRunWith(outcome RunOutcome, code *int, reason RunReas
 	}
 	// A pipe run's stream file, closed before CloseRun seals it (pipes.go).
 	s.sealStream()
+	// A pipe run's own stream: its final result folds into the ledger's
+	// usage before the record is closed, so the closed line carries it
+	// (issue #994).
+	if j, ok := s.journal.(streamUsageJournal); ok {
+		j.FoldRunStreamUsage(s.harness.Name, s.harness.TrajectoryKind(), run.rec.RunID, StreamPathFor(run.rec.Log))
+	}
 	if s.journal != nil {
 		if err := s.journal.CloseRun(s.harness.Name, run.rec); err != nil {
 			s.logEvent("run history not saved", "run_id", run.rec.RunID, "err", err.Error())

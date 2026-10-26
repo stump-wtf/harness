@@ -214,6 +214,35 @@ func (a *Accumulator) Fold(it Item) {
 	}
 }
 
+// FoldResult folds a run's own final result record (REQ-8's stream path: the
+// run's structured stream ends with the agent's own account of the run —
+// turns, duration, tokens, the recorded cost) into the run named by harness
+// and id: its tokens, its cost and its served model, the same way a usage
+// report folds. A run's result covers the whole run, and a usage report from
+// the transcript path does too, so it folds only when the run is still open
+// and no report has reached it yet; on top of one it folds nothing, so the
+// two sources never count the same run twice. It reports whether it folded.
+func (a *Accumulator) FoldResult(harness string, id int, rep UsageReport) bool {
+	f, ok := a.l.OpenRun(harness)
+	if !ok || f.RunID != id {
+		return false
+	}
+	a.mu.Lock()
+	u := a.usageLocked(key{harness, id})
+	if u.hasUsage {
+		a.mu.Unlock()
+		return false
+	}
+	a.foldUsageLocked(u, Item{Usage: &rep})
+	a.stats.Folded++
+	tokens, cost, src := u.tokens, u.cost, u.costSrc
+	a.mu.Unlock()
+	if a.opts.OnFold != nil {
+		a.opts.OnFold(LiveTotals{Harness: harness, RunID: id, Tokens: tokens, CostUSD: cost, CostSource: src})
+	}
+	return true
+}
+
 // foldActivityLocked folds an item's tool call, error and session. Caller
 // holds mu.
 func (a *Accumulator) foldActivityLocked(u *usage, it Item) {

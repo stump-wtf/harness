@@ -351,3 +351,86 @@ func TestCumulativeTotalBetweenRunsMovesTheBaseline(t *testing.T) {
 		t.Errorf("run 2 tokens.input = %v, want 3000: the 1,000 spent between runs is not run 2's", tok["input"])
 	}
 }
+
+// REQ-8's stream path (harness#994): a run whose transcript never flushed
+// gets its usage from its own stream's final result, folded at the run's end
+// with the cost the agent recorded, so the closed line carries it.
+func TestStreamResultFoldsIntoARunWithNoUsage(t *testing.T) {
+	dir := t.TempDir()
+	l := openT(t, dir, Options{})
+	a := NewAccumulator(l, AccumulatorOptions{})
+	now := time.Now()
+	mustAppend(t, l, opened("cc", 1, now.Add(-time.Minute)), true)
+
+	res := UsageReport{
+		Tokens:  Tokens{Input: 1200, Output: 300, CacheRead: 40_000, CacheWrite: 500},
+		CostUSD: pfloat(0.25),
+	}
+	if !a.FoldResult("cc", 1, res) {
+		t.Fatal("FoldResult did not fold a transcript-less run's result")
+	}
+	mustAppend(t, l, closed("cc", 1, now, "success"), true)
+
+	c := lastLineOf(t, dir, "cc", 1, TypeClosed)
+	tok := c["tokens"].(map[string]any)
+	if tok["input"] != float64(1200) || tok["output"] != float64(300) ||
+		tok["cache_read"] != float64(40_000) || tok["cache_write"] != float64(500) {
+		t.Errorf("tokens = %v", tok)
+	}
+	if c["cost_usd"] != 0.25 || c["cost_source"] != "recorded" {
+		t.Errorf("cost = %v (%v), want 0.25 recorded", c["cost_usd"], c["cost_source"])
+	}
+	if c["usage_complete"] != true {
+		t.Errorf("usage_complete = %v, want true: no observer item was lost", c["usage_complete"])
+	}
+	if st := a.Stats(); st.Folded != 1 {
+		t.Errorf("stats = %+v, want 1 folded", st)
+	}
+}
+
+// The stream's result covers the whole run, and so does the transcript's
+// usage: once the transcript path has recorded anything for the run, the
+// result folds nothing on top of it (harness#994).
+func TestStreamResultDoesNotDoubleCountTranscriptUsage(t *testing.T) {
+	dir := t.TempDir()
+	l := openT(t, dir, Options{})
+	a := NewAccumulator(l, AccumulatorOptions{})
+	now := time.Now()
+	mustAppend(t, l, opened("cc", 1, now.Add(-time.Minute)), true)
+	a.Fold(usageItem("cc", "s", now, UsageReport{Tokens: Tokens{Input: 600, Output: 120}, CostUSD: pfloat(0.12)}))
+
+	if a.FoldResult("cc", 1, UsageReport{Tokens: Tokens{Input: 1200, Output: 300}, CostUSD: pfloat(0.25)}) {
+		t.Fatal("FoldResult folded a result on top of the transcript's usage")
+	}
+	mustAppend(t, l, closed("cc", 1, now, "success"), true)
+
+	c := lastLineOf(t, dir, "cc", 1, TypeClosed)
+	tok := c["tokens"].(map[string]any)
+	if tok["input"] != float64(600) || tok["output"] != float64(120) {
+		t.Errorf("tokens = %v, want the transcript's 600/120 and nothing else", tok)
+	}
+	if c["cost_usd"] != 0.12 {
+		t.Errorf("cost_usd = %v, want the transcript's 0.12 and nothing else", c["cost_usd"])
+	}
+}
+
+// FoldResult names its run: it touches nothing on a harness with no open run,
+// or on a run id the harness does not have open.
+func TestStreamResultNeedsTheRunItNames(t *testing.T) {
+	dir := t.TempDir()
+	l := openT(t, dir, Options{})
+	a := NewAccumulator(l, AccumulatorOptions{})
+	now := time.Now()
+	mustAppend(t, l, opened("cc", 1, now.Add(-time.Minute)), true)
+
+	if a.FoldResult("other", 1, UsageReport{Tokens: Tokens{Input: 1}}) {
+		t.Error("FoldResult folded into a harness with no open run")
+	}
+	if a.FoldResult("cc", 2, UsageReport{Tokens: Tokens{Input: 1}}) {
+		t.Error("FoldResult folded into a run id the harness does not have open")
+	}
+	mustAppend(t, l, closed("cc", 1, now, "success"), true)
+	if c := lastLineOf(t, dir, "cc", 1, TypeClosed); c["tokens"] != nil {
+		t.Errorf("run 1 carries tokens %v, want none", c["tokens"])
+	}
+}
