@@ -11,8 +11,8 @@ package tui
 // The mode shadow lives on the view's emulator (vtView.mouse), fed by the same
 // callbacks that shadow DECTCEM and by the daemon's snapshot for anything that
 // happened before the attach. Everything below turns that shadow into bytes on
-// the wire — and, just as importantly, decides when NOT to send any: a guest
-// that enabled mode 9 alone never asked for releases, and forwarding hover to a
+// the wire, and just as importantly decides when NOT to send any: a guest that
+// enabled mode 9 alone never asked for releases, and forwarding hover to a
 // guest below 1003 would feed it bytes it never requested.
 
 import (
@@ -74,9 +74,9 @@ func (m *Model) guestWantsAllMotion() bool {
 
 // forwardGuestMouse encodes one mouse event for a guest that owns the mouse and
 // queues it as attach input. It reports false when the event is not the guest's
-// (guest has no mouse reporting on, wrong substate, or the event landed outside
-// the guest's viewport — the status bar is harness's own surface, not the
-// guest's), and the caller then handles it as harness scrollback.
+// (no mouse reporting on, wrong substate, or the event landed outside the
+// guest's viewport, since the status bar is harness's own surface), and the
+// caller then handles it as harness scrollback.
 func (m *Model) forwardGuestMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
 	if !m.guestOwnsMouse() {
 		return nil, false

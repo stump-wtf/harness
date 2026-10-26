@@ -123,5 +123,13 @@ deliberately does not half-do it.
 - A daemon that is already running must be restarted for the snapshot half to
   take effect; the client half works against an unpatched daemon for guests
   whose mode change the client sees live.
+- The shadow is per harness, not per run, exactly as the existing bracketed-paste
+  shadow is. A guest killed without restoring its modes (no `?1000l` on exit)
+  leaves that harness reading as mouse-owning until its next guest sets a mouse
+  mode, and a plain `command` guest started in its place would then receive
+  mouse bytes it never asked for. Clearing it needs a start-of-run hook the
+  attach path does not have, because history deliberately survives a restart
+  (ADR-0007), so this is recorded as a gap rather than solved by inventing one
+  here.
 - Scrollback for a guest that never asks for the mouse is unchanged here and
   stays a known gap, tracked by this ADR and issue #954.

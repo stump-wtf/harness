@@ -2,7 +2,7 @@ package attach
 
 // Governing: ADR-0055 (mouse ownership follows the guest's mouse-reporting
 // modes). A client attaches to a screen snapshot, and cells, cursor and SGR
-// survive that repaint while a DECSET does not — so a guest that enabled the
+// survive that repaint while a DECSET does not, so a guest that enabled the
 // mouse once at startup, long before anyone attached, would be invisible to the
 // client, which would then keep the wheel for its own scrollback while the guest
 // sat waiting for events (issue #954, upstream stump-wtf/harness#29). The mux
@@ -20,7 +20,7 @@ import (
 // snapshotOf attaches one read-write client and returns the snapshot frame it
 // is handed first. Polling for the first frame is enough: the pump writes in
 // queue order, and the snapshot is what Attach queued ahead of everything else.
-// The assertions are about what that frame states — the ring's tail replay
+// The assertions are about what that frame states, because the ring's tail replay
 // legitimately carries the guest's original DECSET bytes, so "some frame
 // mentions it" would pin nothing.
 func snapshotOf(t *testing.T, m *Mux) []byte {
@@ -58,7 +58,7 @@ func TestSnapshotCarriesGuestMouseModes(t *testing.T) {
 
 // TestSnapshotResetsStaleMouseModes is the other half of the same guarantee: a
 // snapshot must be authoritative, so a mode the guest has since turned off is
-// stated OFF rather than merely absent — otherwise a client that learned "on"
+// stated OFF rather than merely absent, otherwise a client that learned "on"
 // from an earlier frame stays deaf to the guest forever.
 func TestSnapshotResetsStaleMouseModes(t *testing.T) {
 	m := newMux("h", 100, nil, nil, nil)

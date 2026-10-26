@@ -32,7 +32,7 @@ type vtView struct {
 	// mouse shadows the guest's mouse-reporting modes, for the same reason
 	// cursorHidden is shadowed here and bracketed paste is shadowed on the
 	// daemon's Mux: x/vt has no reader for them, and this end only sees the
-	// DECSETs that arrive after it started paying attention — which is why the
+	// DECSETs that arrive after it started paying attention, which is why the
 	// daemon appends its own shadow to the attach snapshot (ADR-0055). It is
 	// what decides whether the wheel opens harness scrollback or reaches the
 	// guest.

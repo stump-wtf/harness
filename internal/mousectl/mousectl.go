@@ -9,17 +9,17 @@
 // Both ends of an attach have to answer "did the guest ask for the mouse", and
 // they answer it from different vantage points: the daemon's emulator sees every
 // DECSET the guest ever issued, while a client only sees the ones issued after
-// it attached — the same asymmetry bracketed paste already works around (see
-// Mux.unwrapPasteIfUnsupported). So the daemon shadows the modes and ships them
-// in the snapshot, and both ends read the events out of one table rather than
-// two that can drift apart and disagree about who owns the wheel.
+// it attached. That is the same asymmetry bracketed paste already works around
+// (see Mux.unwrapPasteIfUnsupported), so the daemon shadows the modes and ships
+// them in the snapshot, and both ends read the events out of one table rather
+// than two that can drift apart and disagree about who owns the wheel.
 package mousectl
 
 import "github.com/charmbracelet/x/ansi"
 
 // modes are the DEC modes that decide mouse ownership, in the order Serialize
-// emits them. ModeMouseExtSgr (1006) announces no events of its own — it only
-// picks the SGR encoding — so it is tracked and never implies ownership.
+// emits them. ModeMouseExtSgr (1006) announces no events of its own: it only
+// picks the SGR encoding, so it is tracked and never implies ownership.
 var modes = []struct {
 	mode  ansi.Mode
 	set   string

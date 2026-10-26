@@ -75,11 +75,10 @@ func (m *Model) onAttachedMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.guestOwnsMouse() {
 		// The wheel and the clicks are the guest's for as long as it holds the
-		// mouse (ADR-0055). An event that landed outside its screen — on
-		// harness's own status bar — is then nobody's: opening harness
-		// scrollback there would scroll the viewer away from a guest that is
-		// still waiting for the event, and tmux drops pane-less events the same
-		// way.
+		// mouse (ADR-0055). An event that landed outside its screen, on the
+		// status bar harness owns, is then nobody's: opening harness scrollback
+		// there would scroll the viewer away from a guest that is still waiting
+		// for the event, and tmux drops pane-less events the same way.
 		if cmd, forwarded := m.forwardGuestMouse(msg); forwarded {
 			return m, cmd
 		}
@@ -472,7 +471,7 @@ func (m *Model) onAttachedKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// PgUp enters scrollback without the prefix — unless the guest owns the
+	// PgUp enters scrollback without the prefix, unless the guest owns the
 	// mouse, in which case PgUp is the guest's own paging key and falls through
 	// to the PTY below, the way PgDn already does (ADR-0055). `^b [` still
 	// opens harness scrollback either way.
