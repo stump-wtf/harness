@@ -119,16 +119,24 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"resul
 	}
 	var live string
 	deadline := time.Now().Add(testwait.Budget(t, 5*time.Second))
-	for !strings.Contains(live, "fedcba98") {
+	// Capture the live text only once it is stable: a read that lands
+	// mid-write of the stream sees the raw tail, and neither a raw fallback
+	// nor a still-growing stream is a prefix of the finished text.
+	for {
 		if time.Now().After(deadline) {
-			t.Fatalf("the live run's stream never showed:\n%s", live)
+			t.Fatalf("the live run's stream never settled:\n%s", live)
 		}
 		ld, err := c.RunLogs("sweep", 1, 1<<20)
 		if err != nil {
 			t.Fatal(err)
 		}
-		live = ld.Text
+		next := ld.Text
 		time.Sleep(20 * time.Millisecond)
+		if next == live && strings.Contains(next, "fedcba98") && !strings.Contains(next, `{"type":"`) {
+			live = next
+			break
+		}
+		live = next
 	}
 	if strings.Contains(live, "early stderr") {
 		t.Errorf("a live run's text carries its run log, which would not stay a prefix:\n%s", live)
