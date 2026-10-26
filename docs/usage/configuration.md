@@ -342,8 +342,10 @@ keep_runs = 30         # default 20
   line per line, private to your user. Its `<run_id>.log` then holds the
   lifecycle lines and the agent's stderr. The stream is compressed to
   `<run_id>.stream.jsonl.zst` when the run closes, like the log. `keep_runs`
-  deletes a run's stream with its log. `harness logs <name> --run N --raw`
-  prints the stream, then the run log once the run has ended.
+  deletes a run's stream with its log. `harness logs <name> --run N` renders
+  the stream as readable entries (its raw masked tail when it parses to
+  nothing), then the run log once the run has ended — see
+  [CLI → Logs](./cli#logs).
 
 :::note Upgrading from a release before the ledger
 The first daemon that has the ledger copies each harness's run history out of
