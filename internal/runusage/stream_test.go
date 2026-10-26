@@ -23,8 +23,8 @@ import (
 	"github.com/stump-wtf/harness/internal/ledger"
 )
 
-func ptime(t time.Time) *time.Time  { return &t }
-func pfloat64(f float64) *float64   { return &f }
+func ptime(t time.Time) *time.Time { return &t }
+func pfloat64(f float64) *float64  { return &f }
 
 // openTestLedger opens a ledger under its own day directory.
 func openTestLedger(t *testing.T) (string, *ledger.Ledger) {
