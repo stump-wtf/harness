@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/stump-wtf/harness/internal/client"
 	"github.com/stump-wtf/harness/internal/protocol"
@@ -11,6 +12,7 @@ import (
 // a record of which control calls were made, so a test can prove each tool
 // delegates to the client call its verb makes instead of inventing one.
 type fakeDaemon struct {
+	mu    sync.Mutex
 	calls []string
 
 	harnesses    []protocol.HarnessInfo
@@ -32,7 +34,11 @@ type fakeDaemon struct {
 	lifecycleErr error
 }
 
-func (f *fakeDaemon) record(s string) { f.calls = append(f.calls, s) }
+func (f *fakeDaemon) record(s string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, s)
+}
 
 func (f *fakeDaemon) List() ([]protocol.HarnessInfo, error) {
 	f.record("list")
@@ -50,11 +56,13 @@ func (f *fakeDaemon) Describe(name string) (protocol.HarnessInfo, error) {
 func (f *fakeDaemon) Runs(name string, limit int) (protocol.RunsData, error) {
 	f.record(fmt.Sprintf("runs %s %d", name, limit))
 	if f.runsSeq != nil {
+		f.mu.Lock()
 		i := f.runsAnswered
 		if i >= len(f.runsSeq) {
 			i = len(f.runsSeq) - 1
 		}
 		f.runsAnswered++
+		f.mu.Unlock()
 		return f.runsSeq[i], nil
 	}
 	return f.runs, nil
