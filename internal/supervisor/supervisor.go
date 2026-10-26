@@ -299,6 +299,7 @@ type Supervisor struct {
 	log          *rotatingLog
 	hist         *ptyHistory   // sanitizer between the PTY stream and log (#279)
 	stream       *streamSink   // a pipe run's .stream.jsonl; nil for a PTY spawn (pipes.go)
+	streamIngest StreamSink    // a pipe run's live stream, handed to whoever normalizes it (#995)
 	readerDone   chan struct{} // closed by readOutput when the final flush has landed
 	// readerProgress is a pipe run's reader progress, which awaitReader's
 	// drain watches; nil for a PTY spawn (pipes.go).

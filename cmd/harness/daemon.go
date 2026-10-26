@@ -125,6 +125,22 @@ func newDaemonObserver(mgr *supervisor.Manager, opts observe.Options) *observe.O
 	return observe.New(mgr, opts)
 }
 
+// startDaemonStreamIngest installs the seam a structured one-shot hands its
+// live stream through (issue #995): the supervisor hands the run's masked
+// lines to the observer, agent-trace normalizes them, and they reach every
+// subscriber attributed to that run — which is what lets a pipe run's activity
+// be reported while it is running, and counted once. It is installed before
+// Autostart, so the first run of the boot already has somewhere to put its
+// stream; a daemon that built no observer installs nothing.
+//
+// Governing: ADR-0033 "One activity stream per session"; SPEC-0006 REQ
+// "Run Correlation".
+func startDaemonStreamIngest(obs *observe.Observer, mgr *supervisor.Manager) {
+	mgr.SetStreamIngestSink(func(harness string, runID int) supervisor.StreamSink {
+		return obs.OpenStream(harness, runID)
+	})
+}
+
 // startDaemonLoopGuard subscribes the runaway tool-loop guard to the
 // observer, stopping harnesses through the daemon's own Manager and reporting
 // each stop to the notifier (nil reports nowhere). The daemon closes it on
@@ -446,6 +462,10 @@ func runDaemon(o daemonOpts) {
 	// parks, so admission refuses a parked harness from the first start. The
 	// observer's poll loop starts below, once every subscriber has attached.
 	observer := newDaemonObserver(mgr, daemonObserverOptions())
+	// A structured one-shot's stream reaches the fan-out through this seam,
+	// installed before Autostart so the boot's first run has somewhere to put
+	// its stream (issue #995).
+	startDaemonStreamIngest(observer, mgr)
 	quotaFeed := startDaemonQuota(observer, mgr)
 
 	mgr.Autostart()

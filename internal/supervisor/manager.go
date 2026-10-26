@@ -126,6 +126,12 @@ type Manager struct {
 	// Snapshot (issue #960).
 	health *HealthProber
 
+	// streamIngest, when set (SetStreamIngestSink at daemon boot), is the
+	// seam a pipe run hands its live stream to (issue #995): the daemon
+	// installs the agent event observer, which normalizes the lines through
+	// agent-trace and fans them out. nil means nothing watches a stream.
+	streamIngest StreamIngestSink
+
 	mu                sync.Mutex
 	cfg               *core.Config
 	supervisors       map[string]*Supervisor
