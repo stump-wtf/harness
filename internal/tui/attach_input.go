@@ -78,8 +78,11 @@ func (q *attachInputQueue) drain() {
 			// The wire is gone, so nothing queued behind this frame can land
 			// either: dropping the backlog matches what a per-keystroke write
 			// would have done a moment later, and keeps a dead session from
-			// being re-hit once per buffered keystroke.
-			q.drop()
+			// being re-hit once per buffered keystroke. This exit also releases
+			// the drain slot, because this drain is finishing: leaving it
+			// claimed would strand every keystroke after the failure, with no
+			// writer left to hand them to.
+			q.dropAndStop()
 			return
 		}
 	}
@@ -91,6 +94,17 @@ func (q *attachInputQueue) drain() {
 func (q *attachInputQueue) drop() {
 	q.mu.Lock()
 	q.pending = nil
+	q.mu.Unlock()
+}
+
+// dropAndStop discards the backlog and releases the drain slot. Only a drain
+// may call it, on its way out: it owns the slot, so clearing it here cannot
+// start a second writer, and clearing it is what lets the next keystroke start
+// the one writer that will actually reach the wire.
+func (q *attachInputQueue) dropAndStop() {
+	q.mu.Lock()
+	q.pending = nil
+	q.draining = false
 	q.mu.Unlock()
 }
 

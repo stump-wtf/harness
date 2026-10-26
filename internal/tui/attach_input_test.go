@@ -11,6 +11,7 @@ package tui
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -33,6 +34,7 @@ type wireRecorder struct {
 	gate    chan struct{} // when non-nil, the first write waits here first
 	entered chan struct{} // closed when that write is on the wire
 	gateOne sync.Once     // hold only the first write, so the rest stay queued
+	err     error         // when non-nil, every write fails, the way a dead session's do
 }
 
 func (w *wireRecorder) AttachInput(sid uint32, data []byte) error {
@@ -44,6 +46,9 @@ func (w *wireRecorder) AttachInput(sid uint32, data []byte) error {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.err != nil {
+		return w.err
+	}
 	w.wire.Write(data)
 	w.sids = append(w.sids, sid)
 	return nil
@@ -190,5 +195,32 @@ func TestAttachInputDropOnDetach(t *testing.T) {
 
 	if got, want := w.String(), "x"; got != want {
 		t.Fatalf("wire after detach = %q, want %q (buffered input must not outlive the session)", got, want)
+	}
+}
+
+// TestAttachInputResumesAfterWriteError: a failed write drops the backlog, but
+// the drain that noticed it is also the only thing allowed to release the drain
+// slot. A slot still claimed after that exit is handed to no one: every later
+// keystroke is buffered behind a writer that no longer exists, and the guest
+// stops hearing the keyboard for the rest of the run.
+func TestAttachInputResumesAfterWriteError(t *testing.T) {
+	m, w := attachedRecorder()
+
+	_, first := m.Update(runeKey("a"))
+	if first == nil {
+		t.Fatal("first keystroke should hand back a drain Cmd")
+	}
+	w.err = errors.New("session is gone")
+	drain(first)
+	w.err = nil
+
+	_, second := m.Update(runeKey("b"))
+	if second == nil {
+		t.Fatal("no drain Cmd after a failed write: the queue is stranded")
+	}
+	drain(second)
+
+	if got, want := w.String(), "b"; got != want {
+		t.Fatalf("wire = %q, want %q (input after a failed write must still reach the guest)", got, want)
 	}
 }
