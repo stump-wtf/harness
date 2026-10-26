@@ -217,11 +217,13 @@ func (a *Accumulator) Fold(it Item) {
 // FoldResult folds a run's own final result record (REQ-8's stream path: the
 // run's structured stream ends with the agent's own account of the run —
 // turns, duration, tokens, the recorded cost) into the run named by harness
-// and id: its tokens, its cost and its served model, the same way a usage
-// report folds. A run's result covers the whole run, and a usage report from
-// the transcript path does too, so it folds only when the run is still open
-// and no report has reached it yet; on top of one it folds nothing, so the
-// two sources never count the same run twice. It reports whether it folded.
+// and id: its tokens and its recorded cost, the same way a usage report
+// folds. The result record names no model, so the fold leaves Model and
+// Provider empty (see runusage.resultReport). A run's result covers the
+// whole run, and a usage report from the transcript path does too, so it
+// folds only when the run is still open and no report has reached it yet; on
+// top of one it folds nothing, so the two sources never count the same run
+// twice. It reports whether it folded.
 func (a *Accumulator) FoldResult(harness string, id int, rep UsageReport) bool {
 	f, ok := a.l.OpenRun(harness)
 	if !ok || f.RunID != id {
