@@ -151,6 +151,18 @@ type item struct {
 func (o *Observer) scan(ctx context.Context) {
 	now := o.opts.Now()
 	o.count(func(s *Stats) { s.LastScan = now })
+	// A stream that ended hands its session back to the poller, floored at the
+	// instant it ended: what that run printed is already delivered from the
+	// stream, so only what the store gained since can be new (issue #995).
+	for id, at := range o.releaseClaims(now) {
+		if st := o.sessions[id]; st != nil {
+			st.baseline, st.floor = true, at
+			continue
+		}
+		if _, ok := o.tombstones[id]; !ok {
+			o.tombstones[id] = tombstone{at: at}
+		}
+	}
 	scopes, targets, order := o.targets()
 	listed := map[string]bool{}
 	complete := true
@@ -362,6 +374,12 @@ func (o *Observer) list(ctx context.Context, src *source, now time.Time) ([]tail
 // and should a harness start writing into it later, that harness's run start
 // is the floor that keeps what came before from replaying.
 func (o *Observer) discover(a tail.Adapter, m tail.SessionMeta, scopes []runtrace.Scope, now time.Time) *session {
+	if o.claimIsOpen(string(m.Harness) + "/" + m.ID) {
+		// A live run's stream is what feeds this session; tracking it would
+		// read a transcript whose calls have already been delivered
+		// (ADR-0033 "One source per session").
+		return nil
+	}
 	at, ok := m.Ended()
 	if !ok {
 		at = now
@@ -472,6 +490,15 @@ func (o *Observer) read(ctx context.Context, st *session, scopes []runtrace.Scop
 	if len(cands) == 0 {
 		return
 	}
+	// A run's live stream is what feeds this session, so the transcript's copy
+	// of these calls is dropped — the watermark moved all the same, which is
+	// what keeps the stream's end from releasing a backlog the stream already
+	// delivered (issue #995; ADR-0033 "One source per session").
+	if o.claimIsOpen(st.id) {
+		n := uint64(len(cands))
+		o.count(func(s *Stats) { s.Suppressed += n })
+		return
+	}
 
 	// readAt is the moment this session was read, later than the scan's own
 	// clock when a scan takes seconds. A row can still be dated later still —
@@ -510,7 +537,8 @@ func (o *Observer) read(ctx context.Context, st *session, scopes []runtrace.Scop
 		if c.when.Before(cutoff) {
 			continue
 		}
-		ev := Event{Harness: name, Adapter: t.scope.Adapter, Session: meta, Time: c.when, ObservedAt: readAt}
+		ev := Event{Harness: name, Adapter: t.scope.Adapter, Session: meta,
+			Time: c.when, ObservedAt: readAt, Origin: OriginTranscript}
 		if c.mark {
 			ev.Kind, ev.Mark = KindMark, redactMark(c.mk)
 		} else {

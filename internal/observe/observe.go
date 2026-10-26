@@ -11,6 +11,14 @@
 // tool calls and marks — to subscribers: the Prometheus collector (SPEC-0013)
 // and the telemetry exporters (issue #391) are the intended ones.
 //
+// A structured one-shot is watched through its own stdout instead, because for
+// such a run the stream is the exact record and the transcript is at best a
+// copy of it: the supervisor hands the run's masked lines to this package,
+// agent-trace normalizes them, and they reach the same subscribers marked
+// Event.Origin (stream.go, ADR-0033 "One activity stream per session"). The
+// session a stream announces is claimed by the run that printed it, so the
+// transcript's copy of the same calls is never delivered as well.
+//
 // It deliberately does not use agent-trace's tail.Watcher. The Watcher parks a
 // mark until a tool call arrives to carry it, and during a provider outage
 // there are only error marks and no tool calls — the 2026-09-14 outage would
@@ -56,6 +64,7 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
+	"github.com/stump-wtf/harness/internal/adapter"
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/runtrace"
 	"github.com/stump-wtf/harness/internal/supervisor"
@@ -93,6 +102,11 @@ type Event struct {
 	Time time.Time
 	// ObservedAt is when the observer read the item.
 	ObservedAt time.Time
+	// Origin says which record the item was read from: the transcript store
+	// (OriginTranscript) or a pipe run's live stream (OriginStream). A consumer
+	// that reports a session's activity asks, so the two routes never look
+	// like two runs of activity (ADR-0033).
+	Origin Origin
 }
 
 // Source is what the observer needs from the supervisor. *supervisor.Manager
@@ -160,6 +174,12 @@ type Options struct {
 	// from a harness's env_file layered over the daemon's environment
 	// (default supervisor.DiscoveryEnv with runtrace.DiscoveryEnvKeys).
 	DiscoveryEnv func(core.Harness) map[string]string
+	// StreamParser resolves the agent-trace stream normalizer a harness's
+	// adapter declares (default: the adapter registry's, which is what
+	// `harness logs` parses a stream with). nil resolves to nothing, and a
+	// pipe run's lines are then drained and counted, never parsed by hand.
+	// A seam for hermetic tests.
+	StreamParser func(core.Harness) tail.StreamParser
 }
 
 func (o Options) withDefaults() Options {
@@ -189,6 +209,18 @@ func (o Options) withDefaults() Options {
 	}
 	if o.Sources == nil {
 		o.Sources = runtrace.Sources
+	}
+	if o.StreamParser == nil {
+		o.StreamParser = func(h core.Harness) tail.StreamParser {
+			a := adapter.NewRegistryWithDefaults().Resolve(h)
+			if adapter.PromptStreamOf(a) == "" {
+				return nil
+			}
+			if p, ok := a.TailAdapter().(tail.StreamParser); ok {
+				return p
+			}
+			return nil
+		}
 	}
 	if o.DiscoveryEnv == nil {
 		o.DiscoveryEnv = func(h core.Harness) map[string]string {
@@ -236,6 +268,18 @@ type Stats struct {
 	Contested int
 	// LastScan is when the latest scan began; zero before the first.
 	LastScan time.Time
+	// The stream route (stream.go). StreamItems counts events normalized from
+	// a run's stream and published; StreamDropped counts stream lines dropped
+	// because their feed's queue was full; StreamParseErrors counts streams
+	// that failed to parse or whose adapter declares no normalizer; Streams is
+	// how many runs are feeding now; Suppressed counts transcript items
+	// withheld because a live stream claims their session — the counter that
+	// proves a tool call was counted once and not twice.
+	StreamItems       uint64
+	StreamDropped     uint64
+	StreamParseErrors uint64
+	Streams           int
+	Suppressed        uint64
 }
 
 // subscriber is one Subscribe call's channel.
@@ -275,6 +319,14 @@ type Observer struct {
 	cancel   context.CancelFunc
 	stopOnce sync.Once
 	done     chan struct{}
+
+	// streamsMu guards the open stream feeds, which the supervisor's run
+	// goroutines open and close; claimsMu guards the sessions they hold, read
+	// by every scan. Neither is held while taking mu (stream.go).
+	streamsMu sync.Mutex
+	streams   map[string]*streamFeed
+	claimsMu  sync.Mutex
+	claims    map[string]claim
 }
 
 // New builds an observer over src. Start runs it.
@@ -301,6 +353,8 @@ func New(src Source, opts Options) *Observer {
 		cancel:  cancel,
 		done:    make(chan struct{}),
 		scanSem: make(chan struct{}, 1),
+		streams: make(map[string]*streamFeed),
+		claims:  make(map[string]claim),
 	}
 }
 
@@ -324,6 +378,10 @@ func (o *Observer) Stop() {
 		o.stopped = true
 		started := o.started
 		o.mu.Unlock()
+		// A feed still open belongs to a run the daemon is stopping with:
+		// closing it ends its parser instead of leaving the goroutine parked
+		// on a channel nothing will write to again.
+		o.CloseStream()
 		o.cancel()
 		if started {
 			<-o.done
