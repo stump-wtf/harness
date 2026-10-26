@@ -222,6 +222,10 @@ type Model struct {
 	connErr error
 	reconn  bool
 
+	// attachInput buffers keystrokes and pastes typed while attached, so one
+	// draining Cmd writes them to the guest in typed order (#952).
+	attachInput attachInputQueue
+
 	// data
 	harnesses []protocol.HarnessInfo
 	profiles  []protocol.ProfileInfo

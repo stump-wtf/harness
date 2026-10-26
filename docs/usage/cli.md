@@ -338,12 +338,30 @@ never silently lose context.
 
 A [stream-json one-shot](./configuration#stream-json-one-shots-run-without-a-terminal)
 (a `claude-code` prompt harness) has no terminal, and its stdout is not in its
-durable log. `harness logs <name> --raw` shows that log's lifecycle and stderr
-lines, with a note saying where the output went. `harness logs <name> --run N
---raw` prints run N's `.stream.jsonl` tail, each line cut at 64 KiB, and once
-the run has ended, its run log after it, each under a `==> path <==` header.
-`harness trigger <name> --wait` streams the same text as the run goes. The file
-itself is whole: read it with `jq` for anything longer.
+durable log: for a run that has a stream file, `jobs/<name>/<run_id>.stream.jsonl`
+is the run's output. `harness logs` renders that stream readably instead of
+showing raw masked JSON, as the same entries a traced run's session gets: a
+`session` line (short id, then the agent, model and title when the stream
+recorded them), one line per classified tool call (a read or an edit names the
+file), a line per mark, and the run's `result` line with its outcome, turns,
+duration and cost, then its final answer or first error. In the terminal and
+in the dashboard preview the `result` line is mint on success and coral on
+failure, and the structured view notes that the entries are rendered from the
+stream file because no agent-trace session is attributable to the run.
+
+Entries keep their stream order, and their ids are stable across polls, so a
+following view — `harness trigger <name> --wait` as the run goes — prints each
+entry once, in order. Every field is masked again at read time: the file was
+masked when it was written, and redaction rules may have grown since (ADR-0008).
+The file on disk is never rewritten.
+
+`harness logs <name> --raw` shows the durable log's lifecycle and stderr
+lines, with a note saying where the output went. With `--run N` it prints run
+N's stream rendering — or, when the stream parses to nothing, its raw masked
+tail, each line shown cut at 64 KiB and the whole tail at 8 MiB — and, once
+the run has ended, its run log after it, each under a `==> path <==` header. A
+closed run's stream is zstd-compressed, and the view reads it transparently.
+The file itself is whole: read it with `jq` for anything longer.
 
 `harness logs` reads the daemon's files for you, compressed or not. A rotated
 backup and a closed run's log and stream are stored zstd-compressed

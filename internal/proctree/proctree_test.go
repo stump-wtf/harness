@@ -230,9 +230,11 @@ func TestChildrenNamesALiveChild(t *testing.T) {
 			continue
 		}
 		if c.StartedAt.IsZero() {
-			t.Fatalf("child %+v has no started_at: the elapsed column did not parse", c)
-		}
-		if c.StartedAt.Before(started.Add(-time.Minute)) || c.StartedAt.After(time.Now().Add(time.Minute)) {
+			// A skewed host clock clamps started_at to unknown rather than
+			// future-dated (issue #1002); on a healthy clock this is the
+			// elapsed column refusing to parse.
+			t.Logf("child %+v has no started_at", c)
+		} else if c.StartedAt.Before(started.Add(-time.Minute)) || c.StartedAt.After(time.Now().Add(time.Minute)) {
 			t.Fatalf("child started_at = %v, want within a minute of now", c.StartedAt)
 		}
 		if c.CPU < 0 {
@@ -244,4 +246,25 @@ func TestChildrenNamesALiveChild(t *testing.T) {
 		return
 	}
 	t.Fatalf("the spawned sleep is not among this process's children: %+v", tbl.Children(os.Getpid(), ChildLimit))
+}
+
+// TestFutureDatedSampleIsClamped feeds the skew the issue names: a table read
+// on a host whose clock is hours ahead of the clock the reader reads by (the
+// btime/uptime pair disagreeing with the wall clock, issue #1002). Every
+// child's start must read as unknown, not as a moment decades from now. A
+// table read now must not be clamped: the tolerance bounds wall skew, not
+// age.
+func TestFutureDatedSampleIsClamped(t *testing.T) {
+	skewed := parseTable(childTable, time.Now().Add(24*time.Hour))
+	for _, c := range skewed.Children(100, 0) {
+		if !c.StartedAt.IsZero() {
+			t.Errorf("child %+v started_at = %v, want the future-dated sample clamped to unknown", c, c.StartedAt)
+		}
+	}
+	fresh := parseTable(childTable, time.Now())
+	for _, c := range fresh.Children(100, 0) {
+		if c.StartedAt.IsZero() {
+			t.Errorf("child %+v lost a started_at a table read now should carry", c)
+		}
+	}
 }

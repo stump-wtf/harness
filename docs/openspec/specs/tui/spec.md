@@ -97,12 +97,23 @@ work; keystrokes forward straight to the PTY. A thin status ribbon SHALL
 always show which harness is being driven, its state, and the detach hint. A
 rebindable detach chord (default `Ctrl-b d`, tmux-muscle-memory-friendly) or
 `Esc`-`Esc` SHALL return to the Dashboard. Read-only attaches (ADR-0008) SHALL
-show a visible read-only badge and ignore input.
+show a visible read-only badge and ignore input. Input typed while attached
+SHALL reach the guest in the order it was typed, however fast the keys and
+pastes arrive, and input buffered for a session that has been closed or hopped
+away from SHALL NOT be written to a later one (#952).
 
 #### Scenario: Driving a live agent
 
 - **WHEN** the user types while attached in interactive substate
 - **THEN** the keystrokes go straight to the harness PTY
+
+#### Scenario: A fast burst keeps its order
+
+- **WHEN** the user types or pastes faster than the attach connection drains
+- **THEN** the guest receives the bytes in typed order, not the order the
+  scheduler happened to run the writers
+- **AND** a burst of keys and pastes is written by one draining writer, not by
+  one per keystroke
 
 #### Scenario: Read-only badge
 
