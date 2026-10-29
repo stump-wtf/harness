@@ -78,9 +78,14 @@ func TestStopGracefulWaitsForTurnEnd(t *testing.T) {
 	if s, _ := m.Snapshot(name); s.State != core.StateRunning || s.Enabled {
 		t.Fatalf("while waiting: state=%s enabled=%v, want still running with intent cleared", s.State, s.Enabled)
 	}
-	if follows, _ := w.counts(); follows == 0 {
-		t.Error("the stop armed no turn-state watch, so nothing could be waited on")
-	}
+	// The stop arms the watch just after it sees the close entered, on the
+	// stop's own goroutine, so under load the arm can lag Closing by a
+	// scheduler beat. Wait for the arm rather than reading it the instant
+	// the close appears (seen red on the run 20251 train commit).
+	waitFor(t, 3*time.Second, "the stop armed the turn-state watch", func() bool {
+		follows, _ := w.counts()
+		return follows > 0
+	})
 
 	w.set(name, turnEnded(), true, "")
 	select {

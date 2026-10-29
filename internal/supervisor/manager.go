@@ -132,6 +132,12 @@ type Manager struct {
 	// agent-trace and fans them out. nil means nothing watches a stream.
 	streamIngest StreamIngestSink
 
+	// streamUsage, when set (SetStreamUsageSink at daemon boot), folds a
+	// pipe run's own stream file into its ledger record at run end (issue
+	// #994): the daemon passes a sink that reads the stream's final result
+	// and folds it into the ledger's usage accumulator.
+	streamUsage StreamUsageSink
+
 	mu                sync.Mutex
 	cfg               *core.Config
 	supervisors       map[string]*Supervisor

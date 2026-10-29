@@ -164,6 +164,18 @@ func startDaemonLoopGuard(mgr *supervisor.Manager, obs loopguard.Subscriber, n *
 func startDaemonRunUsage(obs *observe.Observer, mgr *supervisor.Manager) *runusage.Feed {
 	acc := ledger.NewAccumulator(mgr.Ledger(), ledger.AccumulatorOptions{})
 	acc.SetTraceURL(mgr.Config().Ledger.TraceURL)
+	// A run whose transcript never flushed gets its usage from its own
+	// stream: at the run's end, read the sealed stream's final result once
+	// and fold it into the accumulator (issue #994).
+	mgr.SetStreamUsageSink(func(name, kind string, runID int, streamPath string) {
+		parser, ok := runusage.StreamParserFor(kind)
+		if !ok {
+			return
+		}
+		if _, err := runusage.FoldStream(context.Background(), acc, name, runID, streamPath, parser); err != nil {
+			log.Warn("run stream usage not folded", "harness", name, "run_id", runID, "err", err)
+		}
+	})
 	prev := mgr.ReloadHook()
 	mgr.SetReloadHook(func() {
 		if prev != nil {
