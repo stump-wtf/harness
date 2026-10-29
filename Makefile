@@ -52,8 +52,10 @@ check: scan lint test race fuzz
 # dies in five seconds reading like a CI outage: a failed `uses:` callee is
 # recorded on the no-step wrapper job as "job not started" (issue #1015).
 # Scans history, so run it from a branch that carries the branch's history.
-# Locally a missing gitleaks fails the gate with an install hint; on a
-# runner (RUNNER_OS is set in the job container) it warns loudly and
+# Locally a missing gitleaks fails the gate with an install hint; the `git`
+# subcommand needs gitleaks v8.19+, and an older one fails the gate with
+# its own unknown-command error, which is loud enough. On a runner
+# (RUNNER_OS is set in the job container) it warns loudly and
 # skips, because the shared runner image ships no gitleaks and the
 # pipeline's dedicated secrets stage already ran the same scan earlier in
 # the run.
@@ -63,7 +65,7 @@ scan:
 	elif [ -n "$$RUNNER_OS" ]; then \
 		echo "scan: WARNING: gitleaks is not installed in this runner image, so the check skips the scan here; the pipeline's dedicated secrets stage (stump.wtf/ci gitleaks.yaml) runs the same scan on this run"; \
 	else \
-		echo "scan: gitleaks is not installed; the local gate is incomplete without it. Install it (https://github.com/gitleaks/gitleaks) and re-run"; \
+		echo "scan: gitleaks is not installed; the local gate is incomplete without it. Install gitleaks v8.19 or newer (https://github.com/gitleaks/gitleaks) and re-run"; \
 		exit 1; \
 	fi
 

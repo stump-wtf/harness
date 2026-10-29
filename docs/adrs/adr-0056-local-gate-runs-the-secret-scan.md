@@ -55,7 +55,8 @@ follow-up, not part of this decision.
 
 ## Consequences
 
-- Authors need gitleaks installed for a complete local `make check`; the
+- Authors need gitleaks (v8.19 or newer, for the `git` subcommand the gate
+  calls) installed for a complete local `make check`; the
   gate says so instead of passing short. CI needs no change for coverage:
   the dedicated secrets stage runs the scan on every run.
 - `make check` grows by a few seconds locally (a history scan of this repo
