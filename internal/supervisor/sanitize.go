@@ -272,10 +272,14 @@ func (h *ptyHistory) Write(p []byte) (int, error) {
 // queue (pushEnd/popEnd) the whole bookkeeping: no per-row flags to shift
 // around.
 //
-// A piece that is shorter than the room left on the current row cannot reach
-// the last column, so it can neither scroll the screen nor move the cursor
+// A piece of printable bytes that is shorter than the room left on the current
+// row cannot reach the last column — each printable byte advances the cursor at
+// most one column — so it can neither scroll the screen nor move the cursor
 // down a row: it is fed without a diff, leaving the screen to the next piece,
-// which keeps an ordinary short line at one screen extraction. Any scroll a
+// which keeps an ordinary short line at one screen extraction. A piece with a
+// control byte in it does not get the skip: a tab advances several columns per
+// byte and CR moves the cursor, so the byte count no longer bounds the columns
+// and such a piece can fold while reading as "too short". Any scroll a
 // piece does cause is attributed to a fold unless the piece held a newline,
 // since the only other way to scroll without writing a newline is an escape
 // sequence, and emitLocked rejects a fold whose row does not fill the width.
@@ -339,7 +343,8 @@ func (h *ptyHistory) feedLocked(chunk []byte, lf bool) {
 	pos := h.term.CursorPosition()
 	esc := bytes.IndexByte(chunk, 0x1b) >= 0
 	_, _ = h.term.Write(chunk)
-	if !lf && !esc && len(chunk) < h.term.Width()-pos.X {
+	plain := !bytes.ContainsFunc(chunk, func(r rune) bool { return r < 0x20 })
+	if !lf && !esc && plain && len(chunk) < h.term.Width()-pos.X {
 		return // too short to have reached the last column: nothing scrolled
 	}
 	cur := screenText(h.term)
@@ -360,6 +365,15 @@ func (h *ptyHistory) feedLocked(chunk []byte, lf bool) {
 	folded := !lf && (!esc || ansi.Strip(string(chunk)) != "")
 	for range n {
 		h.pushEnd(folded)
+	}
+	// A diff that emits more rows than the piece could have pushed records for
+	// means the queue has lost its alignment: some earlier piece finished rows
+	// without being diffed, so the records ahead no longer name their rows and
+	// a fold record can land on a full-width row the program ended with a
+	// newline — the wrong join the width test cannot catch. Degrade to one row
+	// per line for the rest of the run instead (ADR-0057's fail-safe).
+	if k > n {
+		h.dropEnds()
 	}
 	for _, ln := range h.prev[:k] {
 		h.emitLocked(ln)

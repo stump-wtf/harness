@@ -451,6 +451,65 @@ func TestPtyHistoryJoinsStyledFold(t *testing.T) {
 	}
 }
 
+// TestPtyHistoryTabFoldStillJoins pins the control-byte hole in the
+// short-piece skip: a tab is one byte but advances the cursor several columns,
+// so a tab-carrying piece shorter than the room left on its row can still fold
+// that row. The skip must not fire on it — if it did, the fold went
+// unrecorded, the record queue lost its alignment, and the folded line landed
+// in the log split.
+func TestPtyHistoryTabFoldStillJoins(t *testing.T) {
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 80, 24)
+	fillTo(h, 25)
+	_, _ = fmt.Fprint(h, "aaaa")                       // 4 bytes, 4 columns: skipped
+	_, _ = fmt.Fprint(h, "\t"+strings.Repeat("b", 73)) // 74 bytes, folds the row
+	_, _ = fmt.Fprint(h, "\r\n")
+	for i := 26; i <= 60; i++ {
+		_, _ = fmt.Fprintf(h, "fill %02d\r\n", i)
+	}
+	h.Flush()
+	got := out.String()
+	want := "aaaa" + strings.Repeat(" ", 4) + strings.Repeat("b", 73)
+	if !strings.Contains(got, want+"\n") {
+		t.Errorf("the tab-folded line did not land as one line; got:\n%s", got)
+	}
+	assertLinesApart(t, got, "fill 26", "fill 27")
+}
+
+// TestPtyHistoryTabFoldCannotMisjoinRule pins the sharper half of the same
+// hole: after an unrecorded fold shifts the record queue by one, each row's
+// emission pops its successor's record — so a full-width row the program ended
+// with a newline receives the fold record of the folded line printed right
+// after it, and is glued to it: the wrong join the width test cannot catch.
+// The rule must stay apart, and the folded line must still join itself.
+func TestPtyHistoryTabFoldCannotMisjoinRule(t *testing.T) {
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 80, 24)
+	fillTo(h, 25)
+	_, _ = fmt.Fprint(h, "aaaa")
+	_, _ = fmt.Fprint(h, "\t"+strings.Repeat("b", 73))
+	_, _ = fmt.Fprint(h, "\r\n")
+	for i := 26; i <= 60; i++ {
+		_, _ = fmt.Fprintf(h, "fill %02d\r\n", i)
+	}
+	rule := strings.Repeat("=", 80)
+	_, _ = fmt.Fprintf(h, "%s\r\n", rule)
+	wrapped := "wrapped " + strings.Repeat("w", 300)
+	_, _ = fmt.Fprintf(h, "%s\r\n", wrapped)
+	for i := 61; i <= 100; i++ {
+		_, _ = fmt.Fprintf(h, "fill %02d\r\n", i)
+	}
+	h.Flush()
+	got := out.String()
+	if strings.Contains(got, rule+"wrapped") {
+		t.Errorf("a newline-terminated full-width rule was joined to the next line:\n%s", got)
+	}
+	if !strings.Contains(got, wrapped+"\n") {
+		t.Errorf("the folded line after the rule did not land as one line:\n%s", got)
+	}
+	assertLinesApart(t, got, rule)
+}
+
 // TestDurableLogKeepsFoldedLineOnOneLine is the end-to-end pin: a real child on
 // a real 80×24 PTY writes one long line, and the durable log — which is what
 // both `harness logs` and `harness logs --json` print — holds it as one line.
