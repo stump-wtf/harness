@@ -49,14 +49,14 @@ func concurrencyGroup(doc map[string]any) (string, bool) {
 // TestWorkflowConcurrencySeparatesPRs pins the concurrency key of every Gitea
 // workflow in this repository.
 //
-// A group keyed on the ref alone does not separate pull requests here: on this
-// act_runner a pull_request run carries no ref (every pull_request row in
-// actions/runs has a null ref and head_branch, while push rows show main and
-// train/* correctly), so every open PR collapses into one group and the newest
-// push cancels the runs already in flight on the others. The cancelled run ends
-// with no failing job, so its commit statuses read failure and the merge gate
-// blocks on a healthy tree — and ADR-0056 deliberately does not re-run a
-// cancellation, so nothing recovers it on its own (#1027).
+// Correction (2026-10-29, runs-API re-read in #1027): the ref-only key never
+// actually collapsed pull requests here — cross-PR runs coexisted in flight —
+// so the pull_request.number term is defensive hygiene, not a fix for observed
+// cancellations. It is still worth pinning: pull_request rows display a null
+// ref and head_branch in actions/runs, so what ref a pull_request run gets
+// server-side is not visible from the outside and is not contractually
+// stable, and the per-PR term keeps the group correct whichever way the runner
+// fills it.
 //
 // The ref still belongs in the key: main, the train/* branches and tags each
 // need their own group, or a push to main would cancel the run already shipping
@@ -91,7 +91,7 @@ func TestWorkflowConcurrencySeparatesPRs(t *testing.T) {
 			t.Errorf("%s: concurrency group %q separates nothing: push runs of main and the train share one group", name, group)
 		}
 		if triggers["pull_request"] && !strings.Contains(group, "pull_request.number") {
-			t.Errorf("%s: concurrency group %q is shared by every open pull request, so a push to one PR cancels the in-flight runs of the rest (#1027); append ${{ gitea.event.pull_request.number }} to the key", name, group)
+			t.Errorf("%s: concurrency group %q has no per-PR term; append ${{ gitea.event.pull_request.number }} so each pull request keeps its own group regardless of how the runner fills ref (#1027)", name, group)
 		}
 	}
 }
