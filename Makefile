@@ -8,7 +8,8 @@
 #   make daemon       # run the daemon in the foreground
 #   make tidy         # go mod tidy + gofumpt
 #   make lint         # static checks only (fmt, vet, go.mod/go.sum tidiness)
-#   make check        # just the CI gates (lint, test, race, fuzz)
+#   make scan         # the secret scan (gitleaks) the pipeline runs first
+#   make check        # just the CI gates (scan, lint, test, race, fuzz)
 #   make fuzz         # run the fuzz targets for a bounded time (FUZZTIME)
 #
 # Override the binary path / version via:
@@ -29,7 +30,7 @@ LDFLAGS   := -X $(PKG)/internal/buildinfo.Version=$(VERSION)
 GOFLAGS   := -trimpath -ldflags "$(LDFLAGS)"
 BIN       := harness
 
-.PHONY: all build check lint fmt vet tidy-check test race fuzz tidy clean run daemon install version release-snapshot release-check
+.PHONY: all build check lint fmt vet tidy-check test race fuzz scan tidy clean run daemon install version release-snapshot release-check
 
 # The default "did I break it" loop.
 all: build check
@@ -38,10 +39,25 @@ all: build check
 build:
 	$(GO) build $(GOFLAGS) -o bin/$(BIN) ./cmd/harness
 
-# Full CI gate: the static checks, tests, the race detector, and a bounded
-# fuzz run. CI's pipeline calls `make check`, so adding `fuzz` here is what
-# puts it in CI.
-check: lint test race fuzz
+# Full CI gate: the secret scan first — a leaked credential must not wait
+# behind a compile, the same ordering as the pipeline — then the static
+# checks, tests, the race detector, and a bounded fuzz run. CI's pipeline
+# calls `make check`, so adding `fuzz` here is what puts it in CI.
+check: scan lint test race fuzz
+
+# The secret scan: the same gitleaks call the pipeline's first stage runs
+# (stump.wtf/ci gitleaks.yaml) — full history, the repo's .gitleaksignore,
+# redacted output. It exists so a literal the scan reads as a credential is
+# caught locally, where the finding is on screen, instead of as a PR that
+# dies in five seconds reading like a CI outage: a failed `uses:` callee is
+# recorded on the no-step wrapper job as "job not started" (issue #1015).
+# Scans history, so run it from a branch that carries the branch's history.
+scan:
+	@command -v gitleaks >/dev/null 2>&1 || { \
+		echo "gitleaks is not installed; the CI gate runs it (stump.wtf/ci), so the local gate is incomplete without it"; \
+		exit 1; \
+	}
+	gitleaks git . --no-banner --verbose --redact --gitleaks-ignore-path .gitleaksignore
 
 # Static checks only (the uniform `make lint` entry point).
 lint: fmt vet tidy-check
