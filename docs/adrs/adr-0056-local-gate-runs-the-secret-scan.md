@@ -44,17 +44,24 @@ the finding.
 runs — full history, the repo's `.gitleaksignore`, redacted output — as its
 first step, so the ordering matches the pipeline: a leaked credential must
 not wait behind a compile. The scan is also available on its own as
-`make scan`. A missing `gitleaks` binary fails the gate with an install
-hint rather than skipping silently: a silently shorter local gate is how
-this class of wedge happens.
+`make scan`. Locally, a missing `gitleaks` binary fails the gate with an
+install hint rather than skipping silently: a silently shorter local gate
+is how this class of wedge happens. On a runner the shared CI image ships
+no `gitleaks`, so there the check warns loudly and skips the duplicate: the
+pipeline's dedicated secrets stage has already run the same scan earlier in
+the run, so no coverage is lost. Bundling gitleaks into the runner image
+would let the build job gate on it too; that is an infrastructure
+follow-up, not part of this decision.
 
 ## Consequences
 
-- Authors need gitleaks installed for `make check`; the gate says so
-  instead of passing short.
-- `make check` grows by a few seconds (a history scan of this repo is about
-  3s warm); CI's build job re-runs the scan behind the dedicated secrets
-  stage, which is redundant but keeps one gate for local and CI.
+- Authors need gitleaks installed for a complete local `make check`; the
+  gate says so instead of passing short. CI needs no change for coverage:
+  the dedicated secrets stage runs the scan on every run.
+- `make check` grows by a few seconds locally (a history scan of this repo
+  is about 3s warm). The CI build job runs in the shared runner image,
+  which has no gitleaks, so it warns and skips the scan there instead of
+  failing the run.
 - Fixture literals that read as credentials must be assembled at run time
   or fingerprinted in `.gitleaksignore` (the existing convention); the scan
   makes that requirement visible locally, as a finding on screen, instead
