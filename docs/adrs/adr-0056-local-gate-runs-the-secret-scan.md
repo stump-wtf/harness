@@ -8,9 +8,9 @@ related: []
 
 # ADR-0056: The local gate runs the secret scan, first
 
-> **Not yet accepted.** Proposed in the PR for stump.wtf/harness#1015 by the
-> s handoff lane. The Makefile change in that PR implements it; whether
-> `make check` should include the scan needs a maintainer's call.
+> **Not yet accepted.** Proposed by the `s` handoff lane in the PR for
+> stump.wtf/harness#1015. The Makefile change in that PR implements it;
+> whether `make check` should include the scan needs a maintainer's call.
 
 ## Context and Problem Statement
 
