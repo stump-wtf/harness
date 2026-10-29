@@ -91,6 +91,14 @@ Option 3, with the width test kept as a validity check.
   the validity check refuses the join. That is safe (never a wrong one), but
   the long-sentence case #279 describes splits exactly there; fixing it needs
   the untrimmed row width at the check.
+- The screen diff that attributes rows to records has two pre-existing failure
+  modes of its own, both in `scrollCount`'s shifted-window match and both on
+  `main` today: a fold whose tail arrives in a later write leaves a non-blank
+  bottom row that defeats the match and silently drops the row the scroll
+  evicted (#1023), and periodic content can win a wrong largest shift,
+  re-emitting rows that are still on screen. Joining leans on the diff harder
+  than row-per-line ever did, so both are easier to hit here; the fixes belong
+  to the diff, not to the joining.
 - Joining, once disabled for a run — panic recovery, records past
   `historyEndsCap`, or a record queue caught emitting rows it has no records
   for — stays off until the harness restarts; the panic and reset paths say so
