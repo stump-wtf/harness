@@ -45,8 +45,11 @@ func (m *Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// onAttachedMouse handles mouse events while in attached mode. Wheel-up in
-// the interactive substate enters scrollback; wheel in scrollback navigates.
+// onAttachedMouse handles mouse events while in attached mode. Ownership comes
+// first: while the guest has mouse reporting on, the wheel, clicks and motion
+// are the guest's and are encoded and forwarded to it (ADR-0055). A guest that
+// never asked for the mouse keeps harness's behaviour: wheel-up in the
+// interactive substate enters scrollback, wheel in scrollback navigates.
 // Shift+click/drag releases the TUI's mouse grab so the terminal handles
 // native text selection (tmux-style shift-passthrough, #49); wheel events
 // keep their normal meaning even with shift held. Any key press re-enables
@@ -69,6 +72,17 @@ func (m *Model) onAttachedMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		// session was killed.
 		m.mouseReleased = true
 		return m, mouseRegrab()
+	}
+	if m.guestOwnsMouse() {
+		// The wheel and the clicks are the guest's for as long as it holds the
+		// mouse (ADR-0055). An event that landed outside its screen, on the
+		// status bar harness owns, is then nobody's: opening harness scrollback
+		// there would scroll the viewer away from a guest that is still waiting
+		// for the event, and tmux drops pane-less events the same way.
+		if cmd, forwarded := m.forwardGuestMouse(msg); forwarded {
+			return m, cmd
+		}
+		return m, nil
 	}
 	if !isWheel {
 		return m, nil
@@ -457,8 +471,11 @@ func (m *Model) onAttachedKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// PgUp enters scrollback without the prefix.
-	if key.Matches(msg, m.keys.Scrollback) {
+	// PgUp enters scrollback without the prefix, unless the guest owns the
+	// mouse, in which case PgUp is the guest's own paging key and falls through
+	// to the PTY below, the way PgDn already does (ADR-0055). `^b [` still
+	// opens harness scrollback either way.
+	if key.Matches(msg, m.keys.Scrollback) && !m.guestOwnsMouse() {
 		m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
 		return m, nil
 	}
