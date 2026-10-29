@@ -55,6 +55,12 @@ import (
 // normal case, and a stream that never scrolls is not one joining can help.
 const historyEndsCap = 4096
 
+// pendingCapScreens bounds how many screens of bytes emitLocked holds for one
+// folded logical line before splitting it: output that folds many rows between
+// newlines would otherwise grow the daemon's memory for as long as the folds
+// outrun the scrolls that drain them.
+const pendingCapScreens = 4
+
 // logLine masks credentials in one history line on its way to disk.
 //
 // The durable log records what the program printed, so a token-bearing git
@@ -103,7 +109,8 @@ type ptyHistory struct {
 	head int
 	// pending holds the text of a folded row whose tail has not been emitted
 	// yet; hasPending says whether it holds anything (an empty row is folded
-	// too, and folding it away would drop a line break).
+	// too, and folding it away would drop a line break). It is bounded
+	// (pendingCapScreens); a longer line splits at the bound (emitLocked).
 	pending    string
 	hasPending bool
 	// noJoin freezes joining for the rest of the run once the records in ends
@@ -390,11 +397,20 @@ func (h *ptyHistory) feedLocked(chunk []byte, lf bool) {
 func (h *ptyHistory) emitLocked(ln string) {
 	folded := h.popEnd() && ln != "" && ansi.StringWidth(ln) == h.term.Width()
 	if h.hasPending {
-		h.pending += ln
-		if !folded {
+		// pending is the one structure this change left unbounded: rows the
+		// terminal folded hold until their line ends, and folds can outrun the
+		// scrolls that drain them. Past a few screens of bytes, split the line
+		// there and let the rest fall back to row-per-line — the split is the
+		// price of a bounded daemon (ADR-0057).
+		if len(h.pending)+len(ln) > pendingCapScreens*h.term.Width() {
 			h.writePendingLocked()
+		} else {
+			h.pending += ln
+			if !folded {
+				h.writePendingLocked()
+			}
+			return
 		}
-		return
 	}
 	if ln == "" {
 		return // blank rows carry no history

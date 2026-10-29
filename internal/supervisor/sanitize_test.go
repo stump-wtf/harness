@@ -510,6 +510,38 @@ func TestPtyHistoryTabFoldCannotMisjoinRule(t *testing.T) {
 	assertLinesApart(t, got, rule)
 }
 
+// TestPtyHistoryPendingSplitsPastCap pins the bound on pending: rows the
+// terminal folded hold until their logical line ends, and folds can outrun
+// the scrolls that drain them, so a stream of folded rows must not make the
+// sanitizer hold all of them. Past a few screens the held line splits, and
+// the content still adds up. Driven at emitLocked: the screen diff above it
+// has its own ambiguity on periodic content, which is not what this pins.
+func TestPtyHistoryPendingSplitsPastCap(t *testing.T) {
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 80, 24)
+	const rows = 101
+	for i := 0; i < rows; i++ {
+		h.pushEnd(true) // this row folded onto the next
+		h.emitLocked(strings.Repeat("b", 80))
+	}
+	h.pushEnd(false) // the last row ended by a newline
+	h.emitLocked(strings.Repeat("b", 80))
+	h.Flush()
+
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("a stream of %d folded rows did not split: %d line(s)", rows+1, len(lines))
+	}
+	if logged := len(strings.ReplaceAll(out.String(), "\n", "")); logged != (rows+1)*80 {
+		t.Errorf("the split changed content: %d of %d bytes logged", logged, (rows+1)*80)
+	}
+	for _, ln := range lines {
+		if len(ln) > 4*80 {
+			t.Errorf("a line longer than the cap landed: %d bytes: %.40q", len(ln), ln)
+		}
+	}
+}
+
 // TestDurableLogKeepsFoldedLineOnOneLine is the end-to-end pin: a real child on
 // a real 80×24 PTY writes one long line, and the durable log — which is what
 // both `harness logs` and `harness logs --json` print — holds it as one line.
