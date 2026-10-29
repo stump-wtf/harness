@@ -32,6 +32,11 @@ const (
 	// MinMergeTrainPollInterval is the floor on poll_interval; the train's CI
 	// polling never goes below 5 s either (SPEC-0025 REQ-5).
 	MinMergeTrainPollInterval = 5 * time.Second
+	// DefaultMergeTrainFlakeCoolDown is how long the train waits before it
+	// retries a red attempt that failed only on jobs no runner ever started
+	// (SPEC-0025 REQ-18). Long enough for a congested runner pool to clear, and
+	// short next to the hours a stalled train otherwise waits.
+	DefaultMergeTrainFlakeCoolDown = 5 * time.Minute
 )
 
 // MergeTrainConfig is the global [mergetrain] table.
@@ -45,6 +50,10 @@ type MergeTrainConfig struct {
 	// Batch is the PRs-per-train size (SPEC-0025 REQ-17), at least 1. Above
 	// 1 a tick batches that many heads onto one train commit.
 	Batch int
+	// FlakeCoolDown is how long a red attempt waits for its one infra retry
+	// (SPEC-0025 REQ-18). Zero turns the retry off, leaving a red attempt to
+	// wait for the base branch or the head to move.
+	FlakeCoolDown time.Duration
 	// ForgeBaseURL is the forge's root, e.g. "https://gitea.stump.rocks".
 	ForgeBaseURL string
 	// ForgeTokenEnv is the NAME of the environment variable holding the
@@ -56,10 +65,11 @@ type MergeTrainConfig struct {
 // disabled, report mode, the documented intervals.
 func DefaultMergeTrainConfig() MergeTrainConfig {
 	return MergeTrainConfig{
-		Mode:         DefaultMergeTrainMode,
-		BaseBranch:   DefaultMergeTrainBaseBranch,
-		PollInterval: DefaultMergeTrainPollInterval,
-		CITimeout:    DefaultMergeTrainCITimeout,
-		Batch:        DefaultMergeTrainBatch,
+		Mode:          DefaultMergeTrainMode,
+		BaseBranch:    DefaultMergeTrainBaseBranch,
+		PollInterval:  DefaultMergeTrainPollInterval,
+		CITimeout:     DefaultMergeTrainCITimeout,
+		Batch:         DefaultMergeTrainBatch,
+		FlakeCoolDown: DefaultMergeTrainFlakeCoolDown,
 	}
 }

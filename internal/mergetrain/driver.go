@@ -19,8 +19,13 @@ package mergetrain
 // No code path here opens, closes or edits a pull request, or pushes to a PR's
 // branch: the Forge interface offers no way to (SPEC-0025 REQ-13).
 //
+// A red attempt whose failures the forge says never reached a runner is the one
+// exception to the attempt memory: the train waits a cool-down and tries that
+// tree once more before it tells the author (SPEC-0025 REQ-18).
+//
 // Governing: ADR-0032 (the loop, failure handling, singleton, author todo,
-// bypass audit), SPEC-0025 REQ-1, REQ-7..REQ-11, REQ-13..REQ-17.
+// bypass audit), ADR-0056 (the infra retry), SPEC-0025 REQ-1, REQ-7..REQ-11,
+// REQ-13..REQ-18.
 
 import (
 	"context"
@@ -73,11 +78,26 @@ type DriverConfig struct {
 	// RetryPause is the pause between retries of cleanup and verification
 	// reads. Default 1 s.
 	RetryPause time.Duration
+	// FlakeCoolDown is how long the train waits before it retries a red
+	// attempt the forge says never reached a runner (SPEC-0025 REQ-18). The
+	// retry is strictly once per (pr, head, base): a tree that fails the same
+	// way twice gets today's comment instead of a second re-run. Zero — this
+	// struct's default — keeps today's behaviour, where a red attempt waits for
+	// the base branch or the PR's head to move.
+	FlakeCoolDown time.Duration
 }
 
 type attemptKey struct {
 	pr         int
 	head, base string
+}
+
+// flakeState is what the train remembers about the one infra retry it granted
+// a (pr, head, base): that it happened, and when the attempt may run again.
+// The entry is dropped when the head moves, like the attempt memory itself.
+type flakeState struct {
+	tried   bool      // the single retry has been spent
+	retryAt time.Time // nothing is attempted for the triple before this
 }
 
 // pendingComment is a failure the author has not been told about yet, because
@@ -96,10 +116,12 @@ type Driver struct {
 	lock *Lock
 
 	attempted map[attemptKey]Outcome
+	flake     map[attemptKey]flakeState
 	pending   map[attemptKey]pendingComment
 	lastMain  string // the base branch head last seen or produced
 	lastQueue string
 	halted    error
+	now       func() time.Time // the cool-down's clock; tests replace it
 }
 
 // NewDriver validates cfg and takes the repo's lock. It makes no forge call.
@@ -138,7 +160,9 @@ func NewDriver(cfg DriverConfig, f forge.Forge) (*Driver, error) {
 		log:       cfg.Log,
 		lock:      lock,
 		attempted: map[attemptKey]Outcome{},
+		flake:     map[attemptKey]flakeState{},
 		pending:   map[attemptKey]pendingComment{},
+		now:       time.Now,
 	}
 	d.log.Info(event("started"), "repo", cfg.Repo, "mode", string(cfg.Mode), "base_branch", cfg.BaseBranch)
 	return d, nil
@@ -213,12 +237,18 @@ func (d *Driver) Tick(ctx context.Context) error {
 
 // targets returns the first not-yet-attempted PRs of the queue, up to the
 // batch size (SPEC-0025 REQ-17). A PR already attempted at this (head, base)
-// is skipped, never retried in this tick.
+// is skipped, never retried in this tick — except one the train granted its
+// one infra retry (REQ-18), which is attemptable again once its cool-down has
+// passed.
 func (d *Driver) targets(queue []PullRequest, base string) []PullRequest {
 	n := max(d.cfg.Batch, 1)
 	var out []PullRequest
 	for _, p := range queue {
-		if _, done := d.attempted[attemptKey{p.Number, p.HeadSHA, base}]; done {
+		key := attemptKey{p.Number, p.HeadSHA, base}
+		if _, done := d.attempted[key]; done {
+			continue
+		}
+		if d.coolingDown(key, d.now()) {
 			continue
 		}
 		out = append(out, p)
@@ -227,6 +257,12 @@ func (d *Driver) targets(queue []PullRequest, base string) []PullRequest {
 		}
 	}
 	return out
+}
+
+// coolingDown reports whether key is waiting out an infra cool-down at now.
+func (d *Driver) coolingDown(key attemptKey, now time.Time) bool {
+	fl, ok := d.flake[key]
+	return ok && !fl.retryAt.IsZero() && now.Before(fl.retryAt)
 }
 
 // attemptSingle runs and judges one train attempt for pr: the REQ-1 through
@@ -251,10 +287,14 @@ func (d *Driver) attemptResult(ctx context.Context, pr PullRequest, base string,
 			short(pr.HeadSHA), d.cfg.BaseBranch, short(base)))
 		return false, nil
 	case OutcomeRed:
+		if d.retryInfraFailure(ctx, key, pr, base, res) {
+			return false, nil
+		}
 		d.attempted[key] = res.Outcome
 		d.fail(ctx, key, pr, CauseRed, fmt.Sprintf(
-			"CI was `%s` on the train commit `%s` — this PR at `%s` squashed onto `%s` at `%s`. The PR's own CI was green, so this is an interaction with what landed since, or a flake; the train tries again when `%s` or this PR's head moves.",
-			res.Status, short(res.Train.SHA), short(pr.HeadSHA), d.cfg.BaseBranch, short(base), d.cfg.BaseBranch))
+			"CI was `%s` on the train commit `%s` — this PR at `%s` squashed onto `%s` at `%s`. The PR's own CI was green, so this is an interaction with what landed since, or a flake; the train tries again when `%s` or this PR's head moves.%s",
+			res.Status, short(res.Train.SHA), short(pr.HeadSHA), d.cfg.BaseBranch, short(base), d.cfg.BaseBranch,
+			flakeNote(d.flake[key])))
 		return false, nil
 	case OutcomeTimeout:
 		d.attempted[key] = res.Outcome
@@ -670,6 +710,51 @@ func (d *Driver) forget(prs []PullRequest) {
 			delete(d.attempted, k)
 		}
 	}
+	for k := range d.flake {
+		if heads[k.pr] != k.head {
+			delete(d.flake, k)
+		}
+	}
+}
+
+// retryInfraFailure takes the one cool-down retry SPEC-0025 REQ-18 allows, and
+// reports whether it did. It fires only when the retry is configured on, this
+// triple has not used its retry yet, and the forge says every failed job on
+// the train commit never reached a runner. Then the triple stays attemptable —
+// no attempt memory, no comment, because the tree was never shown to be
+// wrong — and is attempted again once the cool-down has passed, which the next
+// eligible PR uses in the meantime. A second failure with the same signature
+// is reported once, at warn, and left as an ordinary red.
+func (d *Driver) retryInfraFailure(ctx context.Context, key attemptKey, pr PullRequest, base string, res Result) bool {
+	if d.cfg.FlakeCoolDown <= 0 {
+		return false
+	}
+	fl := d.flake[key]
+	if fl.tried {
+		if rule := infraFailure(ctx, d.f, d.cfg.Repo, res.Train.SHA); rule != "" {
+			d.log.Warn(event("flake retry exhausted"), d.kv("pr", pr.Number, "head", pr.HeadSHA,
+				"base", base, "train", res.Train.SHA, "cause", rule)...)
+		}
+		return false
+	}
+	rule := infraFailure(ctx, d.f, d.cfg.Repo, res.Train.SHA)
+	if rule == "" {
+		return false
+	}
+	d.flake[key] = flakeState{tried: true, retryAt: d.now().Add(d.cfg.FlakeCoolDown)}
+	d.log.Info(event("flake retry"), d.kv("pr", pr.Number, "head", pr.HeadSHA, "base", base,
+		"train", res.Train.SHA, "cause", rule, "wait", d.cfg.FlakeCoolDown.String())...)
+	return true
+}
+
+// flakeNote is the sentence a red comment gains when the tree had already been
+// given its infra retry: the author should know the train re-ran it before
+// calling it red.
+func flakeNote(fl flakeState) string {
+	if !fl.tried {
+		return ""
+	}
+	return " The train had already re-run this tree once after a cool-down, because every failed job then reported that no runner had started it; this is that retry's result."
 }
 
 func (d *Driver) tickFailed(ctx context.Context, err error) error {
