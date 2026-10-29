@@ -275,12 +275,14 @@ move. The driver SHALL ask the forge, for the train commit, how each job ended,
 and SHALL treat the failure as not the tree's only when **every** failed job is
 one the forge reports as never having produced a log (no runner ever attached).
 A job with a log, a job whose conclusion is anything but `failure`, and a commit
-the forge reports no jobs for are all real failures. `flake_cool_down` (default
-5 minutes) sets the wait; `0` turns the retry off, which is the behaviour this
-REQ replaced.
+the forge reports no jobs for are all real failures. `flake_cool_down` sets
+the wait. It is `0` — the retry off — until ADR-0056 is accepted, which is
+expected to set the proposed 5-minute default; `0` is also the behaviour this
+REQ replaced, so a config without the key changes nothing.
 
-- The retry SHALL be granted at most once per `(pr, head, base)`, so a tree that
-  fails the same way twice cannot re-run CI in a loop.
+- The retry SHALL be granted at most once per `(pr, head, base)` in memory,
+  like REQ-10's attempt record, so a tree that fails the same way twice cannot
+  re-run CI in a loop.
 - While a retried attempt waits out its cool-down the driver SHALL NOT attempt
   that triple, and SHALL use the tick for the next eligible PR.
 - A retried attempt SHALL produce no REQ-9 comment and no REQ-10 memory: the
