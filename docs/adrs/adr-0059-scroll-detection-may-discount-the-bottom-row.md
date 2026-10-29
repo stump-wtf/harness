@@ -70,8 +70,14 @@ Two properties fall out of that wording:
 - The row-level exemption is a real relaxation of the shift test, so a frame that
   did not scroll can now be read as one if its content repeats at the candidate
   period. That is #1021's failure mode, not a new one, and it is bounded by the
-  same evidence requirement; whatever settles #1021 should compose with this
-  rule rather than replace it.
+  same evidence requirement, one row weaker than before: the waiver removes one
+  corroborating row from every candidate shift shorter than the full screen, so
+  the smallest shift a single matching row can prove moves from `len(prev)-1`
+  to `len(prev)-2`, and on periodic content the over-shift shape #1021
+  describes is one row wider than it would otherwise be. That is one more
+  reason the evidence-ranked matcher proposed in #1022 should land alongside
+  this rule; whatever settles #1021 should compose with this rule rather than
+  replace it.
 
 ## Considered Alternatives
 
