@@ -45,6 +45,7 @@ base_branch = "trunk"
 poll_interval = "90s"
 ci_timeout = "45m"
 batch = 3
+flake_cool_down = "90s"
 forge_base_url = "https://gitea.stump.rocks/"
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 `
@@ -56,6 +57,7 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 	if !mc.Enabled || mc.Mode != "merge" || mc.BaseBranch != "trunk" ||
 		!slices.Equal(mc.Repos, []string{"stump.wtf/harness", "stump.wtf/switchboard"}) ||
 		mc.PollInterval != 90*time.Second || mc.CITimeout != 45*time.Minute || mc.Batch != 3 ||
+		mc.FlakeCoolDown != 90*time.Second ||
 		mc.ForgeBaseURL != "https://gitea.stump.rocks" || mc.ForgeTokenEnv != "HARNESS_MERGETRAIN_TOKEN" {
 		t.Fatalf("parsed = %+v", mc)
 	}
@@ -68,6 +70,23 @@ func TestMergeTrainEnabledDefaultsFalseAndModeReport(t *testing.T) {
 	}
 	if cfg.MergeTrain.Enabled || cfg.MergeTrain.Mode != "report" {
 		t.Fatalf("enabled = %v, mode = %q; want false, report", cfg.MergeTrain.Enabled, cfg.MergeTrain.Mode)
+	}
+	if cfg.MergeTrain.FlakeCoolDown != core.DefaultMergeTrainFlakeCoolDown {
+		t.Fatalf("flake cool down = %s, want the documented %s",
+			cfg.MergeTrain.FlakeCoolDown, core.DefaultMergeTrainFlakeCoolDown)
+	}
+}
+
+// SPEC-0025 REQ-18: `flake_cool_down = "0"` is the way to turn the runner-flake
+// retry off, so unlike every other duration here a zero is accepted rather than
+// refused.
+func TestMergeTrainFlakeCoolDownOff(t *testing.T) {
+	cfg, err := Parse([]byte("[mergetrain]\nflake_cool_down = \"0\"\n"), "t.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MergeTrain.FlakeCoolDown != 0 {
+		t.Fatalf("flake cool down = %s, want 0", cfg.MergeTrain.FlakeCoolDown)
 	}
 }
 
@@ -89,6 +108,8 @@ func TestMergeTrainRejects(t *testing.T) {
 		{"dup repo", "[mergetrain]\nrepos = [\"a/b\", \"a/b\"]\n", "twice"},
 		{"fast poll", "[mergetrain]\npoll_interval = \"1s\"\n", "at least 5s"},
 		{"bad timeout", "[mergetrain]\nci_timeout = \"soon\"\n", `"ci_timeout"`},
+		{"bad flake cool down", "[mergetrain]\nflake_cool_down = \"soon\"\n", `"flake_cool_down"`},
+		{"negative flake cool down", "[mergetrain]\nflake_cool_down = \"-5m\"\n", `"flake_cool_down"`},
 		{"train base", "[mergetrain]\nbase_branch = \"train/1\"\n", "train/"},
 		{"zero batch", "[mergetrain]\nbatch = 0\n", `"batch": must be a whole number of at least 1`},
 		{"negative batch", "[mergetrain]\nbatch = -2\n", `"batch": must be a whole number of at least 1`},

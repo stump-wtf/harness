@@ -14,7 +14,12 @@ package config
 // at least 1, where a value above 1 batches that many heads onto one train
 // commit.
 //
-// Governing: ADR-0032; SPEC-0025 REQ-1, REQ-12, REQ-17.
+// `flake_cool_down` (SPEC-0025 REQ-18) is how long a red attempt waits for its
+// one retry when every failed job reported no runner. It is the one duration
+// here that accepts 0, because 0 is the honest way to turn the retry off — and
+// it is the default until ADR-0056 is accepted, so the retry is opt-in.
+//
+// Governing: ADR-0032, ADR-0056; SPEC-0025 REQ-1, REQ-12, REQ-17, REQ-18.
 //
 // @joestump-agent 09/28/2026 - Accept `batch`. It was absent from
 // rawMergeTrain, so the strict decode refused it as an unknown key and the
@@ -40,6 +45,7 @@ type rawMergeTrain struct {
 	PollInterval  *string  `toml:"poll_interval"`
 	CITimeout     *string  `toml:"ci_timeout"`
 	Batch         *int64   `toml:"batch"`
+	FlakeCoolDown *string  `toml:"flake_cool_down"`
 	ForgeBaseURL  string   `toml:"forge_base_url"`
 	ForgeTokenEnv string   `toml:"forge_token_env"`
 
@@ -112,6 +118,9 @@ func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (
 	}{
 		{"poll_interval", rm.PollInterval, &mc.PollInterval, core.MinMergeTrainPollInterval},
 		{"ci_timeout", rm.CITimeout, &mc.CITimeout, time.Minute},
+		// flake_cool_down is the one duration allowed to be zero: 0 turns the
+		// infra retry off rather than meaning "immediately" (SPEC-0025 REQ-18).
+		{"flake_cool_down", rm.FlakeCoolDown, &mc.FlakeCoolDown, 0},
 	}
 	for _, d := range durations {
 		if d.raw == nil {

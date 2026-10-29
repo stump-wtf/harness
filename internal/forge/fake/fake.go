@@ -41,6 +41,7 @@ type repoState struct {
 	prs       map[int]*prState
 	branches  map[string]string            // name → sha
 	statuses  map[string]string            // sha → combined state
+	jobs      map[string][]forge.Job       // sha → per-job detail, unset says nothing
 	files     map[string]map[string][]byte // sha or branch → path → bytes
 	trees     map[string]string            // sha → tree
 	comments  map[int][]string
@@ -59,11 +60,13 @@ type Fake struct {
 	polls    map[string]int
 	seq      int
 	onStatus func(sha string, n int) string
+	onJobs   func(sha string) ([]forge.Job, error)
 	onTrain  func(forge.TrainSpec) (forge.TrainBranch, error)
 	onMerge  func(pr int, train forge.TrainBranch) (tree string)
 }
 
 var _ forge.Forge = (*Fake)(nil)
+var _ forge.JobReporter = (*Fake)(nil)
 
 // New returns an empty fake whose base branch is "main".
 func New() *Fake {
@@ -87,6 +90,7 @@ func (f *Fake) repo(name string) *repoState {
 			trees:     map[string]string{},
 			comments:  map[int][]string{},
 			lastTrain: map[int]forge.TrainBranch{},
+			jobs:      map[string][]forge.Job{},
 		}
 		f.repos[name] = r
 	}
@@ -134,6 +138,15 @@ func (f *Fake) SetStatus(repo, sha, state string) {
 	f.repo(repo).statuses[sha] = state
 }
 
+// SetJobs sets the per-job detail CommitJobs reports for sha. A SHA with no
+// entries is one the fake says nothing about, which is what a forge without
+// per-job detail looks like to the train.
+func (f *Fake) SetJobs(repo, sha string, jobs ...forge.Job) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repo(repo).jobs[sha] = slices.Clone(jobs)
+}
+
 // SetFile sets path's content at ref, which may be a SHA or a branch name.
 func (f *Fake) SetFile(repo, ref, path string, content []byte) {
 	f.mu.Lock()
@@ -177,6 +190,13 @@ func (f *Fake) OnStatus(fn func(sha string, n int) string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.onStatus = fn
+}
+
+// OnJobs makes CommitJobs return what fn returns. It overrides SetJobs.
+func (f *Fake) OnJobs(fn func(sha string) ([]forge.Job, error)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onJobs = fn
 }
 
 // OnTrain makes CreateTrainBranch build what fn returns. A returned error
@@ -349,6 +369,22 @@ func (f *Fake) CombinedStatus(ctx context.Context, repo, sha string) (string, er
 		return st, nil
 	}
 	return "pending", nil
+}
+
+// CommitJobs returns OnJobs's answer, else the jobs set for sha, else nothing.
+func (f *Fake) CommitJobs(ctx context.Context, repo, sha string) ([]forge.Job, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin(ctx, "CommitJobs", repo, sha); err != nil {
+		return nil, err
+	}
+	if fn := f.onJobs; fn != nil {
+		var jobs []forge.Job
+		var err error
+		f.unlocked(func() { jobs, err = fn(sha) })
+		return jobs, err
+	}
+	return slices.Clone(f.repo(repo).jobs[sha]), nil
 }
 
 // SquashMerge marks pr merged and moves the base branch to a new commit. The

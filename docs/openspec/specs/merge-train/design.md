@@ -225,6 +225,43 @@ bottleneck. Batching spends **one CI run on up to `batch` heads**:
   `OnTrain` hook already decides what a build produces, so tests script
   batch builds without a new interface.
 
+### Classifying a red train (`flake_cool_down`, REQ-18)
+
+A red train normally means the tree is bad, and the driver's answer is to
+remember the `(pr, head, base)` and stop touching it until `main` or the head
+moves. When the failure is a runner that never attached, that answer costs
+hours and the next roll can land on another flake (#1016).
+
+The distinction has to come from the forge, because the combined status cannot
+make it: a job whose runner never attaches fails the same way a failing test
+fails. Gitea's Actions job-log endpoint answers `job not started` for exactly
+those jobs, so the adapter asks it, per failed job, and reports the verdict as
+`forge.Job.NeverStarted`. Making that an **optional** capability
+(`forge.JobReporter`) rather than a method on `Forge` keeps every other
+implementation and test double compiling unchanged, and forces the conservative
+reading: a forge that cannot answer is a forge reporting a real failure.
+
+Two things make the rule safe to leave on:
+
+- **All or nothing.** Every failed job on the commit must carry the signature.
+  One job with a log, and the failure is the tree's. Skipped jobs are not
+  failures, and a `cancelled` or timed-out job says nothing about runners, so
+  neither can fire the rule.
+- **Once per triple.** The retry is remembered in the same map as the attempt
+  memory, so the worst a misclassification can cost is one extra CI run per
+  `(pr, head, base)`; there is no loop to converge, and the second failure gets
+  today's comment.
+
+The wait is a timestamp in that map, not a sleep: a tick never blocks on a
+flake, and the next eligible PR uses the ticks the cool-down would otherwise
+have wasted. `flake_cool_down = 0` leaves the old behaviour intact; it is the
+shipped default until ADR-0056 is accepted, so the retry is opt-in.
+
+What the driver deliberately does not do: re-run a workflow, cancel a run, or
+adjust a runner or any Actions setting. Deciding that a fleet is unhealthy is
+host work, and a train that retried once and failed the same way says so
+instead of hiding it (ADR-0056).
+
 ### Configuration (#604)
 
 ```toml
@@ -233,6 +270,7 @@ enabled = false                 # REQ-1
 mode = "report"                 # or "merge"
 repos = ["stump.wtf/harness"]
 batch = 1                       # REQ-17: PRs per train commit; > 1 batches and bisects on red
+flake_cool_down = "5m"          # REQ-18: wait before the one runner-failure retry; unset = 0 (off) until ADR-0056 is accepted
 base_branch = "main"
 poll_interval = "60s"
 ci_timeout = "30m"
@@ -246,6 +284,10 @@ A change to `[mergetrain]` takes effect at the next daemon restart, like
 `batch` is parsed and validated (a whole number, at least 1), and a value
 above 1 switches on the batching described above: the daemon hands it to
 every repo's driver and stays quiet about it.
+
+`flake_cool_down` is the one duration that accepts `0`, because there `0` means
+"off" rather than "immediately"; a negative duration is a config error with its
+line. Unset means `0`: the retry ships off until ADR-0056 is accepted.
 
 ## Risks / Trade-offs
 

@@ -1341,6 +1341,7 @@ repos = ["stump.wtf/harness"]                # required when enabled
 base_branch = "main"                         # default "main"
 poll_interval = "60s"                        # default 60s, minimum 5s
 ci_timeout = "30m"                           # default 30m
+flake_cool_down = "5m"                       # default 0 (retry off) until ADR-0056 is accepted; "5m" is the proposed value
 forge_base_url = "https://gitea.stump.rocks" # required when enabled
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN" # the variable's NAME, required when enabled
 ```
@@ -1348,6 +1349,12 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN" # the variable's NAME, required whe
 - **The token is never in this file.** `forge_token_env` names an environment
   variable in the daemon's environment, and a `token` key is refused. The
   daemon refuses to start if the train is enabled and that variable is empty.
+- **A red train whose jobs never reached a runner is retried once** after
+  `flake_cool_down` instead of waiting for `main` to move; every failed job has
+  to carry that signature, and the retry happens at most once per tree. The
+  retry is off until you set `flake_cool_down` (the shipped default is `0`
+  until ADR-0056 is accepted); setting it to `"0"` goes back to waiting
+  (SPEC-0025 REQ-18).
 - **Global only.** A project `harness.toml` or a `harness_d` drop-in that
   contains `[mergetrain]` is refused.
 - **One train per repo.** Each repo's driver holds a lock under

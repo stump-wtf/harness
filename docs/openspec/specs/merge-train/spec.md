@@ -202,7 +202,8 @@ The driver SHALL remember, in memory, every `(pr, head, base)` whose attempt
 ended `conflict`, `red`, `timeout` or `merge-refused`, and SHALL NOT start an
 attempt for the same triple again. A change to the PR's head or to the base
 branch's head SHALL make the PR attemptable again. On `stale` the triple SHALL
-NOT be remembered.
+NOT be remembered. A red attempt the driver retries under REQ-18 is the one
+exception: it is not remembered, because the tree was never shown to be wrong.
 
 #### Scenario: A red flake
 
@@ -247,7 +248,8 @@ Every transition SHALL produce one structured log line whose message is
 `base`, `train`, `tree`, `cause`, `err`. Events: `started`, `queue`,
 `building`, `built`, `green`, `red`, `conflict`, `timeout`, `stale`,
 `deleted`, `delete failed`, `would merge`, `would comment`, `merged`, `verified`,
-`merge refused`, `commented`, `tick failed`, `bypass detected`, `halted`,
+`merge refused`, `commented`, `flake retry`, `flake retry exhausted`,
+`tick failed`, `bypass detected`, `halted`,
 `shutting down`, `stopped`. `shutting down` is logged at warn when the
 driver's context is cancelled between a merge and its REQ-8 verification: the
 driver returns without halting, because a stop is not a verification failure.
@@ -264,6 +266,52 @@ At the start of each tick, if the base branch's head is not the last head the
 driver observed or produced, the driver SHALL log `bypass detected` at warn
 with the previous and current heads, unless the change is explained by a merge
 this driver performed.
+
+### Requirement: REQ-18 A runner failure costs a cool-down, not a stall
+
+A train that goes red only because CI never ran on it SHALL be tried again
+after a cool-down instead of waiting for the base branch or the PR head to
+move. The driver SHALL ask the forge, for the train commit, how each job ended,
+and SHALL treat the failure as not the tree's only when **every** failed job is
+one the forge reports as never having produced a log (no runner ever attached).
+A job with a log, a job whose conclusion is anything but `failure`, and a commit
+the forge reports no jobs for are all real failures. `flake_cool_down` sets
+the wait. It is `0` — the retry off — until ADR-0056 is accepted, which is
+expected to set the proposed 5-minute default; `0` is also the behaviour this
+REQ replaced, so a config without the key changes nothing.
+
+- The retry SHALL be granted at most once per `(pr, head, base)` in memory,
+  like REQ-10's attempt record, so a tree that fails the same way twice cannot
+  re-run CI in a loop.
+- While a retried attempt waits out its cool-down the driver SHALL NOT attempt
+  that triple, and SHALL use the tick for the next eligible PR.
+- A retried attempt SHALL produce no REQ-9 comment and no REQ-10 memory: the
+  author is told once, when the retry's own result lands.
+- The second failure with the same signature SHALL log `flake retry exhausted`
+  and SHALL get the usual `red` comment, which SHALL say the tree was re-run
+  first.
+- The driver SHALL NOT re-run CI, cancel a run, change a runner, or touch any
+  forge or Actions setting to classify a failure; it reads what the forge
+  reports. Runner capacity itself stays with the host (ADR-0056).
+
+#### Scenario: A job never reached a runner
+
+- **WHEN** a train is red and every failed job on its commit has no log at all
+- **THEN** the driver logs `flake retry`, waits the cool-down, and attempts the
+  same `(pr, head, base)` again without any comment in between
+
+#### Scenario: A test genuinely failed
+
+- **WHEN** a train is red and one failed job has a log
+- **THEN** the driver comments once with cause `red` and does not re-run the
+  tree, as before
+
+#### Scenario: The same signature twice
+
+- **WHEN** a retried attempt goes red again with every failed job still
+  never-started
+- **THEN** the driver logs `flake retry exhausted`, comments once with cause
+  `red` naming the retry, and attempts that triple no more
 
 ## State machine (one attempt)
 
@@ -357,3 +405,4 @@ merge of `base` and every head in order, and wait for CI on that commit.
 
 - **WHEN** `batch` is unset or 1
 - **THEN** behaviour is identical to REQ-1 through REQ-16 as written
+

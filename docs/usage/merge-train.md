@@ -25,6 +25,7 @@ repos = ["stump.wtf/harness"]
 base_branch = "main"
 poll_interval = "60s"
 ci_timeout = "30m"
+flake_cool_down = "5m"          # runner-flake retry wait; unset = 0 (off) until ADR-0056 is accepted
 forge_base_url = "https://gitea.stump.rocks"
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 ```
@@ -40,6 +41,7 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 | `forge_base_url` | the forge's API base |
 | `forge_token_env` | the **name** of the environment variable holding the forge token — the token itself never appears in `harness.toml`, logs, errors or argv |
 | `batch` | PRs per train commit, a whole number of at least 1 (default 1). Above 1 batches heads onto one train commit and bisects on red; see [Batching](#batching) |
+| `flake_cool_down` | how long a red train waits before its one retry on a runner failure (default `0` — retry off — until ADR-0056 is accepted; set e.g. `5m` to turn it on); see [Runner flakes](#runner-flakes) |
 
 A change to `[mergetrain]` takes effect at the next daemon restart. The train
 holds an exclusive per-repo lock
@@ -64,7 +66,8 @@ Every transition is one structured line, message `mergetrain <event>`, with
 `err`: `started`, `queue`, `building`, `built`, `green`, `red`, `conflict`,
 `timeout`, `stale`, `deleted`, `delete failed`, `would merge`,
 `would comment`, `merged`, `verified`, `merge refused`, `commented`,
-`tick failed`, `bypass detected`, `halted`, `shutting down`, `stopped`.
+`flake retry`, `flake retry exhausted`, `tick failed`, `bypass detected`,
+`halted`, `shutting down`, `stopped`.
 
 A stale line carries one more key, note, when its ineligibility has a reading
 no other field shows: an approval still left on the head that the forge no
@@ -89,3 +92,28 @@ behaviour exactly.
 The value must be a whole number of at least 1 (`0`, a negative number or a
 string is a config error with its line). Batch train commits live on
 `train/batch/<pr>-<pr>…` branches, which are deleted when the attempt ends.
+
+## Runner flakes
+
+A runner that never attaches fails a job with no log at all, and the combined
+CI state reads exactly like a failing test. When a train goes red and *every*
+failed job on that commit carries that signature, the train logs
+`mergetrain flake retry` and tries the same tree once more after
+`flake_cool_down` (off by default until ADR-0056 is accepted; the proposed
+value is 5 minutes), instead of waiting hours for `main` or
+the PR head to move. Nothing is commented and nothing is remembered in the
+meantime, so a PR whose tree was never shown to be wrong keeps its place in the
+queue, and other PRs use the ticks in between.
+
+The retry is strictly once per `(pr, head, base)`. If the retry fails with the
+same signature the train logs `mergetrain flake retry exhausted` and comments
+as it always did, saying the tree was re-run first; a genuine test failure
+skips the retry entirely and comments immediately. So a broken tree cannot loop
+CI, and the cool-down is the only added wait. The forge's per-job detail decides
+this: a forge that cannot report it, a job with a log, a `cancelled` or
+timed-out job, and a skipped job all count as real failures (SPEC-0025 REQ-18,
+ADR-0056).
+
+Runner capacity itself is not this driver's problem: a run whose jobs die this
+way on several different runners is a host fault, and the train retries once
+and then says so.
