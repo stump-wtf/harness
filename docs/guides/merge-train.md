@@ -52,6 +52,8 @@ Watch the daemon log for these lines:
 | `mergetrain would merge` | a train went green, and in `merge` mode this PR would have landed |
 | `mergetrain would comment` | a conflict, red CI or timeout the author would have been told about |
 | `mergetrain bypass detected` | `main` moved without the train |
+| `mergetrain flake retry` | a red train whose failed jobs never reached a runner: the same tree is tried once more after the cool-down, nothing said to the author yet |
+| `mergetrain flake retry exhausted` | that retry failed with the same signature; the PR now gets its `red` comment |
 
 Run it for a week and count trains built, green versus red, and the causes of
 failures. The bar for going further is set by the agent-contention epic that
@@ -175,12 +177,35 @@ A `stale` line whose cause is `no longer eligible: no approval on current head`
 and which carries a `note` about an unofficial approval is the same state caught
 before the doomed merge attempt, and needs the same cure.
 
+## When the runner pool flakes
+
+A job that never attaches to a runner fails CI with no log at all, and the
+combined status cannot tell that apart from a failing test. When a train goes red
+and every failed job on that commit has no log, the train logs `flake retry` and
+re-runs the same tree once after `flake_cool_down` (default 5 minutes) instead of
+waiting for `main` or the head to move, which is the difference between losing
+five minutes on a congested pool and losing the afternoon (#1016).
+
+Read these lines together with the forge's own run page:
+
+- `flake retry` once, then `green`: the pool was busy and the tree was fine.
+  Nothing to do.
+- `flake retry` then `flake retry exhausted`, and a `red` comment naming the
+  retry: the signature persisted. That is a host question, not the PR's: several
+  jobs dying this way across different runners at once is an act_runner
+  capacity or scheduling fault, and the train will not retry the same tree again
+  to work around it. Fix the runner, then push a commit or wait for `main`.
+- a `red` comment with no `flake retry` before it: at least one failed job had a
+  log, so this is a real failure and the train is right to stop.
+
 ## Known limits
 
 - **One attempt per (head, base).** The driver merges each PR once per (head,
   base) pair and records the result (success, would merge, merge refused,
-  verified, etc.). A red attempt is retried only after the head or base
-  moves (a new merge attempt is initiated, or the PR needs reapproval on a
+  verified, etc.). A red attempt is retried after the head or base
+  moves, and once more on its own if every failed job reported no runner
+  (SPEC-0025 REQ-18; a new merge attempt is then initiated, or the PR needs
+  reapproval on a
   new head). Each head that reaches verification generates one author-todo
   comment on the PR (even after merge).
 - **Singleton per host.** Enable the train in exactly one daemon's config.
