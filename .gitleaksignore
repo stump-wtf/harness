@@ -17,3 +17,14 @@ ce1e2f708621573d3a01fbbc4aa6a820392b656e:internal/redact/redact_test.go:curl-aut
 # redact package's tests. The commit is unmodified history, not a live
 # secret; the branch-time fixtures are assembled at run time.
 8146beef50970c08d45f705c0b33a0dbdffaa15e:internal/redact/jsonline_test.go:curl-auth-user:105
+
+# f1ee2dc8 is the first commit of open #1014 (relay lease client): its
+# fake_switchboard_test.go planted a literal default lease token so the fake's
+# stub httptest server issues a claim worth asserting on — the fake never
+# talks to a real Switchboard and the value authorizes nothing; it exists so
+# the redaction test can prove lease tokens do not survive into errors or
+# logs. 28d147b rebuilt the fixture assembled at run time, but additively: the
+# introducing commit stays reachable through refs/pull/1014/head, which the
+# full-history scan fetches (train run 20260, flagged 10/29/2026, blocked
+# every merge train until this baseline). @joestump-agent
+f1ee2dc8fe82f7bbe06709ca05c5036ef6a5c700:internal/relay/fake_switchboard_test.go:generic-api-key:99
