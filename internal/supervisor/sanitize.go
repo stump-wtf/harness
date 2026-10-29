@@ -18,6 +18,18 @@ package supervisor
 // the pre-write screen shifted up by k rows — the signature of a printed
 // newline at the bottom — and the vanished top k rows are written verbatim.
 //
+// Screen rows are not the whole story, because a row can also end in the
+// terminal rather than in the program: text that reaches the last column is
+// folded onto the next row without the program writing anything, and a row
+// that scrolls off after such a fold is half a line. Splitting there is what
+// makes a long path or a long sentence land in the log in pieces (#279). So
+// each piece of the stream is classified before it is diffed — see feedLocked
+// for the two signals and ADR-0057 for the decision — and a row that ended in
+// a fold is held and glued to the row after it, which restores the line the
+// program actually wrote. Rows that ended in a newline are written alone,
+// exactly as before, so a full-screen TUI's full-width frames and rule lines
+// are never glued to their neighbours.
+//
 // The raw stream still reaches the attach mux untouched (ADR-0003 live attach
 // needs the escape bytes); only the durable log side is sanitized. Structured
 // lifecycle events (state changes, exits, flapping) are written to the same
@@ -30,12 +42,18 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 
 	clog "github.com/charmbracelet/log"
 
 	"github.com/stump-wtf/agent-trace/redact"
 )
+
+// historyEndsCap bounds how many finished-but-unscrolled rows the sanitizer
+// remembers its fold records for (pushEnd): a screenful is enough for the
+// normal case, and a stream that never scrolls is not one joining can help.
+const historyEndsCap = 4096
 
 // logLine masks credentials in one history line on its way to disk.
 //
@@ -77,6 +95,20 @@ type ptyHistory struct {
 	// flushed guards the end-of-stream Flush against a second call (closeLog
 	// also flushes, defensively, for runs that never got a reader EOF).
 	flushed bool
+	// ends queues, in output order, how each row the cursor has left ended:
+	// true when the terminal folded it onto the next row. Rows are written a
+	// screenful after the cursor leaves them, so the queue holds roughly one
+	// screen of records; head is the next record to consume (popEnd).
+	ends []bool
+	head int
+	// pending holds the text of a folded row whose tail has not been emitted
+	// yet; hasPending says whether it holds anything (an empty row is folded
+	// too, and folding it away would drop a line break).
+	pending    string
+	hasPending bool
+	// noJoin freezes joining for the rest of the run once the records in ends
+	// can no longer be trusted to name the right row (see pushEnd).
+	noJoin bool
 	// mask carries credential masking across rows (logLine).
 	mask redact.Lines
 	// released records that the owner is done with this sanitizer and its
@@ -195,28 +227,60 @@ func (h *ptyHistory) drainReplies(term *vt.Emulator) {
 // the log are swallowed (the rotating log itself is best-effort, exactly as it
 // was when it received raw bytes).
 //
-// p is fed to the emulator newline-chunk by newline-chunk, diffing the screen
-// after each: a burst that arrives in one read (a fast `seq`) can scroll many
-// rows at once, and only the intermediate screens reveal each scroll step.
+// p is fed to the emulator piece by piece, cutting each line's text apart from
+// the newline that ends it and diffing after each piece. Two reasons, both
+// about what a screen shift cannot tell you on its own: a burst that arrives in
+// one read (a fast `seq`) can scroll many rows at once, and only the
+// intermediate screens reveal each scroll step; and a piece whose text has no
+// newline in it cannot scroll the screen by printing at all, so any shift it
+// does cause is the terminal folding a row — the difference feedLocked records
+// to decide whether the rows that vanish are whole lines or halves of one.
+// Feeding "text\n" as one piece would let a fold and a newline cancel into a
+// single shift that says nothing about either.
 func (h *ptyHistory) Write(p []byte) (int, error) {
 	n := len(p)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for len(p) > 0 {
-		// Hand the emulator up to and including the next LF (or the rest of p).
+		// Hand the emulator the text up to the next LF, then the LF itself, so
+		// each is diffed as its own kind of step; the rest of p (no LF at all)
+		// is one piece.
 		i := bytes.IndexByte(p, '\n')
-		chunk := p
-		if i >= 0 {
-			chunk = p[:i+1]
+		if i < 0 {
+			h.feedLocked(p, false)
+			break
 		}
-		h.feedLocked(chunk)
-		p = p[len(chunk):]
+		if text := p[:i]; len(text) > 0 {
+			h.feedLocked(text, false)
+		}
+		h.feedLocked(p[i:i+1], true)
+		p = p[i+1:]
 	}
 	return n, nil
 }
 
-// feedLocked hands one chunk to the emulator and diffs the screen, surviving
-// a panic inside the emulator. x/vt's ScrollUp → ultraviolet DeleteLineArea
+// feedLocked hands one piece to the emulator, records how that piece ended the
+// rows it touched, and emits whatever scrolled off, surviving a panic inside
+// the emulator. lf says whether the piece is a newline the program wrote (the
+// pieces are cut at each LF by Write).
+//
+// The record for a row that leaves the screen is pushed while the piece is
+// processed and consumed when the row is emitted, because those are different
+// moments: a scroll finishes the row under the cursor and evicts the row at the
+// top of the screen, which the cursor left about a screenful of rows earlier.
+// In output order the two line up one per scroll, which is what makes the
+// queue (pushEnd/popEnd) the whole bookkeeping: no per-row flags to shift
+// around.
+//
+// A piece that is shorter than the room left on the current row cannot reach
+// the last column, so it can neither scroll the screen nor move the cursor
+// down a row: it is fed without a diff, leaving the screen to the next piece,
+// which keeps an ordinary short line at one screen extraction. Any scroll a
+// piece does cause is attributed to a fold unless the piece held a newline,
+// since the only other way to scroll without writing a newline is an escape
+// sequence, and emitLocked rejects a fold whose row does not fill the width.
+//
+// x/vt's ScrollUp → ultraviolet DeleteLineArea
 // indexes past the buffer when a guest sets a scroll region taller than the
 // PTY (crush does, rendering a channel doorbell on an 80×24 PTY):
 // "index out of range [24] with length 24". Unrecovered, that panic is on
@@ -230,7 +294,7 @@ func (h *ptyHistory) Write(p []byte) (int, error) {
 // try reset first and only rebuild when reset cannot heal the state. The
 // frame is dropped in either case; the durable log loses at most one screen
 // of context.
-func (h *ptyHistory) feedLocked(chunk []byte) {
+func (h *ptyHistory) feedLocked(chunk []byte, lf bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			// Try a reset-first recovery: ESC[r restores the default scroll region
@@ -245,11 +309,13 @@ func (h *ptyHistory) feedLocked(chunk []byte) {
 				healed = true
 			}()
 			if healed {
-				// The screen shifted during the panicked write: diffLocked compares
+				// The screen shifted during the panicked write: the diff compares
 				// the post-panic screen against a prev that reflected the half-scroll
 				// state from before the panic. Resync prev to the current screen so
-				// the next write diffs cleanly.
+				// the next write diffs cleanly, and drop the fold records with it:
+				// which row each one describes is no longer knowable.
 				h.prev = screenText(h.term)
+				h.dropEnds()
 				_, _ = io.WriteString(h.out, fmt.Sprintf("[harness] recovered from a terminal rendering panic (%v) by resetting scroll region\n", r))
 				return
 			}
@@ -265,23 +331,121 @@ func (h *ptyHistory) feedLocked(chunk []byte) {
 			releaseEmulator(h.term)
 			h.startEmulator(cols, rows)
 			h.prev = blankScreen(cols, rows)
+			h.dropEnds()
 			_, _ = io.WriteString(h.out, fmt.Sprintf("[harness] dropped a frame the terminal emulator could not render (%v); emulator reset\n", r))
 		}
 	}()
-	_, _ = h.term.Write(chunk)
-	h.diffLocked()
-}
 
-// diffLocked emits the rows that scrolled off since the last diff and caches
-// the current screen. Caller holds h.mu.
-func (h *ptyHistory) diffLocked() {
+	pos := h.term.CursorPosition()
+	esc := bytes.IndexByte(chunk, 0x1b) >= 0
+	_, _ = h.term.Write(chunk)
+	if !lf && !esc && len(chunk) < h.term.Width()-pos.X {
+		return // too short to have reached the last column: nothing scrolled
+	}
 	cur := screenText(h.term)
-	for _, ln := range h.prev[:scrollCount(h.prev, cur)] {
-		if ln != "" {
-			_, _ = io.WriteString(h.out, h.logLine(ln)+"\n")
-		}
+	k := scrollCount(h.prev, cur)
+	// How many rows this piece finished, and how they ended. A newline finishes
+	// exactly one row, whichever way the cursor got off it. Anything else
+	// finishes one row per row that scrolled off, plus — only for a piece with
+	// no escape in it, since only then can printing be what moved the cursor
+	// down — one per row the cursor moved down over rows the screen still
+	// shows. A piece that scrolls without printing at all moved the screen with
+	// an escape, not with a fold, so its rows stay whole.
+	n := k
+	if lf {
+		n = 1
+	} else if !esc && h.term.CursorPosition().Y > pos.Y {
+		n += h.term.CursorPosition().Y - pos.Y
+	}
+	folded := !lf && (!esc || ansi.Strip(string(chunk)) != "")
+	for range n {
+		h.pushEnd(folded)
+	}
+	for _, ln := range h.prev[:k] {
+		h.emitLocked(ln)
 	}
 	h.prev = cur
+}
+
+// emitLocked writes one row that scrolled off the screen, or that Flush is
+// handing over at the end of the stream, gluing it onto the row above when that
+// row ended in a terminal fold instead of a newline. soft is the row's own
+// record; it only counts when the row really does fill the terminal width,
+// because that is what a fold mechanically requires and it is what a record
+// that lost its alignment cannot produce. Caller holds h.mu.
+func (h *ptyHistory) emitLocked(ln string) {
+	folded := h.popEnd() && ln != "" && ansi.StringWidth(ln) == h.term.Width()
+	if h.hasPending {
+		h.pending += ln
+		if !folded {
+			h.writePendingLocked()
+		}
+		return
+	}
+	if ln == "" {
+		return // blank rows carry no history
+	}
+	if folded {
+		h.pending, h.hasPending = ln, true
+		return
+	}
+	h.writeRowLocked(ln)
+}
+
+// writeRowLocked appends one finished line to the log, masked (logLine).
+func (h *ptyHistory) writeRowLocked(ln string) {
+	_, _ = io.WriteString(h.out, h.logLine(ln)+"\n")
+}
+
+// writePendingLocked writes the held fold, which is as much of its line as the
+// screen has given up.
+func (h *ptyHistory) writePendingLocked() {
+	if !h.hasPending {
+		return
+	}
+	ln := h.pending
+	h.pending, h.hasPending = "", false
+	h.writeRowLocked(ln)
+}
+
+// pushEnd records how the row the cursor just left ended. The queue is bounded:
+// a stream that ends rows without ever scrolling them off (a TUI repainting one
+// status line in place) would otherwise grow it for the life of the run, and
+// once it is over the cap the records no longer name the rows they belong to,
+// so joining stops there and the log falls back to one row per line.
+func (h *ptyHistory) pushEnd(folded bool) {
+	if h.noJoin {
+		return
+	}
+	if h.head > 0 && h.head*2 >= len(h.ends) {
+		h.ends = append(h.ends[:0], h.ends[h.head:]...)
+		h.head = 0
+	}
+	h.ends = append(h.ends, folded)
+	if len(h.ends)-h.head > historyEndsCap {
+		h.dropEnds()
+	}
+}
+
+// popEnd returns how the row about to be emitted ended, false when no record
+// describes it (which is the same as a newline: no joining).
+func (h *ptyHistory) popEnd() bool {
+	if h.head >= len(h.ends) {
+		h.ends, h.head = nil, 0
+		return false
+	}
+	folded := h.ends[h.head]
+	h.head++
+	if h.head == len(h.ends) {
+		h.ends, h.head = nil, 0
+	}
+	return folded
+}
+
+// dropEnds forgets the fold records and freezes joining: the rows on the screen
+// have no records left, so from here on every row is treated as whole.
+func (h *ptyHistory) dropEnds() {
+	h.ends, h.head, h.pending, h.hasPending, h.noJoin = nil, 0, "", false, true
 }
 
 // Flush appends the current on-screen content (minus trailing blank rows) to
@@ -295,10 +459,9 @@ func (h *ptyHistory) Flush() {
 	}
 	h.flushed = true
 	for _, ln := range screenText(h.term) {
-		if ln != "" {
-			_, _ = io.WriteString(h.out, h.logLine(ln)+"\n")
-		}
+		h.emitLocked(ln)
 	}
+	h.writePendingLocked()
 }
 
 // scrollCount returns how many rows scrolled off: the largest k such that
