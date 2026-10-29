@@ -70,19 +70,30 @@ frame that moved nothing claim a scroll.** `scrollCount` now, in order:
 
 - Where the truth is genuinely ambiguous — periodic content shifted by more
   than the rows can distinguish — the log now leaves rows on the screen instead
-  of logging them twice. They are not lost: the end-of-stream `Flush` records
-  whatever is still on screen. The failure mode moves from "the transcript
-  repeats itself out of order", which makes it unreadable to a human and wrong
-  for anything reading a run's history, to "one line is missing until the run
-  ends".
+  of logging them twice. Rows that stay on screen are not lost: the
+  end-of-stream `Flush` records whatever is still there. The failure mode
+  moves from "the transcript repeats itself out of order", which makes it
+  unreadable to a human and wrong for anything reading a run's history, to
+  "one line is missing until the run ends".
 - A normal one-row scroll, the overwhelmingly common frame, is unchanged:
   nothing-moved fails on the first row, and `k = 1` is the first shift tried.
 - An escape-driven multi-row scroll that leaves four or more rows in place is
   still measured exactly, including on periodic content where the new rows are
   distinguishable.
-- A genuine scroll that leaves fewer than four rows is read as a repaint and
-  logs nothing until those rows would be flushed. `scrollEvidence` is a single
-  constant, so this is one edit if real runs show it is the wrong trade.
+- The evidence floor costs real rows in one band, and this file says so
+  plainly: a genuine scroll that leaves fewer than `scrollEvidence` comparable
+  rows — a burst of ~77-79 printed lines in one chunk on an 80-row screen —
+  is read as a repaint, and the rows the scroll evicted are gone from the
+  screen, so `Flush` cannot record them either: the transcript loses a
+  screenful that `main` logged, where the old largest-shift match was
+  "proven" by two rows. That is the trade, not an oversight: a lost
+  near-full-screen burst was judged better than the re-emitted, out-of-order
+  rows #1021 produced. `scrollEvidence` is a single constant, and holding the
+  unverifiable rows in a pending buffer instead of dropping them (Considered
+  Alternatives) is the recorded way out if real runs show the loss matters;
+  choosing between them is the maintainer's call. The band is pinned by
+  `TestScrollCountEvidenceBandPinsTheTrade` so the reported 0 is not read as
+  a detector bug.
 - The no-scroll frame now costs one scan over the screen's rows before the
   shift loop runs; it short-circuits on the first row that differs, which is
   the first row for any real scroll.

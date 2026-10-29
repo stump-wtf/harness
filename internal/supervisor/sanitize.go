@@ -331,7 +331,7 @@ const scrollEvidence = 4
 // shifts are ones the compared rows cannot support is treated as a repaint,
 // never guessed at.
 //
-// Governing: ADR-0058 (the rule and the alternatives behind it); issue #1021.
+// Governing: ADR-0058 (proposed — the rule and the alternatives behind it); issue #1021.
 func scrollCount(prev, cur []string) int {
 	pp := trimBlankTail(prev)
 	cp := trimBlankTail(cur)
