@@ -71,8 +71,9 @@ Option 3, with the width test kept as a validity check.
 4. **Fail toward today's behaviour.** A piece that scrolls without printing was
    moved by an escape sequence, so its rows stay whole; a piece that repositions
    the cursor with an escape does not get to claim rows it jumped over; a run
-   whose records exceed `historyEndsCap`, or whose emulator panicked and was
-   reset, stops joining for the rest of the run. Missing information means no
+   whose records exceed `historyEndsCap`, whose emulator panicked and was
+   reset, or whose record queue is caught emitting rows it has no records for
+   stops joining for the rest of the run. Missing information means no
    joining, never a wrong one.
 
 ## Consequences
@@ -85,6 +86,19 @@ Option 3, with the width test kept as a validity check.
   screen-row splitting. Folding those in would need per-cell damage tracking,
   which the emulator does not expose; a record cannot be invented from a cursor
   jump.
+- A fold whose boundary cell is a space is not rejoined: the emitted row's
+  trailing blanks are trimmed, so it measures a column short of the width and
+  the validity check refuses the join. That is safe (never a wrong one), but
+  the long-sentence case #279 describes splits exactly there; fixing it needs
+  the untrimmed row width at the check.
+- Joining, once disabled for a run — panic recovery, records past
+  `historyEndsCap`, or a record queue caught emitting rows it has no records
+  for — stays off until the harness restarts; the panic and reset paths say so
+  in the log. Re-arming on a clean screen is not obviously right and is not
+  attempted here.
+- A logical line is held only up to a few screens of bytes
+  (`pendingCapScreens`); a longer one splits at the bound instead of growing
+  the daemon's memory for the line's length.
 - The `harness logs` text path and its `--json` path read the same durable file,
   so both change together and the regression test at the sanitizer covers both.
 - If a maintainer would rather the log stay exactly row-per-line and have joining
