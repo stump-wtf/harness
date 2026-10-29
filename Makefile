@@ -25,18 +25,24 @@ GO        ?= go
 VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 BIN_DIR   ?= $(HOME)/.local/bin
 PKG       := github.com/stump-wtf/harness
+# BUILD_FLAGS, deliberately not GOFLAGS: a file-scope `GOFLAGS :=` is passed
+# down to every recipe whenever the caller exports GOFLAGS, and go aborts
+# parsing the leaked -ldflags before a single test runs (issue #1024). make
+# never exports a variable assigned only in the Makefile, so the build flags
+# stay on the build recipe's command line and the go gates see only the
+# caller's own GOFLAGS.
 LDFLAGS   := -X $(PKG)/internal/buildinfo.Version=$(VERSION)
-GOFLAGS   := -trimpath -ldflags "$(LDFLAGS)"
+BUILD_FLAGS := -trimpath -ldflags "$(LDFLAGS)"
 BIN       := harness
 
-.PHONY: all build check lint fmt vet tidy-check test race fuzz tidy clean run daemon install version release-snapshot release-check
+.PHONY: all build check lint fmt vet tidy-check goflags-check test race fuzz tidy clean run daemon install version release-snapshot release-check
 
 # The default "did I break it" loop.
 all: build check
 
 # Build the harness binary into ./bin/ with version metadata baked in.
 build:
-	$(GO) build $(GOFLAGS) -o bin/$(BIN) ./cmd/harness
+	$(GO) build $(BUILD_FLAGS) -o bin/$(BIN) ./cmd/harness
 
 # Full CI gate: the static checks, tests, the race detector, and a bounded
 # fuzz run. CI's pipeline calls `make check`, so adding `fuzz` here is what
@@ -52,7 +58,7 @@ fmt:
 		echo "gofmt would reformat:"; echo "$$unformatted"; exit 1; \
 	fi
 
-vet:
+vet: goflags-check
 	$(GO) vet ./...
 
 # go.mod / go.sum must already be tidy. Without this gate a dependency bump
@@ -65,11 +71,22 @@ tidy-check:
 		echo "go.mod/go.sum are not tidy — run 'make tidy' and commit the result"; exit 1; \
 	}
 
-test:
+# Guard for the go gate recipes (issue #1024): when the caller exports
+# GOFLAGS, a file-scope `GOFLAGS :=` assignment rides into every recipe's
+# environment, and go dies parsing the leaked -ldflags before a single test
+# runs. The build flags therefore live in BUILD_FLAGS (which make never
+# exports); here we reject any -ldflags in the gate's GOFLAGS, so a leak
+# turns the gate red with a message instead of an opaque go parse error.
+goflags-check:
+	@case "$$GOFLAGS" in \
+	*-ldflags*) echo "goflags-check: -ldflags must not reach the go gate (GOFLAGS=$$GOFLAGS)"; exit 1;; \
+	esac
+
+test: goflags-check
 	$(GO) test ./...
 
 # -race needs CGO enabled.
-race:
+race: goflags-check
 	CGO_ENABLED=1 $(GO) test -race ./...
 
 # Fuzz targets CI runs, as <package>:<target>. `go test -fuzz` takes one
@@ -98,7 +115,7 @@ race:
 FUZZTIME    ?= 30s
 FUZZ_TARGETS := ./internal/tmpl:FuzzParse ./internal/attach:FuzzRing ./internal/modelerr:FuzzResetAfter ./internal/budget:FuzzDay
 
-fuzz:
+fuzz: goflags-check
 	@set -e; for t in $(FUZZ_TARGETS); do \
 		pkg=$${t%%:*}; fn=$${t##*:}; \
 		echo "fuzz $$pkg $$fn ($(FUZZTIME))"; \
