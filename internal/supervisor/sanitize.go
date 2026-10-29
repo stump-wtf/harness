@@ -301,28 +301,87 @@ func (h *ptyHistory) Flush() {
 	}
 }
 
-// scrollCount returns how many rows scrolled off: the largest k such that
-// cur[i] == prev[i+k] for every i < len(prev)-k (a pure upward shift). Both
-// screens are first trimmed of trailing blank rows — after a scroll the bottom
-// row(s) are blank until new content lands there, and unwritten padding must
-// not break the match. A clear-and-repaint frame does not satisfy the shift
-// for any k > 0 and correctly reports 0.
+// scrollEvidence is how many rows have to line up before a candidate shift is
+// believed as the scroll distance. A shift of k leaves len(prev)-k rows to
+// compare, so a shift near the height of the screen is "proven" by one or two
+// rows, and periodic content (separator rules, a repeated status line) matches
+// every shift that keeps its phase: asking for the largest match let such a
+// nearly-whole-screen shift win, and the prefix it re-emitted was rows still
+// on screen, so `harness logs` showed segments of the same line over and over,
+// out of order (#1021). Four rows of 80-column output is content no program
+// repeats by accident. On a screen holding fewer rows the bar drops to what
+// exists, so a short screen still sees its ordinary one-row scroll.
+const scrollEvidence = 4
+
+// scrollCount returns how many rows scrolled off: 0 when every row of prev is
+// still on screen, otherwise the SMALLEST shift k for which cur[i] ==
+// prev[i+k] holds for every i < len(prev)-k (a pure upward shift), among the
+// shifts that leave at least scrollEvidence rows to compare.
+// Both screens are first trimmed of trailing blank rows: after a scroll the
+// bottom row(s) are blank until new content lands there, and unwritten padding
+// must not break the match.
+//
+// Smallest rather than largest is the property that keeps the log honest: a
+// screen that really scrolled by K satisfies the match at k = K, so the
+// smallest match is never bigger than K, and prev[:k] is always a subset of the
+// rows that actually left the screen. Where the content is periodic and the
+// true distance is genuinely ambiguous, that errs in the safe direction: the
+// rows nobody can place stay on screen and reach the log through Flush, rather
+// than being logged twice in the wrong order. A frame whose only matching
+// shifts are ones the compared rows cannot support is treated as a repaint,
+// never guessed at.
+//
+// Governing: ADR-0058 (the rule and the alternatives behind it); issue #1021.
 func scrollCount(prev, cur []string) int {
 	pp := trimBlankTail(prev)
 	cp := trimBlankTail(cur)
-	for k := len(pp) - 1; k > 0; k-- {
-		shifted := true
-		for i := 0; i+k < len(pp); i++ {
-			if i >= len(cp) || cp[i] != pp[i+k] {
-				shifted = false
-				break
-			}
-		}
-		if shifted {
+	// Nothing moved is checked first: every row of prev is still on screen where
+	// it was, with whatever is new sitting below it. That is the ordinary frame
+	// (a program printing at its cursor, a spinner, a repaint), and on
+	// self-similar content it is also the frame a bare shift test reads as a
+	// scroll, because a screen that repeats itself lines up with a shifted copy
+	// of itself.
+	if rowsInPlace(pp, cp) {
+		return 0
+	}
+	if len(pp) < 2 {
+		return 0
+	}
+	evidence := min(scrollEvidence, len(pp)-1)
+	for k := 1; k+evidence <= len(pp); k++ {
+		if shiftMatches(pp, cp, k) {
 			return k
 		}
 	}
 	return 0
+}
+
+// rowsInPlace reports whether every row of prev is still on screen at its own
+// index, which is what a frame that appended below the cursor (or changed
+// nothing) leaves behind: no row has scrolled off, whatever else lines up.
+func rowsInPlace(prev, cur []string) bool {
+	if len(prev) > len(cur) {
+		return false
+	}
+	for i, ln := range prev {
+		if cur[i] != ln {
+			return false
+		}
+	}
+	return true
+}
+
+// shiftMatches reports whether cur is prev shifted up by k rows: every row of
+// prev that survived the shift shows up in cur at its new index. Rows below
+// them are new content and are not compared; a cur too short to hold the
+// survivors is not this shift.
+func shiftMatches(prev, cur []string, k int) bool {
+	for i := 0; i+k < len(prev); i++ {
+		if i >= len(cur) || cur[i] != prev[i+k] {
+			return false
+		}
+	}
+	return true
 }
 
 // trimBlankTail drops trailing rows with no visible content. Unwritten screen
