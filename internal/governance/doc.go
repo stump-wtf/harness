@@ -10,7 +10,8 @@
 //
 // @joestump-agent 09/21/2026 - Added with the chatroom citation fix.
 //
-// Repository-level CI config belongs here too, for the same reason: a
-// concurrency key that quietly stopped telling pull requests apart breaks every
-// lane at once, and no Go test would otherwise notice it drift.
+// @joestump-agent 10/29/2026 - Repository-level CI config belongs here too,
+// for the same reason: a concurrency key that quietly stopped telling pull
+// requests apart breaks every lane at once, and no Go test would otherwise
+// notice it drift.
 package governance
