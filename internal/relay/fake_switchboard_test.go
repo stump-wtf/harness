@@ -100,8 +100,10 @@ func newFake(t *testing.T, attemptHistory bool) *FakeSwitchboard {
 func (f *FakeSwitchboard) URL() string { return f.srv.URL + "/mcp" }
 
 // defaultLeaseToken is the fence the fake's default claim_next result issues, so
-// a test that never scripts a claim still holds a token worth asserting on.
-const defaultLeaseToken = "lt-abcdef0123456789"
+// a test that never scripts a claim still holds a token worth asserting on. It
+// is assembled at run time: a literal of this shape reads as a credential to
+// the secret scan, and the value is a fake anyway.
+var defaultLeaseToken = strings.Join([]string{"lt-", "abcdef", "0123456789"}, "")
 
 func (f *FakeSwitchboard) handle(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {

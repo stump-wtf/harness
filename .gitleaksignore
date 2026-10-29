@@ -17,3 +17,10 @@ ce1e2f708621573d3a01fbbc4aa6a820392b656e:internal/redact/redact_test.go:curl-aut
 # redact package's tests. The commit is unmodified history, not a live
 # secret; the branch-time fixtures are assembled at run time.
 8146beef50970c08d45f705c0b33a0dbdffaa15e:internal/redact/jsonline_test.go:curl-auth-user:105
+
+# The relay lease client's first commits carried the fake's default lease
+# token as a literal, which the scan reads as a generic-api-key finding; the
+# tree assembles it at run time now. Both commits are unmodified history on
+# this branch (the second is the rebase onto main), not live secrets.
+39aa45ed185d747edaa78ed9700fd038729c200c:internal/relay/fake_switchboard_test.go:generic-api-key:99
+f1ee2dc8fe82f7bbe06709ca05c5036ef6a5c700:internal/relay/fake_switchboard_test.go:generic-api-key:99
