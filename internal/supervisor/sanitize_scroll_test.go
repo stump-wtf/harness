@@ -1,6 +1,6 @@
 package supervisor
 
-// Governing: ADR-0058 (a scroll shift is believed only from enough comparable
+// Governing: ADR-0058 (proposed — a scroll shift is believed only from enough comparable
 // rows, and the smallest believed shift wins), ADR-0007 (the durable log holds
 // the rows that scrolled off). Issue #1021: asking the shift search for its
 // largest match let periodic or near-identical screen content win a shift of
@@ -160,6 +160,36 @@ func TestScrollCountNeverClaimsStillVisibleRows(t *testing.T) {
 				t.Errorf("%s scrolled by %d: scrollCount = %d, re-emits %d still-visible row(s)",
 					screen.name, trueShift, got, got-trueShift)
 			}
+		}
+	}
+}
+
+// TestScrollCountEvidenceBandPinsTheTrade pins the one band where the evidence
+// floor costs real rows. On an 80-row screen a genuine scroll by 77-79 rows
+// leaves fewer than scrollEvidence rows to compare, so the rule reads the frame
+// as a repaint and the rows the scroll evicted are gone from the screen: Flush
+// records only what is still on it, so the transcript loses a screenful that
+// main logged (the old largest-shift match was proven by two rows). That is
+// the trade ADR-0058's Consequences states, and this pin keeps the 0 from
+// being mistaken for a detector bug; the shift just below the band is still
+// measured exactly.
+func TestScrollCountEvidenceBandPinsTheTrade(t *testing.T) {
+	const h = 80
+	all := screenRows(h)
+	for _, tt := range []struct {
+		trueShift int
+		want      int
+	}{
+		{76, 76},
+		{77, 0},
+		{78, 0},
+		{79, 0},
+	} {
+		cur := scrolled(all, tt.trueShift, func(i int) string {
+			return fmt.Sprintf("fresh %d", i)
+		})
+		if got := scrollCount(all, cur); got != tt.want {
+			t.Errorf("80-row screen scrolled by %d: scrollCount = %d, want %d", tt.trueShift, got, tt.want)
 		}
 	}
 }
