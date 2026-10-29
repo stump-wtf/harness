@@ -25,7 +25,7 @@ repos = ["stump.wtf/harness"]
 base_branch = "main"
 poll_interval = "60s"
 ci_timeout = "30m"
-flake_cool_down = "5m"
+flake_cool_down = "5m"          # runner-flake retry wait; unset = 0 (off) until ADR-0056 is accepted
 forge_base_url = "https://gitea.stump.rocks"
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 ```
@@ -41,7 +41,7 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 | `forge_base_url` | the forge's API base |
 | `forge_token_env` | the **name** of the environment variable holding the forge token — the token itself never appears in `harness.toml`, logs, errors or argv |
 | `batch` | PRs per train commit, a whole number of at least 1 (default 1). Above 1 batches heads onto one train commit and bisects on red; see [Batching](#batching) |
-| `flake_cool_down` | how long a red train waits before its one retry on a runner failure (default `5m`; `0` turns the retry off, which is the pre-#1016 behaviour); see [Runner flakes](#runner-flakes) |
+| `flake_cool_down` | how long a red train waits before its one retry on a runner failure (default `0` — retry off — until ADR-0056 is accepted; set e.g. `5m` to turn it on); see [Runner flakes](#runner-flakes) |
 
 A change to `[mergetrain]` takes effect at the next daemon restart. The train
 holds an exclusive per-repo lock
@@ -99,7 +99,8 @@ A runner that never attaches fails a job with no log at all, and the combined
 CI state reads exactly like a failing test. When a train goes red and *every*
 failed job on that commit carries that signature, the train logs
 `mergetrain flake retry` and tries the same tree once more after
-`flake_cool_down` (default 5 minutes), instead of waiting hours for `main` or
+`flake_cool_down` (off by default until ADR-0056 is accepted; the proposed
+value is 5 minutes), instead of waiting hours for `main` or
 the PR head to move. Nothing is commented and nothing is remembered in the
 meantime, so a PR whose tree was never shown to be wrong keeps its place in the
 queue, and other PRs use the ticks in between.

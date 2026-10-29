@@ -16,7 +16,8 @@ package config
 //
 // `flake_cool_down` (SPEC-0025 REQ-18) is how long a red attempt waits for its
 // one retry when every failed job reported no runner. It is the one duration
-// here that accepts 0, because 0 is the honest way to turn the retry off.
+// here that accepts 0, because 0 is the honest way to turn the retry off — and
+// it is the default until ADR-0056 is accepted, so the retry is opt-in.
 //
 // Governing: ADR-0032, ADR-0056; SPEC-0025 REQ-1, REQ-12, REQ-17, REQ-18.
 //

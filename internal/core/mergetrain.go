@@ -17,6 +17,10 @@ package core
 // @joestump-agent 09/28/2026 - Added Batch: the strict loader refused the
 // documented `batch` key, so a [mergetrain] table copied from the spec failed
 // the whole config load.
+//
+// @joestump-agent 10/29/2026 - DefaultMergeTrainFlakeCoolDown is 0 until
+// ADR-0056 is accepted: a proposed ADR must not switch behaviour on by
+// itself, so the runner-flake retry is opt-in per config (review on #1017).
 
 import "time"
 
@@ -34,9 +38,12 @@ const (
 	MinMergeTrainPollInterval = 5 * time.Second
 	// DefaultMergeTrainFlakeCoolDown is how long the train waits before it
 	// retries a red attempt that failed only on jobs no runner ever started
-	// (SPEC-0025 REQ-18). Long enough for a congested runner pool to clear, and
-	// short next to the hours a stalled train otherwise waits.
-	DefaultMergeTrainFlakeCoolDown = 5 * time.Minute
+	// (SPEC-0025 REQ-18). Zero until ADR-0056 is accepted — a proposed ADR must
+	// not switch behaviour on by itself — so the retry is opt-in, set by
+	// flake_cool_down in harness.toml. The proposed running value is 5 minutes:
+	// long enough for a congested runner pool to clear, and short next to the
+	// hours a stalled train otherwise waits.
+	DefaultMergeTrainFlakeCoolDown time.Duration = 0
 )
 
 // MergeTrainConfig is the global [mergetrain] table.

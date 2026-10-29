@@ -57,8 +57,10 @@ most once after a cool-down when nothing in it blames the tree.**
    first.
 4. **The cool-down is a timestamp, not a sleep.** A tick never blocks on a
    flake; the next eligible PR uses the intervening ticks, and the waiting tree
-   becomes attemptable when its `flake_cool_down` (default 5 minutes) has
-   passed. `0` restores the pre-#1016 behaviour.
+   becomes attemptable when its `flake_cool_down` has passed. The shipped
+   default is `0` — the pre-#1016 behaviour — until this ADR is accepted, which
+   is expected to set the proposed 5-minute default; until then the retry is
+   opt-in per config.
 5. **No comment on the retried attempt.** REQ-9's one comment per head still
    fires, on the retry's result. An author is never told their PR failed and
    then, ten minutes later, silently merged.

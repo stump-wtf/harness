@@ -182,8 +182,10 @@ before the doomed merge attempt, and needs the same cure.
 A job that never attaches to a runner fails CI with no log at all, and the
 combined status cannot tell that apart from a failing test. When a train goes red
 and every failed job on that commit has no log, the train logs `flake retry` and
-re-runs the same tree once after `flake_cool_down` (default 5 minutes) instead of
-waiting for `main` or the head to move, which is the difference between losing
+re-runs the same tree once after `flake_cool_down` instead of
+waiting for `main` or the head to move. The retry is off until
+`flake_cool_down` is set (the shipped default is `0` until ADR-0056 is
+accepted; the proposed value is 5 minutes), which is the difference between losing
 five minutes on a congested pool and losing the afternoon (#1016).
 
 Read these lines together with the forge's own run page:

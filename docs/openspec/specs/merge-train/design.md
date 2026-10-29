@@ -254,8 +254,8 @@ Two things make the rule safe to leave on:
 
 The wait is a timestamp in that map, not a sleep: a tick never blocks on a
 flake, and the next eligible PR uses the ticks the cool-down would otherwise
-have wasted. `flake_cool_down = 0` leaves the old behaviour intact, which is
-what a `DriverConfig` built without the key gets.
+have wasted. `flake_cool_down = 0` leaves the old behaviour intact; it is the
+shipped default until ADR-0056 is accepted, so the retry is opt-in.
 
 What the driver deliberately does not do: re-run a workflow, cancel a run, or
 adjust a runner or any Actions setting. Deciding that a fleet is unhealthy is
@@ -270,7 +270,7 @@ enabled = false                 # REQ-1
 mode = "report"                 # or "merge"
 repos = ["stump.wtf/harness"]
 batch = 1                       # REQ-17: PRs per train commit; > 1 batches and bisects on red
-flake_cool_down = "5m"          # REQ-18: wait before the one runner-failure retry; 0 turns it off
+flake_cool_down = "5m"          # REQ-18: wait before the one runner-failure retry; unset = 0 (off) until ADR-0056 is accepted
 base_branch = "main"
 poll_interval = "60s"
 ci_timeout = "30m"
@@ -287,7 +287,7 @@ every repo's driver and stays quiet about it.
 
 `flake_cool_down` is the one duration that accepts `0`, because there `0` means
 "off" rather than "immediately"; a negative duration is a config error with its
-line.
+line. Unset means `0`: the retry ships off until ADR-0056 is accepted.
 
 ## Risks / Trade-offs
 
