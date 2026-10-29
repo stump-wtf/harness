@@ -15,7 +15,9 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"charm.land/log/v2"
 )
@@ -455,6 +457,45 @@ func TestEventStreamAnswerDecodes(t *testing.T) {
 		t.Fatalf("event-stream claim did not decode: %+v", claimed)
 	}
 	f.assertNoGET(t)
+}
+
+// The client documents itself as safe for concurrent use, and a server may
+// answer a POST with an event stream. A reply matched by "whatever id was
+// issued last" hands one caller another caller's reply, so the regression pins
+// per-request correlation under a fan-out.
+func TestConcurrentCallsMatchTheirOwnReplies(t *testing.T) {
+	f := newFake(t, true)
+	f.setStreamAnswers(true)
+	f.setCallJitter(2 * time.Millisecond)
+	var logs bytes.Buffer
+	c := newTestClient(t, f, nil, &logs)
+	ctx := context.Background()
+	if err := c.Initialize(ctx); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+
+	const callers, rounds = 8, 3
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make([]error, callers*rounds)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(slot int) {
+			defer wg.Done()
+			<-start
+			for r := 0; r < rounds; r++ {
+				_, err := c.ClaimNext(ctx, ClaimOptions{Claimant: "fan-out"})
+				errs[slot*rounds+r] = err
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	for slot, err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent claim %d failed: %v", slot, err)
+		}
+	}
 }
 
 // The contract runs against one fake with both schema generations: the current

@@ -526,16 +526,17 @@ func (c *Client) call(ctx context.Context, verb string, args map[string]any) (js
 		return nil, c.err(verb, "refused: the source is marked unsupported",
 			ErrLeaseSourceUnsupported, "missing", strings.Join(c.MissingArguments(), " "))
 	}
+	id := c.nextRequestID()
 	payload, err := json.Marshal(message{
 		JSONRPC: jsonrpcVersion,
-		ID:      c.nextRequestID(),
+		ID:      id,
 		Method:  "tools/call",
 		Params:  map[string]any{"name": verb, "arguments": args},
 	})
 	if err != nil {
 		return nil, c.err(verb, "encode request", err)
 	}
-	body, err := c.postWithReinit(ctx, payload)
+	body, err := c.postWithReinit(ctx, payload, string(id))
 	if err != nil {
 		return nil, c.err(verb, "", err)
 	}
@@ -564,9 +565,10 @@ func (c *Client) handshake(ctx context.Context) error {
 		"capabilities": map[string]any{"tools": map[string]any{}},
 		"clientInfo":   map[string]any{"name": channel.ClientName, "version": buildinfo.Version},
 	}
+	id := c.nextRequestID()
 	body, err := json.Marshal(message{
 		JSONRPC: jsonrpcVersion,
-		ID:      c.nextRequestID(),
+		ID:      id,
 		Method:  "initialize",
 		Params:  params,
 	})
@@ -597,7 +599,7 @@ func (c *Client) handshake(ctx context.Context) error {
 	if err != nil {
 		return c.err("initialize", "read response", err)
 	}
-	raw, err = responseFor(raw, c.lastRequestID(), stream)
+	raw, err = responseFor(raw, string(id), stream)
 	if err != nil {
 		return c.err("initialize", "", err)
 	}
@@ -649,16 +651,17 @@ func (c *Client) listTools(ctx context.Context) (map[string]map[string]bool, err
 		if cursor != "" {
 			params["cursor"] = cursor
 		}
+		id := c.nextRequestID()
 		body, err := json.Marshal(message{
 			JSONRPC: jsonrpcVersion,
-			ID:      c.nextRequestID(),
+			ID:      id,
 			Method:  "tools/list",
 			Params:  params,
 		})
 		if err != nil {
 			return nil, c.err("tools/list", "encode request", err)
 		}
-		raw, err := c.postWithReinit(ctx, body)
+		raw, err := c.postWithReinit(ctx, body, string(id))
 		if err != nil {
 			return nil, c.err("tools/list", "", err)
 		}
@@ -822,21 +825,21 @@ func codeOrUnknown(code string) string {
 
 // postWithReinit POSTs a request, re-initializing and retrying once when the
 // server no longer recognises the session (REQ-17).
-func (c *Client) postWithReinit(ctx context.Context, body []byte) (json.RawMessage, error) {
-	raw, err := c.postFor(ctx, body)
+func (c *Client) postWithReinit(ctx context.Context, body []byte, id string) (json.RawMessage, error) {
+	raw, err := c.postFor(ctx, body, id)
 	if errors.Is(err, ErrSessionExpired) {
 		c.invalidateSession()
 		if err := c.Initialize(ctx); err != nil {
 			return nil, err
 		}
-		return c.postFor(ctx, body)
+		return c.postFor(ctx, body, id)
 	}
 	return raw, err
 }
 
 // postFor sends one JSON-RPC request and returns the raw response body, which
 // is either a JSON document or an event stream carrying the reply.
-func (c *Client) postFor(ctx context.Context, body []byte) (json.RawMessage, error) {
+func (c *Client) postFor(ctx context.Context, body []byte, id string) (json.RawMessage, error) {
 	resp, err := c.postRequest(ctx, body)
 	if err != nil {
 		return nil, err
@@ -849,7 +852,7 @@ func (c *Client) postFor(ctx context.Context, body []byte) (json.RawMessage, err
 	if err != nil {
 		return nil, c.err("request", "read response", err)
 	}
-	return responseFor(raw, c.lastRequestID(), stream)
+	return responseFor(raw, id, stream)
 }
 
 // postRequest builds and sends the POST. This client sends no other method:
@@ -870,9 +873,9 @@ func (c *Client) postRequest(ctx context.Context, body []byte) (*http.Response, 
 	if p := c.protocolVersion(); p != "" {
 		req.Header.Set("MCP-Protocol-Version", p)
 	}
-	// Operator headers last, so a source's own Authorization cannot be
-	// clobbered by a default, and the session headers go before them, so a
-	// hand-set Mcp-Session-Id cannot override the server's answer.
+	// Operator headers are applied last, so a source's own Authorization
+	// cannot be clobbered by anything this client sets, and a hand-set
+	// Mcp-Session-Id or MCP-Protocol-Version deliberately wins.
 	for name, value := range c.headers {
 		req.Header.Set(name, value)
 	}
@@ -958,12 +961,6 @@ func (c *Client) nextRequestID() json.RawMessage {
 	defer c.mu.Unlock()
 	c.requestID++
 	return json.RawMessage(fmt.Sprintf("%d", c.requestID))
-}
-
-func (c *Client) lastRequestID() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return fmt.Sprintf("%d", c.requestID)
 }
 
 // responseFor finds the JSON-RPC reply to id in a body that is either a single

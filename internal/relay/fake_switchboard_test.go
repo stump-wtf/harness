@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // RecordedCall is one tools/call the fake served.
@@ -58,6 +59,10 @@ type FakeSwitchboard struct {
 	// streamAnswers answers a tools/call as text/event-stream, which Streamable
 	// HTTP allows.
 	streamAnswers bool
+	// callJitter pauses every tools/call before it answers, so a concurrency
+	// test sees real interleaving between issuing a request id and matching
+	// its reply.
+	callJitter time.Duration
 
 	sessionSeq int
 	sessionID  string
@@ -184,7 +189,12 @@ func (f *FakeSwitchboard) handleToolsCall(w http.ResponseWriter, msg message) {
 	f.calls = append(f.calls, RecordedCall{Tool: name, Args: args})
 	failure := f.failures[name]
 	result := f.results[name]
+	stream := f.streamAnswers
+	jitter := f.callJitter
 	f.mu.Unlock()
+	if jitter > 0 {
+		time.Sleep(jitter)
+	}
 
 	if failure != nil {
 		if failure.AsRPCError {
@@ -200,7 +210,12 @@ func (f *FakeSwitchboard) handleToolsCall(w http.ResponseWriter, msg message) {
 	if len(result) == 0 {
 		result = json.RawMessage(`{}`)
 	}
-	writeJSON(w, okResponse(msg.ID, map[string]any{"structuredContent": result}))
+	payload := okResponse(msg.ID, map[string]any{"structuredContent": result})
+	if stream {
+		writeStream(w, payload)
+		return
+	}
+	writeJSON(w, payload)
 }
 
 // toolSchemas builds the advertised tools for the current generation. The
@@ -260,6 +275,14 @@ func (f *FakeSwitchboard) setStreamAnswers(on bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.streamAnswers = on
+}
+
+// setCallJitter makes every tools/call pause before answering, which widens
+// the window between a caller issuing its request id and matching the reply.
+func (f *FakeSwitchboard) setCallJitter(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.callJitter = d
 }
 
 // expireSession makes the next request that carries a session id answer 404, so
