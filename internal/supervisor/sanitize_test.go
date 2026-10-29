@@ -333,3 +333,179 @@ func TestPtyHistoryNoGoroutineLeakOnPanic(t *testing.T) {
 		t.Fatalf("goroutine count grew by %d (before=%d, after=%d); expected reset-first recovery to avoid leaks", after-before, before, after)
 	}
 }
+
+// fillTo writes numbered filler lines, one per screen row, so the screen is
+// full and every later newline scrolls exactly one row off the top.
+func fillTo(h *ptyHistory, through int) {
+	for i := 1; i <= through; i++ {
+		_, _ = fmt.Fprintf(h, "fill %02d\r\n", i)
+	}
+}
+
+// assertLinesApart fails when any of want landed in the log joined to anything:
+// each must appear as a line of its own.
+func assertLinesApart(t *testing.T, log string, want ...string) {
+	t.Helper()
+	lines := strings.Split(log, "\n")
+	for _, w := range want {
+		found := false
+		for _, ln := range lines {
+			if ln == w {
+				found = true
+			} else if strings.Contains(ln, w) {
+				t.Errorf("%q landed glued to other text: %q", w, ln)
+			}
+		}
+		if !found {
+			t.Errorf("log has no line exactly %q; got:\n%s", w, log)
+		}
+	}
+}
+
+// TestPtyHistoryJoinsSoftWrappedRows is the #279 remainder: a line the program
+// wrote as one line, which the terminal folded across rows because it reached
+// the last column, must come back out of the sanitizer as one line — while the
+// unwrapped lines around it stay separate.
+func TestPtyHistoryJoinsSoftWrappedRows(t *testing.T) {
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 80, 24)
+	fillTo(h, 25)
+	long := "wrapped " + strings.Repeat("x", 300) // four rows at 80 columns
+	_, _ = fmt.Fprintf(h, "%s\r\n", long)
+	fillTo(h, 60)
+	for i := 26; i <= 60; i++ {
+		_, _ = fmt.Fprintf(h, "fill %02d\r\n", i)
+	}
+	h.Flush()
+	got := out.String()
+	if !strings.Contains(got, long+"\n") {
+		t.Errorf("the folded line did not land as one line; got:\n%s", got)
+	}
+	for _, ln := range strings.Split(got, "\n") {
+		if rest := strings.Trim(ln, "x"); ln != "" && rest == "" {
+			t.Fatalf("a fold landed in the log as a line of its own: %q", ln)
+		}
+	}
+	want := make([]string, 0, 60)
+	for i := 1; i <= 60; i++ {
+		want = append(want, fmt.Sprintf("fill %02d", i))
+	}
+	assertLinesApart(t, got, want...)
+}
+
+// TestPtyHistoryFullWidthNewlineStaysApart is the other half of the same call:
+// a row that fills the width AND ends in a newline was written by the program
+// as its own line, so nothing is glued to it. Full-width rule lines, table
+// borders and 80-column log lines are the common case this protects.
+func TestPtyHistoryFullWidthNewlineStaysApart(t *testing.T) {
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 80, 24)
+	fillTo(h, 25)
+	rule := strings.Repeat("=", 80)
+	_, _ = fmt.Fprintf(h, "%s\r\n", rule)
+	_, _ = fmt.Fprintf(h, "after the rule\r\n")
+	for i := 26; i <= 60; i++ {
+		_, _ = fmt.Fprintf(h, "fill %02d\r\n", i)
+	}
+	h.Flush()
+	got := out.String()
+	if strings.Contains(got, rule+"after the rule") {
+		t.Errorf("a newline-terminated full-width row was joined to the next:\n%s", got)
+	}
+	assertLinesApart(t, got, rule, "after the rule")
+}
+
+// TestPtyHistoryFlushJoinsFoldedTail covers the fold that never scrolls: the
+// stream ends with the rows still on the screen, and the flush has to rejoin
+// them the same way the scroll path does.
+func TestPtyHistoryFlushJoinsFoldedTail(t *testing.T) {
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 80, 24)
+	long := "tail " + strings.Repeat("y", 200)
+	_, _ = fmt.Fprintf(h, "%s", long) // no newline at all: it stays on screen
+	h.Flush()
+	if got := out.String(); got != long+"\n" {
+		t.Fatalf("flushed fold did not land as one line, got:\n%q", got)
+	}
+}
+
+// TestPtyHistoryJoinsStyledFold pins the same join for output that carries
+// colour: the fold is the terminal's, so styling around it must not talk the
+// sanitizer out of it.
+func TestPtyHistoryJoinsStyledFold(t *testing.T) {
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 80, 24)
+	fillTo(h, 25)
+	body := "styled " + strings.Repeat("z", 200)
+	_, _ = fmt.Fprintf(h, "\x1b[31m%s\x1b[0m\r\n", body)
+	for i := 26; i <= 60; i++ {
+		_, _ = fmt.Fprintf(h, "fill %02d\r\n", i)
+	}
+	h.Flush()
+	got := out.String()
+	if !strings.Contains(got, body+"\n") {
+		t.Errorf("a styled folded line did not land as one line; got:\n%s", got)
+	}
+	if bytes.ContainsRune(out.Bytes(), 0x1b) {
+		t.Errorf("log contains ESC bytes:\n%q", got)
+	}
+}
+
+// TestDurableLogKeepsFoldedLineOnOneLine is the end-to-end pin: a real child on
+// a real 80×24 PTY writes one long line, and the durable log — which is what
+// both `harness logs` and `harness logs --json` print — holds it as one line.
+func TestDurableLogKeepsFoldedLineOnOneLine(t *testing.T) {
+	dir := t.TempDir()
+	long := "foldme " + strings.Repeat("p", 200)
+	h := shHarness("ephemeral", "printf '%s\\n' '"+long+"'", 0)
+	h.Restart = core.RestartNo
+	s := New(h, Options{
+		Policy: Policy{CrashWindow: time.Second, CrashThreshold: 3, MaxRestarts: 5, StopGrace: 200 * time.Millisecond},
+		Bus:    NewBus(),
+		LogCfg: LogConfig{Dir: dir},
+	})
+	s.Restore(true, false, 0, 0, time.Time{}, time.Time{}, IntentChange{})
+	s.Start()
+	waitState(t, s, core.StateStopped)
+	s.Shutdown()
+
+	data, err := readUntilContains(filepath.Join(dir, "ephemeral.log"), []string{long}, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ln := range strings.Split(string(data), "\n") {
+		if rest := strings.Trim(ln, "p"); ln != "" && rest == "" {
+			t.Fatalf("a fold of the child's line landed as its own log line: %q", ln)
+		}
+	}
+}
+
+// TestDurableLogLandsFinalScreenBeforeExited pins the ordering of the two
+// things that write the end of a run: the final screenful and the lifecycle
+// line that says the agent exited. A reader tailing the log must see the
+// program's last output first.
+func TestDurableLogLandsFinalScreenBeforeExited(t *testing.T) {
+	dir := t.TempDir()
+	h := shHarness("ephemeral", "printf 'the last screenful'", 0)
+	h.Restart = core.RestartNo
+	s := New(h, Options{
+		Policy: Policy{CrashWindow: time.Second, CrashThreshold: 3, MaxRestarts: 5, StopGrace: 200 * time.Millisecond},
+		Bus:    NewBus(),
+		LogCfg: LogConfig{Dir: dir},
+	})
+	s.Restore(true, false, 0, 0, time.Time{}, time.Time{}, IntentChange{})
+	s.Start()
+	waitState(t, s, core.StateStopped)
+	s.Shutdown()
+
+	data, err := readUntilContains(filepath.Join(dir, "ephemeral.log"),
+		[]string{"the last screenful", "exited"}, 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	out, exit := strings.Index(got, "the last screenful"), strings.Index(got, "exited")
+	if out > exit {
+		t.Fatalf("the final screenful landed after the exited line:\n%s", got)
+	}
+}
