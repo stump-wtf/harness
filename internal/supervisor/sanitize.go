@@ -314,12 +314,15 @@ func (h *ptyHistory) Flush() {
 const scrollEvidence = 4
 
 // scrollCount returns how many rows scrolled off: 0 when every row of prev is
-// still on screen, otherwise the SMALLEST shift k for which cur[i] ==
-// prev[i+k] holds for every i < len(prev)-k (a pure upward shift), among the
-// shifts that leave at least scrollEvidence rows to compare.
-// Both screens are first trimmed of trailing blank rows: after a scroll the
-// bottom row(s) are blank until new content lands there, and unwritten padding
-// must not break the match.
+// still on screen where it was, otherwise the SMALLEST shift k for which the
+// compared rows of prev line up in cur (a pure upward shift), among the shifts
+// that leave at least scrollEvidence rows in the band the shift displaces. The
+// bottom row of prev is exempt from the comparison: a soft-wrapped fold drops
+// its tail there in a later write, so that row alone can be stale while the
+// shift is real, and the exemption is withheld when it would be the only
+// comparison. Both screens are first trimmed of trailing blank rows: after a
+// scroll the bottom row(s) are blank until new content lands there, and
+// unwritten padding must not break the match.
 //
 // Smallest rather than largest is the property that keeps the log honest: a
 // screen that really scrolled by K satisfies the match at k = K, so the
@@ -331,7 +334,16 @@ const scrollEvidence = 4
 // shifts are ones the compared rows cannot support is treated as a repaint,
 // never guessed at.
 //
-// Governing: ADR-0058 (proposed — the rule and the alternatives behind it); issue #1021.
+// The evidence bar counts the band prev[k:], not just the rows the comparison
+// actually reads: the exempt bottom row still occupies its place in the band,
+// so the exemption relaxes what a match requires without letting a shift be
+// believed from less displacement. Whenever the exemption buys a match, the
+// band is at least two rows, so at least one row above the bottom was compared
+// and lined up, which is the payment ADR-0059 requires for the exemption.
+//
+// Governing: ADR-0058 (proposed: the evidence bar, smallest-wins ranking, and
+// the alternatives behind them, #1021); ADR-0059 (proposed: why the bottom row
+// is exempt, and what pays for that exemption, #1023).
 func scrollCount(prev, cur []string) int {
 	pp := trimBlankTail(prev)
 	cp := trimBlankTail(cur)
@@ -374,9 +386,19 @@ func rowsInPlace(prev, cur []string) bool {
 // shiftMatches reports whether cur is prev shifted up by k rows: every row of
 // prev that survived the shift shows up in cur at its new index. Rows below
 // them are new content and are not compared; a cur too short to hold the
-// survivors is not this shift.
+// survivors is not this shift. The bottom row of prev is the one row a program
+// is still writing to, and a soft-wrapped fold drops its tail there in a later
+// chunk, so that row alone can be stale in the snapshot while the shift itself
+// is real (#1023): it is exempt from the comparison, provided at least one row
+// above it lined up. The exemption is withheld when the exempt row would be
+// the only comparison, and the caller's evidence bar keeps a match from ever
+// resting on the exempt row alone.
 func shiftMatches(prev, cur []string, k int) bool {
+	bottom := len(prev) - 1
 	for i := 0; i+k < len(prev); i++ {
+		if i+k == bottom && i > 0 {
+			continue
+		}
 		if i >= len(cur) || cur[i] != prev[i+k] {
 			return false
 		}

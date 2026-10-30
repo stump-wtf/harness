@@ -77,6 +77,12 @@ func TestScrollCountMeasuresShifts(t *testing.T) {
 			want: 1,
 		},
 		{
+			name: "folded bottom row on a five-row screen (#1023)",
+			prev: screenRows(5),
+			cur:  []string{"row 01", "row 02", "row 03", "row 04fold", ""},
+			want: 1,
+		},
+		{
 			name: "eight rows painted at once",
 			prev: all,
 			cur:  scrolled(all, 8, func(i int) string { return fmt.Sprintf("new %d", i) }),
@@ -98,6 +104,12 @@ func TestScrollCountMeasuresShifts(t *testing.T) {
 			name: "shift proven by a single row cannot win",
 			prev: all,
 			cur:  append([]string{all[h-1]}, screenRows(h-1)...),
+			want: 0,
+		},
+		{
+			name: "single-row proof cannot win on a short screen",
+			prev: screenRows(5),
+			cur:  append([]string{screenRows(5)[4]}, screenRows(4)...),
 			want: 0,
 		},
 		{

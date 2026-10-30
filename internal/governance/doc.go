@@ -9,4 +9,14 @@
 // seven comments kept the draft number for weeks.
 //
 // @joestump-agent 09/21/2026 - Added with the chatroom citation fix.
+//
+// @joestump-agent 10/29/2026 - Repository-level CI config belongs here too,
+// for the same reason: a concurrency key that quietly stopped telling pull
+// requests apart breaks every lane at once, and no Go test would otherwise
+// notice it drift.
+//
+// @joestump-agent 10/29/2026 - Correction from the runs-API re-read in #1027:
+// the ref-only key never actually stopped telling pull requests apart on this
+// instance — cross-PR runs coexisted throughout. The PR-number term stays as
+// defensive hygiene, now worded that way in the pin test too.
 package governance

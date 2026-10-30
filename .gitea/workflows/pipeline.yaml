@@ -35,8 +35,20 @@ permissions:
   pull-requests: write
   issues: write
 
+# The group has to tell one PR's runs apart from every other PR's, and the ref
+# alone does not: on this act_runner a pull_request run carries no ref (every
+# pull_request row in actions/runs has a null ref and head_branch, while the
+# push rows show main and train/* correctly), so all open PRs collapsed into one
+# `pipeline-` group and the newest push cancelled the runs already in flight —
+# a PR ended `cancelled` with no failing job, its statuses read `failure`, and
+# ADR-0056 deliberately never re-runs a cancellation, so a healthy tree sat
+# unmergeable. The PR number is appended to the key: empty for push events,
+# which keep their per-ref behaviour, and the run's own number for a PR. It is
+# concatenated rather than chosen with `||`, because an evaluator that returns a
+# boolean from `||` would turn a null property into the literal `true` and put
+# every PR back in one group. Pinned by TestWorkflowConcurrencySeparatesPRs.
 concurrency:
-  group: ${{ gitea.workflow }}-${{ gitea.ref }}
+  group: ${{ gitea.workflow }}-${{ gitea.ref }}-${{ gitea.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:

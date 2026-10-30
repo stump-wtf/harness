@@ -106,6 +106,63 @@ func TestPtyHistoryFlushLandsFinalScreen(t *testing.T) {
 	}
 }
 
+// TestPtyHistoryLosesNoLineWhenBottomRowChangedAcrossScroll pins #1023: a
+// soft-wrapped fold leaves a non-blank bottom row whose tail lands in a later
+// write, and the scroll that write triggers must still be believed — the row it
+// evicted has to reach the durable log even though the bottom row differs
+// between the two snapshots.
+func TestPtyHistoryLosesNoLineWhenBottomRowChangedAcrossScroll(t *testing.T) {
+	var out bytes.Buffer
+	h := newPtyHistory(&out, 80, 24)
+	for i := 1; i <= 25; i++ {
+		_, _ = h.Write([]byte(fmt.Sprintf("fill %02d\r\n", i)))
+	}
+	// 86 columns on an 80-column screen: the fold leaves its tail on the bottom
+	// row, so that row is non-blank when the next write redraws it.
+	_, _ = h.Write([]byte(strings.Repeat("x", 86)))
+	// The tail arrives as its own write, landing on that bottom row; its newline
+	// scrolls one row off.
+	_, _ = h.Write([]byte("tail\r\n"))
+	for i := 26; i <= 60; i++ {
+		_, _ = h.Write([]byte(fmt.Sprintf("fill %02d\r\n", i)))
+	}
+	h.Flush()
+
+	got := out.String()
+	for i := 1; i <= 60; i++ {
+		want := fmt.Sprintf("fill %02d\n", i)
+		if n := strings.Count(got, want); n != 1 {
+			t.Errorf("log has %d copies of %q, want exactly 1; got:\n%s", n, want, got)
+		}
+	}
+}
+
+// TestScrollCountBelievesShiftWithChangedBottomRow is the matcher-level view of
+// #1023: every row but the bottom one lines up under a one-row shift, and the
+// bottom row only carries the fold's late tail, so the scroll is real.
+func TestScrollCountBelievesShiftWithChangedBottomRow(t *testing.T) {
+	prev := []string{"p0", "p1", "p2", "p3", "p4", "p5"}
+	cur := []string{"p1", "p2", "p3", "p4", "p5fold", ""}
+	if got := scrollCount(prev, cur); got != 1 {
+		t.Errorf("scrollCount with a folded bottom row = %d, want 1", got)
+	}
+}
+
+// TestScrollCountStillReportsZeroForRepaint is the other side of the same rule:
+// a clear-and-repaint frame must not be read as a scroll, or the rows still on
+// screen get logged a second time.
+func TestScrollCountStillReportsZeroForRepaint(t *testing.T) {
+	prev := []string{"p0", "p1", "p2", "p3", "p4", "p5"}
+	if got := scrollCount(prev, []string{"z0", "z1", "z2", "z3", "z4", "z5"}); got != 0 {
+		t.Errorf("scrollCount for a clear-and-repaint = %d, want 0", got)
+	}
+	// A frame that only redrew the bottom row (a status-line tick) scrolled
+	// nothing either.
+	if got := scrollCount(prev, []string{"p0", "p1", "p2", "p3", "p4", "redrawn"}); got != 0 {
+		t.Errorf("scrollCount for a bottom-row redraw = %d, want 0", got)
+	}
+}
+
 // Credential-shaped fixtures, assembled at run time from split literals so no
 // high-entropy token exists as a contiguous string in this source. Assertions
 // reference these rather than restating the value — restating it puts the
