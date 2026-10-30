@@ -4,7 +4,9 @@
 //
 // Governing: ADR-0011 (trajectory discovery is read-only), ADR-0007 (scrollback
 // fallback), ADR-0008 (secrets — trajectory exposure is opt-in), SPEC-0006 REQ
-// "Trajectory Discovery", SPEC-0006 REQ "Harvest Opt-In".
+// "Trajectory Discovery", SPEC-0006 REQ "Harvest Opt-In", SPEC-0006 REQ
+// "Run Correlation" (which of a shared store's sessions a harness may be
+// shown).
 //
 // The service never writes to, alters, or deletes a trajectory. Every code path
 // is read-only by construction — there are no write methods on Service.
@@ -17,12 +19,44 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
-	"github.com/stump-wtf/agent-trace/tail"
+	"charm.land/log/v2"
 	"github.com/stump-wtf/harness/internal/adapter"
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/runtrace"
 )
+
+// attributionTimeout bounds one List's correlation. The reads are local
+// SQLite and JSONL, one store pass per run window, and a store locked by a
+// wedged writer must not hold a caller open indefinitely — the same bound the
+// structured logs view puts on the same work.
+const attributionTimeout = 20 * time.Second
+
+// RunRecord is what the host knows about one harness's runs: the windows it
+// ran in, oldest first, and how far back that record reaches.
+type RunRecord struct {
+	// Runs are the harness's run windows. A native session is listed only
+	// when it started inside one of them (SPEC-0006 REQ "Run Correlation"),
+	// so no windows means nothing to list.
+	Runs []runtrace.Window
+	// KnownSince, when set, is how far back Runs is complete: everything
+	// older could have been written by this harness with no record here. The
+	// daemon's own record is complete, so it leaves this zero; a consumer
+	// holding only each harness's latest run sets it to that run's start.
+	// Peers use it to stay a possible author of their own history — see
+	// runtrace.Scope.
+	KnownSince time.Time
+}
+
+// RunWindows reports the run record for a harness name. The daemon wires it
+// from the records `harness logs` already attributes with: the supervisor's
+// snapshot plus each run the durable lifecycle log records. An error is not
+// an empty record — for the queried harness it fails the call, and for a peer
+// it makes that peer a possible author of every session, which is the
+// conservative answer, since a peer can only ever hide a session.
+type RunWindows func(name string) (RunRecord, error)
 
 // Sentinel errors for domain-specific failure modes callers need to
 // distinguish programmatically (SPEC-0006 REQ "Error Handling Standards").
@@ -90,6 +124,16 @@ type Service struct {
 	// scrollbackDir is the directory where the daemon stores per-harness
 	// scrollback logs. Wired by the daemon; tests set it via SetScrollbackDir.
 	scrollbackDir string
+	// runWindows supplies each harness's run windows — the time half of the
+	// correlation rule, which is what makes a machine-global store listable
+	// per harness. When nil, no native session is attributable and List
+	// reports none (SPEC-0006 REQ "Run Correlation").
+	runWindows RunWindows
+	// resolveEnv returns the discovery environment for a harness name, as the
+	// harness's own process sees it (runtrace.DiscoveryEnvKeys). It is what
+	// lets discovery follow an env_file that relocates a tool's store. When
+	// nil, the defaults each tool uses apply.
+	resolveEnv func(name string) map[string]string
 }
 
 // NewService creates a trajectory Service backed by the given adapter registry.
@@ -112,17 +156,39 @@ func (s *Service) SetScrollbackDir(dir string) {
 	s.scrollbackDir = dir
 }
 
+// SetRunWindows wires the source of run-window knowledge for every harness.
+// List attributes native sessions to these windows before returning them, so
+// a harness sees only the sessions its own runs wrote, and Get — which serves
+// only what List reports — inherits the same scope. Without it, nothing says
+// which of a machine-global store's sessions belong to a harness, and the
+// native listing is empty rather than machine-global (SPEC-0006 REQ "Run
+// Correlation").
+func (s *Service) SetRunWindows(fn RunWindows) {
+	s.runWindows = fn
+}
+
+// SetDiscoveryEnv wires the function that returns a harness's discovery
+// environment as its own process sees it, for the store-location half of the
+// correlation rule. In production this comes from supervisor.DiscoveryEnv, so
+// an env_file that relocates a tool's data directory is followed instead of
+// the daemon's own environment being assumed.
+func (s *Service) SetDiscoveryEnv(fn func(name string) map[string]string) {
+	s.resolveEnv = fn
+}
+
 // List returns trajectory sessions for the named harness, or
 // ErrHarvestDisabled when the harness has not opted in. Per SPEC-0006 REQ
 // "Harvest Opt-In": a harness that has not enabled harvesting is omitted
 // entirely from list results.
 //
-// When the harness's adapter reports a native trajectory directory, sessions
-// are enumerated from there (filtered by the harness's workdir when available).
-// A command harness with `transcripts` lists the bound adapter's sessions
-// (SPEC-0017 REQ-4). When the adapter reports no native trajectory (Generic,
-// an unbound command harness, OMP), the scrollback log
-// is reported as the single trajectory source (ADR-0007 fallback).
+// When the harness's adapter reports a native trajectory directory, its
+// sessions are attributed to the harness's own runs first (SPEC-0006 REQ "Run
+// Correlation"): a session in the store that no run of this harness covers, or
+// that another harness sharing the working directory could equally have
+// written, is not reported. A command harness with `transcripts` lists the
+// bound adapter's sessions (SPEC-0017 REQ-4). When the adapter reports no
+// native trajectory (Generic, an unbound command harness, OMP), the scrollback
+// log is reported as the single trajectory source (ADR-0007 fallback).
 func (s *Service) List(cfg *core.Config, name string) ([]SessionSummary, error) {
 	h, ok := cfg.Harnesses[name]
 	if !ok {
@@ -135,48 +201,17 @@ func (s *Service) List(cfg *core.Config, name string) ([]SessionSummary, error) 
 	adp := s.registry.TrajectoryAdapter(h)
 
 	// Native trajectory path.
-	td := adp.TailAdapter()
-	if td != nil {
-		workdir := s.workdirFor(h, name)
-		filter := tail.SessionFilter{}
-		if workdir != "" {
-			filter.Cwd = workdir
+	if adp.TailAdapter() != nil {
+		sessions, err := s.attributeRuns(cfg, name, h)
+		if err == nil {
+			return sessions, nil
 		}
-		// context.Background(), not a caller's context: nothing in this call
-		// chain has one. List is reached from HandleListTrajectories, which is
-		// a facade tool handler, and none of its callers thread a context
-		// either. agent-trace grew this parameter so a cancelled caller stops
-		// waiting on a SQLite query; passing a background context keeps the
-		// old behaviour exactly rather than pretending to a cancellation this
-		// package cannot honour. Threading one properly means changing
-		// Service.List, the facade handler and every caller of both, which is
-		// a change worth making on its own rather than inside a dependency
-		// bump — see the follow-up issue referenced in the PR.
-		//
-		// Deliberately NOT filtered by ActiveSince: this lists a harness's
-		// trajectory history, where an old session is the point. The activity
-		// window belongs to the live dashboard watcher, not here.
-		//
-		// @joestump-agent 08/23/2026 - Added for the agent-trace bump.
-		sessions, err := tail.ListSessionsFiltered(context.Background(), td, filter)
-		if err != nil {
-			return nil, fmt.Errorf("trajectory list %s: %w", name, err)
+		if !errors.Is(err, runtrace.ErrNoTrajectory) {
+			return nil, err
 		}
-		out := make([]SessionSummary, 0, len(sessions))
-		for _, sm := range sessions {
-			out = append(out, SessionSummary{
-				ID:        sm.ID,
-				Source:    "native",
-				Path:      sm.Path,
-				Cwd:       sm.Cwd,
-				Model:     sm.Model,
-				Title:     sm.Title,
-				StartedAt: sm.StartedAt,
-				EndedAt:   sm.EndedAt,
-			})
-		}
-		sortByStartedDesc(out)
-		return out, nil
+		// runtrace has no store for this kind, so the scrollback record below
+		// is this harness's trajectory (ADR-0007) — the same answer the
+		// structured logs view gives for a scope with no native transcript.
 	}
 
 	// Scrollback fallback (ADR-0007).
@@ -194,6 +229,204 @@ func (s *Service) List(cfg *core.Config, name string) ([]SessionSummary, error) 
 	return nil, nil
 }
 
+// attributeRuns returns the native sessions the correlation rule attributes to
+// a run of this harness: every run window it has, correlated in turn, with the
+// ambiguous ones dropped.
+//
+// The rule itself lives in runtrace and is not restated here; what this adds
+// is which records supply the windows. Run windows are the harness's own — the
+// supervisor's snapshot and the durable lifecycle log, wired by the daemon —
+// so a session predating every recorded run is not reported: nothing ties it
+// to this harness, and a store that has been on the machine longer than the
+// config has is exactly where another user's work sits. A harness with no
+// working directory is correlated in the daemon's own directory, the directory
+// it was spawned in (the same answer `harness logs` gives).
+func (s *Service) attributeRuns(cfg *core.Config, name string, h core.Harness) ([]SessionSummary, error) {
+	target := runtrace.Scope{
+		Name:    name,
+		Adapter: h.TrajectoryKind(),
+		Workdir: s.workdirFor(h, name),
+		Args:    h.Args,
+		Env:     s.discoveryEnv(name),
+	}
+	if target.Workdir == "" {
+		target.Workdir, _ = os.Getwd()
+	}
+	if s.runWindows == nil {
+		log.Info("trajectory listing has no run records, reporting no native sessions",
+			"harness", name)
+		return nil, nil
+	}
+	rec, err := s.runWindows(name)
+	if err != nil {
+		return nil, fmt.Errorf("trajectory runs %s: %w", name, err)
+	}
+	windows := coalesceWindows(rec.Runs)
+	if len(windows) == 0 {
+		return nil, nil
+	}
+	peers, err := s.peerScopes(cfg, target)
+	if err != nil {
+		return nil, err
+	}
+
+	// context.Background(), not a caller's context: nothing in this call chain
+	// has one. List is reached from HandleListTrajectories, a facade tool
+	// handler, and none of its callers thread a context either. The bounded
+	// one below is what keeps a store locked by a wedged writer from holding
+	// the call open; threading a caller's context properly means changing
+	// List, the handler and every caller of both, which is its own change.
+	//
+	// @joestump-agent 08/23/2026 - Added for the agent-trace bump.
+	ctx, cancel := context.WithTimeout(context.Background(), attributionTimeout)
+	defer cancel()
+	now := time.Now()
+
+	out := make([]SessionSummary, 0, len(windows))
+	seen := map[string]bool{}
+	for _, w := range windows {
+		att, err := runtrace.Attribute(ctx, target, w, peers, now)
+		if err != nil {
+			return nil, fmt.Errorf("trajectory attribute %s: %w", name, err)
+		}
+		// Ambiguity is dropped and written down, never scored: nothing in a
+		// transcript identifies the process that wrote it, so a session two
+		// harnesses could each have written belongs to neither.
+		for _, x := range att.Excluded {
+			log.Info("trajectory session excluded as ambiguous",
+				"harness", name,
+				"session", x.Session.Meta.ID,
+				"started_at", x.Session.Started.Format(time.RFC3339Nano),
+				"claimants", strings.Join(x.Claimants, ","))
+		}
+		for _, sess := range att.Sessions {
+			// Two windows can reach one session through two sources under
+			// different spellings of the same store; a session id is a UUID,
+			// so identity is the tool plus the id.
+			key := string(sess.Meta.Harness) + "/" + sess.Meta.ID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, SessionSummary{
+				ID:        sess.Meta.ID,
+				Source:    "native",
+				Path:      sess.Meta.Path,
+				Cwd:       sess.Meta.Cwd,
+				Model:     sess.Meta.Model,
+				Title:     sess.Meta.Title,
+				StartedAt: sess.Meta.StartedAt,
+				EndedAt:   sess.Meta.EndedAt,
+			})
+		}
+	}
+	sortByStartedDesc(out)
+	return out, nil
+}
+
+// peerScopes builds every other declared harness that could have written a
+// session in target's workdir, with its run windows: the input that makes a
+// session ambiguous. A peer can only ever hide a session, never claim one for
+// the harness being queried, so its run record being unreadable is answered
+// the conservative way — as running throughout.
+func (s *Service) peerScopes(cfg *core.Config, target runtrace.Scope) ([]runtrace.Scope, error) {
+	daemonDir, _ := os.Getwd()
+	var peers []runtrace.Scope
+	for _, pname := range harnessNames(cfg) {
+		if pname == target.Name {
+			continue
+		}
+		p, ok := cfg.Harnesses[pname]
+		if !ok {
+			continue
+		}
+		scope := runtrace.Scope{
+			Name:    pname,
+			Adapter: p.TrajectoryKind(),
+			Workdir: s.workdirFor(p, pname),
+			Args:    p.Args,
+		}
+		// A harness with no workdir is spawned in the daemon's own, and writes
+		// its stores there like any other peer.
+		if scope.Workdir == "" {
+			scope.Workdir = daemonDir
+		}
+		if !runtrace.CouldWrite(scope.Adapter, target.Adapter) || !runtrace.SameDir(scope.Workdir, target.Workdir) {
+			continue
+		}
+		if s.runWindows != nil {
+			rec, err := s.runWindows(pname)
+			if err != nil {
+				log.Warn("trajectory peer run history unreadable, treating it as running throughout",
+					"harness", pname, "err", err)
+				scope.Runs = []runtrace.Window{{Start: time.Unix(1, 0)}}
+				peers = append(peers, scope)
+				continue
+			}
+			scope.Runs = rec.Runs
+			scope.KnownSince = rec.KnownSince
+		}
+		peers = append(peers, scope)
+	}
+	return peers, nil
+}
+
+// harnessNames returns the config's harness names in a stable order, so one
+// host's listing does not depend on Go's map iteration.
+func harnessNames(cfg *core.Config) []string {
+	if len(cfg.HarnessOrder) == len(cfg.Harnesses) {
+		return cfg.HarnessOrder
+	}
+	names := make([]string, 0, len(cfg.Harnesses))
+	for n := range cfg.Harnesses {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// discoveryEnv returns the harness's discovery environment, or nil when no
+// resolver is wired, which leaves runtrace on each tool's defaults.
+func (s *Service) discoveryEnv(name string) map[string]string {
+	if s.resolveEnv == nil {
+		return nil
+	}
+	return s.resolveEnv(name)
+}
+
+// coalesceWindows merges run windows whose slack-expanded bounds touch, so
+// frequent runs cost one store pass instead of one each. It is exactly the
+// coverage of the windows it merges: two windows that touch after
+// runtrace.Slack is applied on both sides leave no instant between them that
+// one of them did not cover. Windows with no start are dropped — an unknown
+// run cannot vouch for a session.
+func coalesceWindows(runs []runtrace.Window) []runtrace.Window {
+	known := make([]runtrace.Window, 0, len(runs))
+	for _, w := range runs {
+		if !w.Start.IsZero() {
+			known = append(known, w)
+		}
+	}
+	sort.SliceStable(known, func(i, j int) bool { return known[i].Start.Before(known[j].Start) })
+	var out []runtrace.Window
+	for _, w := range known {
+		if n := len(out); n > 0 {
+			last := &out[n-1]
+			if last.End.IsZero() {
+				continue // open: it already covers everything after its start
+			}
+			if !w.Start.After(last.End.Add(2 * runtrace.Slack)) {
+				if w.End.After(last.End) {
+					last.End = w.End
+				}
+				continue
+			}
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
 // Get returns the full trajectory for the named harness at the given session
 // path, or ErrHarvestDisabled when the harness has not opted in. The content
 // is read once and returned as-is; no daemon code path writes to, alters, or
@@ -201,15 +434,17 @@ func (s *Service) List(cfg *core.Config, name string) ([]SessionSummary, error) 
 //
 // Get reads only a session that List reports for the same harness. The
 // caller's path is a lookup key into that list, never a path to open, so Get
-// inherits List's scoping: the harvest opt-in, the workdir filter, and the
-// scrollback fallback. A path List does not report, whether it is another
-// harness's transcript, an opted-out harness's scrollback, or /etc/passwd,
+// inherits List's scoping: the harvest opt-in, which run windows attribute
+// the session to this harness, and the scrollback fallback. A path List does
+// not report, whether it is another harness's transcript, a session from a run
+// this harness was not in, an opted-out harness's scrollback, or /etc/passwd,
 // fails with ErrUnknownSession before any file is opened. Paths are compared
 // after filepath.Clean, so a spelling of a listed path with "./" or a doubled
 // separator still matches, while a "../" escape or a relative path does not.
 //
 // Governing: SPEC-0006 REQ "Harvest Opt-In", SPEC-0006 REQ "Trajectory
-// Discovery", ADR-0008 (trajectory exposure is opt-in).
+// Discovery", SPEC-0006 REQ "Run Correlation", ADR-0008 (trajectory exposure
+// is opt-in).
 //
 // @joestump-agent 09/29/2026 - Scoped the read to List's sessions. Get used to
 // os.ReadFile any caller-supplied path, so an opted-in harness's get_trajectory
