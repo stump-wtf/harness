@@ -398,8 +398,9 @@ func (s *Service) discoveryEnv(name string) map[string]string {
 // frequent runs cost one store pass instead of one each. It is exactly the
 // coverage of the windows it merges: two windows that touch after
 // runtrace.Slack is applied on both sides leave no instant between them that
-// one of them did not cover. Windows with no start are dropped — an unknown
-// run cannot vouch for a session.
+// one of them did not cover. A merged window stays open when one of the runs it
+// covers is still going, so the run in progress is never closed off. Windows
+// with no start are dropped — an unknown run cannot vouch for a session.
 func coalesceWindows(runs []runtrace.Window) []runtrace.Window {
 	known := make([]runtrace.Window, 0, len(runs))
 	for _, w := range runs {
@@ -416,7 +417,12 @@ func coalesceWindows(runs []runtrace.Window) []runtrace.Window {
 				continue // open: it already covers everything after its start
 			}
 			if !w.Start.After(last.End.Add(2 * runtrace.Slack)) {
-				if w.End.After(last.End) {
+				// A run still going leaves the merged window open: closing it
+				// at the previous run's end would hide what the run in progress
+				// is writing now, which is exactly a restarted harness.
+				if w.Open() {
+					last.End = time.Time{}
+				} else if w.End.After(last.End) {
 					last.End = w.End
 				}
 				continue

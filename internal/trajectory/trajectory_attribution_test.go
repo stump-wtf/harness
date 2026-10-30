@@ -312,3 +312,17 @@ func TestCoalesceWindowsOpenRunAbsorbs(t *testing.T) {
 		t.Fatalf("coalesceWindows = %+v, want one open window from 09:00", got)
 	}
 }
+
+func TestCoalesceWindowsKeepsALiveRunOpen(t *testing.T) {
+	// A harness restarted inside the slack of the previous run's end is the
+	// same case seen from the other end: merging it into the closed window
+	// must leave the result open, or nothing covers the run in progress and
+	// the sessions it is writing now would be listed by neither window.
+	got := coalesceWindows([]runtrace.Window{
+		{Start: at(9, 0), End: at(9, 30)},
+		{Start: at(9, 30)},
+	})
+	if len(got) != 1 || !got[0].Start.Equal(at(9, 0)) || !got[0].End.IsZero() {
+		t.Fatalf("coalesceWindows = %+v, want one open window from 09:00", got)
+	}
+}
