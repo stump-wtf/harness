@@ -8,7 +8,8 @@
 #   make daemon       # run the daemon in the foreground
 #   make tidy         # go mod tidy + gofumpt
 #   make lint         # static checks only (fmt, vet, go.mod/go.sum tidiness)
-#   make check        # just the CI gates (lint, test, race, fuzz)
+#   make scan         # the secret scan (gitleaks) the pipeline runs first
+#   make check        # just the CI gates (scan, lint, test, race, fuzz)
 #   make fuzz         # run the fuzz targets for a bounded time (FUZZTIME)
 #
 # Override the binary path / version via:
@@ -35,7 +36,7 @@ LDFLAGS   := -X $(PKG)/internal/buildinfo.Version=$(VERSION)
 BUILD_FLAGS := -trimpath -ldflags "$(LDFLAGS)"
 BIN       := harness
 
-.PHONY: all build check lint fmt vet tidy-check goflags-check test race fuzz tidy clean run daemon install version release-snapshot release-check
+.PHONY: all build check lint fmt vet tidy-check goflags-check test race fuzz scan tidy clean run daemon install version release-snapshot release-check
 
 # The default "did I break it" loop.
 all: build check
@@ -44,10 +45,35 @@ all: build check
 build:
 	$(GO) build $(BUILD_FLAGS) -o bin/$(BIN) ./cmd/harness
 
-# Full CI gate: the static checks, tests, the race detector, and a bounded
-# fuzz run. CI's pipeline calls `make check`, so adding `fuzz` here is what
-# puts it in CI.
-check: lint test race fuzz
+# Full CI gate: the secret scan first — a leaked credential must not wait
+# behind a compile, the same ordering as the pipeline — then the static
+# checks, tests, the race detector, and a bounded fuzz run. CI's pipeline
+# calls `make check`, so adding `fuzz` here is what puts it in CI.
+check: scan lint test race fuzz
+
+# The secret scan: the same gitleaks call the pipeline's first stage runs
+# (stump.wtf/ci gitleaks.yaml) — full history, the repo's .gitleaksignore,
+# redacted output. It exists so a literal the scan reads as a credential is
+# caught locally, where the finding is on screen, instead of as a PR that
+# dies in five seconds reading like a CI outage: a failed `uses:` callee is
+# recorded on the no-step wrapper job as "job not started" (issue #1015).
+# Scans history, so run it from a branch that carries the branch's history.
+# Locally a missing gitleaks fails the gate with an install hint; the `git`
+# subcommand needs gitleaks v8.19+, and an older one fails the gate with
+# its own unknown-command error, which is loud enough. On a runner
+# (RUNNER_OS is set in the job container) it warns loudly and
+# skips, because the shared runner image ships no gitleaks and the
+# pipeline's dedicated secrets stage already ran the same scan earlier in
+# the run.
+scan:
+	@if command -v gitleaks >/dev/null 2>&1; then \
+		gitleaks git . --no-banner --verbose --redact --gitleaks-ignore-path .gitleaksignore; \
+	elif [ -n "$$RUNNER_OS" ]; then \
+		echo "scan: WARNING: gitleaks is not installed in this runner image, so the check skips the scan here; the pipeline's dedicated secrets stage (stump.wtf/ci gitleaks.yaml) runs the same scan on this run"; \
+	else \
+		echo "scan: gitleaks is not installed; the local gate is incomplete without it. Install gitleaks v8.19 or newer (https://github.com/gitleaks/gitleaks) and re-run"; \
+		exit 1; \
+	fi
 
 # Static checks only (the uniform `make lint` entry point).
 lint: fmt vet tidy-check

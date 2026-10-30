@@ -24,3 +24,11 @@ ce1e2f708621573d3a01fbbc4aa6a820392b656e:internal/redact/redact_test.go:curl-aut
 # this branch (the second is the rebase onto main), not live secrets.
 39aa45ed185d747edaa78ed9700fd038729c200c:internal/relay/fake_switchboard_test.go:generic-api-key:99
 f1ee2dc8fe82f7bbe06709ca05c5036ef6a5c700:internal/relay/fake_switchboard_test.go:generic-api-key:99
+
+# 86774c9 is the pre-merge head of feat/995-stream-ingest (#995, merged):
+# a stale local-only branch ref no checkout of main reaches, so CI never
+# sees it, but a full-history scan from a clone that keeps the branch does.
+# Its stream_test.go fixture was a literal GITEA_TOKEN shape; the merged
+# version assembles the token at run time. Unmodified history, not a live
+# secret.
+86774c921b32937f191ce3ddad3ddfc54a55c17d:internal/observe/stream_test.go:generic-api-key:173
