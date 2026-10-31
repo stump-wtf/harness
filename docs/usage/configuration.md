@@ -27,10 +27,10 @@ enabled = false
 
 | Field | Meaning |
 |-------|---------|
-| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `pi`, `omp`, `generic`, `command`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args. To run any other program, use `command` with an `argv` — see [The `command` kind](#the-command-kind). `generic` takes no `prompt` or `prompt_file` — see [Agent adapters](#agent-adapters) |
+| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `pi`, `omp`, `opencode`, `generic`, `command`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args. To run any other program, use `command` with an `argv` — see [The `command` kind](#the-command-kind). `generic` takes no `prompt` or `prompt_file` — see [Agent adapters](#agent-adapters) |
 | `args` | argument list appended after the adapter's executable. Not accepted on `command`, which takes `argv` instead |
 | `argv` | `command` only: the whole process, `argv[0]` first, exec'd **without a shell**. See [The `command` kind](#the-command-kind) |
-| `transcripts` | `command` only: observe the harness's sessions as those of `claude-code`, `crush`, `codex`, `pi` or `omp`. See [Binding transcripts](#binding-transcripts) |
+| `transcripts` | `command` only: observe the harness's sessions as those of `claude-code`, `crush`, `codex`, `pi`, `omp` or `opencode`. See [Binding transcripts](#binding-transcripts) |
 | `workdir` | working directory (**required** for most commands) |
 | `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config). Also accepts a **list** of files loaded in order, a later file winning a key collision — `env_file = ["claude.env", "reviewer.env"]` — so a shared credential file and a per-persona one compose without copying. A missing file is tolerated, exactly as a missing string is; an empty list is a load error |
 | `description` | free-text shown in the dashboard |
@@ -103,6 +103,7 @@ is dropped, not emulated:
 | `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
 | `pi` | `pi --print [--model M] <prompt>` | `auto_accept` (Pi has no permission prompts), `max_turns`, `quiet` (`--print` is already headless) |
 | `omp` | `omp --print [--model M] <prompt>` | `auto_accept`, `max_turns`, `quiet`, as for `pi` |
+| `opencode` | `opencode run [--model M] <prompt>` | `auto_accept` (OpenCode declares tool permissions in its own config), `max_turns`, `quiet` |
 | `generic` | none — a `prompt` or `prompt_file` on `generic` is a config error | — |
 
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
@@ -113,7 +114,7 @@ it on trusted, headless runs.
 A `claude-code` one-shot prints `stream-json`, one JSON object per line, so the
 daemon runs it on pipes rather than under a PTY
 ([ADR-0033](/decisions/adr-0033-trace-first-run-records)). Every other kind
-keeps its PTY: `crush`, `codex`, `pi` and `omp` one-shots, every resident
+keeps its PTY: `crush`, `codex`, `pi`, `omp` and `opencode` one-shots, every resident
 harness, and every `command` harness, whatever its `argv`.
 
 - **No terminal.** The process has no controlling terminal and its stdin is
@@ -680,14 +681,14 @@ the file, line, harness and key:
 ## Agent adapters
 
 The `harness` key is a **required** enum selecting the adapter (ADR-0011,
-SPEC-0006): `crush`, `claude-code` ([what it runs](/guides/claude-code)), `codex`, `pi`, `omp`, `generic`, `command`. It has no default —
+SPEC-0006): `crush`, `claude-code` ([what it runs](/guides/claude-code)), `codex`, `pi`, `omp`, `opencode`, `generic`, `command`. It has no default —
 what a harness runs is the most consequential thing it declares, so a table
 that omits the key is a config error rather than an agent nobody asked for:
 
 ```
 harness "web": missing required key "harness" (want one of: crush, claude-code,
-codex, pi, omp, generic, command — use "command" with argv = ["…"] for an arbitrary
-program)
+codex, pi, omp, opencode, generic, command — use "command" with argv = ["…"] for an
+arbitrary program)
 ```
  The
 adapter owns both the tool-specific behaviour (trajectory discovery) and the
@@ -705,7 +706,8 @@ scratchpad and the edit form refuse it too:
 
 ```
 harness "triage": "generic" runs sh and has no prompt synthesis, so it takes no
-"prompt"; use harness = "crush"|"claude-code"|"codex"|"pi"|"omp" for a prompt one-shot, or
+"prompt"; use harness = "crush"|"claude-code"|"codex"|"pi"|"omp"|"opencode" for a
+prompt one-shot, or
 harness = "command" with argv to run another program without a shell
 ```
 
@@ -773,8 +775,8 @@ workdir = "~/src/report"
 ```
 
 Any agent CLI not listed above runs this way: `harness = "command"`,
-`argv = ["…", …]`, resident, on a `schedule`, or on `triggers`. Pi and OMP
-have adapters of their own (below).
+`argv = ["…", …]`, resident, on a `schedule`, or on `triggers`. Pi, OMP and
+OpenCode have adapters of their own (below).
 
 #### Argv templates
 
@@ -867,8 +869,8 @@ workdir = "~/src/app"
 enabled = true
 ```
 
-- The value is one of `claude-code`, `crush`, `codex`, `pi` or `omp`; anything
-  else fails to load, listing those.
+- The value is one of `claude-code`, `crush`, `codex`, `pi`, `omp` or `opencode`;
+  anything else fails to load, listing those.
 - It is accepted on `command` only. An adapter kind already binds its own
   transcripts, so `transcripts` on `crush` (even `transcripts = "crush"`) is a
   config error.
@@ -914,6 +916,38 @@ so an `omp` harness claims exactly its own.
 [harness.my-agent]
 harness = "claude-code"
 ```
+
+### OpenCode
+
+`opencode` runs [OpenCode](https://opencode.ai), the SST coding agent. A
+resident harness runs `opencode` with `args` appended, and a prompt one-shot
+runs `opencode run` with `model` passed as `--model` in the CLI's
+`provider/model` form. `auto_accept`, `max_turns` and `quiet` are accepted and
+add nothing: OpenCode declares tool permissions in its own configuration rather
+than through a skip-permissions flag, and has no turn budget or quiet switch.
+
+```toml
+[harness.oc-triage]
+harness = "opencode"
+model = "anthropic/claude-opus-5"
+prompt = "triage the open issues"
+schedule = "0 8 * * *"
+workdir = "~/src/app"
+```
+
+⚠️ **The argv is not verified against a real binary.** It was written from the
+adapter template and the CLI's documented `run` mode, because no `opencode` was
+installed where this was built (issue #919). Check `opencode run --help` on the
+host: if the flags have drifted, run the CLI as `harness = "command"` with your
+own `argv` and `transcripts = "opencode"` until the adapter is updated.
+
+**Observation.** Observed through the same session reader agent-trace has used
+for OpenCode since before v0.4.0 (ADR-0033). OpenCode keeps every session in
+one SQLite database, `~/.opencode/opencode.db`, so a harness's sessions are the
+rows recorded with its own working directory, and the database follows the
+`HOME` its `env_file` gives it. Its sessions are attributed to it and counted
+in the model-call metrics. A database the CLI has not written yet is no
+sessions, not an error.
 
 ## Agent packages and stables
 

@@ -43,7 +43,7 @@ func (NoSkills) SkillTarget() string        { return "" }
 // the trajectory surface — skill methods arrive in later stories.
 type Adapter interface {
 	// Name is the adapter's registry key: "claude-code", "crush", "codex",
-	// "pi", "omp", "generic", "command".
+	// "pi", "omp", "opencode", "generic", "command".
 	Name() string
 
 	// TrajectoryDir returns the directory where this tool stores session
@@ -96,7 +96,7 @@ type Registry struct {
 }
 
 // NewRegistry returns a Registry populated with the built-in adapters:
-// claude-code, crush, codex, pi, omp, generic, and command.
+// claude-code, crush, codex, pi, omp, opencode, generic, and command.
 func NewRegistry() *Registry {
 	r := &Registry{
 		entries: make(map[string]Adapter),
@@ -106,6 +106,7 @@ func NewRegistry() *Registry {
 	r.register(&Codex{})
 	r.register(Pi)
 	r.register(OMP)
+	r.register(&OpenCode{})
 	r.register(&Generic{})
 	r.register(&Command{})
 	return r
@@ -126,7 +127,7 @@ func (r *Registry) Get(name string) (Adapter, error) {
 
 // Names returns every registered adapter name in insertion order.
 func (r *Registry) Names() []string {
-	return []string{"claude-code", "crush", "codex", core.AdapterPi, core.AdapterOMP, "generic", "command"}
+	return []string{"claude-code", "crush", "codex", core.AdapterPi, core.AdapterOMP, core.AdapterOpenCode, "generic", "command"}
 }
 
 // Resolve selects the adapter for a harness from its `harness` enum key. Per
@@ -428,6 +429,80 @@ func (a *PiFamily) PromptCommand(prompt string, opts core.AgentOpts) (string, []
 		args = append(args, "--model", opts.Model)
 	}
 	return a.exe, append(args, prompt)
+}
+
+// OpenCode is the adapter for OpenCode (SST's opencode, https://opencode.ai).
+//
+// The argv is NOT verified against a running binary: no opencode is installed
+// on the lane that wrote this. It follows the adapter template and the issue:
+// the resident process is a bare `opencode` (its TUI) with `args` appended,
+// and the one-shot is `opencode run`, the CLI's non-interactive mode, with
+// `model` passed as `--model` in the CLI's "provider/model" form.
+// auto_accept, max_turns and quiet are accepted and emit nothing: OpenCode
+// declares tool permissions in its own config rather than through a
+// skip-permissions flag, and has neither a turn budget nor a quiet switch to
+// map (issue #919 names these as what a human must re-check with the real
+// binary). A CLI that drifts from this runs as `harness = "command"` with its
+// own argv and `transcripts = "opencode"` until this is updated, exactly as
+// for the Pi family.
+//
+// The store needs no relocation rule: the CLI records every session in one
+// SQLite database, `~/.opencode/opencode.db` — agent-trace's
+// OpenCodeAdapter default — and reads no variable that moves it, so discovery
+// follows only the HOME a harness's env_file gives it.
+//
+// Governing: ADR-0011, ADR-0033 (trace first: agent-trace's OpenCodeAdapter
+// is on main), issue #919.
+type OpenCode struct {
+	NoSkills
+}
+
+func (a *OpenCode) Name() string { return core.AdapterOpenCode }
+
+func (a *OpenCode) Executable() string { return "opencode" }
+
+// SessionPath is the CLI's session database as a process whose home directory
+// is home sees it: <home>/.opencode/opencode.db. Run correlation resolves it
+// from the harness's own HOME, so an env_file that moves the home directory
+// is followed.
+func (a *OpenCode) SessionPath(home string) string {
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".opencode", "opencode.db")
+}
+
+// TrajectoryDir is the directory holding the database under the daemon's own
+// home; run correlation resolves the database itself from the harness's
+// environment (SessionPath).
+func (a *OpenCode) TrajectoryDir(_ string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".opencode")
+}
+
+// TailAdapter is agent-trace's OpenCode reader at the database. The database
+// is one SQLite store for every session the CLI has recorded, so sessions are
+// keyed "<database>/<session-id>" like Crush's; attribution narrows them by
+// the session's recorded directory.
+func (a *OpenCode) TailAdapter() tail.Adapter {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	return &tail.OpenCodeAdapter{DBPath: a.SessionPath(home)}
+}
+
+// PromptCommand is `opencode run [--model M] <prompt>`. See the type doc for
+// what was verified and what a human must check against the real binary.
+func (a *OpenCode) PromptCommand(prompt string, opts core.AgentOpts) (string, []string) {
+	args := []string{"run"}
+	if opts.Model != "" {
+		args = append(args, "--model", opts.Model)
+	}
+	return "opencode", append(args, prompt)
 }
 
 // Generic is the adapter for unrecognized tools. It reports no trajectory —

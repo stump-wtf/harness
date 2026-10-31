@@ -228,7 +228,8 @@ successful model call, because the model answered with work. It counts an
 call is not counted.
 
 Only a harness whose adapter writes a readable transcript (`claude-code`,
-`crush`, `codex`, `pi`, `omp`, or a `command` harness bound to one of those
+`crush`, `codex`, `pi`, `omp`, `opencode`, or a `command` harness bound to one
+of those
 with `transcripts`) **and** that has a `workdir` gets model-call series. A
 `generic` harness, an unbound `command` harness, or an agent harness with no
 workdir, has none. The daemon
