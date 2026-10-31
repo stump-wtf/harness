@@ -598,7 +598,13 @@ type Entry struct {
 	Tool    string
 	Target  string
 	Summary string
-	Error   bool
+	// Programs names the executables a shell tool call runs, in the order the
+	// command names them (agent-trace's classify.Event.Programs). It is a
+	// lower bound: a name computed when the command runs, or one inside a
+	// command substitution, is absent, and an env assignment is never a
+	// program. Empty for a call that is not a shell.
+	Programs []string
+	Error    bool
 	// Ambiguous marks an entry from an excluded session, present only when
 	// the caller explicitly asked for them.
 	Ambiguous bool
@@ -685,16 +691,17 @@ func sessionEntries(ctx context.Context, s Session, w Window, now time.Time) ([]
 			continue
 		}
 		out = append(out, Entry{
-			ID:      fmt.Sprintf("%s/tool/%d", id, ev.Seq),
-			Time:    t,
-			Session: id,
-			Seq:     ev.Seq,
-			Kind:    KindTool,
-			Action:  ev.Action,
-			Tool:    ev.Tool,
-			Target:  redact.Redact(PrimaryTarget(ev)),
-			Summary: redact.Redact(ToolSummary(ev.Summary)),
-			Error:   ev.IsError,
+			ID:       fmt.Sprintf("%s/tool/%d", id, ev.Seq),
+			Time:     t,
+			Session:  id,
+			Seq:      ev.Seq,
+			Kind:     KindTool,
+			Action:   ev.Action,
+			Tool:     ev.Tool,
+			Target:   redact.Redact(PrimaryTarget(ev)),
+			Summary:  redact.Redact(ToolSummary(ev.Summary)),
+			Programs: ProgramNames(ev.Programs),
+			Error:    ev.IsError,
 		})
 	}
 	for i, mk := range marks {
@@ -714,6 +721,23 @@ func sessionEntries(ctx context.Context, s Session, w Window, now time.Time) ([]
 		})
 	}
 	return out, nil
+}
+
+// ProgramNames copies an event's program list, redacting each name like every
+// other string read from a transcript (ADR-0008). agent-trace only ever names
+// an executable basename, so this normally returns the names unchanged; an
+// empty name is dropped rather than printed as a gap.
+func ProgramNames(progs []string) []string {
+	if len(progs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(progs))
+	for _, p := range progs {
+		if p = strings.TrimSpace(redact.Redact(p)); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // sessionSummary names a session the way an operator scans for it: short id,

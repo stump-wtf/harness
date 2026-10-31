@@ -101,3 +101,37 @@ func TestGroupLineWhoPutsTheSpeakerBeforeTheBadge(t *testing.T) {
 		t.Errorf("line reads %q", p)
 	}
 }
+
+// TestEntryNamesItsPrograms: a shell call's executables print after the
+// command, and past ProgramLimit the rest fold into a count, so a wrapper
+// around a hundred scripts stays one line (issue #913).
+func TestEntryNamesItsPrograms(t *testing.T) {
+	e := protocol.LogEntry{Time: stamp(3), Kind: protocol.LogEntryTool, Action: "exec",
+		Summary: "tea pr list | jq -r .title", Programs: []string{"tea", "jq"}}
+	if p := FormatEntry(e); !strings.HasSuffix(p, "  → tea jq") {
+		t.Errorf("entry reads %q, want it to end in the program list", p)
+	}
+
+	failed := e
+	failed.Error = true
+	if p := FormatEntry(failed); !strings.HasSuffix(p, "  (failed)  → tea jq") {
+		t.Errorf("failed entry reads %q, want the failure first and the programs last", p)
+	}
+
+	many := protocol.LogEntry{Time: stamp(3), Kind: protocol.LogEntryTool, Action: "exec", Summary: "make -j8 all"}
+	for i := 0; i < ProgramLimit+4; i++ {
+		many.Programs = append(many.Programs, "script"+string(rune('a'+i)))
+	}
+	p := FormatEntry(many)
+	if !strings.Contains(p, "+4") {
+		t.Errorf("long program list not folded: %q", p)
+	}
+	if len([]rune(p)) > len(FormatEntry(e))+ProgramWidth+len("+4")+4 {
+		t.Errorf("long program list widened the line past its budget: %q", p)
+	}
+
+	if p := FormatEntry(protocol.LogEntry{Time: stamp(4), Kind: protocol.LogEntryTool,
+		Action: "read", Target: "/src/a.go"}); strings.Contains(p, "→") {
+		t.Errorf("a call that names no programs prints an empty list: %q", p)
+	}
+}

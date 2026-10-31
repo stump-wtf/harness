@@ -299,6 +299,10 @@ type series struct {
 	// renderFailures counts template render failures by reason
 	// (supervisor.RenderFailure*), SPEC-0017 REQ-11.
 	renderFailures map[string]uint64
+	// programs counts tool calls by program label and outcome (programs.go,
+	// issue #913); it never holds more than ProgramCap names plus
+	// ProgramOther.
+	programs map[string][2]uint64
 }
 
 func newSeries() *series {
@@ -593,6 +597,7 @@ func (m *Metrics) item(ev observe.Event) {
 	switch ev.Kind {
 	case observe.KindTool:
 		s.calls[0]++
+		s.countPrograms(ev.Tool.Programs, ev.Tool.IsError)
 		// Never backwards: an item delivered late must not rewind the
 		// timestamp an alert measures staleness from.
 		if ev.Time.After(s.lastSuccess) {

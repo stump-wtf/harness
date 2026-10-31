@@ -43,6 +43,15 @@ const DetailWidth = 160
 // LabelWidth is the label column's width, measured before styling.
 const LabelWidth = 8
 
+// ProgramLimit is how many of one shell call's programs the activity view names
+// before folding the rest into a count, and ProgramWidth is the most runes that
+// list may take. A `make` wrapper around a hundred scripts is a fact about the
+// command, not a reason to widen every line of a run.
+const (
+	ProgramLimit = 6
+	ProgramWidth = 60
+)
+
 // --- plain -------------------------------------------------------------------
 
 // RunFields is a run header's columns, each already made inert.
@@ -139,6 +148,12 @@ func Parts(e protocol.LogEntry) EntryFields {
 		if e.Error {
 			suffix = "  (failed)"
 		}
+		// The executables a shell call ran, so an operator scanning a run sees
+		// "a stale tea login failed four times" without opening the transcript
+		// (issue #913). The command itself is already the detail.
+		if p := ProgramList(e.Programs); p != "" {
+			suffix += "  → " + p
+		}
 	case protocol.LogEntryMark:
 		switch e.Action {
 		case "error":
@@ -175,6 +190,21 @@ func Clip(s string, n int) string {
 		return s
 	}
 	return string(r[:n-1]) + "…"
+}
+
+// ProgramList renders one tool call's programs for the detail column: at most
+// ProgramLimit of them, the rest folded into a count, so a generated command
+// that names dozens of executables cannot push the command text off the line.
+func ProgramList(programs []string) string {
+	if len(programs) == 0 {
+		return ""
+	}
+	shown := programs
+	if len(shown) > ProgramLimit {
+		extra := len(shown) - ProgramLimit
+		shown = append(append([]string{}, shown[:ProgramLimit]...), fmt.Sprintf("+%d", extra))
+	}
+	return Clip(Inert(strings.Join(shown, " ")), ProgramWidth)
 }
 
 // --- styled ------------------------------------------------------------------
