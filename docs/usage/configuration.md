@@ -103,7 +103,7 @@ is dropped, not emulated:
 | `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
 | `pi` | `pi --print [--model M] <prompt>` | `auto_accept` (Pi has no permission prompts), `max_turns`, `quiet` (`--print` is already headless) |
 | `omp` | `omp --print [--model M] <prompt>` | `auto_accept`, `max_turns`, `quiet`, as for `pi` |
-| `opencode` | `opencode run [--model M] <prompt>` | `auto_accept` (OpenCode declares tool permissions in its own config), `max_turns`, `quiet` |
+| `opencode` | `opencode run [--model M] <prompt>` | `auto_accept` (no flag is emitted — OpenCode declares tool permissions in its own config, so set them there before an unattended run or it can stall on a prompt), `max_turns`, `quiet` |
 | `generic` | none — a `prompt` or `prompt_file` on `generic` is a config error | — |
 
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
