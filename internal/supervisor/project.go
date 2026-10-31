@@ -454,8 +454,8 @@ func validateHarnessDef(src string, h core.Harness) error {
 	// refuses it there (ErrGenericPrompt) — after it had been registered.
 	// Governing: ADR-0023, SPEC-0017 REQ "Generic Kind Rejects Prompts".
 	case h.Adapter == "generic" && (h.Prompt != "" || h.PromptFile != "" || h.PromptTemplate != "" || h.PromptTemplateFile != ""):
-		return fmt.Errorf("%s: harness %q: %w: %q runs sh and has no prompt synthesis, so it takes no prompt; use harness = %q|%q|%q|%q|%q for a prompt one-shot, or harness = %q with argv to run another program without a shell",
-			src, h.Name, ErrInvalidProjectDef, "generic", "crush", "claude-code", "codex", core.AdapterPi, core.AdapterOMP, core.AdapterCommand)
+		return fmt.Errorf("%s: harness %q: %w: %q runs sh and has no prompt synthesis, so it takes no prompt; use harness = %q|%q|%q|%q|%q|%q for a prompt one-shot, or harness = %q with argv to run another program without a shell",
+			src, h.Name, ErrInvalidProjectDef, "generic", "crush", "claude-code", "codex", core.AdapterPi, core.AdapterOMP, core.AdapterOpenCode, core.AdapterCommand)
 	case strings.TrimSpace(h.Prompt) != "" && len(h.Args) > 0:
 		return fmt.Errorf("%s: harness %q: %w: prompt and args are mutually exclusive",
 			src, h.Name, ErrInvalidProjectDef)

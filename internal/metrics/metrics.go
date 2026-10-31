@@ -240,6 +240,10 @@ func Observable(h core.Harness) bool {
 	switch h.TrajectoryKind() {
 	case "crush", "claude-code", "codex", core.AdapterPi:
 		return h.Workdir != ""
+	case core.AdapterOpenCode:
+		// agent-trace's OpenCode reader parses the session database, so an
+		// opencode harness is observed like crush (issue #919).
+		return h.Workdir != ""
 	case core.AdapterOMP:
 		return adapter.OMP.Observed() && h.Workdir != ""
 	}

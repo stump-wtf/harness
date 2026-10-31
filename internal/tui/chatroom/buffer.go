@@ -256,6 +256,10 @@ func (re RenderableEvent) Entries() []protocol.LogEntry {
 			Target:  runtrace.PrimaryTarget(c),
 			Summary: runtrace.ToolSummary(c.Summary),
 			Error:   c.IsError,
+			// Only ever set on a failed call, and already redacted by the
+			// classifier before it was cut; logview prints it beside (failed)
+			// the way `harness logs` does.
+			ErrorExcerpt: c.ErrorExcerpt,
 		})
 	}
 	return out
