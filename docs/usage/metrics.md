@@ -228,7 +228,8 @@ successful model call, because the model answered with work. It counts an
 call is not counted.
 
 Only a harness whose adapter writes a readable transcript (`claude-code`,
-`crush`, `codex`, `pi`, `omp`, or a `command` harness bound to one of those
+`crush`, `codex`, `pi`, `omp`, `opencode`, or a `command` harness bound to one
+of those
 with `transcripts`) **and** that has a `workdir` gets model-call series. A
 `generic` harness, an unbound `command` harness, or an agent harness with no
 workdir, has none. The daemon
@@ -243,7 +244,7 @@ counted, but its provider errors do not appear yet.
 Until an adapter's errors do appear, its harnesses have no error-side series:
 `harness_model_calls_total{outcome="error"}`, `harness_model_call_errors_total`
 and `harness_model_call_errors_unclassified_total` are **absent** for `codex`,
-`pi` and `omp` harnesses today, not zero. A zero would say "no quota
+`pi`, `omp` and `opencode` harnesses today, not zero. A zero would say "no quota
 errors" through the very outage the quota alert exists to catch. For those
 harnesses, the staleness alert on `harness_last_successful_call_timestamp` is
 the one that fires.

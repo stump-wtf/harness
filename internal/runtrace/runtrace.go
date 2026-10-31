@@ -222,6 +222,16 @@ func Sources(s Scope) ([]tail.Adapter, error) {
 		if fam.Observed() {
 			return []tail.Adapter{&tail.PiAdapter{Dir: fam.SessionRoot(s.Env, s.home()), OMP: s.Adapter == core.AdapterOMP}}, nil
 		}
+	case core.AdapterOpenCode:
+		// One SQLite database holds every session the CLI recorded, so the
+		// reader is named outright rather than discovered: the same shape as
+		// a crush store named in the config. Sessions are keyed
+		// "<database>/<session-id>", and the session's own recorded directory
+		// is what Attribute matches against this harness's workdir.
+		// Governing: ADR-0033, issue #919.
+		if db := (&adapter.OpenCode{}).SessionPath(s.home()); db != "" {
+			return []tail.Adapter{&tail.OpenCodeAdapter{DBPath: db}}, nil
+		}
 	}
 	return nil, fmt.Errorf("%w: %q", ErrNoTrajectory, s.Adapter)
 }
@@ -347,10 +357,17 @@ func configDataDir(path string) string {
 // the database is the store — the same value Store reports for a harness
 // configured with one.
 func storeOf(meta tail.SessionMeta) string {
-	if meta.Harness != tail.HarnessCrush || meta.Path == "" {
-		return ""
+	switch meta.Harness {
+	// Crush and OpenCode are both SQLite-backed and both key a session
+	// "<database path>/<session id>", so the directory holding the database is
+	// the store — the same value Store reports for one of them.
+	case tail.HarnessCrush, tail.HarnessOpenCode:
+		if meta.Path == "" {
+			return ""
+		}
+		return filepath.Dir(filepath.Dir(meta.Path))
 	}
-	return filepath.Dir(filepath.Dir(meta.Path))
+	return ""
 }
 
 // Session is one discovered session together with the adapter that can parse
@@ -490,7 +507,7 @@ func CouldWrite(adapter, kind string) bool {
 	switch adapter {
 	case kind:
 		return true
-	case "crush", "claude-code", "codex", core.AdapterPi, core.AdapterOMP:
+	case "crush", "claude-code", "codex", core.AdapterPi, core.AdapterOMP, core.AdapterOpenCode:
 		return false
 	}
 	return true
