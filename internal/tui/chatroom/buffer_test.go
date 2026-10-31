@@ -9,6 +9,7 @@ import (
 	"github.com/stump-wtf/agent-trace/classify"
 	"github.com/stump-wtf/agent-trace/tail"
 
+	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/tui/theme"
 )
 
@@ -165,6 +166,69 @@ func TestMakeRenderableRedactsCredentials(t *testing.T) {
 // testStyles is the Styles every buffer test inserts with. Insert renders an
 // event's lines as it files it, so it needs a palette.
 func testStyles() *Styles { return NewStyles(theme.Default()) }
+
+// TestMakeRenderableCarriesTheErrorExcerpt: the chatroom is the live stream the
+// excerpt was switched on for — a failed call's lines say why beside (failed),
+// flattened by logview like every transcript string, and a successful call
+// keeps nothing even if an excerpt somehow rode along.
+func TestMakeRenderableCarriesTheErrorExcerpt(t *testing.T) {
+	failed := tail.Event{
+		Session: tail.SessionMeta{Harness: tail.HarnessCrush, ID: "s1"},
+		Classified: classify.Event{
+			Seq:          1,
+			Timestamp:    "2026-10-31T14:00:00Z",
+			Tool:         "bash",
+			Action:       classify.ActionExec,
+			IsError:      true,
+			ErrorExcerpt: "go build ./...\nundefined: foo\nFAIL\texample.com/x",
+		},
+		ReceivedAt: time.Now(),
+	}
+
+	rendered := strings.Join(MakeRenderable(failed).RenderLines(testStyles()), "\n")
+	if !strings.Contains(rendered, "(failed)") {
+		t.Errorf("a failed call rendered without (failed):\n%s", rendered)
+	}
+	// Inert flattens the newlines, so the why reads as one line, not three.
+	if !strings.Contains(rendered, "go build ./... undefined: foo") {
+		t.Errorf("rendered lines do not say why the call failed:\n%s", rendered)
+	}
+
+	succeeded := failed
+	succeeded.Classified.IsError = false
+	succeeded.Classified.ErrorExcerpt = ""
+	rendered = strings.Join(MakeRenderable(succeeded).RenderLines(testStyles()), "\n")
+	if strings.Contains(rendered, "(failed)") || strings.Contains(rendered, "undefined: foo") {
+		t.Errorf("a successful call rendered failure output:\n%s", rendered)
+	}
+}
+
+// TestHistoryEventRestoresTheErrorExcerpt: history rows come from the same
+// activity entries the daemon now serves the excerpt on, so a replayed failure
+// says why exactly as the live one did.
+func TestHistoryEventRestoresTheErrorExcerpt(t *testing.T) {
+	entry := protocol.LogEntry{
+		Time:         "2026-10-31T14:00:00Z",
+		ID:           "s1/tool/1",
+		Session:      "s1",
+		Kind:         protocol.LogEntryTool,
+		Action:       classify.ActionExec,
+		Tool:         "bash",
+		Error:        true,
+		ErrorExcerpt: "exit status 1",
+	}
+
+	ev, ok := historyEvent(entry, tail.HarnessCrush)
+	if !ok {
+		t.Fatal("historyEvent rejected a well-formed tool entry")
+	}
+	if ev.Classified.ErrorExcerpt != "exit status 1" {
+		t.Errorf("ErrorExcerpt = %q, want %q", ev.Classified.ErrorExcerpt, "exit status 1")
+	}
+	if !ev.Classified.IsError {
+		t.Error("IsError was not restored")
+	}
+}
 
 func TestEventBufferInsert(t *testing.T) {
 	b := NewEventBuffer(100)

@@ -108,10 +108,12 @@ type agentEventMsg struct{ Events []tail.Event }
 func watcherConfig() tail.WatchConfig {
 	cfg := tail.DefaultWatchConfig()
 	cfg.MaxAge = discoveryWindow
-	// The same bounded, masked excerpt the post-mortem shows. This watcher feeds
-	// the dashboard's live action field, and a failure there should say why the
-	// way a failure in `harness logs` does; the budget and the masker are
-	// runtrace's so the two views cannot drift apart.
+	// The same bounded, masked excerpt the post-mortem shows. This watcher
+	// feeds the chatroom's stream as well as the dashboard's live action
+	// field: the chatroom renders a failure the way `harness logs` does — the
+	// excerpt beside (failed) — while the action row is a fixed-width field
+	// that names the failure only. The budget and the masker are runtrace's so
+	// the views cannot drift apart.
 	cfg.ErrorExcerptBytes = runtrace.ErrorExcerptBytes
 	cfg.Redact = redact.Redact
 	return cfg

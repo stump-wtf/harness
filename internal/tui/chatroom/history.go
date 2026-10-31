@@ -122,6 +122,7 @@ func historyEvent(e protocol.LogEntry, h tail.Harness) (tail.Event, bool) {
 		ev.Classified.Action = e.Action
 		ev.Classified.Summary = e.Summary
 		ev.Classified.IsError = e.Error
+		ev.Classified.ErrorExcerpt = e.ErrorExcerpt
 		if e.Target != "" {
 			touch := classify.TouchHit
 			switch e.Action {
