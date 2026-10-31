@@ -861,6 +861,10 @@ type LogEntry struct {
 	Summary string `json:"summary,omitempty"`
 	Session string `json:"session,omitempty"`
 	Error   bool   `json:"error,omitempty"`
+	// ErrorExcerpt is the bounded, credential-masked piece of output a failing
+	// tool call produced, empty for everything that succeeded. It answers why
+	// the call failed, which the action and summary columns cannot.
+	ErrorExcerpt string `json:"error_excerpt,omitempty"`
 	// Ambiguous marks an entry from an excluded session, present only on an
 	// IncludeAmbiguous request.
 	Ambiguous bool `json:"ambiguous,omitempty"`
