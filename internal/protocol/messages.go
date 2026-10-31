@@ -158,7 +158,11 @@ const (
 	// arm_shutdown with an unknown-op error, which the CLI reports instead of
 	// silently stopping; an older client sends neither, and keeps the
 	// immediate lifecycle timing it has always had.
-	ProtoMinor = 29
+	// ProtoMinor 30 added Programs on LogEntry (stump.wtf/harness#913): the
+	// executables a shell tool call runs, as agent-trace names them. Additive
+	// only: an older daemon omits the field and a newer CLI prints the entry
+	// without them; an older client ignores what it does not decode.
+	ProtoMinor = 30
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -859,8 +863,13 @@ type LogEntry struct {
 	Tool    string `json:"tool,omitempty"`
 	Target  string `json:"target,omitempty"`
 	Summary string `json:"summary,omitempty"`
-	Session string `json:"session,omitempty"`
-	Error   bool   `json:"error,omitempty"`
+	// Programs lists the executables a shell tool call runs, in the order the
+	// command names them, empty for a call that is not a shell. It is a lower
+	// bound: agent-trace names only what a static read of the command can
+	// name, and never an env assignment (issue #913).
+	Programs []string `json:"programs,omitempty"`
+	Session  string   `json:"session,omitempty"`
+	Error    bool     `json:"error,omitempty"`
 	// ErrorExcerpt is the bounded, credential-masked piece of output a failing
 	// tool call produced, empty for everything that succeeded. It answers why
 	// the call failed, which the action and summary columns cannot.
