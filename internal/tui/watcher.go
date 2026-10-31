@@ -33,8 +33,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/stump-wtf/agent-trace/redact"
 	"github.com/stump-wtf/agent-trace/tail"
 
+	"github.com/stump-wtf/harness/internal/runtrace"
 	"github.com/stump-wtf/harness/internal/tui/chatroom"
 )
 
@@ -106,6 +108,12 @@ type agentEventMsg struct{ Events []tail.Event }
 func watcherConfig() tail.WatchConfig {
 	cfg := tail.DefaultWatchConfig()
 	cfg.MaxAge = discoveryWindow
+	// The same bounded, masked excerpt the post-mortem shows. This watcher feeds
+	// the dashboard's live action field, and a failure there should say why the
+	// way a failure in `harness logs` does; the budget and the masker are
+	// runtrace's so the two views cannot drift apart.
+	cfg.ErrorExcerptBytes = runtrace.ErrorExcerptBytes
+	cfg.Redact = redact.Redact
 	return cfg
 }
 

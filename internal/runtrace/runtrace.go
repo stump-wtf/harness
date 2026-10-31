@@ -177,6 +177,17 @@ func (s Scope) home() string {
 // instances it has been observed corrupt and frozen weeks stale, which made
 // registry-only discovery report no sessions at all.
 func Sources(s Scope) ([]tail.Adapter, error) {
+	adapters, err := scopeSources(s)
+	if err != nil {
+		return nil, err
+	}
+	applyExcerptOptions(adapters)
+	return adapters, nil
+}
+
+// scopeSources is Sources before the excerpt options are applied: the stores
+// this harness's agent could have written to, and nothing else.
+func scopeSources(s Scope) ([]tail.Adapter, error) {
 	work := clean(s.Workdir)
 	switch s.Adapter {
 	case "crush":
@@ -599,6 +610,11 @@ type Entry struct {
 	Target  string
 	Summary string
 	Error   bool
+	// ErrorExcerpt is the bounded, masked piece of output a failing tool call
+	// produced, empty for everything that succeeded. It is what tells an
+	// operator why the call failed without their opening the transcript; see
+	// ErrorExcerptBytes for the budget and how it is masked.
+	ErrorExcerpt string
 	// Ambiguous marks an entry from an excluded session, present only when
 	// the caller explicitly asked for them.
 	Ambiguous bool
@@ -695,6 +711,12 @@ func sessionEntries(ctx context.Context, s Session, w Window, now time.Time) ([]
 			Target:  redact.Redact(PrimaryTarget(ev)),
 			Summary: redact.Redact(ToolSummary(ev.Summary)),
 			Error:   ev.IsError,
+			// The adapter already ran Redact over the whole result before cutting
+			// this, so this pass changes nothing masked; it is here because every
+			// other string an entry carries is masked here, and an excerpt from an
+			// adapter configured outside excerptOptions should not be the one that
+			// is not.
+			ErrorExcerpt: redact.Redact(ev.ErrorExcerpt),
 		})
 	}
 	for i, mk := range marks {

@@ -43,6 +43,12 @@ const DetailWidth = 160
 // LabelWidth is the label column's width, measured before styling.
 const LabelWidth = 8
 
+// ExcerptWidth caps a failed call's excerpt as it prints. The excerpt is
+// already bounded upstream, at 512 bytes; this is the width of the failure
+// note, not another mask, and the full excerpt is one --json away, the same way
+// a long summary is.
+const ExcerptWidth = 120
+
 // --- plain -------------------------------------------------------------------
 
 // RunFields is a run header's columns, each already made inert.
@@ -146,6 +152,11 @@ func Parts(e protocol.LogEntry) EntryFields {
 		case "user-message", "user":
 			label = "prompt"
 		}
+	}
+	if e.ErrorExcerpt != "" {
+		// The why, on the same line, so reading a post-mortem does not require
+		// opening the transcript to learn what the failure actually said.
+		suffix += "  " + Clip(Inert(e.ErrorExcerpt), ExcerptWidth)
 	}
 	if e.Ambiguous {
 		label = "?" + label
