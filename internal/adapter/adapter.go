@@ -433,18 +433,20 @@ func (a *PiFamily) PromptCommand(prompt string, opts core.AgentOpts) (string, []
 
 // OpenCode is the adapter for OpenCode (SST's opencode, https://opencode.ai).
 //
-// The argv is NOT verified against a running binary: no opencode is installed
-// on the lane that wrote this. It follows the adapter template and the issue:
-// the resident process is a bare `opencode` (its TUI) with `args` appended,
-// and the one-shot is `opencode run`, the CLI's non-interactive mode, with
-// `model` passed as `--model` in the CLI's "provider/model" form.
-// auto_accept, max_turns and quiet are accepted and emit nothing: OpenCode
-// declares tool permissions in its own config rather than through a
-// skip-permissions flag, and has neither a turn budget nor a quiet switch to
-// map (issue #919 names these as what a human must re-check with the real
-// binary). A CLI that drifts from this runs as `harness = "command"` with its
-// own argv and `transcripts = "opencode"` until this is updated, exactly as
-// for the Pi family.
+// The argv follows the adapter template, the issue, and the CLI's documented
+// `run` flags (https://opencode.ai/docs/cli): the resident process is a bare
+// `opencode` (its TUI) with `args` appended, and the one-shot is
+// `opencode run`, the CLI's non-interactive mode, with `model` passed as
+// `--model` in the CLI's "provider/model" form. auto_accept maps to `--auto`,
+// which the CLI documents as approving the permissions that are not
+// explicitly denied — auto-accept, but narrower than a yolo bypass, so
+// explicit denials in OpenCode's own permission config still hold. max_turns
+// and quiet are accepted and emit nothing: OpenCode has neither a turn budget
+// nor a quiet switch to map (issue #919 left the argv for a human to re-check
+// against the real binary; the review pass closed that against the CLI's
+// documented flags). A CLI that drifts from this runs as
+// `harness = "command"` with its own argv and `transcripts = "opencode"`
+// until this is updated, exactly as for the Pi family.
 //
 // The store needs no relocation rule: the CLI records every session in one
 // SQLite database, `~/.opencode/opencode.db` — agent-trace's
@@ -495,10 +497,13 @@ func (a *OpenCode) TailAdapter() tail.Adapter {
 	return &tail.OpenCodeAdapter{DBPath: a.SessionPath(home)}
 }
 
-// PromptCommand is `opencode run [--model M] <prompt>`. See the type doc for
-// what was verified and what a human must check against the real binary.
+// PromptCommand is `opencode run [--auto] [--model M] <prompt>`. See the
+// type doc for what the CLI's documented flags confirm.
 func (a *OpenCode) PromptCommand(prompt string, opts core.AgentOpts) (string, []string) {
 	args := []string{"run"}
+	if opts.AutoAccept {
+		args = append(args, "--auto")
+	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}

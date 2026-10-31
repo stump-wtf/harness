@@ -34,11 +34,14 @@ func TestOpenCodePromptArgv(t *testing.T) {
 		{"with model", core.AgentOpts{Model: "anthropic/claude-opus-5"},
 			[]string{"run", "--model", "anthropic/claude-opus-5", "fix the build"}},
 		{"without model", core.AgentOpts{}, []string{"run", "fix the build"}},
-		// auto_accept, max_turns and quiet are accepted by the config and put
-		// nothing on the argv: OpenCode's permissions live in its own config,
-		// and it has neither a turn budget nor a quiet switch.
-		{"inert knobs", core.AgentOpts{AutoAccept: true, MaxTurns: 40, Quiet: true},
-			[]string{"run", "fix the build"}},
+		// auto_accept maps to --auto, which the CLI documents as approving
+		// the permissions that are not explicitly denied. max_turns and
+		// quiet are accepted by the config and put nothing on the argv:
+		// OpenCode has neither a turn budget nor a quiet switch.
+		{"auto_accept is --auto; the rest stay inert", core.AgentOpts{AutoAccept: true, MaxTurns: 40, Quiet: true},
+			[]string{"run", "--auto", "fix the build"}},
+		{"model with auto_accept", core.AgentOpts{AutoAccept: true, Model: "openrouter/qwen/qwen3.8-flash-next"},
+			[]string{"run", "--auto", "--model", "openrouter/qwen/qwen3.8-flash-next", "fix the build"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

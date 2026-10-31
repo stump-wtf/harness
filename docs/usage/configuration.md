@@ -103,11 +103,13 @@ is dropped, not emulated:
 | `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
 | `pi` | `pi --print [--model M] <prompt>` | `auto_accept` (Pi has no permission prompts), `max_turns`, `quiet` (`--print` is already headless) |
 | `omp` | `omp --print [--model M] <prompt>` | `auto_accept`, `max_turns`, `quiet`, as for `pi` |
-| `opencode` | `opencode run [--model M] <prompt>` | `auto_accept` (no flag is emitted — OpenCode declares tool permissions in its own config, so set them there before an unattended run or it can stall on a prompt), `max_turns`, `quiet` |
+| `opencode` | `opencode run [--auto] [--model M] <prompt>` | `max_turns`, `quiet` |
 | `generic` | none — a `prompt` or `prompt_file` on `generic` is a config error | — |
 
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
-it on trusted, headless runs.
+it on trusted, headless runs. OpenCode's is the narrow exception: `--auto`
+approves the permissions that are not explicitly denied, so explicit denials
+in OpenCode's own permission config still hold.
 
 ### Stream-json one-shots run without a terminal
 
