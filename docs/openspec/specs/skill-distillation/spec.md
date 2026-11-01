@@ -706,8 +706,7 @@ serving clones MUST restore equivalent behavior.
 
 #### Scenario: Search runs with no embeddings endpoint
 
-- **WHEN** a search runs on a machine whose `[model_api]` is unset or
-  unreachable
+- **WHEN** a search runs on a machine whose `[model_api]` is unreachable
 - **THEN** it returns FTS5 results and marks the response degraded (REQ "Search
   Degrades To Text-Only When Embeddings Fail")
 
