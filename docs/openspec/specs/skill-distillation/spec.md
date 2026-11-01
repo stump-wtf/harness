@@ -459,6 +459,8 @@ Promotion SHALL be gated by an eval suite, not by a single control run
 evidence: the task statement as the prompt, the clean-room snapshot at the base
 SHA as the scaffold, and graders derived from the merged hunks and the check that
 went green. A grader MAY see the merged change; the agent under test MUST NOT.
+Cases a distiller writes carry `delivery = "search"` (ADR-0036); this spec
+serves skills by search only, and projection delivery is ADR-0011's to specify.
 
 `harness distill propose` SHALL open a pull request only when that suite passes
 on every target named by the distiller's `eval_targets`, and SHALL put the
