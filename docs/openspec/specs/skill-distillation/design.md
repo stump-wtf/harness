@@ -10,7 +10,10 @@ Harness is the only thing watching every agent at once, so it is the only thing
 that can see the fleet relearning the same lesson. **ADR-0012** decided that
 distilled skills are searched rather than projected. **ADR-0030** decided what a
 skill is grounded in and how it reaches review, and made two things operator
-configuration: where skills live, and who distills them.
+configuration: where skills live, and who distills them. **ADR-0036** extends
+both: a suite of controlled evals, not one control run, gates promotion, and the
+daemon may hold a `[model_api]` credential for bounded utility calls such as the
+embeddings its skill index needs.
 
 The main influence is Code2Skill
 ([arXiv 2609.05571](https://arxiv.org/abs/2609.05571)). It grounds skills in
@@ -26,22 +29,25 @@ review time, carry most of their value.
 - Ground every skill in code that CI passed, that merged, and that stayed merged.
 - Filter out unfaithful and useless candidates before they cost a reviewer any
   time.
-- Keep the daemon free of model credentials, forge credentials and repository
-  writes.
+- Keep the daemon free of forge credentials and repository writes, and its model
+  use to ADR-0036's bounded utility calls.
 - Keep a growing corpus at constant, small context cost.
 
 ### Non-Goals
 
 - **Learning from work that never merged.** Exploratory sessions and operations
   work leave no grounding evidence. This is accepted.
-- **Judging session quality with a model.** Candidates are found by counting,
-  and models only author and verify.
+- **Judging session quality with a model.** Candidates are found by counting.
+  Models author and verify, and grade eval trials in the orchestrator
+  (ADR-0036); nothing judges whether a session was worth distilling.
 - **Enforcing who merges.** That is the skill repo's branch protection.
 - **A local-only skill repo.** Promotion is a merge, so a forge remote is
   required.
 - **Editing `AGENTS.md` or `CLAUDE.md`.** Harness writes skills only.
 - **Importing third-party skill banks.** Deferred (ADR-0030).
-- **Neural embeddings.** See the retrieval decision below.
+- **Model-backed supervision.** Utility calls (ADR-0036) name, tag, summarize
+  and embed. Supervising, attaching, triggering and recording never wait on one,
+  and no gate depends on one.
 
 ## Decisions
 
@@ -124,15 +130,18 @@ verifier adapter's prompt command. Each run gets an allowlisted environment
 (`PATH`, locale, `TMPDIR`, a fresh `HOME`, and `verifier_env_file`) and a new
 temporary working directory holding only its inputs. Each role gets only the
 tools it needs: none for the author, judge and adjudicator, and file read and
-write without a shell for the reconstructor and control. The MCP bridge is
-never wired.
+write without a shell for the reconstructor. The MCP bridge is never wired. The
+daemon stays out of this path: its only model traffic is ADR-0036's utility
+calls, one request each, no tools and no loop.
 
 **Rationale**: The daemon builds a harness's environment from its own plus
-`env_file`, so a daemon-spawned run would inherit whatever the daemon holds.
-It would also be able to reach the facade's `get_trajectory` and `harness_logs`,
+`env_file`, so a daemon-spawned run would inherit whatever the daemon holds. It
+would also be able to reach the facade's `get_trajectory` and `harness_logs`,
 which return the original session and its answer. A scratchpad harness has no
 prompt, wait or result contract. A child process gets all three for free, and
-every input is placed there by code.
+every input is placed there by code. ADR-0036 does not soften this for the runs
+that could see an answer: it moves the credential into the daemon only for
+single-request utility calls, and keeps judging in a client process.
 
 **Alternatives considered**: *Scratchpad harnesses (ADR-0017)*: they inherit
 the daemon's environment, reach the facade, and have no result contract. *One agent doing every step*: once it has seen the
@@ -140,7 +149,7 @@ diff, it cannot be blind.
 
 ### Verify by rebuilding without seeing the answer, and test only in a sandbox
 
-**Choice**: Reconstructor, judge, adjudicator and control, with the clean room
+**Choice**: Reconstructor, judge and adjudicator, with the clean room
 from `git archive` and an audit over the raw paths in the reconstructor's tool
 calls. `make test` on a reconstruction runs only under `test_sandbox`.
 
@@ -149,9 +158,33 @@ constraints. A judge's disagreement goes to an adjudicator, because 84% of the
 paper's adjudicated records were worth keeping despite a failed rebuild. The
 audit resolves raw paths because agent-trace's `OutsideTouch` drops relative
 `..` paths. Tests run model-written code, so they need isolation that a
-same-user child process does not give. A control that matches drops the
-candidate for the pass, but suppression needs two matches on different
-evidence, because one sample is noise.
+same-user child process does not give. Fidelity establishes that the skill says
+what the merged change did; it says nothing about whether the skill helps, which
+is the next decision's job.
+
+### Evals gate promotion, not one control run
+
+**Choice**: The author run also writes at least one eval case from the same
+evidence, and `harness distill propose` opens a pull request only when that suite
+passes on every target in the distiller's `eval_targets` (ADR-0036). Trials are
+ordinary supervised runs, with and without the skill, graded from agent-trace's
+normalized record; a `judge` grader is three plain chat-completions calls made by
+the eval orchestrator. ADR-0030's single control run is gone, and with it
+`replay_max_lines`.
+
+**Rationale**: One control run is one sample of a nondeterministic agent on one
+adapter and model. A suite with a without-arm baseline, `trials` per arm and a
+delta read against its standard error answers the operator's question on every
+target the distiller names, and the same suite later catches the edit or the
+model release that makes a merged skill worse. The clean-room snapshot the
+reconstruction already builds is the case's scaffold, so the added cost is
+trials, not new machinery.
+
+**Alternatives considered**: *Keep the control run beside the suite*: it is the
+weakest sample in the room, and it gates the same decision twice. *Gate on
+production efficacy*: that is correlation with a task-selection confound, so
+ADR-0036 keeps it as reported evidence on dashboards and in maintenance pull
+requests.
 
 ### Invariants live in code, not prompts
 
@@ -173,18 +206,23 @@ loss, raising the retrieval depth from 1 to 10 grew context 8.5× for little
 gain, and review after a draft exists was the most consistent placement (38% vs
 24% resolve rate in its coding-RL experiment).
 
-### FTS5 over embeddings
+### FTS5 plus vectors, with a text-only fallback
 
-**Choice**: `modernc.org/sqlite` FTS5 with `bm25()`, pure Go (already a
-dependency at v1.59.0), with columns for `name`, `description`, `symptoms`,
-`tags` and `applies_to`.
+**Choice**: `modernc.org/sqlite` FTS5 with `bm25()` and `porter unicode61`, pure
+Go (already a dependency at v1.59.0), over `name`, `description`, `symptoms`,
+`tags` and `applies_to`, fused by reciprocal rank fusion with a cosine ranking
+over one embedding per skill from `[model_api].embedding_model` (ADR-0036). A
+query that cannot be embedded is answered from FTS5 alone and says it is
+degraded.
 
-**Rationale**: As in ADR-0012. Embeddings would add a runtime library
-or grow the binary several-fold, and vocabulary mismatch is closed more cheaply
-here. The `symptoms` are observed literal strings, callers are frontier models
-that can supply several phrasings, and the porter tokenizer stems for free.
-`applies_to` adds a lexical match on file paths, the query a reviewer already
-has in hand.
+**Rationale**: As in ADR-0012, the lexical match still matters: the `symptoms`
+are observed literal strings, and an error string or tool name is the query a
+reviewer already has in hand. ADR-0036 adds vectors because paraphrase is not
+closed by stemming, and because the model API the operator already runs serves
+embeddings, so nothing is bundled in the binary. Caching by content hash plus
+model id keeps an unchanged corpus from ever re-embedding, and the degraded path
+means search never depends on the endpoint. Relation edges come from the repo and
+the call log, so related-skill surfacing costs no model call.
 
 ### Retirement by disuse and by staleness, both through a pull request
 
@@ -199,8 +237,9 @@ triggering a storm of model runs.
 ### Settled details
 
 - **Task statement for replay**: the linked issue's body, otherwise the
-  session's first user message, with a verbatim-leak flag that also skips the
-  control.
+  session's first user message, with a verbatim-leak flag carried into the
+  dossier, since a statement that quotes the answer also leaks it to the
+  without arm of the case derived from it.
 - **A repository worked by both Crush and Claude Code harnesses**: its skills
   live in a skill repo, served by search to both. No adapter-native path is
   written.
@@ -218,6 +257,13 @@ summary_max_chars  = 1000
 retire_grace_days  = 30
 retire_window_days = 60
 
+[model_api]                         # ADR-0036: the daemon's utility and embedding calls
+base_url        = "https://gateway.example.com/v1"
+env_file        = "~/.config/harness/env/model-api.env"
+api_key         = "${MODEL_API_KEY}"      # resolved from env_file only; a literal key is refused
+utility_model   = "qwen3-30b-a3b"         # daemon utility calls: naming, tagging, summaries
+embedding_model = "bge-m3"               # required whenever a skill repo is configured
+
 [skill_repo.go-stack]
 remote   = "https://git.example.com/your-org/go-skills.git"
 public   = false                    # unset is treated as public
@@ -229,6 +275,27 @@ remote   = "https://git.example.com/your-org/reduit.git"
 public   = false
 path     = ".harness/skills"       # outside every adapter's native skill path
 serve_to = ["reduit/*"]
+
+[eval]                              # ADR-0036: the suite that gates promotion
+trials         = 5
+concurrency    = 2
+min_delta      = 0.10
+max_regression = 0.10
+max_cost_usd   = 20.00
+judge_model    = "qwen3-235b"       # optional; defaults to [model_api].chat_model
+
+[eval_target.crush-glm]             # what a trial runs as
+adapter      = "crush"
+max_cost_usd = 2.00
+[eval_target.crush-glm.model_pin]   # ADR-0026: trials fail closed like production
+route = "litellm"
+model = "z-ai/glm-5.3-flash"
+
+[eval_target.codex]
+adapter     = "codex"
+model       = "gpt-5.5-codex"
+env_file    = "~/.config/harness/env/eval-codex.env"
+secrets_env = ["OPENAI_API_KEY"]   # ADR-0038 allowlist
 
 [harness.distill-go]
 harness  = "command"               # ADR-0023; a prompt harness cannot distill
@@ -243,15 +310,15 @@ to                 = "go-stack"
 evidence_repos     = ["git.example.com/your-org/*"]
 min_repos          = 2
 reviewers          = ["your-reviewer"]   # must not be the token's own login
+eval_targets       = ["crush-glm", "codex"]   # required: the suite must pass on each (ADR-0036)
 max_open           = 3
 max_candidates     = 5
 max_reverify       = 2
-replay_max_lines   = 400
 revert_window_days = 7
 labels             = ["toil"]
 branch_prefix      = "toil/distill-"
 verifier           = "claude-code"   # must be able to restrict tools per role
-verifier_env_file  = "~/.config/harness/env/verifier.env"   # model API key; HOME is fresh, so no subscription login
+verifier_env_file  = "~/.config/harness/env/verifier.env"   # the verifier's own model key, not [model_api]'s; HOME is fresh, so no subscription login
 test_sandbox       = ["docker", "run", "--rm", "-v", "{clean_room}:/src", "-w", "/src", "golang:1.26"]
 
 [harness.distill-reduit]
@@ -261,10 +328,11 @@ schedule = "30 3 * * *"
 
 [harness.distill-reduit.distill]
 credential_file = "~/.config/harness/forge/reduit.token"
-from      = ["reduit/*"]
-to        = "reduit"
-min_repos = 1
-reviewers = ["your-reviewer"]
+from            = ["reduit/*"]
+to              = "reduit"
+min_repos       = 1
+reviewers       = ["your-reviewer"]
+eval_targets    = ["crush-glm"]
 
 [harness.skills-sync]               # a hand-curated repo with no distiller still needs sync
 harness  = "command"
@@ -282,6 +350,7 @@ sequenceDiagram
     participant X as harness distill
     participant F as Forge (canonical)
     participant M as Model runs (child processes)
+    participant E as harness eval run
     participant L as Skill repo (the distiller's to)
     participant R as Reviewer
 
@@ -294,15 +363,21 @@ sequenceDiagram
     M-->>X: typed skill record
     Note over X: purpose key, slug, dedup,<br/>suppression, visibility
     X->>M: reconstructor (skill + clean room, no shell)
-    X->>M: judge, adjudicator, control
+    X->>M: judge, adjudicator
     M-->>X: verdicts
-    Note over X: audit raw paths, tests in test_sandbox,<br/>drop if control matches
+    Note over X: audit raw paths, tests in test_sandbox,<br/>derive one eval case<br/>from the same evidence
+    X->>E: suite for the candidate, on eval_targets
+    E->>D: supervised trials, with and without the skill
+    E-->>X: aggregate table (delta per target)
+    Note over X: propose only if the suite passes on every target
     X->>L: one skill per PR (marker, cap, reviewers)
     R->>L: review, merge or close (branch protection)
     X->>L: harness skills sync
-    L-->>D: serving clone changed, reindex FTS5
+    L-->>D: serving clone changed, reindex FTS5 + vectors
+    D->>D: /v1/embeddings for changed skills (cached by hash + model)
     H->>D: search_skills(query, paths), scoped by serve_to
-    D-->>H: ids + descriptions (k ≤ 5)
+    D->>D: embed the query; FTS5-only if it fails
+    D-->>H: ids + descriptions + related ids (k ≤ 5)
     H->>D: get_skill(id)
     D-->>H: summary render
     D-->>X: retrieval counts per (harness, run)
@@ -329,9 +404,18 @@ sequenceDiagram
   self-merge by the token's login.
 - **Private code in public repos.** → The visibility check holds any candidate
   whose evidence is more private than its target.
-- **Cost.** Up to five model runs per candidate. → `max_candidates`,
-  `max_reverify`, `replay_max_lines`, dedup before verification, and ADR-0027's
-  run budgets once they land.
+- **Cost.** Up to five model runs per candidate, plus one suite run per candidate
+  on every `eval_targets` target. → `max_candidates`, `max_reverify`, dedup
+  before verification, `max_cost_usd` per suite and per trial, and ADR-0027's run
+  budgets once they land.
+- **Utility calls put a model credential in the daemon.** → Only `[model_api]`,
+  restricted to `utility_model` and `embedding_model`; one request each, no
+  tools, schema-validated output, redacted input, and a deterministic fallback
+  for every use (ADR-0036).
+- **Evals are expensive and imperfect.** cases × trials × 2 arms × targets agent
+  runs, and five trials per arm detect only large effects, so a small real gain
+  reads `inconclusive`. → `--changed-since`, `max_cost_usd`, and raising `trials`
+  where a decision matters (ADR-0036).
 - **Narrower reach than ADR-0012.** Work that never merged teaches nothing. →
   Accepted, since that is the cost of grounding.
 - **Misconfigured sources.** A `from` glob can match the wrong harnesses. → Every
@@ -346,13 +430,28 @@ its own:
 1. **Git provenance recording**, plus linking with `harness distill scan
    --json`, which reports links and candidates and opens nothing. This measures
    link rate and signal volume before any model spend.
-2. **Skill repos, `harness skills sync`, the index and the tools**, served from a
-   hand-curated repo first, with `harness skills lint` as its CI. These need
-   SPEC-0005's caller identity and bridge.
-3. **Distillers with fidelity verification**, starting with one
-   `min_repos = 1` distiller against a single project's skill repo. This needs
-   ADR-0023's `command` kind.
-4. **Control runs, tests in a sandbox, staleness and retirement.**
+2. **Skill repos, `harness skills sync`, the FTS5 index and the tools**, served
+   from a hand-curated repo first, with `harness skills lint` as its CI. These
+   need SPEC-0005's caller identity and bridge. Search carries the `degraded`
+   flag from the start, so a corpus with no embeddings is the ordinary case here,
+   not an outage.
+3. **The model API and the vector half of the index**: `[model_api]`, embeddings
+   for changed skills and for queries, hybrid ranking, relation edges and
+   `harness eval retrieval` reporting recall at 3 for both halves (ADR-0036).
+   From here a configured skill repo with no `embedding_model` fails the load.
+4. **Distillers with fidelity verification**, starting with one
+   `min_repos = 1` distiller against a single project's skill repo, and tests only
+   under `test_sandbox`. This needs ADR-0023's `command` kind. It stops short of
+   `propose`: with no suite behind it, nothing is proposed.
+5. **The eval loop**: suites beside the skill, supervised trials on each
+   `eval_targets` target, graders over the normalized record, the judge in the
+   orchestrator, and the gate in `harness distill propose`. Promotion opens here.
+6. **Regression and nightly evals, staleness and retirement**: `harness eval run
+   --changed-since` as skill repo CI reporting `harness/eval`, `[eval] schedule`
+   as a built-in nightly job, and the staleness and retirement pull requests.
+7. **Efficacy reporting**: `harness skills efficacy` joins the gateway call log to
+   run records. Reported on dashboards and in maintenance pull requests, never
+   acted on (ADR-0036).
 
 agent-trace's `ErrorExcerpt` can land at any point. Until it does, `symptoms`
 come from check names and review text.
