@@ -123,8 +123,13 @@ func TestOpenCodeOneShotIsObserved(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixture := filepath.Join(t.TempDir(), "recorded.db")
-	start := time.Now().Add(-100 * time.Millisecond)
-	writeOpencodeSessionDB(t, fixture, work, "ses_run1", start)
+	// One clock anchors both the session row and the run window: the
+	// fixture's fsync-heavy write can cost seconds on a loaded runner, and
+	// any latency between the session's timestamp and the window anchor
+	// comes out of the 2s attribution Slack. Recording the session at the
+	// anchor itself puts that latency inside the window instead.
+	started := time.Now()
+	writeOpencodeSessionDB(t, fixture, work, "ses_run1", started)
 
 	t.Setenv("HOME", home)
 	t.Setenv(fakeOpencodeFixtureEnv, fixture)
@@ -140,7 +145,6 @@ workdir = "`+work+`"
 		t.Fatalf("config does not load: %v", err)
 	}
 	h := cfg.Harnesses[cfg.HarnessOrder[0]]
-	started := time.Now()
 	proc, err := spawn(&admission{}, h, 80, 24, RunEnv{})
 	if err != nil {
 		t.Fatalf("spawn: %v", err)
