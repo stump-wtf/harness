@@ -277,6 +277,25 @@ func LastAction(ev tail.Event) string {
 	return ""
 }
 
+// FailureExcerpt returns the reason a failing tool call carries: the same
+// masked bytes `harness logs` prints beside (failed), flattened onto one line
+// and clipped exactly the way logview clips it, so the live views and the
+// post-mortem cannot show two widths of one failure. It is "" for anything that
+// is not a failing call.
+//
+// Redaction happens upstream: agent-trace masks before it cuts the excerpt, so
+// this only presents it (ADR-0008). The live action field has 22 columns and no
+// room for a reason, which is why the surfaces with width (the peek head, the
+// stream itself) read it here rather than the field doing it.
+//
+// Governing: ADR-0015 (one watcher feeds both live views), issue #1036.
+func FailureExcerpt(ev tail.Event) string {
+	if ev.Classified.Tool == "" || !ev.Classified.IsError {
+		return ""
+	}
+	return logview.Clip(logview.Inert(ev.Classified.ErrorExcerpt), logview.ExcerptWidth)
+}
+
 // FilterSet is a bitmask of visible harnesses.
 type FilterSet uint32
 
