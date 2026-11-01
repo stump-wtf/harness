@@ -1,7 +1,7 @@
 ---
 status: draft
 date: 2026-09-22
-implements: [ADR-0012, ADR-0030]
+implements: [ADR-0012, ADR-0030, ADR-0036]
 requires: [SPEC-0005, SPEC-0006, SPEC-0008, SPEC-0014]
 ---
 
@@ -16,14 +16,17 @@ requires: [SPEC-0005, SPEC-0006, SPEC-0008, SPEC-0014]
 
 This spec covers how a lesson the fleet keeps relearning becomes a reviewed
 skill, and how that skill is served. See **ADR-0012** for the search-only skill
-tier, and **ADR-0030** for grounding, verification, proposal, skill repos and
-distillers.
+tier, **ADR-0030** for grounding, verification, proposal, skill repos and
+distillers, and **ADR-0036** for eval suites and gates, the model API, the
+daemon's utility calls, hybrid retrieval and production efficacy.
 
 Sessions show where agents struggled. The merged, green, unreverted pull request
 that ended the struggle supplies the content. Before a candidate is proposed, a
 model that never saw that pull request must rebuild the change from the skill
-alone. Every change to a skill then arrives as a pull request, and its merge
-promotes it.
+alone, and a suite of eval runs must then show that agents do measurably better
+with the skill than without it, on every target the distiller names
+(ADR-0036). Every change to a skill then arrives as a pull request, and its
+merge promotes it.
 
 The operator declares **skill repos** (a remote, a path, and the harnesses they
 serve) and **distillers** (command one-shots that name the harnesses they learn
@@ -32,11 +35,13 @@ and how many distinct repositories a lesson must span). Skills are served by
 search, never projected.
 
 The daemon records each harvested session's git provenance, serves the index,
-and counts retrievals. It makes no model or forge request, holds no model or
-forge credential, and writes to no repository. `harness distill` does the
-deterministic work and holds the forge token. Every model call is a child
-process of `harness distill`, and code fixes that child's inputs, environment
-and tools.
+and counts retrievals. It holds the `[model_api]` credential and makes only the
+bounded utility calls ADR-0036 allows, holds no forge or agent credential, and
+writes to no repository. `harness distill` does the deterministic work and holds
+the forge token. Every agent-shaped model call is a child process of
+`harness distill`, and code fixes that child's inputs, environment and tools.
+Eval trials are supervised runs requested by the eval orchestrator, and eval
+judging runs in that orchestrator (ADR-0036).
 
 ## Requirements
 
@@ -269,25 +274,61 @@ SHALL proceed as a revision (REQ "Revisions").
 ### Requirement: Distillation Runs Outside The Daemon
 
 Linking, detection, deduplication, verification orchestration and proposal SHALL
-run in `harness distill`, a client process. Model calls SHALL run as child
-processes of `harness distill` (REQ "Isolated Model Runs"), never as daemon
-runs. The daemon MUST NOT issue model or forge requests, MUST NOT hold model or
-forge credentials, and MUST NOT write to any repository working tree, including a
-skill repo's clones. `harness distill` SHALL hold the forge credential, read from
-the distill table's `credential_file`. The credential MUST NOT be placed in the
-environment of any process.
+run in `harness distill`, a client process. Agent-shaped model calls SHALL run as
+child processes of `harness distill` (REQ "Isolated Model Runs"), never as daemon
+runs. Eval trials SHALL be supervised runs requested by the eval orchestrator,
+and eval judging SHALL run in that orchestrator, also a client process
+(ADR-0036).
 
-#### Scenario: Daemon makes no model or forge request
+The daemon MAY hold the `[model_api]` credential and make the bounded utility
+calls of REQ "Daemon Utility Calls For Skills" (ADR-0036). This replaces the
+rule of ADR-0012 and ADR-0030 that the daemon holds no model credential and makes
+no model request. The daemon MUST NOT hold a forge or agent credential, MUST NOT
+issue a forge request, and MUST NOT write to any repository working tree,
+including a skill repo's clones. `harness distill` SHALL hold the forge
+credential, read from the distill table's `credential_file`. The credential MUST
+NOT be placed in the environment of any process.
+
+#### Scenario: Agent-shaped requests never come from the daemon
 
 - **WHEN** a full distillation pass runs
-- **THEN** every model request comes from a child of `harness distill`, every
-  forge request comes from `harness distill`, and none comes from the daemon
-  process
+- **THEN** every agent-shaped model request comes from a child of
+  `harness distill`, every forge request comes from `harness distill`, and the
+  daemon's model requests are only `/v1/embeddings` and `utility_model`
+  completions
+
+#### Scenario: A utility call is never an agent
+
+- **WHEN** the daemon makes a utility call during a distillation pass
+- **THEN** that request carries no `tools` field and no prior assistant turn, and
+  its result is validated against a fixed schema and stored without starting a
+  run
+
+### Requirement: Daemon Utility Calls For Skills
+
+The daemon SHALL make model requests only as the bounded utility calls ADR-0036
+defines: one request, no tools, no loop, output validated against a fixed schema,
+input redacted first, and a deterministic fallback when the call fails, is slow
+or is unconfigured. For this spec the only such call is the embedding of skill
+text and search queries (REQ "Skill Index Vectors And Relation Edges").
+
+A utility call SHALL NEVER select a command, change configuration, grant a tier,
+trigger a run, or decide whether a candidate is proposed. Utility spend SHALL be
+accounted under ADR-0027's daily ceiling and exported as its own series.
+Distillation decisions MUST NOT depend on a utility call succeeding.
+
+#### Scenario: An unreachable model API changes nothing about supervision
+
+- **WHEN** `[model_api]` is unreachable while a distillation pass runs
+- **THEN** the pass completes with the same candidate set, the index is served
+  FTS5-only and flagged degraded, and sessions still start, attach and record
 
 ### Requirement: Isolated Model Runs
 
 Each model run SHALL be a child process that `harness distill` starts directly,
-running the configured `verifier` adapter's prompt command. For each child:
+running the configured `verifier` adapter's prompt command. Eval trials are not
+model runs under this requirement: they are supervised runs (REQ "Eval Trials
+Are Supervised Runs", ADR-0036). For each child:
 
 - Its environment SHALL contain only `PATH`, the locale variables, `TMPDIR`, a
   `HOME` set to a new directory inside the run's temporary directory, and the
@@ -295,9 +336,9 @@ running the configured `verifier` adapter's prompt command. For each child:
   `harness distill`'s environment.
 - Its working directory SHALL be a new temporary directory outside every Harness
   state directory, containing exactly the inputs listed for its role.
-- Author, judge and adjudicator runs SHALL have no tools. Reconstructor and
-  control runs SHALL have file read and write tools only, with no shell and no
-  network tool. The Harness MCP bridge MUST NOT be wired into any model run.
+- Author, judge and adjudicator runs SHALL have no tools. Reconstructor runs
+  SHALL have file read and write tools only, with no shell and no network tool.
+  The Harness MCP bridge MUST NOT be wired into any model run.
 - It SHALL be launched with the tool's project-level settings and project MCP
   servers disabled (for Claude Code, `--setting-sources user` and
   `--strict-mcp-config`). Agent configuration files (`.claude/`, `.mcp.json`,
@@ -316,7 +357,6 @@ fail the load.
 | Reconstructor | the skill record, the task statement, a clean-room snapshot at the base SHA | the merged diff, later history, review text, the pull request's identity |
 | Judge | the merged hunks, the reconstructed hunks, the skill's summary render | the full skill record, sessions |
 | Adjudicator | the judge's reason, both sets of hunks, the full skill record | sessions |
-| Control | the task statement, the same clean-room snapshot | the skill record |
 
 #### Scenario: No inherited environment
 
@@ -368,13 +408,12 @@ Verification SHALL:
    the model runs' environment allowlist. Otherwise, record that tests were not
    run. `make test` MUST NOT run outside `test_sandbox`, and MUST NOT run in a
    process that holds the forge credential.
-7. When the merged change is under `replay_max_lines` and `task_leak` is false,
-   run the control. If its test result and judge verdict are at least as good as
-   the reconstructor's, drop the candidate for this pass. Suppress its purpose
-   key once the control has matched on two different evidence pull requests.
+7. Derive at least one eval case from the same evidence, as REQ "Eval-Gated
+   Promotion" requires. This verification starts no control run: ADR-0036
+   replaces ADR-0030's single control run with the suite.
 
-A candidate SHALL be proposed only with a fidelity pass (direct or adjudicated)
-and a clean audit.
+A fidelity pass (direct or adjudicated) and a clean audit SHALL clear a candidate
+for its eval suite. Neither alone SHALL propose it.
 
 #### Scenario: A relative escape is contamination
 
@@ -399,18 +438,87 @@ and a clean audit.
 - **THEN** no `make test` is executed, and the dossier records that tests were
   not run
 
-#### Scenario: One matching control does not suppress
+#### Scenario: A fidelity pass alone proposes nothing
 
-- **WHEN** the control matches the reconstructor for evidence from one pull
-  request
-- **THEN** the candidate is dropped for this pass, and its purpose key is not
-  suppressed
+- **WHEN** a candidate has a fidelity pass and a clean audit while its suite has
+  not run
+- **THEN** no pull request is opened, and the ledger records the candidate as
+  awaiting its eval suite
 
-#### Scenario: A leaky task skips the control
+#### Scenario: A leaky task statement is still recorded
 
 - **WHEN** the task statement contains a line that appears verbatim in the
   merged hunks
-- **THEN** the dossier marks `task_leak: true`, and no control run starts
+- **THEN** the dossier marks `task_leak: true`, and the flag is carried in the
+  proposal body so the reviewer sees it
+
+### Requirement: Eval-Gated Promotion
+
+Promotion SHALL be gated by an eval suite, not by a single control run
+(ADR-0036). The author run SHALL also write at least one case from the same
+evidence: the task statement as the prompt, the clean-room snapshot at the base
+SHA as the scaffold, and graders derived from the merged hunks and the check that
+went green. A grader MAY see the merged change; the agent under test MUST NOT.
+
+`harness distill propose` SHALL open a pull request only when that suite passes
+on every target named by the distiller's `eval_targets`, and SHALL put the
+aggregate table (per case and target: trial count, pass rate, mean score, and
+delta with its standard error) in the dossier. A `fail`, an `inconclusive` or a
+`partial` result on any target SHALL gate as `fail`: no pull request, and the
+candidate waits in the ledger with the reason and the trial counts that would
+decide it (ADR-0036).
+
+A distilled skill whose directory carries no case SHALL fail `harness skills
+lint`; a hand-written one gets a warning (ADR-0036).
+
+#### Scenario: One green target does not promote
+
+- **WHEN** a suite passes on `crush-glm` and fails on `codex`
+- **THEN** no pull request is opened, and the dossier carries the aggregate row
+  for both targets
+
+#### Scenario: An inconclusive suite gates as a failure
+
+- **WHEN** a case's standard error is too large to decide its delta
+- **THEN** the candidate does not go forward, and the dossier says how many more
+  trials per arm would decide it
+
+#### Scenario: A distilled skill without a case fails lint
+
+- **WHEN** `harness skills lint` runs over a skill directory written by a
+  distiller and carrying no `evals/` case
+- **THEN** lint fails, naming the skill directory
+
+### Requirement: Eval Trials Are Supervised Runs
+
+Each `(case, arm, target, trial)` behind the promotion gate SHALL be an ephemeral
+supervised one-shot run requested by the eval orchestrator, a client process,
+with the target's adapter and model or model pin (ADR-0026), ADR-0027's budget,
+a fresh workspace seeded from the case's `scaffold`, the case directory absent
+from that workspace, `fixtures` exposed read-only, ADR-0030's isolation (the
+`secrets_env` allowlist, a fresh `HOME`, project configuration off, no inherited
+`HARNESS_*` variables), and MCP only through the gateway with
+`mcp_exclusive = true` (ADR-0036).
+
+The with arm serves the skill repo at the commit under test; the without arm is
+the same run minus that one skill, so the delta isolates the skill. Graders SHALL
+read agent-trace's normalized run record, never a vendor transcript, and a
+`judge` grader's three calls SHALL come from the orchestrator with no tools.
+Trials SHALL get run records, count against budgets, and appear in
+`harness runs`.
+
+#### Scenario: The without arm cannot see the skill
+
+- **WHEN** a without-arm trial calls `search_skills` with the skill under test's
+  symptom text
+- **THEN** that skill is not among the results, while the with arm's search does
+  return it
+
+#### Scenario: Judge traffic stays in the orchestrator
+
+- **WHEN** a suite run with a `judge` grader finishes
+- **THEN** every judge `/chat/completions` request observed at the endpoint came
+  from the orchestrator, and the daemon made only embeddings and utility requests
 
 ### Requirement: Skill Artifact
 
@@ -495,9 +603,11 @@ as a pull request:
 - Carry exactly one skill per pull request, on a branch named
   `<branch_prefix><slug>`, cut from a freshly fetched default branch in the
   distiller's proposal clone under its state directory.
+- Open only for a candidate whose eval suite passed on every `eval_targets`
+  target (REQ "Eval-Gated Promotion").
 - Put the marker `<!-- harness-distill key=<purpose_key> -->` and the evidence
-  dossier in the body: the claim; an evidence table; the fidelity, test, control
-  and audit results; the scope; and the context cost in characters of the
+  dossier in the body: the claim; an evidence table; the fidelity, test, eval
+  suite and audit results; the scope; and the context cost in characters of the
   summary and full renders.
 - If an open pull request against the same skill repo already carries the same
   marker, push a new commit to it and MUST NOT open another, whichever distiller
@@ -545,6 +655,13 @@ as a pull request:
 - **THEN** the pull request's diff touches only files under the skill repo's
   `path`
 
+#### Scenario: A suite that did not pass opens nothing
+
+- **WHEN** `propose` reaches a candidate whose suite failed on one
+  `eval_targets` target
+- **THEN** no pull request is opened, and the candidate keeps its rank in the
+  ledger
+
 ### Requirement: Review Feedback And Suppression
 
 `harness distill` SHALL list the review comments on its open pull requests and
@@ -576,18 +693,21 @@ any distillation pull request that was merged by the forge token's own login.
 
 ### Requirement: Embedded Retrieval Index
 
-Retrieval SHALL use an embedded full-text index that requires no external
-service, no network access and no model weights. It SHALL record which skill
-repo each skill came from. The index SHALL cover `name`, `description`,
-`symptoms`, `tags` and `applies_to`, and SHALL stem terms so that morphological
-variants match. It SHALL be a rebuildable cache: deleting it and reindexing from
-the serving clones MUST restore equivalent behavior.
+Retrieval SHALL use an embedded index that bundles no model weights and needs no
+service other than the model API ADR-0036 puts behind it. Its text half is FTS5
+over `name`, `description`, `symptoms`, `tags` and `applies_to` with the
+`porter unicode61` tokenizer, as ADR-0012 and ADR-0030 require; stemming makes
+morphological variants match. Its vector and edge halves are REQ "Skill Index
+Vectors And Relation Edges". It SHALL record which skill repo each skill came
+from, and SHALL be a rebuildable cache: deleting it and reindexing from the
+serving clones MUST restore equivalent behavior.
 
-#### Scenario: Search runs with no external dependency
+#### Scenario: Search runs with no embeddings endpoint
 
-- **WHEN** a search runs on a machine with no other software installed and no
-  network access
-- **THEN** it returns results
+- **WHEN** a search runs on a machine whose `[model_api]` is unset or
+  unreachable
+- **THEN** it returns FTS5 results and marks the response degraded (REQ "Search
+  Degrades To Text-Only When Embeddings Fail")
 
 #### Scenario: Literal symptom text matches
 
@@ -599,6 +719,65 @@ the serving clones MUST restore equivalent behavior.
 - **WHEN** the index is deleted and rebuilt
 - **THEN** the same active skills are searchable, with equivalent ranking
 
+### Requirement: Skill Index Vectors And Relation Edges
+
+Each skill SHALL have one embedding over its `name`, `description`, `symptoms`
+and *When to use* section, requested from `[model_api].embedding_model` through
+`/v1/embeddings` and cached by content hash plus model id, so an unchanged skill
+is never re-embedded and a change of `embedding_model` re-embeds everything
+(ADR-0036). Similarity SHALL use sqlite-vec where ADR-0037's driver loads it, and
+an exact cosine scan in Go otherwise. Each `search_skills` query SHALL be
+embedded at search time as one request under a short timeout.
+
+The index SHALL also carry relation edges `(src, dst, kind, weight)` with kinds
+`references`, `shares_purpose` and `co_used`; a `search_skills` hit SHALL carry up
+to two related skill ids outside the returned limit, and distillation and
+efficacy analysis SHALL read the edges (ADR-0036).
+
+Loading SHALL fail when a skill repo is configured and `[model_api]` or
+`embedding_model` is missing, and `harness doctor` SHALL report the same
+(ADR-0036).
+
+#### Scenario: An unchanged skill is never re-embedded
+
+- **WHEN** a reindex finds a skill whose content hash and model id match its
+  cached vector
+- **THEN** no embeddings request is made for that skill
+
+#### Scenario: A missing embedding model fails the load
+
+- **WHEN** a `[skill_repo.*]` table is declared and `[model_api]` has no
+  `embedding_model`
+- **THEN** configuration fails to load naming the table, and `harness doctor`
+  reports the same gap
+
+#### Scenario: Related skills ride along outside the limit
+
+- **WHEN** a query returns three hits, each with an edge to another skill
+- **THEN** the response carries at most two related skill ids in addition to
+  those three results
+
+### Requirement: Search Degrades To Text-Only When Embeddings Fail
+
+When a query cannot be embedded, search SHALL answer from FTS5 alone and mark the
+response `degraded: "embeddings_unavailable"`. A skill that cannot be embedded at
+index time SHALL be stored without a vector, still found by FTS5, and retried.
+Both paths SHALL be visible in `harness doctor` and in the
+`harness_skill_search_degraded_total` series. Degraded search is not an error and
+MUST NOT be silent (ADR-0036).
+
+#### Scenario: A failed query embedding still answers
+
+- **WHEN** the embeddings endpoint times out during `search_skills`
+- **THEN** the response carries the FTS5 ranking, and `degraded` says
+  `embeddings_unavailable`
+
+#### Scenario: An unembeddable skill stays findable
+
+- **WHEN** a skill's embeddings request fails while indexing
+- **THEN** the skill is stored without a vector, is still returned for its
+  literal `symptoms` text, and is retried at the next reindex
+
 ### Requirement: Search And Retrieval Tools
 
 Skill repos SHALL be exposed through the SPEC-0005 facade as two tools.
@@ -609,8 +788,11 @@ Skill repos SHALL be exposed through the SPEC-0005 facade as two tools.
   bare `"*"`.
   It SHALL take a query and an optional `paths` list. It SHALL return
   identifiers, qualified by skill repo, and descriptions only: 3 by default and
-  at most 5. A skill whose `applies_to` matches any given path SHALL rank above
-  an otherwise equal skill.
+  at most 5. Ranking SHALL be reciprocal rank fusion of the BM25 and cosine
+  rankings, so an exact lexical match (an error string, a tool name) still
+  counts, then ADR-0030's `applies_to` boost and `serve_to` scoping (ADR-0036).
+  A skill whose `applies_to` matches any given path SHALL rank above an
+  otherwise equal skill.
 - `get_skill` SHALL return one skill. By default it SHALL return a summary render
   (*When to use*, *Steps*, *Invariants*, *Do not*) of at most
   `summary_max_chars`. `render: "full"` SHALL return the whole file.
@@ -651,6 +833,27 @@ calling harness and run, in daemon state.
 
 - **WHEN** `search_skills` is called with `paths: [".gitea/workflows/ci.yml"]`
 - **THEN** skills whose `applies_to` matches that path rank first
+
+#### Scenario: A literal match outranks a paraphrase
+
+- **WHEN** a query contains the exact error string one skill lists in
+  `symptoms`, and another skill's description is closer in cosine terms
+- **THEN** the skill with the lexical hit ranks above the closer paraphrase
+
+### Requirement: Production Efficacy Is Evidence, Not A Gate
+
+`harness skills efficacy` SHALL join the gateway call log (ADR-0035) to run
+records and report exposure, outcomes and a within-stratum comparison over a
+rolling 30-day window, or `insufficient data` below 20 runs in a stratum. That
+comparison is correlation: it SHALL appear in maintenance pull requests and on
+dashboards, and MUST NOT act on anything automatically. Only controlled evals
+gate (ADR-0036).
+
+#### Scenario: A production dip opens nothing by itself
+
+- **WHEN** a skill's stratum shows a fall in outcome rate over the window
+- **THEN** no retirement, edit or suppression pull request opens, and the
+  difference is reported with its counts
 
 ### Requirement: Revisions
 
@@ -763,11 +966,15 @@ runs `harness distill run <name>`. The table has:
 - `evidence_repos`: host/owner/name globs naming the canonical repositories
   evidence may come from. The default is the host and owner of `to`'s remote.
 - `min_repos`: default 1.
+- `eval_targets`: required, and non-empty. The `[eval_target.*]` names whose
+  suite a candidate must pass before `propose` opens a pull request
+  (REQ "Eval-Gated Promotion", ADR-0036).
 
 Optional per-distiller policy: `max_open` (default 3), `max_candidates` (default
-5), `max_reverify` (default 2), `replay_max_lines` (default 400),
-`revert_window_days` (default 7), `labels`, `branch_prefix`, `verifier`,
-`verifier_env_file` and `test_sandbox`.
+5), `max_reverify` (default 2), `revert_window_days` (default 7), `labels`,
+`branch_prefix`, `verifier`, `verifier_env_file` and `test_sandbox`.
+`replay_max_lines` is dropped: it only bounded ADR-0030's control run, which
+ADR-0036's suite replaces.
 
 Loading SHALL fail when:
 
@@ -775,6 +982,8 @@ Loading SHALL fail when:
 - an exact global `from` name is undeclared or lacks `harvest_trajectory`;
 - a distiller lists itself;
 - `reviewers` is empty, or `credential_file` is unset;
+- `eval_targets` is empty, names an undeclared `[eval_target]`, or names a target
+  whose adapter agent-trace does not support (ADR-0033, ADR-0036);
 - the harness carrying the table is not a triggered `command` one-shot;
 - the `verifier` adapter cannot enforce the per-role tool restrictions;
 - the table appears in a project `harness.toml`.
@@ -788,6 +997,12 @@ summary SHALL list the harnesses each selector matched, including none.
   exists
 - **THEN** the configuration fails to load, naming the distiller and the missing
   skill repo
+
+#### Scenario: An unusable eval target fails the load
+
+- **WHEN** a distiller sets `eval_targets = ["crush-glm"]` and that target is
+  undeclared, or its adapter is one agent-trace does not support
+- **THEN** the configuration fails to load, naming the distiller and the target
 
 #### Scenario: A non-harvesting source fails the load
 
