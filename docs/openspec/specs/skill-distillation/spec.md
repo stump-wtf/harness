@@ -494,9 +494,10 @@ lint`; a hand-written one gets a warning (ADR-0036).
 ### Requirement: Eval Trials Are Supervised Runs
 
 Each `(case, arm, target, trial)` behind the promotion gate SHALL be an ephemeral
-supervised one-shot run requested by the eval orchestrator, a client process,
-with the target's adapter and model or model pin (ADR-0026), ADR-0027's budget,
-a fresh workspace seeded from the case's `scaffold`, the case directory absent
+supervised one-shot run requested by the eval orchestrator, `harness eval run`,
+a client process, with the target's adapter and model or model pin (ADR-0026),
+ADR-0027's budget, a fresh workspace seeded from the case's `scaffold`, the
+case directory absent
 from that workspace, `fixtures` exposed read-only, ADR-0030's isolation (the
 `secrets_env` allowlist, a fresh `HOME`, project configuration off, no inherited
 `HARNESS_*` variables), and MCP only through the gateway with
