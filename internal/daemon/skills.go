@@ -28,6 +28,7 @@ func newSkillsManager(cfg *core.Config) *skillserve.Manager {
 		skillserve.DefaultCountsPath(),
 		cfg.Skills.RetireGraceDaysOrDefault(),
 		cfg.Skills.RetireWindowDaysOrDefault(),
+		cfg.Skills.SummaryMaxCharsOrDefault(),
 	)
 }
 

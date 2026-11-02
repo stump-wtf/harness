@@ -22,7 +22,7 @@ func reposOf(name, path string) []core.SkillRepo {
 func newTestManager(t *testing.T, clone string) *Manager {
 	t.Helper()
 	dir := t.TempDir()
-	m := NewManager(reposOf("go-stack", "skills"), filepath.Join(dir, "index.db"), filepath.Join(dir, "counts.db"), 30, 60)
+	m := NewManager(reposOf("go-stack", "skills"), filepath.Join(dir, "index.db"), filepath.Join(dir, "counts.db"), 30, 60, 0)
 	m.dirFor = func(string) string { return clone }
 	t.Cleanup(m.Stop)
 	return m
@@ -35,7 +35,7 @@ func TestManagerIndexesOnStart(t *testing.T) {
 	if err := m.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	hits, err := m.Search("cannot find main module", nil, 5)
+	hits, err := m.Search(Caller{}, "cannot find main module", nil, 5)
 	if err != nil || len(hits) != 1 || hits[0].Repo != "go-stack" {
 		t.Fatalf("start must index the serving clone, got %v %v", hits, err)
 	}
@@ -55,7 +55,7 @@ func TestManagerKeepsPreviousIndexOnGateFailure(t *testing.T) {
 	// Detached HEAD: reindex refused, the previous index keeps serving.
 	gitRun(t, clone, "checkout", "-q", "--detach", "HEAD")
 	m.ReindexRepos([]string{"go-stack"})
-	hits, err := m.Search("cannot find main module", nil, 5)
+	hits, err := m.Search(Caller{}, "cannot find main module", nil, 5)
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("previous index must keep serving, got %v %v", hits, err)
 	}
@@ -70,7 +70,7 @@ func TestManagerKeepsPreviousIndexOnGateFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.ReindexRepos([]string{"go-stack"})
-	hits, err = m.Search("cannot find main module", nil, 5)
+	hits, err = m.Search(Caller{}, "cannot find main module", nil, 5)
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("dirty clone must keep the previous index, got %v %v", hits, err)
 	}
@@ -96,7 +96,7 @@ func TestManagerReindexesOnSyncReport(t *testing.T) {
 	}
 	m.ReindexRepos([]string{"go-stack"})
 
-	hits, err := m.Search("cannot find main module", nil, 5)
+	hits, err := m.Search(Caller{}, "cannot find main module", nil, 5)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestManagerReconcilePicksUpNewClone(t *testing.T) {
 	m.dirFor = func(string) string { return clone }
 	m.reconcile()
 
-	hits, err := m.Search("cannot find main module", nil, 5)
+	hits, err := m.Search(Caller{}, "cannot find main module", nil, 5)
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("reconcile must index the appeared clone, got %v %v", hits, err)
 	}
@@ -167,7 +167,7 @@ func TestManagerRetrievalCountsAndEligibility(t *testing.T) {
 
 func TestManagerWithoutReposCreatesNoIndex(t *testing.T) {
 	dir := t.TempDir()
-	m := NewManager(nil, filepath.Join(dir, "index.db"), filepath.Join(dir, "counts.db"), 30, 60)
+	m := NewManager(nil, filepath.Join(dir, "index.db"), filepath.Join(dir, "counts.db"), 30, 60, 0)
 	defer m.Stop()
 	if err := m.Start(); err != nil {
 		t.Fatalf("start with no repos: %v", err)
@@ -175,7 +175,7 @@ func TestManagerWithoutReposCreatesNoIndex(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "index.db")); !os.IsNotExist(err) {
 		t.Fatal("no skill repo declared: no index file may be created (SPEC-0007 REQ \"Skill Repos\")")
 	}
-	if _, err := m.Search("anything", nil, 3); err == nil {
+	if _, err := m.Search(Caller{}, "anything", nil, 3); err == nil {
 		t.Fatal("search without repos must report the index unavailable")
 	}
 }
