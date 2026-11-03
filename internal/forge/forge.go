@@ -36,8 +36,9 @@ const statusMethodNotAllowed = 405
 // because it counts too few approvals. Gitea's is "Does not have enough
 // approvals", and it is the answer a PR gets when its APPROVED reviews are no
 // longer official, which is a state the reviewer can produce without touching
-// the code (ADR-0050).
-var approvalsRefusalRE = regexp.MustCompile(`(?i)(not enough |insufficient |does not have (enough|sufficient) )approvals`)
+// the code (ADR-0050). The second alternative is GitHub's wording for the same
+// refusal, which its branch-protection settings produce (ADR-0061).
+var approvalsRefusalRE = regexp.MustCompile(`(?i)(not enough |insufficient |does not have (enough|sufficient) )approvals|must have[^\n]{0,40}?approving review|requir[^\n]{0,40}?approving review`)
 
 // Forge is what the merge train needs from a code forge. repo is always
 // "owner/name".
@@ -78,6 +79,10 @@ type Forge interface {
 type TrainSpec struct {
 	Branch  string // "train/<pr>", or "train/batch/<pr>-…" when Heads carries more than one head
 	BaseSHA string // the base branch head the train is built on
+	// BaseRef names the base branch itself. A forge whose gate runs on a
+	// pull_request rather than a branch push needs it to open the train
+	// branch's gate PR (ADR-0061); a forge gated by push ignores it.
+	BaseRef string
 	PR      int    // the first PR in the batch
 	HeadSHA string // the first PR's head; the build fails with ErrStale if the forge disagrees
 	// Heads pins every PR in the batch, in the order their heads fold onto

@@ -43,6 +43,37 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 | `batch` | PRs per train commit, a whole number of at least 1 (default 1). Above 1 batches heads onto one train commit and bisects on red; see [Batching](#batching) |
 | `flake_cool_down` | how long a red train waits before its one retry on a runner failure (default `0` — retry off — until ADR-0056 is accepted; set e.g. `5m` to turn it on); see [Runner flakes](#runner-flakes) |
 
+### Repos on GitHub
+
+A repo that lives on GitHub is served by the same train. Prefix its `repos`
+entry with `github:` and give that forge its own credentials:
+
+```toml
+[mergetrain]
+enabled = true
+repos = ["stump.wtf/harness", "github:octo/widgets"]
+forge_base_url = "https://gitea.stump.rocks"
+forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
+github_base_url = "https://api.github.com"          # default; set it for GHES
+github_token_env = "HARNESS_MERGETRAIN_GITHUB_TOKEN" # required once a repo names GitHub
+github_ci_gate = "draft-pr"                         # or "train-push"
+```
+
+| Field | Meaning |
+|-------|---------|
+| `repos` entries prefixed `github:` | drive that repo through the GitHub forge; the `github:` prefix is not part of the repo's name |
+| `github_base_url` | the GitHub API base (default `https://api.github.com`) |
+| `github_token_env` | the NAME of the variable holding the GitHub token; required when any repo names GitHub, and a `token` key is refused just as it is for the default forge |
+| `github_ci_gate` | how a train commit gets its CI run: `draft-pr` (default) opens the train branch as a draft PR against `base_branch`, which is what triggers a repo's `pull_request` workflows; `train-push` pushes the branch and the repo's own workflows must declare `train/**` |
+
+An entry list that is entirely GitHub does not need `forge_base_url` or
+`forge_token_env`. Each forge keeps its own clone cache under
+`$XDG_STATE_HOME/harness/mergetrain/cache/<forge>/`, so the same `owner/name`
+on both forges is two repositories, not one. See
+[ADR-0061](/decisions/adr-0061-github-forge-backend) for why a GitHub train
+gates on a draft pull request, and for the check-run rule that keeps an
+untested commit from reading as green.
+
 A change to `[mergetrain]` takes effect at the next daemon restart. The train
 holds an exclusive per-repo lock
 (`$XDG_STATE_HOME/harness/mergetrain/<owner>_<name>.lock`), so a second driver

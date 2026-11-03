@@ -1380,11 +1380,19 @@ ci_timeout = "30m"                           # default 30m
 flake_cool_down = "5m"                       # default 0 (retry off) until ADR-0056 is accepted; "5m" is the proposed value
 forge_base_url = "https://gitea.stump.rocks" # required when enabled
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN" # the variable's NAME, required when enabled
+github_base_url = "https://api.github.com"    # default; only read when a repo names GitHub
+github_token_env = "HARNESS_MERGETRAIN_GITHUB_TOKEN" # the variable's NAME, required for a "github:" repo
+github_ci_gate = "draft-pr"                   # or "train-push" (ADR-0061)
 ```
 
 - **The token is never in this file.** `forge_token_env` names an environment
   variable in the daemon's environment, and a `token` key is refused. The
   daemon refuses to start if the train is enabled and that variable is empty.
+- **Two forges, one train.** A `repos` entry of `"github:owner/name"` is driven
+  by the GitHub forge, which authenticates from `github_token_env`; an
+  unprefixed entry uses the default forge (`forge_base_url`). A train whose
+  repos are all GitHub needs no `forge_base_url` or `forge_token_env`. See
+  [Merge train](./merge-train#repos-on-github) and ADR-0061.
 - **A red train whose jobs never reached a runner is retried once** after
   `flake_cool_down` instead of waiting for `main` to move; every failed job has
   to carry that signature, and the retry happens at most once per tree. The

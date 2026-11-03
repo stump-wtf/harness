@@ -49,6 +49,12 @@ type rawMergeTrain struct {
 	ForgeBaseURL  string   `toml:"forge_base_url"`
 	ForgeTokenEnv string   `toml:"forge_token_env"`
 
+	// GitHub is the train's second forge, decoded flat rather than as a table
+	// so a repo's forge stays one prefix on its repos entry (ADR-0061).
+	GitHubBaseURL  string `toml:"github_base_url"`
+	GitHubTokenEnv string `toml:"github_token_env"`
+	GitHubCIGate   string `toml:"github_ci_gate"`
+
 	// Token is decoded only so its presence can be refused.
 	Token any `toml:"token"`
 }
@@ -76,6 +82,7 @@ func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (
 
 	mc := core.DefaultMergeTrainConfig()
 	mc.Enabled = rm.Enabled
+	var hasGitHubRepo, hasDefaultRepo bool
 
 	if rm.Mode != nil {
 		m := strings.TrimSpace(*rm.Mode)
@@ -101,13 +108,30 @@ func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (
 
 	for _, r := range rm.Repos {
 		r = strings.TrimSpace(r)
+		forgeName := ""
+		if kind, rest, ok := strings.Cut(r, ":"); ok {
+			if kind != "github" {
+				return fail("repos", "names forge %q, which [mergetrain] has no configuration for; the only forge a repos entry can name is \"github:\" (got %q)", kind, r)
+			}
+			forgeName, r = kind, strings.TrimSpace(rest)
+		}
 		if !repoNameRe.MatchString(r) {
-			return fail("repos", "each entry must be \"owner/name\" (got %q)", r)
+			return fail("repos", "each entry must be \"owner/name\", or \"github:owner/name\" to use the GitHub forge (got %q)", r)
 		}
 		if slices.Contains(mc.Repos, r) {
 			return fail("repos", "lists %q twice", r)
 		}
 		mc.Repos = append(mc.Repos, r)
+		if mc.RepoForge == nil {
+			mc.RepoForge = map[string]string{}
+		}
+		mc.RepoForge[r] = forgeName
+		switch forgeName {
+		case "github":
+			hasGitHubRepo = true
+		default:
+			hasDefaultRepo = true
+		}
 	}
 
 	durations := []struct {
@@ -150,14 +174,43 @@ func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (
 		mc.ForgeTokenEnv = name
 	}
 
+	gh := &core.MergeTrainGitHub{BaseURL: strings.TrimRight(strings.TrimSpace(rm.GitHubBaseURL), "/"), CIGate: core.GitHubGateDraftPR}
+	if gh.BaseURL != "" {
+		u, err := url.Parse(gh.BaseURL)
+		switch {
+		case err != nil || !u.IsAbs() || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
+			return fail("github_base_url", "must be an absolute http or https URL with a host (got %q)", redactURL(gh.BaseURL))
+		case u.User != nil:
+			return fail("github_base_url", "must not carry userinfo — a credential in the URL is a credential in harness.toml (ADR-0008)")
+		}
+	}
+	if gate := strings.TrimSpace(rm.GitHubCIGate); gate != "" {
+		if gate != core.GitHubGateDraftPR && gate != core.GitHubGateTrainPush {
+			return fail("github_ci_gate", "must be %q or %q (got %q)", core.GitHubGateDraftPR, core.GitHubGateTrainPush, gate)
+		}
+		gh.CIGate = gate
+	}
+	if name := strings.TrimSpace(rm.GitHubTokenEnv); name != "" {
+		if !envNameRe.MatchString(name) {
+			return fail("github_token_env", "must be the NAME of an environment variable, such as \"HARNESS_MERGETRAIN_GITHUB_TOKEN\" — never the token itself")
+		}
+		gh.TokenEnv = name
+	}
+	if !hasGitHubRepo && gh.BaseURL == "" && gh.TokenEnv == "" && strings.TrimSpace(rm.GitHubCIGate) == "" {
+		gh = nil // nothing names the GitHub forge, so the train has only one
+	}
+	mc.GitHub = gh
+
 	if mc.Enabled {
 		switch {
 		case len(mc.Repos) == 0:
 			return fail("repos", "must list at least one \"owner/name\" when enabled = true")
-		case mc.ForgeBaseURL == "":
+		case hasDefaultRepo && mc.ForgeBaseURL == "":
 			return fail("forge_base_url", "is required when enabled = true")
-		case mc.ForgeTokenEnv == "":
+		case hasDefaultRepo && mc.ForgeTokenEnv == "":
 			return fail("forge_token_env", "is required when enabled = true")
+		case hasGitHubRepo && (gh == nil || gh.TokenEnv == ""):
+			return fail("github_token_env", "is required when a repos entry names the GitHub forge")
 		}
 	}
 	return mc, nil

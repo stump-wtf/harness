@@ -61,7 +61,7 @@ func opts(t *testing.T, c core.MergeTrainConfig, f forge.Forge, log mergetrain.L
 		StateDir: t.TempDir(),
 		Log:      log,
 		NewForge: func(baseURL, token, cacheDir string) (forge.Forge, error) {
-			if baseURL != "https://gitea.example" || token != "tok" || !strings.HasSuffix(cacheDir, filepath.Join("mergetrain", "cache")) {
+			if baseURL != "https://gitea.example" || token != "tok" || !strings.HasSuffix(cacheDir, filepath.Join("mergetrain", "cache", "gitea")) {
 				return nil, fmt.Errorf("NewForge(%q, token set=%v, %q)", baseURL, token != "", cacheDir)
 			}
 			return f, nil
@@ -198,5 +198,114 @@ func TestMergeTrainBatchNeedsNoWarning(t *testing.T) {
 				t.Fatalf("enabled line does not name the configured batch:\n%s", txt)
 			}
 		})
+	}
+}
+
+// TestMergeTrainTwoForges drives the config where one repo lives on Gitea and
+// another on GitHub (ADR-0061): each forge is built once, with its own base
+// URL, its own token variable and its own clone cache, and each repo's driver
+// ticks the client its repos entry named.
+func TestMergeTrainTwoForges(t *testing.T) {
+	c := enabledConfig("stump.wtf/harness", "octo/widgets")
+	c.RepoForge = map[string]string{"stump.wtf/harness": "", "octo/widgets": "github"}
+	c.GitHub = &core.MergeTrainGitHub{BaseURL: "https://api.github.example", TokenEnv: "MT_GH_TOKEN", CIGate: core.GitHubGateDraftPR}
+
+	giteaForge, githubForge := fake.New(), fake.New()
+	giteaForge.SetBranch("stump.wtf/harness", "main", "base")
+	githubForge.SetBranch("octo/widgets", "main", "base")
+	var builtGitea, builtGitHub int
+	log := &recLog{}
+	o := opts(t, c, giteaForge, log)
+	o.Getenv = func(k string) string {
+		return map[string]string{"MT_TOKEN": "tok", "MT_GH_TOKEN": "ghtok"}[k]
+	}
+	o.NewForge = func(baseURL, token, cacheDir string) (forge.Forge, error) {
+		builtGitea++
+		if baseURL != "https://gitea.example" || token != "tok" || !strings.HasSuffix(cacheDir, filepath.Join("mergetrain", "cache", "gitea")) {
+			return nil, fmt.Errorf("NewForge(%q, token set=%v, %q)", baseURL, token != "", cacheDir)
+		}
+		return giteaForge, nil
+	}
+	o.NewGitHubForge = func(baseURL, token, cacheDir, ciGate string) (forge.Forge, error) {
+		builtGitHub++
+		if baseURL != "https://api.github.example" || token != "ghtok" || ciGate != core.GitHubGateDraftPR ||
+			!strings.HasSuffix(cacheDir, filepath.Join("mergetrain", "cache", "github")) {
+			return nil, fmt.Errorf("NewGitHubForge(%q, token set=%v, %q, gate %q)", baseURL, token != "", cacheDir, ciGate)
+		}
+		return githubForge, nil
+	}
+
+	m, err := StartMergeTrain(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
+	if m.Running() != 2 {
+		t.Fatalf("running %d drivers, want 2", m.Running())
+	}
+	if builtGitea != 1 || builtGitHub != 1 {
+		t.Fatalf("built %d gitea and %d github clients, want one each", builtGitea, builtGitHub)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if len(giteaForge.Methods()) > 0 && len(githubForge.Methods()) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a driver never ticked: gitea %v, github %v", giteaForge.Methods(), githubForge.Methods())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if txt := log.text(); !strings.Contains(txt, "forge=unknown github=unknown") {
+		t.Fatalf("start line does not name both forge identities:\n%s", txt)
+	}
+}
+
+// TestMergeTrainGitHubTokenEmptyRefuses is ADR-0061's credential rule on the
+// second forge: a repos entry naming GitHub makes its own variable required,
+// and an empty one stops the daemon rather than starting a driver that cannot
+// write.
+func TestMergeTrainGitHubTokenEmptyRefuses(t *testing.T) {
+	c := enabledConfig("stump.wtf/harness", "octo/widgets")
+	c.RepoForge = map[string]string{"stump.wtf/harness": "", "octo/widgets": "github"}
+	c.GitHub = &core.MergeTrainGitHub{TokenEnv: "MT_GH_TOKEN"}
+	o := opts(t, c, fake.New(), &recLog{})
+	o.Getenv = func(k string) string { return map[string]string{"MT_TOKEN": "tok"}[k] }
+	m, err := StartMergeTrain(context.Background(), o)
+	if err == nil || m != nil || !strings.Contains(err.Error(), "$MT_GH_TOKEN is empty") {
+		t.Fatalf("StartMergeTrain with an empty GitHub token = %v, %v", m, err)
+	}
+}
+
+// TestMergeTrainGitHubOnlyNeedsNoGiteaToken is the other half of the same rule:
+// when no repo uses the default forge, its absent credentials are not the
+// daemon's problem.
+func TestMergeTrainGitHubOnlyNeedsNoGiteaToken(t *testing.T) {
+	c := enabledConfig("octo/widgets")
+	c.RepoForge = map[string]string{"octo/widgets": "github"}
+	c.ForgeBaseURL, c.ForgeTokenEnv = "", ""
+	c.GitHub = &core.MergeTrainGitHub{TokenEnv: "MT_GH_TOKEN", CIGate: core.GitHubGateTrainPush}
+	gh := fake.New()
+	gh.SetBranch("octo/widgets", "main", "base")
+	var builtGitea int
+	o := opts(t, c, fake.New(), &recLog{})
+	o.Getenv = func(k string) string { return map[string]string{"MT_GH_TOKEN": "ghtok"}[k] }
+	o.NewForge = func(string, string, string) (forge.Forge, error) {
+		builtGitea++
+		return fake.New(), nil
+	}
+	o.NewGitHubForge = func(_, _, _, ciGate string) (forge.Forge, error) {
+		if ciGate != core.GitHubGateTrainPush {
+			return nil, fmt.Errorf("ci gate = %q, want %q", ciGate, core.GitHubGateTrainPush)
+		}
+		return gh, nil
+	}
+	m, err := StartMergeTrain(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
+	if m.Running() != 1 || builtGitea != 0 {
+		t.Fatalf("running %d drivers and built %d gitea clients, want 1 and 0", m.Running(), builtGitea)
 	}
 }

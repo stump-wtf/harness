@@ -772,6 +772,7 @@ func (d *Driver) trainConfig() TrainConfig {
 	}
 	return TrainConfig{
 		Repo:        d.cfg.Repo,
+		BaseBranch:  d.cfg.BaseBranch,
 		PollMin:     pollMin,
 		PollMax:     max(d.cfg.PollInterval, pollMin),
 		Timeout:     d.cfg.CITimeout,

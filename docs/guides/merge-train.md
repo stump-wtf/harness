@@ -64,6 +64,36 @@ proposed the train, and by stump.wtf/harness#540:
 - no merge made by an LLM session;
 - `main` red only from flakes.
 
+## A repo that lives on GitHub
+
+The same train can serve a GitHub repo. Name the forge on the `repos` entry and
+give it its own token:
+
+```toml
+[mergetrain]
+enabled = true
+mode = "report"
+repos = ["github:octo/widgets"]
+github_base_url = "https://api.github.com"
+github_token_env = "HARNESS_MERGETRAIN_GITHUB_TOKEN"
+github_ci_gate = "draft-pr"
+```
+
+Keep `github_ci_gate = "draft-pr"` unless that repo's own workflows declare
+`train/**`. With the draft gate the train opens `train/<pr>` as a **draft** pull
+request, because that is what makes the repo's `pull_request` workflows run on
+the exact commit the train will land; it closes the PR when the attempt ends.
+You will see those drafts in the repo's pull request list for the length of an
+attempt, in `report` mode too — the push and the draft PR are how the train gets
+a CI verdict, and `report` still writes nothing to the pull requests under test.
+`train-push` opens no pull request at all, and gates only if the workflows name
+the branch.
+
+GitHub reports CI as check runs, not combined statuses, and an untested commit
+has none, so a GitHub train that never gets a check run waits out `ci_timeout`
+and says `timeout`. It never reads an absent gate as green. See
+[ADR-0061](/decisions/adr-0061-github-forge-backend).
+
 ## Cutover
 
 In one change, and for one repository only:
