@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/stump-wtf/harness/internal/forge"
+	"github.com/stump-wtf/harness/internal/forge/gitcache"
 )
 
 // requestTimeout bounds every REST call (#600).
@@ -65,14 +66,10 @@ type Options struct {
 
 // Client is a forge.Forge for one Gitea instance.
 type Client struct {
-	api    string // BaseURL + "/api/v1"
-	token  string
-	http   *http.Client
-	gitBin string
-	gitURL func(repo string) string
-	cache  string
-
-	gitMu sync.Map // repo → *sync.Mutex, serialising git per clone
+	api   string // BaseURL + "/api/v1"
+	token string
+	http  *http.Client
+	git   *gitcache.Cache
 
 	idMu sync.Mutex
 	id   identity // cached once read successfully
@@ -97,21 +94,21 @@ func New(opts Options) (*Client, error) {
 	if hc == nil {
 		hc = &http.Client{Timeout: requestTimeout}
 	}
-	gitBin := opts.GitBinary
-	if gitBin == "" {
-		gitBin = "git"
-	}
 	gitURL := opts.GitURL
 	if gitURL == nil {
 		gitURL = func(repo string) string { return base + "/" + repo + ".git" }
 	}
 	return &Client{
-		api:    base + "/api/v1",
-		token:  opts.Token,
-		http:   hc,
-		gitBin: gitBin,
-		gitURL: gitURL,
-		cache:  opts.CacheDir,
+		api:   base + "/api/v1",
+		token: opts.Token,
+		http:  hc,
+		git: gitcache.New(gitcache.Options{
+			Prefix:     "gitea",
+			AuthHeader: "Authorization: token " + opts.Token,
+			CacheDir:   opts.CacheDir,
+			GitBinary:  opts.GitBinary,
+			GitURL:     gitURL,
+		}),
 	}, nil
 }
 

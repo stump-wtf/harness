@@ -66,6 +66,33 @@ type MergeTrainConfig struct {
 	// ForgeTokenEnv is the NAME of the environment variable holding the
 	// forge token, never the token.
 	ForgeTokenEnv string
+	// GitHub, when non-nil, is the train's second forge: the repos whose
+	// entries in Repos carried the "github:" prefix are driven by it
+	// (ADR-0061).
+	GitHub *MergeTrainGitHub
+	// RepoForge says which forge drives each repo in Repos: "" is the default
+	// forge above, "github" is GitHub. Every repo in Repos has an entry.
+	RepoForge map[string]string
+}
+
+// GitHub CI gate topologies (ADR-0061).
+const (
+	// GitHubGateDraftPR gates a train commit with a draft pull request from
+	// the train branch, which runs the repository's existing pull_request
+	// workflows. It is the default, and the only gate that works where the
+	// train may not edit .github/workflows/.
+	GitHubGateDraftPR = "draft-pr"
+	// GitHubGateTrainPush gates a train commit by pushing train/**, which
+	// requires the repository's own workflows to name that branch.
+	GitHubGateTrainPush = "train-push"
+)
+
+// MergeTrainGitHub is the GitHub forge: its API root, the name of the
+// environment variable holding its token, and how its train commits are gated.
+type MergeTrainGitHub struct {
+	BaseURL  string
+	TokenEnv string
+	CIGate   string
 }
 
 // DefaultMergeTrainConfig is the table's value when harness.toml omits it:
