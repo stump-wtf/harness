@@ -36,6 +36,7 @@ re-attachable — an agent CLI, a REPL, a watcher, a background service.
 | CLI verbs (list, start, stop, logs...) | [CLI reference](./cli) |
 | Configuration (`harness.toml`) | [Configuration](./configuration) |
 | Model pins (fail-closed model + provider policy) | [Model pins](./model-pins) |
+| Skill search and retrieval (`search_skills`, `get_skill`) | [Skill search and retrieval](./skills) |
 | Scheduled agent one-shots (cron) | [Configuration → Scheduled one-shots](./configuration#scheduled-one-shots) |
 | Supervision & restart policy | [Supervision](./supervision) |
 | The TUI dashboard | [Cockpit TUI](./tui) |
