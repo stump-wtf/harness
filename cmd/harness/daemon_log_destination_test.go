@@ -58,7 +58,6 @@ func TestDaemonLogCheckNamesTheSurfaceOrSaysItIsUnknown(t *testing.T) {
 	cases := []struct {
 		name       string
 		di         *protocol.DaemonInfo
-		fetched    bool
 		wantLevel  cliui.Level
 		wantDetail string
 		wantHint   bool
@@ -66,14 +65,12 @@ func TestDaemonLogCheckNamesTheSurfaceOrSaysItIsUnknown(t *testing.T) {
 		{
 			name:       "log file",
 			di:         &protocol.DaemonInfo{LogDestination: "/var/log/harness/daemon.log"},
-			fetched:    true,
 			wantLevel:  cliui.LevelSuccess,
 			wantDetail: "/var/log/harness/daemon.log",
 		},
 		{
 			name:       "journal",
 			di:         &protocol.DaemonInfo{LogDestination: daemon.LogDestinationJournal},
-			fetched:    true,
 			wantLevel:  cliui.LevelSuccess,
 			wantDetail: daemon.LogDestinationJournal,
 		},
@@ -83,21 +80,14 @@ func TestDaemonLogCheckNamesTheSurfaceOrSaysItIsUnknown(t *testing.T) {
 			// unknown and how to get an answer.
 			name:       "daemon predates the field",
 			di:         &protocol.DaemonInfo{},
-			fetched:    true,
 			wantLevel:  cliui.LevelWarn,
 			wantDetail: "the running daemon did not say",
 			wantHint:   true,
 		},
-		{
-			name:       "daemon info unavailable",
-			fetched:    false,
-			wantLevel:  cliui.LevelWarn,
-			wantDetail: "unknown, daemon info unavailable",
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			row := daemonLogCheck(tc.di, tc.fetched)
+			row := daemonLogCheck(tc.di)
 			if row.name != "daemon_log" {
 				t.Errorf("row name = %q, want daemon_log", row.name)
 			}
@@ -111,6 +101,23 @@ func TestDaemonLogCheckNamesTheSurfaceOrSaysItIsUnknown(t *testing.T) {
 				t.Errorf("hint present = %v (%q), want %v", got, row.hint, tc.wantHint)
 			}
 		})
+	}
+}
+
+// TestDaemonLogCheckNamesTheSurfaceOrSaysItIsUnknown above drives the row
+// builder directly; this one pins the wiring around it (the #315 lesson: a
+// constructed argument never exercises a call site). With no daemon to ask,
+// doctor --json carries no daemon_log row at all — the version row already
+// says why — while a reachable daemon that predates the field still gets one.
+func TestDoctorSkipsTheDaemonLogRowWhenTheDaemonIsUnreachable(t *testing.T) {
+	cfgPath, _ := laxWebhookConfig(t, t.TempDir(), 0o600, "")
+	rows := doctorRows(t, cfgPath)
+	if r, ok := rows["daemon_log"]; ok {
+		t.Errorf("doctor --json carries a daemon_log row with no daemon to ask: %+v", r)
+	}
+	r, ok := rows["daemon"]
+	if !ok || !strings.Contains(r.Detail, "unreachable") {
+		t.Errorf("daemon row = %+v, want the unreachable-daemon complaint", r)
 	}
 }
 
@@ -208,7 +215,7 @@ func daemonStatusInfo(t *testing.T, bin string, env []string, socket string) pro
 func TestEmitDoctorJSONCarriesTheDaemonLogRow(t *testing.T) {
 	rows := []check{
 		{name: "config", level: cliui.LevelSuccess, detail: "ok"},
-		daemonLogCheck(&protocol.DaemonInfo{LogDestination: daemon.LogDestinationJournal}, true),
+		daemonLogCheck(&protocol.DaemonInfo{LogDestination: daemon.LogDestinationJournal}),
 	}
 	var buf bytes.Buffer
 	emitDoctorJSON(&buf, rows, nil)

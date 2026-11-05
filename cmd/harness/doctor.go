@@ -15,6 +15,11 @@ package main
 //
 // @joestump-agent 09/27/2026 - Added the skill-repo serving-clone row
 // (SPEC-0007 REQ "Default-Branch Gate").
+//
+// @joestump-agent 11/05/2026 - The daemon_log row is skipped when daemon_info
+//   cannot be fetched at all: the version row already carries the
+//   unreachable-daemon complaint, and a second "unknown" row for the same
+//   root problem read as two broken things.
 
 import (
 	"encoding/json"
@@ -281,7 +286,14 @@ func runDoctorWith(o verbOpts, notifyTest bool) int {
 	// detached run, and reading it while a service-run daemon answers the
 	// journal cost an operator an hour of chasing a log that had nothing to
 	// say (stump.wtf/harness#583).
-	rows = append(rows, daemonLogCheck(&di, diOK))
+	// When daemon_info could not be fetched at all the row is skipped: the
+	// version row above already carries the unreachable-daemon complaint, and
+	// a second "unknown" row for the same root problem reads as two broken
+	// things. No row (and no daemon_log object in --json) is the shape of
+	// "no answer available".
+	if diOK {
+		rows = append(rows, daemonLogCheck(&di))
+	}
 
 	// --- Check 4: remote SSH server -----------------------------------------
 	// Governing: ADR-0004 (the optional Wish cockpit) + ADR-0008 (public-key
@@ -506,20 +518,15 @@ func sshCheck(sc core.ServerConfig, di *protocol.DaemonInfo) check {
 }
 
 // daemonLogCheck builds the "daemon_log" row from what the running daemon
-// answered about its own stderr. Three answers are possible and each needs
-// different follow-up: a path (tail it), the journal (journalctl it), or
-// stderr (whatever the caller redirected it to, which only the caller
-// knows). An empty answer is a daemon predating the field, so the row says it
-// went unanswered and how to get one rather than pointing at a file that may
-// be months stale (stump.wtf/harness#583).
-func daemonLogCheck(di *protocol.DaemonInfo, fetched bool) check {
-	if !fetched || di == nil {
-		return check{
-			name:   "daemon_log",
-			level:  cliui.LevelWarn,
-			detail: "unknown, daemon info unavailable",
-		}
-	}
+// answered about its own stderr; the caller skips it entirely when
+// daemon_info could not be fetched, so an answer is always from a live
+// daemon. Three answers are possible and each needs different follow-up: a
+// path (tail it), the journal (journalctl it), or stderr (whatever the caller
+// redirected it to, which only the caller knows). An empty answer is a daemon
+// predating the field, so the row says it went unanswered and how to get one
+// rather than pointing at a file that may be months stale
+// (stump.wtf/harness#583).
+func daemonLogCheck(di *protocol.DaemonInfo) check {
 	if di.LogDestination == "" {
 		return check{
 			name:   "daemon_log",
