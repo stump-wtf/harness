@@ -130,7 +130,7 @@ var daemonHelpText = struct {
 		{"--scrollback-bytes SIZE", "per-harness scrollback ring storage (default 1MiB)"},
 		{"--log-level LEVEL", "debug, info (default), warn, error"},
 		{"--log-file PATH", "append logs to this file instead of stderr"},
-		{"--detach", "fork into the background; redirect stdio to --log-file (default: $XDG_STATE_HOME/harness/harness-daemon.log)"},
+		{"--detach", "fork into the background; redirect stdio to --log-file (default: $XDG_STATE_HOME/harness/harness-daemon.log, which belongs to that detached run alone; harness daemon status names where the running daemon logs)"},
 		{"--ssh", "enable the remote Wish SSH server"},
 		{"--ssh-listen H:P", "SSH bind address (overrides [server] listen)"},
 		{"--webhook-listen H:P", "webhook listener bind address (overrides [server] webhook_listen)"},

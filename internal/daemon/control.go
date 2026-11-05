@@ -687,6 +687,10 @@ func (c *conn) opDaemonInfo() protocol.DaemonInfo {
 		res.SshKeys = keys
 	}
 	res.Notify = c.srv.notifyInfo()
+	// Where this process's own log lines land (stump.wtf/harness#583). The
+	// server resolved it when it started, so it names the surface the logger
+	// chose, not the path config or a stale detach log happens to mention.
+	res.LogDestination = c.srv.logDestination
 	// The webhook listener, likewise only when it actually bound (SPEC-0014
 	// REQ "Webhook Listener"), so doctor judges the live bind.
 	res.WebhookAddr, res.WebhookTLS = c.srv.webhook()

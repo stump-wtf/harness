@@ -342,7 +342,7 @@ func runDaemon(o daemonOpts) {
 	//
 	// Governing: ADR-0016, SPEC-0010 REQ "Precedence Order".
 
-	configureDaemonLogger(o.logLevel, o.logFile)
+	openedLogFile := configureDaemonLogger(o.logLevel, o.logFile)
 
 	// GitHub https://github.com/stump-wtf/harness/issues/18: the Go soft
 	// memory limit, before anything allocates in earnest. Off unless set;
@@ -524,6 +524,10 @@ func runDaemon(o daemonOpts) {
 		SocketPath: o.socketPath,
 		ConfigPath: o.configPath,
 		Version:    buildinfo.Version,
+		// The log surface this process chose, so `doctor` and `daemon status`
+		// can answer "where does this daemon log" without guessing from the
+		// filesystem (stump.wtf/harness#583).
+		LogFile: openedLogFile,
 	})
 	if err := srv.Listen(); err != nil {
 		logListenFailure(o.socketPath, err)
@@ -1057,8 +1061,14 @@ func startRemote(sc core.ServerConfig, forceOn bool, listenOverride, socket, con
 // logger per ADR-0001. level may be debug/info/warn/error; logFile may be ""
 // (stderr) or a path to append to. Time format is ISO 8601 (sortable, matches
 // the log-file-per-harness format in the supervisor).
-func configureDaemonLogger(level, logFile string) {
+//
+// It returns the path the logger is actually writing to, empty when that is
+// stderr, so the daemon can report its own log surface through daemon_info
+// even in the case only it can see: a --log-file that failed to open leaves
+// the lines on stderr (stump.wtf/harness#583).
+func configureDaemonLogger(level, logFile string) string {
 	var w io.Writer = os.Stderr
+	opened := ""
 	if logFile != "" {
 		f, err := openLogFile(logFile)
 		if err != nil {
@@ -1066,6 +1076,7 @@ func configureDaemonLogger(level, logFile string) {
 			log.Warn("could not open log file, falling back to stderr", "path", logFile, "err", err)
 		} else {
 			w = f
+			opened = f.Name()
 		}
 	}
 	log.SetOutput(w)
@@ -1083,6 +1094,7 @@ func configureDaemonLogger(level, logFile string) {
 	default:
 		log.SetLevel(log.InfoLevel)
 	}
+	return opened
 }
 
 // logListenFailure reports why the daemon could not take its socket.

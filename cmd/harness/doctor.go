@@ -52,7 +52,11 @@ type doctorResult struct {
 	Config  checkResult  `json:"config"`
 	Daemon  *checkResult `json:"daemon,omitempty"`
 	Version *checkResult `json:"version,omitempty"`
-	Harness *checkResult `json:"harness,omitempty"`
+	// DaemonLog is where the running daemon says its own lines land: a journal,
+	// a --log-file path, or stderr (stump.wtf/harness#583). Absent only from a
+	// daemon too old to answer, which the row itself says.
+	DaemonLog *checkResult `json:"daemon_log,omitempty"`
+	Harness   *checkResult `json:"harness,omitempty"`
 	// Profile (#99) and Autostart are conditional rows: present only when the
 	// condition fires. Both already counted toward the summary tally, but had no
 	// object here, so `--json` reported `warned: 1` with nothing to point at.
@@ -268,6 +272,16 @@ func runDoctorWith(o verbOpts, notifyTest bool) int {
 			})
 		}
 	}
+
+	// --- Check: where this daemon actually logs -----------------------------
+	// Governing: ADR-0001 (the daemon logs to stderr and lets the service
+	// manager own the surface). The value is the running process's own answer
+	// over daemon_info, never a re-derivation from config: $XDG_STATE_HOME/
+	// harness/harness-daemon.log exists on most boxes as the leftover of some
+	// detached run, and reading it while a service-run daemon answers the
+	// journal cost an operator an hour of chasing a log that had nothing to
+	// say (stump.wtf/harness#583).
+	rows = append(rows, daemonLogCheck(&di, diOK))
 
 	// --- Check 4: remote SSH server -----------------------------------------
 	// Governing: ADR-0004 (the optional Wish cockpit) + ADR-0008 (public-key
@@ -491,6 +505,32 @@ func sshCheck(sc core.ServerConfig, di *protocol.DaemonInfo) check {
 	}
 }
 
+// daemonLogCheck builds the "daemon_log" row from what the running daemon
+// answered about its own stderr. Three answers are possible and each needs
+// different follow-up: a path (tail it), the journal (journalctl it), or
+// stderr (whatever the caller redirected it to, which only the caller
+// knows). An empty answer is a daemon predating the field, so the row says it
+// went unanswered and how to get one rather than pointing at a file that may
+// be months stale (stump.wtf/harness#583).
+func daemonLogCheck(di *protocol.DaemonInfo, fetched bool) check {
+	if !fetched || di == nil {
+		return check{
+			name:   "daemon_log",
+			level:  cliui.LevelWarn,
+			detail: "unknown, daemon info unavailable",
+		}
+	}
+	if di.LogDestination == "" {
+		return check{
+			name:   "daemon_log",
+			level:  cliui.LevelWarn,
+			detail: "the running daemon did not say",
+			hint:   "restart the daemon to pick up a build that reports where it logs; until then trust the service manager, not any log file you find",
+		}
+	}
+	return check{name: "daemon_log", level: cliui.LevelSuccess, detail: di.LogDestination}
+}
+
 // appendOperatingHoursCheck adds the "operating_hours" row when
 // operatingHoursWarnings finds anything to say. cfg may be nil (config failed
 // to load), in which case there is nothing to check.
@@ -599,6 +639,9 @@ func emitDoctorJSON(w io.Writer, rows []check, resolved []settings.Resolved, tel
 		case "version":
 			c := cr
 			res.Version = &c
+		case "daemon_log":
+			c := cr
+			res.DaemonLog = &c
 		case "harnesses":
 			c := cr
 			res.Harness = &c
