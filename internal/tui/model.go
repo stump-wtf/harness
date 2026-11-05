@@ -323,6 +323,12 @@ type Model struct {
 	// tail.Watcher that runs while the daemon connection is live, and resolved
 	// onto harness rows at render time (activity.go).
 	lastActions map[activityKey]sessionActivity
+	// workingOnMap carries the newest top-level task description per session
+	// working directory, for the "working on" banner, and taskNesting counts
+	// each transcript's open subagents so a delegated task cannot overwrite the
+	// task the harness itself started (workingon.go).
+	workingOnMap map[activityKey]workingOnEntry
+	taskNesting  map[string]int
 	// watcher is the one agent-session watcher the TUI runs, feeding both the
 	// dashboard's activity field and the chatroom stream (watcher.go).
 	watcher       *tail.Watcher

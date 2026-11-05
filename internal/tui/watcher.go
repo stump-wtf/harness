@@ -223,7 +223,7 @@ func withinWindow(ev tail.Event, floor time.Time) bool {
 	return !t.Before(floor)
 }
 
-// onAgentEvents feeds one batch to both consumers and re-arms the read.
+// onAgentEvents feeds one batch to every consumer and re-arms the read.
 func (m *Model) onAgentEvents(msg agentEventMsg) (tea.Model, tea.Cmd) {
 	if len(msg.Events) == 0 {
 		return m, m.readEvents()
@@ -235,6 +235,7 @@ func (m *Model) onAgentEvents(msg agentEventMsg) (tea.Model, tea.Cmd) {
 	m.ensureChatroom()
 	for _, ev := range msg.Events {
 		m.trackLastAction(ev)
+		m.trackWorkingOn(ev)
 		m.chatroom.Add(ev)
 	}
 	// Once per batch, not once per event: the anchor is a property of the
