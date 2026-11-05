@@ -53,10 +53,11 @@ const deleteBudget = 30 * time.Second
 
 // TrainConfig tunes one attempt.
 type TrainConfig struct {
-	Repo    string
-	PollMin time.Duration // first wait before polling CI
-	PollMax time.Duration // backoff cap
-	Timeout time.Duration // overall CI deadline, from the branch's creation
+	Repo       string
+	BaseBranch string        // the base branch's name, for a forge whose gate needs it
+	PollMin    time.Duration // first wait before polling CI
+	PollMax    time.Duration // backoff cap
+	Timeout    time.Duration // overall CI deadline, from the branch's creation
 	// DeleteRetry is the pause between cleanup attempts. Default 1 s.
 	DeleteRetry time.Duration
 	Log         Logger
@@ -160,6 +161,7 @@ func RunTrainBatch(ctx context.Context, f forge.Forge, cfg TrainConfig, prs []Pu
 	spec := forge.TrainSpec{
 		Branch:  branch,
 		BaseSHA: base,
+		BaseRef: cfg.BaseBranch,
 		PR:      prs[0].Number,
 		HeadSHA: prs[0].HeadSHA,
 		Message: trainMessage(prs),

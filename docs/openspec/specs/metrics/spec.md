@@ -88,6 +88,25 @@ has ever succeeded in this daemon's lifetime, and MUST be omitted (not zeroed)
 for one that has not. A zero would read as 1970 and produce an enormous, wrong
 staleness on every dashboard.
 
+Shell tool calls are also counted by the program they run, so an operator can
+ask which programs the fleet's agents actually use and which of them keep
+failing:
+
+```text
+harness_agent_program_calls_total{harness,program,outcome}  counter  outcome: ok|error
+```
+
+`program` comes from agent-trace's program list for the call, which names
+executables only: an env assignment in front of a command, its arguments, and
+shell builtins are never programs. `outcome` is taken from the tool result, not
+from any error mark, so one call contributes to exactly one outcome.
+
+A program that has never been counted MUST be absent rather than reported as
+zero: the set of names is open-ended, and a zero for every executable on the
+host would be the cardinality this family is here to avoid. Once a program has
+been counted, both of its outcomes MUST be emitted, so `increase()` can see its
+first error.
+
 ### REQ-4: Sessions and schedules
 
 ```text
@@ -111,6 +130,16 @@ unbounded.
 
 The following MUST NOT be labels: session id, prompt text, model name as free
 text, provider credentials, or any part of a harness's environment.
+
+`program` is the one label here that a harness does not choose, so its values
+are bounded where the count is taken, not at scrape time: a value MUST match
+`^[a-z0-9][a-z0-9._+-]{0,31}$` (agent-trace also names uppercase executables, so
+names are folded to lowercase before the match), and at most 64 distinct names
+are kept per harness label. Anything failing the grammar — an env assignment, an
+argument, a path, shell punctuation — and every name past the cap MUST be
+counted as `program="other"`. Folding at count time is what keeps the guarantee:
+a name that could carry a credential is then never stored anywhere a scrape could
+print it, and the map holding the counts cannot grow without bound.
 
 Model identity is deliberately excluded. A harness's model is configuration that
 changes rarely; putting it in a label multiplies every series by it and makes a

@@ -79,7 +79,11 @@ type activityKey struct {
 // sessionActivity is the newest action observed for one activityKey.
 type sessionActivity struct {
 	action string
-	at     time.Time
+	// failure is why the newest call failed, already one line and clipped for
+	// the post-mortem; "" when the newest action did not fail. The action field
+	// has no room for it, so the surfaces with width render it (ADR-0015).
+	failure string
+	at      time.Time
 }
 
 // trackLastAction records an event from the dashboard watcher against the
@@ -116,13 +120,40 @@ func (m *Model) trackLastAction(ev tail.Event) {
 		m.lastActions = make(map[activityKey]sessionActivity)
 	}
 	m.lastActions[key] = sessionActivity{
-		action: action + " " + chatroom.FormatTime(ev.Classified.Timestamp),
-		at:     at,
+		action:  action + " " + chatroom.FormatTime(ev.Classified.Timestamp),
+		failure: chatroom.FailureExcerpt(ev),
+		at:      at,
 	}
 }
 
 // liveAction returns h's activity field, padded to actionFieldWidth, or "" when
 // nothing has been observed in its workdir.
+func (m *Model) liveAction(h protocol.HarnessInfo) string {
+	best, ok := m.newestActivity(h)
+	if !ok {
+		return ""
+	}
+	return fitAction(best.action)
+}
+
+// liveFailure returns why h's newest observed call failed, or "" when its newest
+// action succeeded or nothing was observed in its workdir.
+//
+// The live action field is a fixed-width column whose whole design is that
+// nothing around it moves, and "[BADGE] Tool HH:MM:SS" already spends it; a
+// reason appended there would survive as an ellipsis that changes every frame.
+// So the field says WHICH harness is acting and the surfaces with room say WHY
+// it stopped, with the same bytes the post-mortem prints beside (failed),
+// which is the parity #1035's watcher wiring was staged for (ADR-0060).
+func (m *Model) liveFailure(h protocol.HarnessInfo) string {
+	best, ok := m.newestActivity(h)
+	if !ok {
+		return ""
+	}
+	return best.failure
+}
+
+// newestActivity resolves h to the newest action observed for it.
 //
 // A harness with no configured workdir gets nothing: it inherits the daemon's
 // working directory, which identifies no particular harness, and guessing there
@@ -133,10 +164,10 @@ func (m *Model) trackLastAction(ev tail.Event) {
 // spawned it, so an interactive session started by hand in a harness's workdir
 // is indistinguishable from the harness's own. Session-to-PID correlation would
 // settle it and no adapter reports one.
-func (m *Model) liveAction(h protocol.HarnessInfo) string {
+func (m *Model) newestActivity(h protocol.HarnessInfo) (sessionActivity, bool) {
 	work := cleanDir(h.Workdir)
 	if work == "" || len(m.lastActions) == 0 {
-		return ""
+		return sessionActivity{}, false
 	}
 	var best sessionActivity
 	var found bool
@@ -148,10 +179,7 @@ func (m *Model) liveAction(h protocol.HarnessInfo) string {
 			best, found = act, true
 		}
 	}
-	if !found {
-		return ""
-	}
-	return fitAction(best.action)
+	return best, found
 }
 
 // fitAction clips or pads s to exactly actionFieldWidth columns, so the fields

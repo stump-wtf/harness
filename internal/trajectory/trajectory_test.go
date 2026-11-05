@@ -5,19 +5,44 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stump-wtf/agent-trace/tail"
 	"github.com/stump-wtf/harness/internal/adapter"
 	"github.com/stump-wtf/harness/internal/core"
+	"github.com/stump-wtf/harness/internal/runtrace"
 )
 
+// fixtureRunStart opens a run before the timestamps the fixtures below write
+// (2026-01-01T10:00:00Z), so a fixture session sits inside a run of the
+// harness and stays listed once List attributes sessions to runs (#89).
+var fixtureRunStart = time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+
+// runsSince reports one open run for every harness, started at since.
+func runsSince(since time.Time) RunWindows {
+	return func(string) (RunRecord, error) {
+		return RunRecord{Runs: []runtrace.Window{{Start: since}}}, nil
+	}
+}
+
+// runsByHarness reports the mapped windows for each harness name, and none for
+// a name the map does not hold.
+func runsByHarness(runs map[string][]runtrace.Window) RunWindows {
+	return func(name string) (RunRecord, error) {
+		return RunRecord{Runs: runs[name]}, nil
+	}
+}
+
 // newTestService creates a trajectory service with a default adapter registry
-// for testing. The scrollback directory is set to a temp dir.
+// for testing. The scrollback directory is a temp dir, and every harness gets
+// a run that opened before the fixtures' sessions, because List now attributes
+// a native session to a harness's runs before reporting it (#89).
 func newTestService(t *testing.T) *Service {
 	t.Helper()
 	dir := t.TempDir()
 	svc := NewService(adapter.NewRegistryWithDefaults())
 	svc.SetScrollbackDir(dir)
+	svc.SetRunWindows(runsSince(fixtureRunStart))
 	return svc
 }
 

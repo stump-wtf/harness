@@ -288,7 +288,7 @@ func (f HarnessForm) Validate() error {
 	// Mirror the parser's refusal: saving this would leave harness.toml
 	// unparseable. Governing: SPEC-0017 REQ "Generic Kind Rejects Prompts".
 	if f.Harness == "generic" && promptSet {
-		return fmt.Errorf("generic runs sh and has no prompt synthesis; use harness crush, claude-code, codex, pi or omp for a prompt one-shot, or command with argv to run another program without a shell")
+		return fmt.Errorf("generic runs sh and has no prompt synthesis; use harness crush, claude-code, codex, pi, omp or opencode for a prompt one-shot, or command with argv to run another program without a shell")
 	}
 	if err := f.validateCommand(promptSet); err != nil {
 		return err

@@ -50,7 +50,7 @@ run 2026-09-11 07:40:00 → 07:56:21 · exit 1 · crush
 07:40:00  state     starting → running
 07:40:02  session   e088ec4e · crush · your-model
 07:40:05  read      /home/you/sweeps/infra-check/prompt.md
-07:41:10  exec      ssh web01 docker ps  (failed)
+07:41:10  exec      ssh web01 docker ps  (failed)  ssh: connect to host web01 port 22: Connection refused
 07:56:20  ERROR     Bad Request: context window exceeded
 07:56:21  exited    code=1
 07:56:21  state     running → stopped
@@ -63,7 +63,11 @@ Read it top to bottom:
    exit.
 3. **`session`** is the agent session that ran: its id, the tool and the model.
 4. **Tool entries** are what the agent did. `read` and `edit` show a file,
-   `exec` a command, and `(failed)` marks a tool call that errored.
+   `exec` a command, and `(failed)` marks a tool call that errored. A failed
+   call carries a short excerpt of what it printed beside the marker, masked of
+   any credential it held, so the reason is on the same line and the transcript
+   stays where it is. The whole excerpt is one `--json` away, as a long summary
+   is.
 5. **`ERROR`** is the error the agent reported. Here it is the reason for exit
    code 1.
 

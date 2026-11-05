@@ -476,7 +476,8 @@ type Harness struct {
 	// History"; issue #119.
 	KeepRuns int
 	// Adapter is the harness kind — the config `harness` key, an enum:
-	// "crush", "claude-code", "codex", "pi", "omp", "generic", "command". It
+	// core.HarnessKinds ("crush", "claude-code", "codex", "pi", "omp",
+	// "opencode", "generic", "command"). It
 	// selects the adapter, which supplies BOTH the tool-specific behaviour
 	// (trajectory discovery, prompt flag mapping) and the executable a
 	// long-running (non-prompt) harness runs; `args` are appended after it.
@@ -661,16 +662,21 @@ const (
 	AdapterOMP = "omp"
 )
 
+// AdapterOpenCode is the OpenCode CLI (SST's opencode, https://opencode.ai).
+// agent-trace has read its session database since before v0.4.0, so under
+// ADR-0033's trace-first rule the adapter here is the second half.
+const AdapterOpenCode = "opencode"
+
 // HarnessKinds is the `harness` enum, in the order errors list it. Every front
 // door (config files, the project-up and scratchpad wire, the TUI form)
 // checks against this one list so they cannot disagree on what exists.
 // Governing: SPEC-0006 REQ "Adapter Selection" as amended by SPEC-0017 REQ-17.
-var HarnessKinds = []string{"crush", "claude-code", "codex", AdapterPi, AdapterOMP, "generic", AdapterCommand}
+var HarnessKinds = []string{"crush", "claude-code", "codex", AdapterPi, AdapterOMP, AdapterOpenCode, "generic", AdapterCommand}
 
 // TranscriptSources are the values `transcripts` accepts on a command harness:
 // every adapter kind with a trajectory store of its own. The order is the one
 // errors list them in.
-var TranscriptSources = []string{"claude-code", "crush", "codex", AdapterPi, AdapterOMP}
+var TranscriptSources = []string{"claude-code", "crush", "codex", AdapterPi, AdapterOMP, AdapterOpenCode}
 
 // CheckTranscripts enforces SPEC-0017 REQ-4 for a harness of kind adapter
 // declaring transcripts, shared by every front door so they cannot drift. An

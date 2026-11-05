@@ -691,12 +691,21 @@ func (m *Model) viewPeek(w, h int) string {
 	var (
 		screenStr string
 		cropNote  bool
+		// failure is why this harness is failing right now, if its newest
+		// observed call did. The list pane's action column is a 22-column field
+		// with no room for a reason, so the head, the dashboard's detail surface
+		// for the one harness you are looking at, carries it, and a run says why
+		// while it runs instead of only afterwards (issue #1036).
+		failure = m.liveFailure(sel)
 	)
 	if lines, ok := m.peekActivityLines(sel); ok {
 		// A one-shot renders as `harness logs` prints it (peek_activity.go).
 		// The lines are already one per row, so they skip the emulator.
 		head = m.theme.Header().Render(sel.Name) + " " +
 			m.theme.Faint().Render("run activity · read-only")
+		// Those lines print the excerpt beside (failed) themselves, so the head
+		// saying it too would show the same bytes twice.
+		failure = ""
 		screenStr = strings.Join(lines, "\n")
 	} else if m.peekLive() {
 		screenStr = m.peekView.renderNoCursor()
@@ -711,6 +720,13 @@ func (m *Model) viewPeek(w, h int) string {
 	tailLines := trimBlankTail(splitLines(screenStr))
 	if len(tailLines) > maxLines {
 		tailLines = tailLines[len(tailLines)-maxLines:]
+	}
+
+	// The failure leads the notes: a cropped pane is a nuisance, a failing call
+	// is the reason you are looking at this harness at all, and the head is
+	// truncated from the right.
+	if failure != "" {
+		head += m.theme.StateStyle(core.StateDegraded).Render(" · failed: " + failure)
 	}
 
 	// When the guest doesn't fit the pane, name its viewport in the head so the

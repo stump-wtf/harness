@@ -43,6 +43,7 @@ re-attachable — an agent CLI, a REPL, a watcher, a background service.
 | Project-scoped compose (`up` / `down` / `ps`) | [Projects](./projects) |
 | Remote access over SSH | [Remote access](./remote) |
 | Merge train (auto-landing approved PRs) | [Merge train](./merge-train) |
+| Switchboard relay (leased-harness lease client) | [Switchboard relay](./switchboard) |
 | Prometheus metrics (`/metrics`) | [Metrics](./metrics) |
 
 ## Where the architecture comes from

@@ -7,7 +7,7 @@
 #   make run          # build and launch the TUI against the local daemon
 #   make daemon       # run the daemon in the foreground
 #   make tidy         # go mod tidy + gofumpt
-#   make lint         # static checks only (fmt, vet, go.mod/go.sum tidiness)
+#   make lint         # static checks only (fmt, vet, go.mod tidiness, downgrade gate)
 #   make scan         # the secret scan (gitleaks) the pipeline runs first
 #   make check        # just the CI gates (scan, lint, test, race, fuzz)
 #   make fuzz         # run the fuzz targets for a bounded time (FUZZTIME)
@@ -36,7 +36,11 @@ LDFLAGS   := -X $(PKG)/internal/buildinfo.Version=$(VERSION)
 BUILD_FLAGS := -trimpath -ldflags "$(LDFLAGS)"
 BIN       := harness
 
-.PHONY: all build check lint fmt vet tidy-check goflags-check test race fuzz scan tidy clean run daemon install version release-snapshot release-check
+# Base ref the go.mod downgrade gate compares against (#1047). Set to empty
+# to make a deliberate downgrade (a revert) pass: make check MOD_BASE_REF=
+MOD_BASE_REF ?= origin/main
+
+.PHONY: all build check lint fmt vet tidy-check mod-downgrade-check goflags-check test race fuzz scan tidy clean run daemon install version release-snapshot release-check
 
 # The default "did I break it" loop.
 all: build check
@@ -76,7 +80,7 @@ scan:
 	fi
 
 # Static checks only (the uniform `make lint` entry point).
-lint: fmt vet tidy-check
+lint: fmt vet tidy-check mod-downgrade-check
 
 fmt:
 	@unformatted=$$(gofmt -l $$(git ls-files '*.go' | grep -v '^vendor/')); \
@@ -96,6 +100,16 @@ tidy-check:
 	@$(GO) mod tidy -diff || { \
 		echo "go.mod/go.sum are not tidy — run 'make tidy' and commit the result"; exit 1; \
 	}
+
+# Fail if the change lowers a requirement the base branch still compiles
+# (#1047). A Renovate v3 -> v4 major update of a Go module rewrote go.mod
+# against the old imports and silently lowered the v3 requirement the code
+# still compiles; the tidy gate above caught it only in repos that have one.
+# This gate compares against the base ref, so it catches the shape wherever
+# the code does not move. CI fetches the base ref (fetch_base in the shared
+# go-service workflow); locally it needs a fetched origin/main.
+mod-downgrade-check:
+	@$(GO) run ./tools/modcheck $(MOD_BASE_REF) go.mod
 
 # Guard for the go gate recipes (issue #1024): when the caller exports
 # GOFLAGS, a file-scope `GOFLAGS :=` assignment rides into every recipe's

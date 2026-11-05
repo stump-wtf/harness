@@ -31,6 +31,7 @@ func TestScratchpadDefKindDispatch(t *testing.T) {
 		{"kind override keeps args", "codex", "", []string{"--yolo"}, "codex", []string{"--yolo"}},
 		{"pi is an agent kind", "", "", []string{"pi", "--continue"}, "pi", []string{"--continue"}},
 		{"omp is an agent kind", "", "", []string{"omp"}, "omp", []string{}},
+		{"opencode is an agent kind", "", "", []string{"opencode", "--model", "qwen/qwen3.8"}, "opencode", []string{"--model", "qwen/qwen3.8"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

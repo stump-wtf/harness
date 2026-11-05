@@ -29,6 +29,15 @@ var (
 	// ErrSkillRepoNotFound is returned when no skill repo with the requested
 	// name is declared.
 	ErrSkillRepoNotFound = errors.New("skillserve: skill repo not found")
+
+	// ErrNotServed is returned when the skill repo exists but its serve_to
+	// selectors do not admit the calling harness (SPEC-0007 REQ "Search And
+	// Retrieval Tools").
+	ErrNotServed = errors.New("skillserve: skill repo is not served to this harness")
+
+	// ErrBadSkillID is returned when an identifier does not parse as
+	// <repo>/<slug>.
+	ErrBadSkillID = errors.New("skillserve: malformed skill id")
 )
 
 // pollInterval is the reconciliation cadence: it catches a clone created or
@@ -66,6 +75,7 @@ type Manager struct {
 
 	graceDays  int
 	windowDays int
+	summaryMax int
 
 	// dirFor resolves a repo name to its serving clone. It defaults to
 	// CloneDir; tests point it at a temp clone.
@@ -77,11 +87,15 @@ type Manager struct {
 }
 
 // NewManager builds a manager for the declared skill repos. Paths default to
-// the state-directory layout; tests pass temp paths. graceDays and
-// windowDays come from the [skills] table.
-func NewManager(repos []core.SkillRepo, indexPath, countsPath string, graceDays, windowDays int) *Manager {
+// the state-directory layout; tests pass temp paths. graceDays, windowDays and
+// summaryMaxChars come from the [skills] table; a summaryMaxChars below 1
+// takes core.DefaultSummaryMaxChars.
+func NewManager(repos []core.SkillRepo, indexPath, countsPath string, graceDays, windowDays, summaryMaxChars int) *Manager {
 	if repos == nil {
 		repos = []core.SkillRepo{}
+	}
+	if summaryMaxChars < 1 {
+		summaryMaxChars = core.DefaultSummaryMaxChars
 	}
 	return &Manager{
 		repos:       repos,
@@ -93,6 +107,7 @@ func NewManager(repos []core.SkillRepo, indexPath, countsPath string, graceDays,
 		indexed:     map[string]bool{},
 		graceDays:   graceDays,
 		windowDays:  windowDays,
+		summaryMax:  summaryMaxChars,
 		dirFor:      CloneDir,
 		stop:        make(chan struct{}),
 	}
@@ -271,16 +286,41 @@ func (m *Manager) Statuses() []RepoStatus {
 	return out
 }
 
-// Search runs a query against the index. It is the seam the facade's
-// search_skills tool (#79) calls through.
-func (m *Manager) Search(query string, paths []string, limit int) ([]SearchHit, error) {
+// Search runs a query against the index on behalf of one caller: the repos it
+// searches are exactly those whose serve_to admits that caller, so a caller
+// cannot read a repo it is not served. An empty hit list with no error means
+// the caller is scoped out of every declared repo.
+//
+// It is the seam the facade's search_skills tool (#79) calls through.
+func (m *Manager) Search(caller Caller, query string, paths []string, limit int) ([]SearchHit, error) {
 	m.mu.Lock()
 	idx := m.index
+	served := m.servedNames(caller)
 	m.mu.Unlock()
 	if idx == nil {
 		return nil, fmt.Errorf("%w: no skill repos declared", ErrIndexUnavailable)
 	}
-	return idx.Search(query, paths, limit)
+	if len(served) == 0 {
+		return nil, nil
+	}
+	return idx.Search(query, paths, limit, served)
+}
+
+// Skills returns the active skills the caller may read, which is exactly the
+// set of skills the harness://skills/<repo>/<slug> resources cover (SPEC-0007
+// REQ "Search And Retrieval Tools").
+func (m *Manager) Skills(caller Caller) ([]SkillRef, error) {
+	m.mu.Lock()
+	idx := m.index
+	served := m.servedNames(caller)
+	m.mu.Unlock()
+	if idx == nil {
+		return nil, fmt.Errorf("%w: no skill repos declared", ErrIndexUnavailable)
+	}
+	if len(served) == 0 {
+		return nil, nil
+	}
+	return idx.ListSkills(served)
 }
 
 // RecordRetrieval counts one search or get_skill retrieval per (skill repo,
