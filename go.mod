@@ -21,6 +21,7 @@ require (
 	github.com/stump-wtf/agent-trace v0.8.2
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/crypto v0.58.0
+	golang.org/x/mod v0.42.0
 	golang.org/x/term v0.47.0
 )
 

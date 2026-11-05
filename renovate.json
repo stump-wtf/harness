@@ -1,7 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "gomodTidy re-tidies go.mod/go.sum after a dependency update. gomodUpdateImportPaths is the half that was missing (harness#1047): a major update of a /vN Go module (go.yaml.in/yaml/v3 -> v4) rewrites go.mod against the old imports, so a PR that does not move the imports silently lowers the v3 requirement the code still compiles and adds an unused v4 line (harness#1046, msgbrowse#568). With it, the imports migrate in the same commit and tidy re-resolves, the shape cairn#492 landed.",
+    "The mod-downgrade-check gate in the Makefile is the backstop: a PR that lowers a requirement the base branch still compiles fails CI even if the bot config is wrong again."
+  ],
   "postUpdateOptions": [
-    "gomodTidy"
+    "gomodTidy",
+    "gomodUpdateImportPaths"
   ],
   "customManagers": [
     {
