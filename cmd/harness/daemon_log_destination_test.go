@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -118,6 +119,65 @@ func TestDoctorSkipsTheDaemonLogRowWhenTheDaemonIsUnreachable(t *testing.T) {
 	r, ok := rows["daemon"]
 	if !ok || !strings.Contains(r.Detail, "unreachable") {
 		t.Errorf("daemon row = %+v, want the unreachable-daemon complaint", r)
+	}
+}
+
+// TestDoctorSkipsDaemonLogRowWhenDaemonInfoUnavailable pins the path the
+// guard above actually changed: a daemon that answers HELLO but hangs up
+// before daemon_info. The unreachable-daemon path never reaches the
+// daemon_log row (doctor returns after the daemon row), so only this path
+// can tell the skip from the old duplicate-warning behavior — without it,
+// removing the diOK guard changes nothing any test notices.
+func TestDoctorSkipsDaemonLogRowWhenDaemonInfoUnavailable(t *testing.T) {
+	cliui.SetJSON(true)
+	t.Cleanup(func() { cliui.SetJSON(false) })
+
+	cfgPath := filepath.Join(t.TempDir(), "harness.toml")
+	if err := writeMinimalConfig(cfgPath); err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(t.TempDir(), "hello-only.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		pc := protocol.NewConn(conn)
+		f, err := pc.ReadFrame()
+		if err != nil || f.Type != protocol.TypeHello {
+			return
+		}
+		_ = pc.WriteJSON(protocol.TypeHello, &protocol.Hello{
+			ProtoVersion:  protocol.ProtoVersion,
+			DaemonVersion: "hello-only",
+		})
+		// Hang up: daemon_info and everything after it fails, while the
+		// handshake succeeded — exactly the state the guard decides on.
+	}()
+
+	var code int
+	stdout, _ := captureStd(t, func() {
+		code = runDoctorWith(verbOpts{configPath: cfgPath, socket: sock, json: true}, false)
+	})
+	if code != 0 && code != 1 {
+		t.Fatalf("runDoctorWith = %d, want 0 or 1", code)
+	}
+
+	var res doctorResult
+	if err := json.Unmarshal([]byte(stdout), &res); err != nil {
+		t.Fatalf("invalid doctor --json: %v\nraw: %s", err, stdout)
+	}
+	if res.DaemonLog != nil {
+		t.Errorf("daemon_log row emitted for a daemon that answered no daemon_info: %+v\n%s", res.DaemonLog, stdout)
+	}
+	if res.Version == nil || res.Version.Status != "warn" || !strings.Contains(res.Version.Detail, "couldn't fetch daemon info") {
+		t.Errorf("version row = %+v, want the warn that names the unanswered daemon_info\n%s", res.Version, stdout)
 	}
 }
 
