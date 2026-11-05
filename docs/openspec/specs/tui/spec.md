@@ -89,6 +89,37 @@ when the window size is unknown, and SHALL hold no session while attached.
   crops it to the pane, naming that viewport, rather than reflowing the tail
   into the pane's geometry
 
+### Requirement: Working-On Banner
+
+A harness that is running something SHALL show a one-line `working on:` banner:
+the description of the most recent **top-level** `Agent`/`Task` call in its
+session transcript. It appears wherever the harness is named: its row in the
+list, the peek pane's head line, and the attached status bar. State answers
+whether a harness is alive and the live activity field answers which tool it is
+in; the banner answers which piece of work, so an operator reading a triggered or
+scheduled harness does not have to attach to find out.
+
+A task launched by a subagent is one level down and SHALL NOT replace the banner:
+it names what the harness itself is working on. It SHALL be absent on a harness
+that is not in a state where it can be running something, and a list pane too
+narrow to fund a legible clip SHALL drop the field there rather than spend the
+columns on an ellipsis; the peek head and the status bar, which have the room,
+still say it.
+
+#### Scenario: What is it working on
+
+- **WHEN** a triggered or scheduled harness is working a queue and the user wants
+  to know which item
+- **THEN** the harness's row says `working on: <task description>` without
+  attaching, and the line changes when the harness starts its next top-level task
+
+#### Scenario: A delegated task does not take over the banner
+
+- **WHEN** the harness launches a subagent and that subagent launches a task of
+  its own
+- **THEN** the banner still names the task the harness launched, and updates only
+  when the harness starts another one of its own
+
 ### Requirement: Attached Mode
 
 Attached mode SHALL render the harness's actual terminal full-width/height
