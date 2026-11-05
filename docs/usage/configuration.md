@@ -1116,6 +1116,42 @@ protocol and the TUI are in [Model pins](./model-pins); the decision is
 [ADR-0026](/decisions/adr-0026-fail-closed-model-pinning) and the behaviour
 is [SPEC-0020](/specs/model-pinning/spec).
 
+## Skill repos
+
+A `[skill_repo.<name>]` table declares a git repository of skills the daemon
+serves to agents through the facade's `search_skills` and `get_skill` tools,
+and a `[skills]` table tunes serving. Both are **global config only**: a
+project `harness.toml` is refused them the same way it is refused `[server]`
+and `[telemetry]`, so a cloned repository cannot declare its own skill repo.
+With no skill repo declared, the facade registers no skill tools and creates
+no index.
+
+```toml
+[skill_repo.fleet]
+remote   = "https://gitea.stump.rocks/stump.wtf/skills-fleet"
+path     = "skills"          # where skill files live inside the repo (default)
+serve_to = ["*"]             # who may search it; globs over harness names
+public   = true              # default; distiller-side, not a serving scope
+
+[skills]
+summary_max_chars  = 1000    # get_skill summary cap (200-5000)
+retire_grace_days  = 30      # a merged skill cannot be retired before this
+retire_window_days = 60      # zero-retrieval window after the grace period
+```
+
+| Table | Key | Required | Meaning |
+| --- | --- | --- | --- |
+| `[skill_repo.<name>]` | `remote` | yes | Forge URL of the skill repository; the name may not contain `/` or `.` |
+| | `path` | no (default `skills`) | Directory inside the repo holding the skill files |
+| | `serve_to` | no (default `["*"]`) | Harness selectors admitted to search the repo; the bare `"*"` matches every harness, any other selector is a glob over qualified harness names in which `*` does not match `/` |
+| | `public` | no (default `true`) | Whether the repo is public; distiller-side, not a serving scope |
+| `[skills]` | `summary_max_chars` | no (default `1000`) | Cap on the `get_skill` summary render, 200-5000 |
+| | `retire_grace_days` | no (default `30`) | Days after merge during which a skill cannot be retired |
+| | `retire_window_days` | no (default `60`) | Zero-retrieval window after the grace; must not be shorter than `retire_grace_days` |
+
+The serving clones, the index, the scoping and the two facade tools are in
+[Skill search and retrieval](./skills).
+
 ## Trajectory harvesting & facade scope
 
 :::note Reserved, not yet active
