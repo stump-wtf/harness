@@ -219,9 +219,11 @@ func TestDaemonStatusNamesTheJournal(t *testing.T) {
 	}
 	bin := buildHarnessBinary(t)
 	env, stateHome := isolatedEnv(t)
-	// Mark the child as service-started and clear anything the runner itself
-	// inherited, so the answer comes from this test's environment.
-	env = append(env, "INVOCATION_ID=handoff-m-test", "JOURNAL_STREAM=")
+	// Give the child a real unit's environment and clear anything the runner
+	// itself inherited, so the answer comes from this test's variables:
+	// JOURNAL_STREAM is what says the journal (systemd sets it exactly when
+	// stderr connects to it); INVOCATION_ID rides along on every unit run.
+	env = append(env, "INVOCATION_ID=handoff-m-test", "JOURNAL_STREAM=8:1963214")
 
 	dir := shortSockDir(t)
 	socket := filepath.Join(dir, "h.sock")

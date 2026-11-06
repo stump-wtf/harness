@@ -47,20 +47,24 @@ func LogDestination(logFile string, getenv func(string) string, stderr io.Writer
 // the help text exists, and the live daemon's lines are in the journal
 // instead.
 //
-// systemd marks the processes it starts: JOURNAL_STREAM carries the
-// device:inode of the journal stream a unit's stdout or stderr is wired to,
-// and INVOCATION_ID names the unit's run. launchd marks nothing, and it hands
+// systemd sets JOURNAL_STREAM — the device:inode of the journal stream a
+// unit's stdout or stderr is wired to — exactly when those streams connect
+// to the journal, so it is the one marker that names this case.
+// INVOCATION_ID is set for every unit run, including a `StandardOutput=file:`
+// unit whose stderr the unit itself redirected into a plain file, so keying
+// on it would call those lines "journal" when journald holds none of them.
+// launchd marks nothing, and it hands
 // the process an already-redirected stderr, which reads as an ordinary file
 // and stays spelled `stderr` here — the plist names that file, not us.
 //
 // A terminal stderr wins either way: an interactive shell inside a systemd
-// login session carries those variables without the journal holding this
-// process's lines.
+// login session inherits the unit's environment without the journal holding
+// this process's lines.
 func stderrIsJournal(getenv func(string) string, stderr io.Writer) bool {
 	if getenv == nil {
 		getenv = os.Getenv
 	}
-	if getenv("JOURNAL_STREAM") == "" && getenv("INVOCATION_ID") == "" {
+	if getenv("JOURNAL_STREAM") == "" {
 		return false
 	}
 	return !isCharDevice(stderr)

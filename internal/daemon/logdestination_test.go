@@ -55,8 +55,12 @@ func TestLogDestinationNamesTheRunningSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	systemd := map[string]string{"INVOCATION_ID": "a1b2c3"}
+	systemd := map[string]string{"INVOCATION_ID": "a1b2c3", "JOURNAL_STREAM": "8:1963214"}
 	journalStream := map[string]string{"JOURNAL_STREAM": "8:1963214"}
+	// INVOCATION_ID alone means only "systemd started me", which is equally
+	// true of a StandardOutput=file: unit whose stderr the unit redirected
+	// into a plain file; JOURNAL_STREAM is the marker that means the journal.
+	invocationOnly := map[string]string{"INVOCATION_ID": "a1b2c3"}
 
 	cases := []struct {
 		name    string
@@ -68,7 +72,8 @@ func TestLogDestinationNamesTheRunningSurface(t *testing.T) {
 		{name: "log file", logFile: "/var/log/harness/daemon.log", want: "/var/log/harness/daemon.log"},
 		{name: "relative log file is named where it can be followed", logFile: rel, want: abs},
 		{name: "service manager owns stderr", env: systemd, want: LogDestinationJournal},
-		{name: "journal stream device recorded", env: journalStream, want: LogDestinationJournal},
+		{name: "journal stream without an invocation", env: journalStream, want: LogDestinationJournal},
+		{name: "unit redirected stderr to a file", env: invocationOnly, want: LogDestinationStderr},
 		{name: "foreground daemon", want: LogDestinationStderr},
 	}
 	for _, tc := range cases {
@@ -80,9 +85,9 @@ func TestLogDestinationNamesTheRunningSurface(t *testing.T) {
 	}
 
 	// A terminal wins over the environment: a shell inside a systemd login
-	// session carries INVOCATION_ID without the journal holding this process's
-	// lines, and pointing an operator at journalctl for those lines would be
-	// the same wrong answer this issue is about.
+	// session inherits the unit's markers without the journal holding this
+	// process's lines, and pointing an operator at journalctl for those lines
+	// would be the same wrong answer this issue is about.
 	if got := LogDestination("", fixedEnv(systemd), terminal); got != LogDestinationStderr {
 		t.Errorf("terminal stderr under systemd = %q, want %q", got, LogDestinationStderr)
 	}
