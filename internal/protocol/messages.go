@@ -162,7 +162,14 @@ const (
 	// executables a shell tool call runs, as agent-trace names them. Additive
 	// only: an older daemon omits the field and a newer CLI prints the entry
 	// without them; an older client ignores what it does not decode.
-	ProtoMinor = 30
+	// ProtoMinor 31 added LogDestination on DaemonInfo
+	// (stump.wtf/harness#583): the log surface the *running* daemon's own
+	// lines land in, so `doctor` and `daemon status` can answer "where does
+	// this daemon log" from the process instead of re-deriving it from config
+	// or from a file that may be a stale leftover. Additive only: an older
+	// daemon leaves it empty, and the CLI then says the daemon did not answer
+	// rather than guessing from the filesystem.
+	ProtoMinor = 31
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -1193,6 +1200,13 @@ type DaemonInfo struct {
 	// Scenario "The ledger cannot be written", REQ-7 Scenario "A lost ledger
 	// file".
 	RunLedger *RunLedgerInfo `json:"run_ledger,omitempty"`
+	// LogDestination is where this daemon's own log lines land, as the running
+	// process knows it (ProtoMinor 31, stump.wtf/harness#583): the absolute
+	// path it opened for `--log-file`, `journal (stderr)` when a service
+	// manager owns its stderr, or `stderr`. Empty means the daemon predates
+	// the field — never "it logs nowhere". Governing: ADR-0001 (the daemon
+	// logs to stderr and lets the service manager own the surface).
+	LogDestination string `json:"log_destination,omitempty"`
 }
 
 // RunLedgerInfo is what SPEC-0021's admission met of the run ledger.

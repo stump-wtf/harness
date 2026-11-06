@@ -58,7 +58,7 @@ the same protocol version.
 harness list                  # table of every harness: name, state, enabled, restarts, PID
 harness ps                    # inside a project: only that project's harnesses
 harness describe <name>       # one harness in detail (state, harness kind, backend, flapping, ...)
-harness daemon status         # daemon version, proto, PID, uptime, socket, active profile
+harness daemon status         # daemon version, proto, PID, uptime, socket, active profile, where it logs
 ```
 
 `list` and `describe` also surface **schedule metadata** for scheduled
@@ -729,8 +729,8 @@ file schema.
 ```sh
 harness daemon                # run the supervisor in the foreground (== daemon run)
 harness daemon stop           # ask the running daemon to shut down (SIGTERM)
-harness daemon status         # one-shot: daemon info
-harness daemon --detach       # fork into the background (dev convenience)
+harness daemon status         # one-shot: daemon info, including where that daemon logs
+harness daemon --detach       # fork into the background (dev convenience; its log file is that run's own)
 ```
 
 Daemon flags: `--config`, `--socket`, `--scrollback-bytes SIZE` (per-harness

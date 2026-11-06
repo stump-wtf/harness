@@ -94,6 +94,12 @@ tail -f /tmp/harness-daemon.log                   # daemon log
 launchctl bootout gui/$(id -u)/dev.harness.daemon # stop (survives reboot of the plist)
 ```
 
+That file is the one this plist redirects stderr to, not a surface harness
+chose. To confirm what the daemon you are talking to actually uses, ask it:
+`harness daemon status` prints a `logs` field, and `harness doctor` a
+`daemon_log` row. See
+[Observability → Where the daemon's own log lives](../guides/observability#where-the-daemons-own-log-lives).
+
 Two launchd specifics worth knowing:
 
 - **No login shell, no environment.** A LaunchAgent does not source your

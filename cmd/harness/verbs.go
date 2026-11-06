@@ -601,6 +601,16 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 	t.Row("pid", fmt.Sprintf("%d", di.PID))
 	t.Row("uptime", fmt.Sprintf("%ds", di.UptimeSeconds))
 	t.Row("socket", t.faintPlain(di.Socket))
+	// Which surface this daemon's own lines land in, answered by the running
+	// process rather than re-derived from config or guessed from a file that
+	// may be a leftover of some earlier `--detach`
+	// (stump.wtf/harness#583). An empty answer is a daemon predating the
+	// field, and says so: a missing row would read as though nothing logged.
+	logs := di.LogDestination
+	if logs == "" {
+		logs = "not reported by this daemon"
+	}
+	t.Row("logs", t.faintPlain(logs))
 	t.Row("harnesses", fmt.Sprintf("%d", di.Harnesses))
 	if di.ActiveProfile != "" {
 		profileLabel := di.ActiveProfile
