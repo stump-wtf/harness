@@ -32,3 +32,19 @@ f1ee2dc8fe82f7bbe06709ca05c5036ef6a5c700:internal/relay/fake_switchboard_test.go
 # version assembles the token at run time. Unmodified history, not a live
 # secret.
 86774c921b32937f191ce3ddad3ddfc54a55c17d:internal/observe/stream_test.go:generic-api-key:173
+
+# 6a1b5bfc is a mid-branch commit of the closed #580 (unmerged; the work
+# landed as #584). Its trigger_test.go fixture was a literal
+# SB_NOTIFY_SECRET shape; a later commit on the same branch assembles the
+# secret at run time, so no commit reachable from main carries the
+# literal. It is reachable only through the retained refs/pull/580/head.
+# Synthetic fixture, not a live credential.
+6a1b5bfc5d75e9e5814e0e4c12d1d299869b1240:internal/config/trigger_test.go:generic-api-key:158
+
+# ca2ed8c8 is a mid-branch commit of the closed #344 (unmerged; the work
+# landed as #608). Its buffer_test.go row was a literal credential shape
+# for the redaction tests; a later commit on the same branch derives it
+# from the fixture, so no commit reachable from main carries the literal.
+# It is reachable only through the retained refs/pull/344/head.
+# Synthetic fixture, not a live credential.
+ca2ed8c802baa597274df30aee3d2e57dfc0e4c9:internal/tui/chatroom/buffer_test.go:generic-api-key:132
