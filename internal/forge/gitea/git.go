@@ -2,10 +2,12 @@ package gitea
 
 // Git Plumbing
 //
-// The two Forge methods REST cannot answer. They are the shared content-addressed
-// plumbing in internal/forge/gitcache seen from Gitea: who the train commit is
-// authored by comes from the token's user, and the clone authenticates with the
-// same header the REST client sends.
+// The three Forge methods REST cannot answer. They are the shared
+// content-addressed plumbing in internal/forge/gitcache seen from Gitea: who
+// the train commit is authored by comes from the token's user, and the clone
+// authenticates with the same header the REST client sends. TreePaths lists
+// what a commit holds under a directory, which REST can answer only with a
+// recursive tree read (ADR-0063).
 //
 // Governing: ADR-0032 option A1, SPEC-0025 REQ-4, REQ-8, REQ-12.
 
@@ -40,4 +42,15 @@ func (c *Client) TreeOf(ctx context.Context, repo, sha string) (string, error) {
 		return "", err
 	}
 	return c.git.TreeOf(ctx, repo, sha)
+}
+
+// TreePaths lists the files under prefixes at commit sha, sorted. The train
+// uses it to read a whole watched directory, which a diff of one head cannot
+// show: the other claimant of a sequence number is usually not in the diff at
+// all (ADR-0063).
+func (c *Client) TreePaths(ctx context.Context, repo, sha string, prefixes []string) ([]string, error) {
+	if _, err := repoPath(repo); err != nil {
+		return nil, err
+	}
+	return c.git.TreePaths(ctx, repo, sha, prefixes)
 }

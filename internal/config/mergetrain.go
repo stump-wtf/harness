@@ -38,16 +38,20 @@ import (
 // rawMergeTrain mirrors [mergetrain] before validation. Tuning keys are
 // pointers so an absent key takes its default and an explicit zero is refused.
 type rawMergeTrain struct {
-	Enabled       bool     `toml:"enabled"`
-	Mode          *string  `toml:"mode"`
-	Repos         []string `toml:"repos"`
-	BaseBranch    *string  `toml:"base_branch"`
-	PollInterval  *string  `toml:"poll_interval"`
-	CITimeout     *string  `toml:"ci_timeout"`
-	Batch         *int64   `toml:"batch"`
-	FlakeCoolDown *string  `toml:"flake_cool_down"`
-	ForgeBaseURL  string   `toml:"forge_base_url"`
-	ForgeTokenEnv string   `toml:"forge_token_env"`
+	Enabled      bool     `toml:"enabled"`
+	Mode         *string  `toml:"mode"`
+	Repos        []string `toml:"repos"`
+	BaseBranch   *string  `toml:"base_branch"`
+	PollInterval *string  `toml:"poll_interval"`
+	CITimeout    *string  `toml:"ci_timeout"`
+	Batch        *int64   `toml:"batch"`
+	// SequencePaths replaces the watched directories of the sequence check
+	// (ADR-0063). A pointer, like the other tuning keys: an absent key keeps
+	// the defaults, an explicit empty list disables the check (REQ-19).
+	SequencePaths *[]string `toml:"sequence_paths"`
+	FlakeCoolDown *string   `toml:"flake_cool_down"`
+	ForgeBaseURL  string    `toml:"forge_base_url"`
+	ForgeTokenEnv string    `toml:"forge_token_env"`
 
 	// GitHub is the train's second forge, decoded flat rather than as a table
 	// so a repo's forge stays one prefix on its repos entry (ADR-0061).
@@ -62,7 +66,20 @@ type rawMergeTrain struct {
 var (
 	envNameRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	repoNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	// sequencePathRe is a repo-relative directory: no leading slash, no
+	// backslash, nothing empty.
+	sequencePathRe = regexp.MustCompile(`^[^/.\\][^\\]*$`)
 )
+
+// hasDotSegment reports whether p contains a "." or ".." path segment.
+func hasDotSegment(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "." || seg == ".." || seg == "" {
+			return true
+		}
+	}
+	return false
+}
 
 // buildMergeTrain validates rm into a core.MergeTrainConfig.
 func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (core.MergeTrainConfig, error) {
@@ -132,6 +149,21 @@ func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (
 		default:
 			hasDefaultRepo = true
 		}
+	}
+
+	if rm.SequencePaths != nil {
+		var paths []string
+		for _, p := range *rm.SequencePaths {
+			p = strings.TrimSuffix(strings.TrimSpace(p), "/")
+			if p == "" || !sequencePathRe.MatchString(p) || hasDotSegment(p) {
+				return fail("sequence_paths", "must be a repo-relative directory such as \"docs/adrs\", with no leading slash and no \".\" or \"..\" segment (got %q)", p)
+			}
+			if slices.Contains(paths, p+"/") {
+				return fail("sequence_paths", "lists %q twice", p)
+			}
+			paths = append(paths, p+"/")
+		}
+		mc.SequencePaths = paths
 	}
 
 	durations := []struct {

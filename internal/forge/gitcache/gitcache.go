@@ -294,6 +294,41 @@ func (c *Cache) TreeOf(ctx context.Context, repo, sha string) (string, error) {
 	return c.revParse(ctx, dir, sha+"^{tree}")
 }
 
+// TreePaths lists the files under prefixes at commit sha, sorted. The train
+// uses it to read a whole watched directory, which a diff of one head cannot
+// show: the other claimant of a sequence number is usually not in the diff at
+// all (ADR-0063).
+func (c *Cache) TreePaths(ctx context.Context, repo, sha string, prefixes []string) ([]string, error) {
+	unlock := c.lockRepo(repo)
+	defer unlock()
+	dir, err := c.clone(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := c.git(ctx, dir, Identity{}, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		if _, err := c.git(ctx, dir, Identity{}, "fetch", "--quiet", "--no-tags", "--prune", c.GitURL(repo), headsRefspec); err != nil {
+			return nil, err
+		}
+	}
+	args := []string{"ls-tree", "-r", "-z", "--name-only", sha}
+	if len(prefixes) > 0 {
+		args = append(args, "--")
+		for _, p := range prefixes {
+			args = append(args, strings.TrimSuffix(p, "/"))
+		}
+	}
+	out, err := c.git(ctx, dir, Identity{}, args...)
+	if err != nil {
+		return nil, err
+	}
+	paths := strings.FieldsFunc(string(out), func(r rune) bool { return r == 0 })
+	for i, p := range paths {
+		paths[i] = strings.TrimSuffix(p, "\n")
+	}
+	slices.Sort(paths)
+	return paths, nil
+}
+
 // pullRef is the private ref a PR head is fetched into.
 func pullRef(pr int) string { return "refs/mergetrain/pull/" + strconv.Itoa(pr) }
 

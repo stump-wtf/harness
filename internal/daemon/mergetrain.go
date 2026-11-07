@@ -218,6 +218,7 @@ func StartMergeTrain(ctx context.Context, o MergeTrainOptions) (*MergeTrain, err
 			CITimeout:     c.CITimeout,
 			Batch:         c.Batch,
 			FlakeCoolDown: c.FlakeCoolDown,
+			SequencePaths: c.SequencePaths,
 			LockDir:       root,
 			Log:           log,
 			TrainPollMin:  o.TrainPollMin,

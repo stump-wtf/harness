@@ -22,7 +22,10 @@ package core
 // ADR-0056 is accepted: a proposed ADR must not switch behaviour on by
 // itself, so the runner-flake retry is opt-in per config (review on #1017).
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // Merge train defaults.
 const (
@@ -46,6 +49,15 @@ const (
 	DefaultMergeTrainFlakeCoolDown time.Duration = 0
 )
 
+// DefaultMergeTrainSequencePaths are the directories whose files carry a
+// sequence number in their names, and where a collision between two pull
+// requests lands a duplicate instead of a conflict (ADR-0063).
+var DefaultMergeTrainSequencePaths = []string{
+	"docs/adrs/",
+	"docs/openspec/specs/",
+	"migrations/",
+}
+
 // MergeTrainConfig is the global [mergetrain] table.
 type MergeTrainConfig struct {
 	Enabled      bool
@@ -61,6 +73,9 @@ type MergeTrainConfig struct {
 	// (SPEC-0025 REQ-18). Zero turns the retry off, leaving a red attempt to
 	// wait for the base branch or the head to move.
 	FlakeCoolDown time.Duration
+	// SequencePaths are the directories the train watches for two files
+	// claiming the same sequence number (ADR-0063). Empty disables the check.
+	SequencePaths []string
 	// ForgeBaseURL is the forge's root, e.g. "https://gitea.stump.rocks".
 	ForgeBaseURL string
 	// ForgeTokenEnv is the NAME of the environment variable holding the
@@ -105,5 +120,6 @@ func DefaultMergeTrainConfig() MergeTrainConfig {
 		CITimeout:     DefaultMergeTrainCITimeout,
 		Batch:         DefaultMergeTrainBatch,
 		FlakeCoolDown: DefaultMergeTrainFlakeCoolDown,
+		SequencePaths: slices.Clone(DefaultMergeTrainSequencePaths),
 	}
 }

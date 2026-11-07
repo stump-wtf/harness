@@ -46,6 +46,7 @@ poll_interval = "90s"
 ci_timeout = "45m"
 batch = 3
 flake_cool_down = "90s"
+sequence_paths = ["docs/adrs", "migrations/"]
 forge_base_url = "https://gitea.stump.rocks/"
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 `
@@ -58,8 +59,29 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 		!slices.Equal(mc.Repos, []string{"stump.wtf/harness", "stump.wtf/switchboard"}) ||
 		mc.PollInterval != 90*time.Second || mc.CITimeout != 45*time.Minute || mc.Batch != 3 ||
 		mc.FlakeCoolDown != 90*time.Second ||
+		!slices.Equal(mc.SequencePaths, []string{"docs/adrs/", "migrations/"}) ||
 		mc.ForgeBaseURL != "https://gitea.stump.rocks" || mc.ForgeTokenEnv != "HARNESS_MERGETRAIN_TOKEN" {
 		t.Fatalf("parsed = %+v", mc)
+	}
+}
+
+// SPEC-0025 REQ-19: an explicit empty list disables the sequence check, and an
+// absent key keeps the watched defaults. That difference is why the key is a
+// pointer, like the other tuning keys.
+func TestMergeTrainSequencePathsEmptyDisables(t *testing.T) {
+	cfg, err := Parse([]byte("[mergetrain]\nsequence_paths = []\n"), "t.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.MergeTrain.SequencePaths) != 0 {
+		t.Fatalf("sequence_paths = [] watches %v, want the check disabled", cfg.MergeTrain.SequencePaths)
+	}
+	absent, err := Parse([]byte("[mergetrain]\n"), "t.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(absent.MergeTrain.SequencePaths, core.DefaultMergeTrainSequencePaths) {
+		t.Fatalf("absent key watches %v, want the defaults", absent.MergeTrain.SequencePaths)
 	}
 }
 
@@ -115,6 +137,10 @@ func TestMergeTrainRejects(t *testing.T) {
 		{"negative batch", "[mergetrain]\nbatch = -2\n", `"batch": must be a whole number of at least 1`},
 		{"string batch", "[mergetrain]\nbatch = \"2\"\n", "batch"},
 		{"float batch", "[mergetrain]\nbatch = 2.5\n", "batch"},
+		{"absolute sequence path", "[mergetrain]\nsequence_paths = [\"/etc\"]\n", "sequence_paths"},
+		{"parent hop in sequence path", "[mergetrain]\nsequence_paths = [\"docs/../secrets\"]\n", "sequence_paths"},
+		{"empty sequence path", "[mergetrain]\nsequence_paths = [\"  \"]\n", "sequence_paths"},
+		{"dup sequence path", "[mergetrain]\nsequence_paths = [\"docs/adrs\", \"docs/adrs/\"]\n", "twice"},
 		{"unknown key", "[mergetrain]\nenabeld = true\n", "enabeld"},
 		{"duplicate table", "[mergetrain]\n[mergetrain]\n", "already been defined"},
 	}

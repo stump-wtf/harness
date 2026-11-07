@@ -80,6 +80,14 @@ func (c *Client) TreeOf(ctx context.Context, repo, sha string) (string, error) {
 	return c.git.TreeOf(ctx, repo, sha)
 }
 
+// TreePaths lists the files under prefixes at commit sha, sorted (ADR-0063).
+func (c *Client) TreePaths(ctx context.Context, repo, sha string, prefixes []string) ([]string, error) {
+	if _, err := repoPath(repo); err != nil {
+		return nil, err
+	}
+	return c.git.TreePaths(ctx, repo, sha, prefixes)
+}
+
 // openGatePR opens (or reuses) the draft pull request that gates spec.Branch.
 func (c *Client) openGatePR(ctx context.Context, repo, rp string, spec forge.TrainSpec) (int, error) {
 	num, err := c.gatePRNumber(ctx, repo, rp, spec.Branch)
