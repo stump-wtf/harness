@@ -6,7 +6,7 @@ extends: []
 related: []
 ---
 
-# ADR-0063: The local gate runs the secret scan, first
+# ADR-0064: The local gate runs the secret scan, first
 
 > **Not yet accepted.** Proposed by the `s` handoff lane in the PR for
 > stump.wtf/harness#1015. The Makefile change in that PR implements it;
