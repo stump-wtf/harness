@@ -81,6 +81,56 @@ func (c *Client) Restart(name string) (protocol.HarnessInfo, error) {
 	return c.harnessOp(protocol.OpRestart, name)
 }
 
+// StopGraceful and RestartGraceful are Stop and Restart asked to wait for the
+// harness's current turn to end before signaling it, bounded by gracefulFor (a Go
+// duration string; "0" takes the harness's configured shutdown timeout).
+// Governing: SPEC-0012 REQ "Graceful Shutdown" as extended by
+// stump.wtf/harness#871; the daemon replies with the harness's state once the
+// wait is over, so the call blocks for as long as the wait lasts.
+func (c *Client) StopGraceful(name, gracefulFor string) (protocol.HarnessInfo, error) {
+	return c.gracefulOp(protocol.OpStop, name, gracefulFor)
+}
+func (c *Client) RestartGraceful(name, gracefulFor string) (protocol.HarnessInfo, error) {
+	return c.gracefulOp(protocol.OpRestart, name, gracefulFor)
+}
+
+// ArmShutdown arms the running daemon's shutdown drain: its next shutdown lets
+// every resident harness finish the turn it is in, bounded by gracefulFor, before
+// stopping anything (stump.wtf/harness#871). It changes nothing about this
+// daemon process, which is why `harness daemon stop --graceful` arms it and then
+// sends the usual SIGTERM.
+func (c *Client) ArmShutdown(gracefulFor string) error {
+	_, err := c.call(protocol.ControlReq{Op: protocol.OpArmShutdown, Graceful: gracefulFor})
+	return err
+}
+
+// Drain arms the operator drain gate on every named harness
+// (stump.wtf/harness#828): no source starts a new run from then on, the run
+// in flight finishes untouched, and a queued firing is held for Undrain
+// unless discard is set. With wait it holds the reply until every drained
+// harness is idle, bounded by timeout (a Go duration string; empty means no
+// deadline); a timeout answers with protocol.ErrDrainTimeout. It returns
+// each named harness's fresh state.
+func (c *Client) Drain(names []string, discard, wait bool, timeout string) ([]protocol.HarnessInfo, error) {
+	resp, err := c.call(protocol.ControlReq{Op: protocol.OpDrain, Names: names, Discard: discard, Wait: wait, Timeout: timeout})
+	if err != nil {
+		return nil, err
+	}
+	var out []protocol.HarnessInfo
+	return out, json.Unmarshal(resp.Data, &out)
+}
+
+// Undrain clears the drain gate on every named harness and releases the
+// firings the drain held (stump.wtf/harness#828).
+func (c *Client) Undrain(names []string) ([]protocol.HarnessInfo, error) {
+	resp, err := c.call(protocol.ControlReq{Op: protocol.OpUndrain, Names: names})
+	if err != nil {
+		return nil, err
+	}
+	var out []protocol.HarnessInfo
+	return out, json.Unmarshal(resp.Data, &out)
+}
+
 // StartFor starts name under an after-hours lease of the given duration
 // (SPEC-0012 REQ "After-Hours Lease"): the daemon persists the lease end
 // before starting and rejects the op when no lease applies to the target
@@ -107,6 +157,16 @@ func (c *Client) Disable(name string) (protocol.HarnessInfo, error) {
 // harnessOp runs a single-harness op returning a HarnessInfo.
 func (c *Client) harnessOp(op protocol.Op, name string) (protocol.HarnessInfo, error) {
 	resp, err := c.call(protocol.ControlReq{Op: op, Name: name})
+	if err != nil {
+		return protocol.HarnessInfo{}, err
+	}
+	var out protocol.HarnessInfo
+	return out, json.Unmarshal(resp.Data, &out)
+}
+
+// gracefulOp is harnessOp carrying a graceful-wait cap (see StopGraceful).
+func (c *Client) gracefulOp(op protocol.Op, name, gracefulFor string) (protocol.HarnessInfo, error) {
+	resp, err := c.call(protocol.ControlReq{Op: op, Name: name, Graceful: gracefulFor})
 	if err != nil {
 		return protocol.HarnessInfo{}, err
 	}

@@ -26,6 +26,7 @@ package metrics
 // @joestump-agent 09/21/2026 - Added for harness#356.
 
 import (
+	"sort"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -52,6 +53,9 @@ var (
 	descCalls = prometheus.NewDesc("harness_model_calls_total",
 		"Model calls observed in the agent's transcript: a tool call is a success, an agent error mark an error.",
 		[]string{"harness", "outcome"}, nil)
+	descProgramCalls = prometheus.NewDesc("harness_agent_program_calls_total",
+		"Shell tool calls by the program they run and their outcome (ok|error). A program label is a lowercase executable name of at most 32 runes; anything else, and every name past 64 for a harness, is counted as program=\"other\". A program never counted is absent, not zero.",
+		[]string{"harness", "program", "outcome"}, nil)
 	descErrors = prometheus.NewDesc("harness_model_call_errors_total",
 		"Failed model calls by class (quota|auth|timeout|transport|other), classified where observed.",
 		[]string{"harness", "class"}, nil)
@@ -108,7 +112,7 @@ var (
 
 var allDescs = []*prometheus.Desc{
 	descState, descRestarts, descConsecutive, descTransitions,
-	descCalls, descErrors, descUnclassified, descLastSuccess,
+	descCalls, descProgramCalls, descErrors, descUnclassified, descLastSuccess,
 	descSessionsStarted, descSessionActive, descScheduledRuns, descNextRun,
 	descRenderFailures,
 	descCollectionErrors, descOverflowed,
@@ -244,6 +248,10 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 			for k, v := range s.renderFailures {
 				cp.renderFailures[k] = v
 			}
+			cp.programs = make(map[string][2]uint64, len(s.programs))
+			for k, v := range s.programs {
+				cp.programs[k] = v
+			}
 			counted[lbl] = cp
 		}
 	}
@@ -294,6 +302,21 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 
 		if a.observable && reachable {
 			counter(descCalls, float64(s.calls[0]), lbl, outcomeSuccess)
+			// A program counted at all reports both outcomes, so increase()
+			// sees its first error; one never counted is absent, not zero
+			// (REQ-6). Named order is sorted so scrapes are comparable.
+			if len(s.programs) > 0 {
+				names := make([]string, 0, len(s.programs))
+				for name := range s.programs {
+					names = append(names, name)
+				}
+				sort.Strings(names)
+				for _, name := range names {
+					c := s.programs[name]
+					counter(descProgramCalls, float64(c[0]), lbl, name, outcomeOK)
+					counter(descProgramCalls, float64(c[1]), lbl, name, outcomeError)
+				}
+			}
 			// Omitted, not zeroed, where the adapter's errors never reach
 			// the observer (ErrorsObservable, REQ-6).
 			if a.errorsObservable {

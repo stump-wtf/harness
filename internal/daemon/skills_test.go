@@ -30,7 +30,7 @@ func TestSkillsStatusOpAnswersWithoutManager(t *testing.T) {
 func TestSkillsStatusOpReportsManagerState(t *testing.T) {
 	mgr := skillserve.NewManager([]core.SkillRepo{
 		{Name: "go-stack", Remote: "unused", Path: "skills", ServeTo: []string{"*"}, Public: true},
-	}, filepath.Join(t.TempDir(), "index.db"), filepath.Join(t.TempDir(), "counts.db"), 30, 60)
+	}, filepath.Join(t.TempDir(), "index.db"), filepath.Join(t.TempDir(), "counts.db"), 30, 60, 0)
 	td := newTestDaemon(t, sleeperTOML, func(o *Options) { o.Skills = mgr })
 	c := td.dial(t, nil)
 	data, err := c.SkillsStatus()

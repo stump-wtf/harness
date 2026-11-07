@@ -52,13 +52,42 @@ The client warns when its own build is older or newer than the daemon's
 (client/daemon skew) — after upgrading, restart the daemon so both sides speak
 the same protocol version.
 
+### Taking a harness out of service
+
+`stop` disables a harness and stops the run in flight. `drain` takes it out of
+service without touching that run: no source starts a new one (cron, a channel,
+a webhook, `harness trigger`, a `catch_up` pass, a self-triggered queue), and
+whatever the run in flight earns for `on_overlap = "queue"` stays queued.
+
+```sh
+harness drain <name>              # no new runs; the run in flight finishes
+harness drain <name> --discard    # ... and drop the queued firing instead of holding it
+harness drain --all               # every harness the daemon lists
+harness undrain <name>            # back in service; starts the firing the drain held
+```
+
+A drained harness reads `draining` while its run is still going and `drained`
+once it is idle, in `describe` and in `--json` (the `drain` field, next to
+`hold_reasons: ["drain"]`). The gate is runtime state, so a daemon restart
+resumes every harness.
+
+`--wait` is the half a script uses:
+
+```sh
+harness drain --all && harness drain --wait --timeout 30m && brew services restart harness
+```
+
+`--wait` blocks until every drained harness is idle. A `--timeout` that passes
+first exits non-zero (`drain_timeout`) with the gate still armed, so the
+`&&` stops before the restart rather than SIGTERMing an agent mid-run.
+
 ## Listing & inspection
 
 ```sh
 harness list                  # table of every harness: name, state, enabled, restarts, PID
 harness ps                    # inside a project: only that project's harnesses
 harness describe <name>       # one harness in detail (state, harness kind, backend, flapping, ...)
-harness daemon status         # daemon version, proto, PID, uptime, socket, active profile
+harness daemon status         # daemon version, proto, PID, uptime, socket, active profile, where it logs
 ```
 
 `list` and `describe` also surface **schedule metadata** for scheduled
@@ -126,6 +155,28 @@ a daemon restart. Windows that pass while stopped leave a skipped run record
 instead of firing. A harness with trigger sources reads `disarmed` the same
 way while its schedule is paused; event sources still fire, and the SCHEDULE
 column keeps listing them.
+
+Every stop path can wait for the turn in progress instead of cutting it short,
+with `--graceful`:
+
+```bash
+harness stop demo --graceful         # wait for the turn, capped by hours_shutdown_timeout
+harness stop demo --graceful=2m      # ... and never longer than two minutes
+harness restart demo --graceful=5m   # drain the turn, then start it again
+harness daemon stop --graceful       # every harness drains before the daemon exits
+```
+
+This is the operating-hours graceful close (ADR-0019) asked for by hand rather than
+by a window closing, so it stops the harness at the first of: the agent's turn
+ending and settling, its output going quiet for two minutes where the adapter has
+no turn markers to settle on, or the cap. Without the flag nothing waits, and the
+stop is the `SIGTERM` → `stop_grace` → `SIGKILL` sequence it has always been; a
+plain `SIGTERM` to the daemon, including `systemctl stop`, keeps that timing too,
+since a signal carries no arguments. A harness whose agent cannot be attributed to
+a session (a `generic` command, an ambiguous workdir) degrades the way the hours
+gate already degrades: it stops at once, and its durable log says graceful was
+unavailable. The command blocks for as long as the wait takes, so prefer an
+explicit cap in scripts.
 
 A harness fired by trigger sources (`triggers`, see
 [Trigger sources](#trigger-sources)) is a one-shot too, and reads the same
@@ -204,6 +255,38 @@ TRIGGERS column shows each source with that source's state
 (`webhook.ci listening, channel.sb backoff`), so a job that never runs starts
 its explanation in the row; a harness with no `schedule` shows no next
 window.
+
+### Where TOKENS and COST come from
+
+The TOKENS and COST cells of `--wide` are the usage folded into the run's
+ledger record at run end (SPEC-0022 REQ-8). A run's usage can come from two
+sources, and the two must never count the same run twice:
+
+- **The run's own stream.** A [stream-json one-shot](./configuration#stream-json-one-shots-run-without-a-terminal)
+  (a pipe run) writes `jobs/<name>/<run_id>.stream.jsonl`. When the run ends,
+  the daemon reads that sealed stream once and folds its final `result`
+  record — the agent's own account of the run's tokens and, when the agent
+  recorded one, its cost — into the record with `cost_source = "recorded"`
+  (ADR-0033). A pipe run has no transcript for the observer to read, so this
+  is how a one-shot's usage reaches the ledger at all.
+- **The transcript.** A run the observer watches through a
+  [`transcripts` binding](./configuration#binding-transcripts) can also carry
+  usage from the agent's transcript. The observer's usage items are not read
+  yet, so today the stream is the only source that folds usage in.
+
+The stream's final `result` covers the whole run exactly as a transcript's
+report would, so the no-double-count rule is binary: a run that already
+carries folded usage skips the stream's. A run folds nothing — and shows `—`
+in both cells rather than a zero it is not — when it has no stream file (a
+PTY run, or a spawn that never opened one) or its stream ends without a
+`result` (the process was killed before it finished).
+
+The TOKENS cell sums input and output tokens. COST prints with its source
+when that source is not the recorded one: a recorded cost prints bare, a cost
+the daemon priced from [`[budget]` prices](./configuration#run-budgets) prints
+with `priced`, and a run whose cost no one could resolve prints `?` (ADR-0027).
+`--json` carries the same totals per run — `tokens`, `cost_usd`,
+`cost_source` and `models` — as the run's `closed` ledger line.
 
 ## Trigger sources
 
@@ -316,12 +399,30 @@ never silently lose context.
 
 A [stream-json one-shot](./configuration#stream-json-one-shots-run-without-a-terminal)
 (a `claude-code` prompt harness) has no terminal, and its stdout is not in its
-durable log. `harness logs <name> --raw` shows that log's lifecycle and stderr
-lines, with a note saying where the output went. `harness logs <name> --run N
---raw` prints run N's `.stream.jsonl` tail, each line cut at 64 KiB, and once
-the run has ended, its run log after it, each under a `==> path <==` header.
-`harness trigger <name> --wait` streams the same text as the run goes. The file
-itself is whole: read it with `jq` for anything longer.
+durable log: for a run that has a stream file, `jobs/<name>/<run_id>.stream.jsonl`
+is the run's output. `harness logs` renders that stream readably instead of
+showing raw masked JSON, as the same entries a traced run's session gets: a
+`session` line (short id, then the agent, model and title when the stream
+recorded them), one line per classified tool call (a read or an edit names the
+file), a line per mark, and the run's `result` line with its outcome, turns,
+duration and cost, then its final answer or first error. In the terminal and
+in the dashboard preview the `result` line is mint on success and coral on
+failure, and the structured view notes that the entries are rendered from the
+stream file because no agent-trace session is attributable to the run.
+
+Entries keep their stream order, and their ids are stable across polls, so a
+following view — `harness trigger <name> --wait` as the run goes — prints each
+entry once, in order. Every field is masked again at read time: the file was
+masked when it was written, and redaction rules may have grown since (ADR-0008).
+The file on disk is never rewritten.
+
+`harness logs <name> --raw` shows the durable log's lifecycle and stderr
+lines, with a note saying where the output went. With `--run N` it prints run
+N's stream rendering — or, when the stream parses to nothing, its raw masked
+tail, each line shown cut at 64 KiB and the whole tail at 8 MiB — and, once
+the run has ended, its run log after it, each under a `==> path <==` header. A
+closed run's stream is zstd-compressed, and the view reads it transparently.
+The file itself is whole: read it with `jq` for anything longer.
 
 `harness logs` reads the daemon's files for you, compressed or not. A rotated
 backup and a closed run's log and stream are stored zstd-compressed
@@ -390,6 +491,90 @@ read it. This matters because `harness logs` deliberately records only
 full-screen prompt that repaints in place never scrolls, so it never reaches
 the log. When a screen has never received any output, `capture` answers
 `no screen` rather than pretending it is blank.
+
+## MCP server (`harness mcp`)
+
+```sh
+harness mcp                     # read-only tools over stdio
+harness mcp --allow-control     # also serve the tools that change state
+harness --socket PATH mcp       # serve a daemon other than the default one
+```
+
+`mcp` serves Harness's control plane as an [MCP](https://modelcontextprotocol.io)
+server over stdio, so an agent drives the daemon with named tools instead of a
+shell loop over `harness list`, `runs`, `logs` and `trigger`. It is a thin client
+like every other verb ([ADR-0002](/decisions/adr-0002-daemon-client-architecture)):
+each tool delegates to the same control call its verb makes, so a tool can never
+show more than the CLI does, and there is no second implementation to keep in
+step. It adds no listener and no trust boundary: whoever can reach the daemon
+socket can already do everything the read tools report.
+
+An agent's configuration launches it the way it launches any stdio server:
+
+```toml
+# The agent CLI starts and stops this process; the session ends when it closes
+# the pipe.
+command = "harness"
+args = ["mcp"]
+```
+
+### Tools
+
+| Tool | Returns |
+| --- | --- |
+| `harness_list` | every harness with state, enabled/held flags and last exit |
+| `harness_describe` | one harness in detail (config, state, children, sessions) |
+| `harness_runs` | run history: outcome, exit, duration, trigger, skip reason; with no `name`, across all harnesses with the ledger's filters |
+| `harness_logs` | one run's output, `summary` or `raw` (see below) |
+| `harness_jobs` | triggered harnesses with sources, next run, recent results |
+| `harness_triggers` | trigger sources with state, last event and error, counters |
+| `harness_daemon_info` | daemon version, protocol, uptime, socket, counts |
+| `harness_trigger` | run a triggered harness now; `wait` follows it to its outcome |
+| `harness_start`, `harness_stop`, `harness_restart` | the lifecycle verbs, returning the new state |
+
+The last four change state, so they are absent unless the server was started
+with `--allow-control`. A read-only server is what you hand a monitoring agent:
+its tool list contains nothing that can touch a run, and a call to a control
+tool is refused with `not_permitted` before the daemon is asked. That split is
+the reason this exists: a permission system can allow one tool name and gate
+another, where a shell command that both reads and acts gets one verdict for
+both. Per-harness grants (`mcp_allow`) arrive with the broker's caller identity
+([ADR-0035](/decisions/adr-0035-mcp-gateway));
+until then the startup flag is the whole grant, which is why control is off by
+default ([ADR-0054](/decisions/adr-0054-mcp-stdio-bridge-before-the-broker)).
+
+### Reading logs without flooding the context
+
+`harness_logs` answers in one of two formats:
+
+- `summary` (default): the run's activity as ordered entries (lifecycle
+  transitions, tool calls, marks) with session bookkeeping collapsed out. Each
+  answer carries `next_cursor`; pass it back as `cursor` to get only what is
+  newer, which is the polling pattern an agent wants and `logs --follow` cannot
+  serve.
+- `raw`: the durable log tail, exactly as `harness logs --raw` prints it. Page
+  past a truncation with the returned `next_offset` as `offset`. A raw offset is
+  only meaningful against the tail it came from: pass one that is past what this
+  call returns and the answer repeats the whole tail with a `note`, rather than
+  coming back empty and reading as "caught up" to a poller that missed output.
+  To poll for what is new, use the `summary` cursor, whose entry ids are stable.
+
+Both are capped (256 KiB by default, `max_bytes` to lower it) and say
+`truncated` when they cut. A summary of a run whose adapter records no native
+trajectory answers with the raw tail and a `note` saying why, because for those
+harnesses the log is the record ([ADR-0007](/decisions/adr-0007-state-persistence-scrollback)).
+
+Errors stay inside the tool result with a stable `code` (`unknown_harness`,
+`not_permitted`, `unknown_tool`) so a caller branches on the code instead of
+matching prose, and the session stays usable after a refusal.
+
+### Not in this slice
+
+Editing `harness.toml` stays a file edit plus `reload`. Upstream MCP servers,
+the broker's per-harness endpoints, caller attribution by token, prompt
+side-loading and log subscriptions belong to the gateway design
+([ADR-0035](/decisions/adr-0035-mcp-gateway)),
+not to this bridge.
 
 ## Waiting for input
 
@@ -573,8 +758,8 @@ file schema.
 ```sh
 harness daemon                # run the supervisor in the foreground (== daemon run)
 harness daemon stop           # ask the running daemon to shut down (SIGTERM)
-harness daemon status         # one-shot: daemon info
-harness daemon --detach       # fork into the background (dev convenience)
+harness daemon status         # one-shot: daemon info, including where that daemon logs
+harness daemon --detach       # fork into the background (dev convenience; its log file is that run's own)
 ```
 
 Daemon flags: `--config`, `--socket`, `--scrollback-bytes SIZE` (per-harness

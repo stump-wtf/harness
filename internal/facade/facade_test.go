@@ -36,7 +36,7 @@ func TestTrajectoryToolsNames(t *testing.T) {
 }
 
 func TestAllToolsIncludesTrajectory(t *testing.T) {
-	all := AllTools()
+	all := AllTools(true)
 	if len(all) < 2 {
 		t.Fatalf("expected at least 2 tools, got %d", len(all))
 	}
@@ -92,17 +92,17 @@ func TestAllowedWriteGatedByMCPAllow(t *testing.T) {
 
 func TestCheckToolReadAlwaysOK(t *testing.T) {
 	h := core.Harness{Name: "test", MCPAllow: []string{"read"}}
-	if err := CheckTool(h, "list_trajectories"); err != nil {
+	if err := CheckTool(h, "list_trajectories", true); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if err := CheckTool(h, "get_trajectory"); err != nil {
+	if err := CheckTool(h, "get_trajectory", true); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestCheckToolUnknown(t *testing.T) {
 	h := core.Harness{Name: "test"}
-	if err := CheckTool(h, "nonexistent_tool"); !errors.Is(err, ErrUnknownTool) {
+	if err := CheckTool(h, "nonexistent_tool", true); !errors.Is(err, ErrUnknownTool) {
 		t.Fatalf("got err %v, want ErrUnknownTool", err)
 	}
 }

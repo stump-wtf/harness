@@ -2,340 +2,55 @@ package gitea
 
 // Git Plumbing
 //
-// The two Forge methods REST cannot answer. CreateTrainBranch computes the
-// train commit with `git merge-tree --write-tree` (no work tree; exit 1 means
-// conflict) and `git commit-tree`, then pushes it to a new branch. TreeOf
-// reads a real tree id, which Gitea's REST API does not expose: its commit and
-// tree endpoints both report the commit id (ADR-0032 "Why tested == merged").
-// TreePaths lists what a commit holds under a directory, which REST can answer
-// only with a recursive tree read (ADR-0052).
-//
-// The token reaches git as an http.extraHeader through GIT_CONFIG_COUNT /
-// GIT_CONFIG_KEY_0 / GIT_CONFIG_VALUE_0 in the child's environment — never in
-// argv (where ps shows it) and never in a URL (where git may echo it). The
-// user's global and system git config are ignored, so a credential helper or
-// hook on the host cannot change what the train does.
+// The three Forge methods REST cannot answer. They are the shared
+// content-addressed plumbing in internal/forge/gitcache seen from Gitea: who
+// the train commit is authored by comes from the token's user, and the clone
+// authenticates with the same header the REST client sends. TreePaths lists
+// what a commit holds under a directory, which REST can answer only with a
+// recursive tree read (ADR-0063).
 //
 // Governing: ADR-0032 option A1, SPEC-0025 REQ-4, REQ-8, REQ-12.
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"slices"
-	"strconv"
-	"strings"
-	"sync"
 
 	"github.com/stump-wtf/harness/internal/forge"
+	"github.com/stump-wtf/harness/internal/forge/gitcache"
 )
-
-// headsRefspec mirrors the remote's branches into a namespace of the cache
-// clone's own, so nothing the train does locally is mistaken for a branch.
-const headsRefspec = "+refs/heads/*:refs/mergetrain/heads/*"
 
 // identity is who the train commit is authored and committed by.
 type identity struct {
 	name, email string
 }
 
-// gitError is a failed git invocation. It names the subcommand and exit code;
-// stderr is kept out of it, since a remote's error can echo a header.
-type gitError struct {
-	sub  string
-	code int
-}
-
-func (e *gitError) Error() string {
-	return fmt.Sprintf("gitea: git %s exited %d", e.sub, e.code)
-}
-
-// lockRepo serialises git in one repo's clone.
-func (c *Client) lockRepo(repo string) func() {
-	m, _ := c.gitMu.LoadOrStore(repo, &sync.Mutex{})
-	mu := m.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
-}
-
-// git runs one git command in dir and returns its stdout. id, when non-zero,
-// becomes the author and committer.
-func (c *Client) git(ctx context.Context, dir string, id identity, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, c.gitBin, args...)
-	cmd.Dir = dir
-	cmd.Env = c.gitEnv(id)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = nil // discarded; see gitError
-	err := cmd.Run()
-	if err != nil {
-		if ctx.Err() != nil {
-			return stdout.Bytes(), ctx.Err()
-		}
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return stdout.Bytes(), &gitError{sub: args[0], code: ee.ExitCode()}
-		}
-		return stdout.Bytes(), fmt.Errorf("gitea: git %s: %w", args[0], err)
-	}
-	return stdout.Bytes(), nil
-}
-
-// gitEnv is the child's environment: the parent's, minus any git config
-// injection it carried, plus ours.
-func (c *Client) gitEnv(id identity) []string {
-	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "GIT_CONFIG") || strings.HasPrefix(kv, "GIT_AUTHOR_") ||
-			strings.HasPrefix(kv, "GIT_COMMITTER_") || strings.HasPrefix(kv, "GIT_DIR=")
-	})
-	env = append(env,
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL="+os.DevNull,
-		"GIT_CONFIG_COUNT=1",
-		"GIT_CONFIG_KEY_0=http.extraHeader",
-		"GIT_CONFIG_VALUE_0=Authorization: token "+c.token,
-	)
-	if id.name != "" {
-		env = append(env,
-			"GIT_AUTHOR_NAME="+id.name, "GIT_AUTHOR_EMAIL="+id.email,
-			"GIT_COMMITTER_NAME="+id.name, "GIT_COMMITTER_EMAIL="+id.email,
-		)
-	}
-	return env
-}
-
-// clone returns repo's bare cache clone, creating it on first use.
-func (c *Client) clone(ctx context.Context, repo string) (string, error) {
-	if c.cache == "" {
-		return "", errors.New("gitea: CacheDir is not set; git operations are unavailable")
-	}
-	if _, err := repoPath(repo); err != nil {
-		return "", err
-	}
-	dir := filepath.Join(c.cache, filepath.FromSlash(repo)+".git")
-	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err == nil {
-		return dir, nil
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("gitea: create cache clone: %w", err)
-	}
-	if _, err := c.git(ctx, dir, identity{}, "init", "--quiet", "--bare"); err != nil {
-		return "", err
-	}
-	return dir, nil
-}
-
-// CreateTrainBranch builds spec.BaseSHA plus a squash of every pinned head,
-// folded in order, as one new commit and pushes it to the new branch
-// spec.Branch. With one head this is exactly the single-PR train commit;
-// with several (SPEC-0025 REQ-17) head i is folded onto the tree the heads
-// before it produced, and a rejection is attributed to that head as a
-// *forge.ConflictError.
+// CreateTrainBranch builds the train commit and pushes it to spec.Branch,
+// authored by the token's user.
 func (c *Client) CreateTrainBranch(ctx context.Context, repo string, spec forge.TrainSpec) (forge.TrainBranch, error) {
-	heads := spec.Heads
-	if len(heads) == 0 {
-		heads = []forge.PRHead{{PR: spec.PR, HeadSHA: spec.HeadSHA}}
-	}
-	if spec.Branch == "" || spec.BaseSHA == "" {
-		return forge.TrainBranch{}, errors.New("gitea: CreateTrainBranch needs Branch and BaseSHA")
-	}
-	for _, h := range heads {
-		if h.PR <= 0 || h.HeadSHA == "" {
-			return forge.TrainBranch{}, errors.New("gitea: CreateTrainBranch needs a PR number and head SHA for every head")
-		}
+	if _, err := repoPath(repo); err != nil {
+		return forge.TrainBranch{}, err
 	}
 	id, err := c.whoami(ctx)
 	if err != nil {
 		return forge.TrainBranch{}, err
 	}
-	unlock := c.lockRepo(repo)
-	defer unlock()
-	dir, err := c.clone(ctx, repo)
-	if err != nil {
-		return forge.TrainBranch{}, err
-	}
-	remote := c.gitURL(repo)
-
-	// Fetch every branch head and every pinned PR head into private refs.
-	// Fetching the base by SHA would need uploadpack.allowReachableSHA1InWant
-	// on the server; the base is main's head, so fetching heads always brings
-	// it.
-	refspecs := make([]string, 0, len(heads)+1)
-	refspecs = append(refspecs, headsRefspec)
-	for _, h := range heads {
-		refspecs = append(refspecs, "+refs/pull/"+strconv.Itoa(h.PR)+"/head:"+pullRef(h.PR))
-	}
-	if _, err := c.git(ctx, dir, identity{}, append([]string{"fetch", "--quiet", "--no-tags", "--prune", remote}, refspecs...)...); err != nil {
-		return forge.TrainBranch{}, err
-	}
-	if _, err := c.git(ctx, dir, identity{}, "cat-file", "-e", spec.BaseSHA+"^{commit}"); err != nil {
-		return forge.TrainBranch{}, fmt.Errorf("gitea: base %s is not on the remote: %w", spec.BaseSHA, forge.ErrStale)
-	}
-	for _, h := range heads {
-		got, err := c.revParse(ctx, dir, pullRef(h.PR))
-		if err != nil {
-			return forge.TrainBranch{}, err
-		}
-		if got != h.HeadSHA {
-			return forge.TrainBranch{}, forge.ErrStale
-		}
-	}
-
-	// Fold the heads in order. merge-tree takes commits, not trees, so the
-	// tree folded so far travels in a local commit-tree whose parent is the
-	// base: merge-base(that commit, the next head) is then merge-base(base,
-	// the next head), which is exactly the squash the forge will apply onto
-	// the growing base. These fold commits are local plumbing; only the final
-	// commit is pushed.
-	tree := ""
-	for i, h := range heads {
-		side1 := spec.BaseSHA
-		if i > 0 {
-			// The bot identity, same as the final commit below: the child
-			// environment carries no git config (GIT_CONFIG_GLOBAL=/dev/null),
-			// so a commit-tree with identity{} depends on the runner's
-			// fallback email auto-detection and dies where that is absent.
-			out, err := c.git(ctx, dir, id, "commit-tree", tree, "-p", spec.BaseSHA, "-m", "merge train fold")
-			if err != nil {
-				return forge.TrainBranch{}, err
-			}
-			side1 = firstLine(out)
-		}
-		out, err := c.git(ctx, dir, identity{}, "merge-tree", "--write-tree", "--no-messages", side1, pullRef(h.PR))
-		var ge *gitError
-		if errors.As(err, &ge) && ge.code == 1 {
-			if len(heads) == 1 {
-				return forge.TrainBranch{}, forge.ErrConflict
-			}
-			return forge.TrainBranch{}, &forge.ConflictError{PR: h.PR}
-		}
-		if err != nil {
-			return forge.TrainBranch{}, err
-		}
-		tree = firstLine(out)
-	}
-
-	msg := spec.Message
-	if msg == "" {
-		msg = "merge train: #" + strconv.Itoa(spec.PR)
-	}
-	out, err := c.git(ctx, dir, id, "commit-tree", tree, "-p", spec.BaseSHA, "-m", msg)
-	if err != nil {
-		return forge.TrainBranch{}, err
-	}
-	sha := firstLine(out)
-
-	changed, deleted, err := c.diff(ctx, dir, spec.BaseSHA, sha)
-	if err != nil {
-		return forge.TrainBranch{}, err
-	}
-
-	// A plain push creates the branch. It cannot rewrite one: a branch that
-	// already exists and is not an ancestor rejects it, and the driver
-	// deletes any leftover train branch before building.
-	if _, err := c.git(ctx, dir, identity{}, "push", "--quiet", remote, sha+":refs/heads/"+spec.Branch); err != nil {
-		return forge.TrainBranch{}, err
-	}
-	return forge.TrainBranch{SHA: sha, Tree: tree, Changed: changed, Deleted: deleted}, nil
-}
-
-// pullRef is the private ref a PR head is fetched into.
-func pullRef(pr int) string { return "refs/mergetrain/pull/" + strconv.Itoa(pr) }
-
-// diff lists paths from base to commit: added, modified or type-changed ones
-// in changed, deleted ones in deleted, both sorted. Renames are split into a
-// delete and an add.
-func (c *Client) diff(ctx context.Context, dir, base, commit string) (changed, deleted []string, err error) {
-	out, err := c.git(ctx, dir, identity{}, "diff-tree", "-r", "-z", "--no-renames", "--name-status", base, commit)
-	if err != nil {
-		return nil, nil, err
-	}
-	fields := strings.Split(strings.TrimRight(string(out), "\x00"), "\x00")
-	changed, deleted = []string{}, []string{}
-	for i := 0; i+1 < len(fields); i += 2 {
-		switch status, path := fields[i], fields[i+1]; status {
-		case "D":
-			deleted = append(deleted, path)
-		default:
-			changed = append(changed, path)
-		}
-	}
-	slices.Sort(changed)
-	slices.Sort(deleted)
-	return changed, deleted, nil
+	return c.git.CreateTrainBranch(ctx, repo, spec, gitcache.Identity{Name: id.name, Email: id.email})
 }
 
 // TreeOf returns the git tree id of commit sha, fetching it if needed.
 func (c *Client) TreeOf(ctx context.Context, repo, sha string) (string, error) {
-	unlock := c.lockRepo(repo)
-	defer unlock()
-	dir, err := c.clone(ctx, repo)
-	if err != nil {
+	if _, err := repoPath(repo); err != nil {
 		return "", err
 	}
-	if err := c.ensureCommit(ctx, dir, repo, sha); err != nil {
-		return "", err
-	}
-	return c.revParse(ctx, dir, sha+"^{tree}")
+	return c.git.TreeOf(ctx, repo, sha)
 }
 
 // TreePaths lists the files under prefixes at commit sha, sorted. The train
 // uses it to read a whole watched directory, which a diff of one head cannot
 // show: the other claimant of a sequence number is usually not in the diff at
-// all (ADR-0052).
+// all (ADR-0063).
 func (c *Client) TreePaths(ctx context.Context, repo, sha string, prefixes []string) ([]string, error) {
-	unlock := c.lockRepo(repo)
-	defer unlock()
-	dir, err := c.clone(ctx, repo)
-	if err != nil {
+	if _, err := repoPath(repo); err != nil {
 		return nil, err
 	}
-	if err := c.ensureCommit(ctx, dir, repo, sha); err != nil {
-		return nil, err
-	}
-	args := []string{"ls-tree", "-r", "-z", "--name-only", sha}
-	if len(prefixes) > 0 {
-		args = append(args, "--")
-		for _, p := range prefixes {
-			args = append(args, strings.TrimSuffix(p, "/"))
-		}
-	}
-	out, err := c.git(ctx, dir, identity{}, args...)
-	if err != nil {
-		return nil, err
-	}
-	paths := strings.FieldsFunc(string(out), func(r rune) bool { return r == 0 })
-	for i, p := range paths {
-		paths[i] = strings.TrimSuffix(p, "\n")
-	}
-	slices.Sort(paths)
-	return paths, nil
-}
-
-// ensureCommit fetches the remote's branch heads unless commit sha is already
-// in the clone.
-func (c *Client) ensureCommit(ctx context.Context, dir, repo, sha string) error {
-	if _, err := c.git(ctx, dir, identity{}, "cat-file", "-e", sha+"^{commit}"); err == nil {
-		return nil
-	}
-	_, err := c.git(ctx, dir, identity{}, "fetch", "--quiet", "--no-tags", "--prune", c.gitURL(repo), headsRefspec)
-	return err
-}
-
-func (c *Client) revParse(ctx context.Context, dir, rev string) (string, error) {
-	out, err := c.git(ctx, dir, identity{}, "rev-parse", "--verify", "--quiet", rev)
-	if err != nil {
-		return "", err
-	}
-	return firstLine(out), nil
-}
-
-func firstLine(b []byte) string {
-	s, _, _ := strings.Cut(string(b), "\n")
-	return strings.TrimSpace(s)
+	return c.git.TreePaths(ctx, repo, sha, prefixes)
 }

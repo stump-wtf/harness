@@ -7,7 +7,7 @@ package mergetrain
 // number merge cleanly: the paths differ, so nothing conflicts, and the base
 // branch ends up holding two ADR-0050 files. Renaming one afterwards is a
 // push, which dismisses approvals and re-runs CI, so the renumbering happens
-// by hand instead (ADR-0052). The train judges a sequence claim the way it
+// by hand instead (ADR-0063). The train judges a sequence claim the way it
 // judges a content conflict: on the train commit, before anything merges.
 //
 // A file claims a sequence number when the first run of two or more digits
@@ -16,7 +16,7 @@ package mergetrain
 // base branch is not this attempt's doing, and refusing it would block the
 // train forever, so only a collision the attempt introduces is a verdict.
 //
-// Governing: ADR-0032 (the attempt), ADR-0052 (sequence claims), SPEC-0025.
+// Governing: ADR-0032 (the attempt), ADR-0063 (sequence claims), SPEC-0025.
 
 import (
 	"context"

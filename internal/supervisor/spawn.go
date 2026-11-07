@@ -253,6 +253,18 @@ type RunEnv struct {
 	// run carries no event, so every event.* path is absent — never empty —
 	// and a required reference fails the render.
 	Event *EventContext
+	// Workdir is the directory this run was given, when the configured
+	// "workdir" is a template. Empty means the harness's own configured
+	// directory — which is what every harness without a templated workdir has
+	// always spawned into — so a respawn of the same run is born in the same
+	// place.
+	// Governing: ADR-0051 (proposed); stump.wtf/harness#980.
+	Workdir string
+	// DataDir is the run's agent data directory, named to a lifecycle hook as
+	// HARNESS_RUN_DATADIR. It is deliberately NOT exported to the harness
+	// process: an agent's own configuration is not the daemon's to relocate.
+	// Governing: ADR-0051 (proposed).
+	DataDir string
 }
 
 // EventContext is the event tier of the template context: the envelope's
@@ -665,11 +677,12 @@ type process struct {
 }
 
 // Workdir is the process working directory the supervisor spawns h into: the
-// configured value with a leading ~ expanded. Exported so the control plane can
-// put the same string on the wire that spawn assigns to cmd.Dir — a client
-// correlating an agent transcript's cwd back to a harness is comparing against
-// this, and a second expansion elsewhere is a second thing to drift.
-func Workdir(h core.Harness) string { return expandHome(h.Workdir) }
+// configured value with a leading ~ expanded, and any template rendered with
+// no run in flight — which is the directory the run directories live in, not
+// one run's own (runworkdir.go). Exported so the control plane can put the
+// same string on the wire that spawn assigns to cmd.Dir; a run's own directory
+// travels on its run environment.
+func Workdir(h core.Harness) string { return WorkdirOf(h) }
 
 // spawn launches h under a fresh PTY of cols×rows in its workdir with env_file
 // loaded. The child is placed in its own session (Setsid) so the whole process
@@ -698,7 +711,10 @@ func spawn(adm *admission, h core.Harness, cols, rows int, run RunEnv) (*process
 	// Resolve prompt_file to its text BEFORE allocating anything: a missing
 	// instruction file must fail the start outright rather than leak a PTY and
 	// launch an agent with nothing to do (ADR-0018).
-	workdir := Workdir(h)
+	workdir := run.Workdir
+	if workdir == "" {
+		workdir = Workdir(h)
+	}
 	h, err := resolvePrompt(h, workdir, run)
 	if err != nil {
 		return nil, err

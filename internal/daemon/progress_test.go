@@ -100,17 +100,21 @@ func TestLastCallAndChildrenRideListAndDescribe(t *testing.T) {
 	if kid.Command == "" {
 		t.Errorf("child %+v names no command", kid)
 	}
-	started, err := time.Parse(time.RFC3339Nano, kid.StartedAt)
-	if err != nil {
-		t.Fatalf("child started_at = %q: %v", kid.StartedAt, err)
-	}
-	if started.Before(time.Now().Add(-5*time.Minute)) || started.After(time.Now()) {
-		t.Errorf("child started_at = %v, want a moment ago", started)
+	if kid.StartedAt != "" {
+		started, err := time.Parse(time.RFC3339Nano, kid.StartedAt)
+		if err != nil {
+			t.Fatalf("child started_at = %q: %v", kid.StartedAt, err)
+		}
+		if started.Before(time.Now().Add(-5*time.Minute)) || started.After(time.Now()) {
+			t.Errorf("child started_at = %v, want a moment ago", started)
+		}
 	}
 	// The wedged-child reading the issue asks for: this child has been alive
-	// since the harness started and has burned almost nothing.
+	// since the harness started and has burned almost nothing. A skewed host
+	// clock clamps started_at to absent (issue #1002); the CPU reading holds
+	// either way.
 	if kid.CPUMs > 500 {
-		t.Errorf("child cpu_ms = %d for a child up %s, want near zero", kid.CPUMs, time.Since(started))
+		t.Errorf("child cpu_ms = %d, want near zero", kid.CPUMs)
 	}
 
 	var listed []protocol.HarnessInfo

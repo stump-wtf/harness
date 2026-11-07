@@ -104,7 +104,7 @@ func TestDescribeShowsLastCallAndChildren(t *testing.T) {
 	socket := bootProgressDaemon(t, stalled)
 	c := dialTest(t, socket)
 
-	if _, err := callLifecycle(c, "start", "demo", ""); err != nil {
+	if _, err := callLifecycle(c, "start", "demo", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	h := waitForRunningChild(t, c, "demo")
@@ -134,7 +134,7 @@ func TestDescribeShowsLastCallAndChildren(t *testing.T) {
 func TestDescribeSaysNoCallWasSeen(t *testing.T) {
 	socket := bootProgressDaemon(t, time.Time{})
 	c := dialTest(t, socket)
-	if _, err := callLifecycle(c, "start", "demo", ""); err != nil {
+	if _, err := callLifecycle(c, "start", "demo", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	waitForRunningChild(t, c, "demo")

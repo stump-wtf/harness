@@ -23,7 +23,7 @@ const (
 	CauseMergeRefused = "merge-refused"
 	CauseVerifyFailed = "verify-failed"
 	// CauseSequenceConflict says the train commit would put two files with
-	// the same sequence number on the base branch (ADR-0052).
+	// the same sequence number on the base branch (ADR-0063).
 	CauseSequenceConflict = "sequence-conflict"
 )
 

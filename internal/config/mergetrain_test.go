@@ -45,6 +45,7 @@ base_branch = "trunk"
 poll_interval = "90s"
 ci_timeout = "45m"
 batch = 3
+flake_cool_down = "90s"
 sequence_paths = ["docs/adrs", "migrations/"]
 forge_base_url = "https://gitea.stump.rocks/"
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
@@ -57,13 +58,14 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 	if !mc.Enabled || mc.Mode != "merge" || mc.BaseBranch != "trunk" ||
 		!slices.Equal(mc.Repos, []string{"stump.wtf/harness", "stump.wtf/switchboard"}) ||
 		mc.PollInterval != 90*time.Second || mc.CITimeout != 45*time.Minute || mc.Batch != 3 ||
+		mc.FlakeCoolDown != 90*time.Second ||
 		!slices.Equal(mc.SequencePaths, []string{"docs/adrs/", "migrations/"}) ||
 		mc.ForgeBaseURL != "https://gitea.stump.rocks" || mc.ForgeTokenEnv != "HARNESS_MERGETRAIN_TOKEN" {
 		t.Fatalf("parsed = %+v", mc)
 	}
 }
 
-// SPEC-0025 REQ-18: an explicit empty list disables the sequence check, and an
+// SPEC-0025 REQ-19: an explicit empty list disables the sequence check, and an
 // absent key keeps the watched defaults. That difference is why the key is a
 // pointer, like the other tuning keys.
 func TestMergeTrainSequencePathsEmptyDisables(t *testing.T) {
@@ -91,6 +93,23 @@ func TestMergeTrainEnabledDefaultsFalseAndModeReport(t *testing.T) {
 	if cfg.MergeTrain.Enabled || cfg.MergeTrain.Mode != "report" {
 		t.Fatalf("enabled = %v, mode = %q; want false, report", cfg.MergeTrain.Enabled, cfg.MergeTrain.Mode)
 	}
+	if cfg.MergeTrain.FlakeCoolDown != core.DefaultMergeTrainFlakeCoolDown {
+		t.Fatalf("flake cool down = %s, want the documented %s",
+			cfg.MergeTrain.FlakeCoolDown, core.DefaultMergeTrainFlakeCoolDown)
+	}
+}
+
+// SPEC-0025 REQ-18: `flake_cool_down = "0"` is the way to turn the runner-flake
+// retry off, so unlike every other duration here a zero is accepted rather than
+// refused.
+func TestMergeTrainFlakeCoolDownOff(t *testing.T) {
+	cfg, err := Parse([]byte("[mergetrain]\nflake_cool_down = \"0\"\n"), "t.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MergeTrain.FlakeCoolDown != 0 {
+		t.Fatalf("flake cool down = %s, want 0", cfg.MergeTrain.FlakeCoolDown)
+	}
 }
 
 func TestMergeTrainRejects(t *testing.T) {
@@ -111,6 +130,8 @@ func TestMergeTrainRejects(t *testing.T) {
 		{"dup repo", "[mergetrain]\nrepos = [\"a/b\", \"a/b\"]\n", "twice"},
 		{"fast poll", "[mergetrain]\npoll_interval = \"1s\"\n", "at least 5s"},
 		{"bad timeout", "[mergetrain]\nci_timeout = \"soon\"\n", `"ci_timeout"`},
+		{"bad flake cool down", "[mergetrain]\nflake_cool_down = \"soon\"\n", `"flake_cool_down"`},
+		{"negative flake cool down", "[mergetrain]\nflake_cool_down = \"-5m\"\n", `"flake_cool_down"`},
 		{"train base", "[mergetrain]\nbase_branch = \"train/1\"\n", "train/"},
 		{"zero batch", "[mergetrain]\nbatch = 0\n", `"batch": must be a whole number of at least 1`},
 		{"negative batch", "[mergetrain]\nbatch = -2\n", `"batch": must be a whole number of at least 1`},
@@ -227,4 +248,108 @@ func tomlBlocksWith(md, marker string) []string {
 		}
 	}
 	return out
+}
+
+// GitHub forge (ADR-0061): a repos entry names it with a "github:" prefix, its
+// token comes from the environment like any other, and a repo that selects it
+// without a configured GitHub forge is refused rather than driven by the wrong
+// forge.
+func TestMergeTrainGitHubForge(t *testing.T) {
+	src := `
+[mergetrain]
+enabled = true
+mode = "merge"
+repos = ["stump.wtf/harness", "github:joestump-agent/crush"]
+forge_base_url = "https://gitea.stump.rocks"
+forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
+github_base_url = "https://api.github.com/"
+github_token_env = "HARNESS_MERGETRAIN_GITHUB_TOKEN"
+github_ci_gate = "train-push"
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mc := cfg.MergeTrain
+	if !slices.Equal(mc.Repos, []string{"stump.wtf/harness", "joestump-agent/crush"}) {
+		t.Fatalf("repos = %q; the forge prefix is not part of the repo name", mc.Repos)
+	}
+	if mc.RepoForge["stump.wtf/harness"] != "" || mc.RepoForge["joestump-agent/crush"] != "github" {
+		t.Fatalf("repo forges = %v", mc.RepoForge)
+	}
+	if mc.GitHub == nil || mc.GitHub.BaseURL != "https://api.github.com" ||
+		mc.GitHub.TokenEnv != "HARNESS_MERGETRAIN_GITHUB_TOKEN" || mc.GitHub.CIGate != core.GitHubGateTrainPush {
+		t.Fatalf("github = %+v", mc.GitHub)
+	}
+}
+
+func TestMergeTrainGitHubDefaults(t *testing.T) {
+	src := `
+[mergetrain]
+enabled = true
+repos = ["github:octo/widgets"]
+github_token_env = "GH_TOKEN"
+`
+	cfg, err := Parse([]byte(src), "t.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mc := cfg.MergeTrain
+	// No repo uses the default forge, so it needs no URL or token of its own.
+	if mc.ForgeBaseURL != "" || mc.ForgeTokenEnv != "" {
+		t.Fatalf("default forge = %q %q", mc.ForgeBaseURL, mc.ForgeTokenEnv)
+	}
+	if mc.GitHub == nil || mc.GitHub.CIGate != core.GitHubGateDraftPR {
+		t.Fatalf("github = %+v; draft-PR is the gate a fork can use", mc.GitHub)
+	}
+}
+
+func TestMergeTrainGitHubErrors(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"unknown forge prefix", `
+[mergetrain]
+enabled = true
+repos = ["gitlab:acme/widgets"]
+forge_base_url = "https://gitea.stump.rocks"
+forge_token_env = "T"
+`, "gitlab"},
+		{"github repo with no github config", `
+[mergetrain]
+enabled = true
+repos = ["github:octo/widgets"]
+forge_base_url = "https://gitea.stump.rocks"
+forge_token_env = "T"
+`, "github_token_env"},
+		{"token inline", `
+[mergetrain]
+enabled = true
+repos = ["github:octo/widgets"]
+github_token = "ghp_secret"
+`, "token"},
+		{"bad gate", `
+[mergetrain]
+enabled = true
+repos = ["github:octo/widgets"]
+github_token_env = "GH_TOKEN"
+github_ci_gate = "whatever"
+`, "github_ci_gate"},
+		{"credentials in url", `
+[mergetrain]
+enabled = true
+repos = ["github:octo/widgets"]
+github_base_url = "https://user:secret@api.github.com"
+github_token_env = "GH_TOKEN"
+`, "github_base_url"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(tc.src), "t.toml")
+			if err == nil {
+				t.Fatal("config accepted")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want it to name %q", err, tc.want)
+			}
+		})
+	}
 }

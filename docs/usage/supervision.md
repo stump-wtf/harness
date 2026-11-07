@@ -94,6 +94,12 @@ tail -f /tmp/harness-daemon.log                   # daemon log
 launchctl bootout gui/$(id -u)/dev.harness.daemon # stop (survives reboot of the plist)
 ```
 
+That file is the one this plist redirects stderr to, not a surface harness
+chose. To confirm what the daemon you are talking to actually uses, ask it:
+`harness daemon status` prints a `logs` field, and `harness doctor` a
+`daemon_log` row. See
+[Observability → Where the daemon's own log lives](../guides/observability#where-the-daemons-own-log-lives).
+
 Two launchd specifics worth knowing:
 
 - **No login shell, no environment.** A LaunchAgent does not source your
@@ -120,13 +126,14 @@ Two launchd specifics worth knowing:
   [Configuration → Model routing](./configuration#model-routing-and-provider-failover)
   for the mitigation.
 - **Agent events are observed, not just processes**: every 5 seconds the daemon
-  reads the session transcripts its `crush`, `claude-code`, `codex`, `pi`
-  and `omp` harnesses write (and those of a `command` harness bound with
-  `transcripts`)
+  reads the session transcripts its `crush`, `claude-code`, `codex`, `pi`,
+  `omp` and `opencode` harnesses write (and those of a `command` harness bound
+  with `transcripts`)
   and picks up new tool calls and marks — for `crush` and `claude-code`, that
   includes the provider errors a quota wall leaves behind while the process
-  stays `running` (`codex`, `pi` and `omp` transcripts do not record those
-  as errors yet). Only activity after the daemon started is reported, a
+  stays `running` (`codex`, `pi`, `omp` and `opencode` transcripts do not
+  record those as errors yet). Only activity after the daemon started is
+  reported, a
   session two harnesses could have written is attributed to neither, and
   credentials in the text are masked before anything else in the daemon sees
   it. Nothing leaves the host yet: this is the feed the upcoming metrics and

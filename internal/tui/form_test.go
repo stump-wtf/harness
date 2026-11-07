@@ -1033,6 +1033,10 @@ var harnessFormFields = []string{
 	// with no widget yet, the budget convention — the save path writes them
 	// only under health_cmd, default-equal siblings omitted.
 	"HealthCmd", "HealthInterval", "HealthFailures", "HealthAction",
+	// The issue #980 run lifecycle keys (ADR-0051): carried typed through
+	// formInputs with no widget yet, the budget convention, so an edit of an
+	// unrelated field cannot delete a hook or the run directory cap.
+	"WorkdirRetain", "PreRun", "PostRun",
 }
 
 // TestHarnessFormCoversEveryHarnessField is the census half of the issue #161
@@ -1137,6 +1141,10 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				`description = "scheduled sweep"`,
 				"harvest_trajectory = true",
 				`mcp_allow = ["read", "write"]`,
+				// The issue #980 hooks (ADR-0051), allowed here because a
+				// scheduled harness is a one-shot.
+				`pre_run = ["/usr/local/bin/fetch-tickets"]`,
+				`post_run = ["/usr/local/bin/verdict"]`,
 			},
 		},
 		{
@@ -1170,6 +1178,10 @@ func TestEditPreservesEveryConfigKey(t *testing.T) {
 				`quota_group = "claude-max"`,
 				`quota_backoff = "10m"`,
 				`quota_backoff_max = "1h30m"`,
+				// Per-run work directories (ADR-0051): a templated workdir
+				// and the cap on how many the daemon keeps.
+				`workdir = "~/sweeps/blog/runs/{{run.id}}"`,
+				"workdir_retain = 5",
 			},
 			promptFileBody: "Draft the studio blog post and open a PR.\n",
 		},

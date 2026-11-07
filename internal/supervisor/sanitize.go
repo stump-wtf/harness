@@ -302,27 +302,44 @@ func (h *ptyHistory) Flush() {
 }
 
 // scrollCount returns how many rows scrolled off: the largest k such that
-// cur[i] == prev[i+k] for every i < len(prev)-k (a pure upward shift). Both
-// screens are first trimmed of trailing blank rows — after a scroll the bottom
-// row(s) are blank until new content lands there, and unwritten padding must
-// not break the match. A clear-and-repaint frame does not satisfy the shift
-// for any k > 0 and correctly reports 0.
+// cur[i] == prev[i+k] for every i < len(prev)-k, with the bottom row of prev
+// allowed to differ (a pure upward shift). Both screens are first trimmed of
+// trailing blank rows — after a scroll the bottom row(s) are blank until new
+// content lands there, and unwritten padding must not break the match. A
+// clear-and-repaint frame does not satisfy the shift for any k > 0 and
+// correctly reports 0.
+//
+// Governing: ADR-0059 (proposed: why the bottom row is exempt, and what pays
+// for that exemption); issue #1023.
 func scrollCount(prev, cur []string) int {
 	pp := trimBlankTail(prev)
 	cp := trimBlankTail(cur)
 	for k := len(pp) - 1; k > 0; k-- {
-		shifted := true
-		for i := 0; i+k < len(pp); i++ {
-			if i >= len(cp) || cp[i] != pp[i+k] {
-				shifted = false
-				break
-			}
-		}
-		if shifted {
+		if shiftMatches(pp, cp, k) {
 			return k
 		}
 	}
 	return 0
+}
+
+// shiftMatches reports whether cur is prev shifted up by k rows. The bottom row
+// of prev is the one row a program is still writing to, and a soft-wrapped fold
+// drops its tail there in a later chunk, so that row alone can be stale in the
+// snapshot while the shift itself is real. It is exempt from the comparison,
+// provided at least one row above it lined up. That payment is what keeps a
+// clear-and-repaint frame at 0 instead of accepting a shift nothing supports,
+// which would log rows that are still on screen (#1021's failure mode).
+func shiftMatches(prev, cur []string, k int) bool {
+	bottom := len(prev) - 1
+	for i := 0; i+k < len(prev); i++ {
+		if i+k == bottom && i > 0 {
+			continue
+		}
+		if i >= len(cur) || cur[i] != prev[i+k] {
+			return false
+		}
+	}
+	return true
 }
 
 // trimBlankTail drops trailing rows with no visible content. Unwritten screen

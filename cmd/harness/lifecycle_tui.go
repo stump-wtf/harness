@@ -137,7 +137,7 @@ func newRows(names []string) []rowState {
 func (m *lifecycleModel) runOp(i int) tea.Cmd {
 	name, verb, c := m.names[i], m.verb, m.client
 	return func() tea.Msg {
-		info, err := callLifecycle(c, verb, name, "")
+		info, err := callLifecycle(c, verb, name, "", "")
 		return opDoneMsg{idx: i, info: info, err: err}
 	}
 }

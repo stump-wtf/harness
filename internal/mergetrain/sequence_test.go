@@ -2,7 +2,7 @@ package mergetrain
 
 // Sequence Collision Tests
 //
-// Governing tests: SPEC-0025 REQ-18, ADR-0052: a claim is the first run of
+// Governing tests: SPEC-0025 REQ-19, ADR-0063: a claim is the first run of
 // three or more digits in a file's name, scoped to its directory; a pair the
 // base branch already holds is not a verdict; a collision the attempt
 // introduces ends the attempt before CI, and names which PR brings each file.

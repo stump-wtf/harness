@@ -125,6 +125,22 @@ func newDaemonObserver(mgr *supervisor.Manager, opts observe.Options) *observe.O
 	return observe.New(mgr, opts)
 }
 
+// startDaemonStreamIngest installs the seam a structured one-shot hands its
+// live stream through (issue #995): the supervisor hands the run's masked
+// lines to the observer, agent-trace normalizes them, and they reach every
+// subscriber attributed to that run — which is what lets a pipe run's activity
+// be reported while it is running, and counted once. It is installed before
+// Autostart, so the first run of the boot already has somewhere to put its
+// stream; a daemon that built no observer installs nothing.
+//
+// Governing: ADR-0033 "One activity stream per session"; SPEC-0006 REQ
+// "Run Correlation".
+func startDaemonStreamIngest(obs *observe.Observer, mgr *supervisor.Manager) {
+	mgr.SetStreamIngestSink(func(harness string, runID int) supervisor.StreamSink {
+		return obs.OpenStream(harness, runID)
+	})
+}
+
 // startDaemonLoopGuard subscribes the runaway tool-loop guard to the
 // observer, stopping harnesses through the daemon's own Manager and reporting
 // each stop to the notifier (nil reports nowhere). The daemon closes it on
@@ -148,6 +164,18 @@ func startDaemonLoopGuard(mgr *supervisor.Manager, obs loopguard.Subscriber, n *
 func startDaemonRunUsage(obs *observe.Observer, mgr *supervisor.Manager) *runusage.Feed {
 	acc := ledger.NewAccumulator(mgr.Ledger(), ledger.AccumulatorOptions{})
 	acc.SetTraceURL(mgr.Config().Ledger.TraceURL)
+	// A run whose transcript never flushed gets its usage from its own
+	// stream: at the run's end, read the sealed stream's final result once
+	// and fold it into the accumulator (issue #994).
+	mgr.SetStreamUsageSink(func(name, kind string, runID int, streamPath string) {
+		parser, ok := runusage.StreamParserFor(kind)
+		if !ok {
+			return
+		}
+		if _, err := runusage.FoldStream(context.Background(), acc, name, runID, streamPath, parser); err != nil {
+			log.Warn("run stream usage not folded", "harness", name, "run_id", runID, "err", err)
+		}
+	})
 	prev := mgr.ReloadHook()
 	mgr.SetReloadHook(func() {
 		if prev != nil {
@@ -314,7 +342,7 @@ func runDaemon(o daemonOpts) {
 	//
 	// Governing: ADR-0016, SPEC-0010 REQ "Precedence Order".
 
-	configureDaemonLogger(o.logLevel, o.logFile)
+	openedLogFile := configureDaemonLogger(o.logLevel, o.logFile)
 
 	// GitHub https://github.com/stump-wtf/harness/issues/18: the Go soft
 	// memory limit, before anything allocates in earnest. Off unless set;
@@ -446,6 +474,10 @@ func runDaemon(o daemonOpts) {
 	// parks, so admission refuses a parked harness from the first start. The
 	// observer's poll loop starts below, once every subscriber has attached.
 	observer := newDaemonObserver(mgr, daemonObserverOptions())
+	// A structured one-shot's stream reaches the fan-out through this seam,
+	// installed before Autostart so the boot's first run has somewhere to put
+	// its stream (issue #995).
+	startDaemonStreamIngest(observer, mgr)
 	quotaFeed := startDaemonQuota(observer, mgr)
 
 	mgr.Autostart()
@@ -492,6 +524,10 @@ func runDaemon(o daemonOpts) {
 		SocketPath: o.socketPath,
 		ConfigPath: o.configPath,
 		Version:    buildinfo.Version,
+		// The log surface this process chose, so `doctor` and `daemon status`
+		// can answer "where does this daemon log" without guessing from the
+		// filesystem (stump.wtf/harness#583).
+		LogFile: openedLogFile,
 	})
 	if err := srv.Listen(); err != nil {
 		logListenFailure(o.socketPath, err)
@@ -1025,8 +1061,14 @@ func startRemote(sc core.ServerConfig, forceOn bool, listenOverride, socket, con
 // logger per ADR-0001. level may be debug/info/warn/error; logFile may be ""
 // (stderr) or a path to append to. Time format is ISO 8601 (sortable, matches
 // the log-file-per-harness format in the supervisor).
-func configureDaemonLogger(level, logFile string) {
+//
+// It returns the path the logger is actually writing to, empty when that is
+// stderr, so the daemon can report its own log surface through daemon_info
+// even in the case only it can see: a --log-file that failed to open leaves
+// the lines on stderr (stump.wtf/harness#583).
+func configureDaemonLogger(level, logFile string) string {
 	var w io.Writer = os.Stderr
+	opened := ""
 	if logFile != "" {
 		f, err := openLogFile(logFile)
 		if err != nil {
@@ -1034,6 +1076,7 @@ func configureDaemonLogger(level, logFile string) {
 			log.Warn("could not open log file, falling back to stderr", "path", logFile, "err", err)
 		} else {
 			w = f
+			opened = f.Name()
 		}
 	}
 	log.SetOutput(w)
@@ -1051,6 +1094,7 @@ func configureDaemonLogger(level, logFile string) {
 	default:
 		log.SetLevel(log.InfoLevel)
 	}
+	return opened
 }
 
 // logListenFailure reports why the daemon could not take its socket.

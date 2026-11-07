@@ -364,6 +364,10 @@ func (m *Model) onDisconnect(msg disconnectMsg) (tea.Model, tea.Cmd) {
 	m.reconn = true
 	m.ctrl = nil
 	m.attach = nil
+	// Input buffered for the dropped connection can never reach its guest,
+	// and redialing must not flush it into a session opened on the new one
+	// (#952).
+	m.attachInput.drop()
 	// The periodic tick (onTick) retries the connection while reconn is set, so
 	// no separate timer is needed here.
 	return m, nil

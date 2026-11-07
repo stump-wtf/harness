@@ -15,6 +15,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
+
+	"github.com/stump-wtf/harness/internal/mousectl"
 )
 
 // vtView is a client-side embedded terminal: an x/vt emulator fed the daemon's
@@ -27,6 +29,14 @@ type vtView struct {
 	// interface exposes no reader for it, so it has to be reconstructed from
 	// callbacks — see newVTView for why one callback isn't enough.
 	cursorHidden bool
+	// mouse shadows the guest's mouse-reporting modes, for the same reason
+	// cursorHidden is shadowed here and bracketed paste is shadowed on the
+	// daemon's Mux: x/vt has no reader for them, and this end only sees the
+	// DECSETs that arrive after it started paying attention, which is why the
+	// daemon appends its own shadow to the attach snapshot (ADR-0055). It is
+	// what decides whether the wheel opens harness scrollback or reaches the
+	// guest.
+	mouse mousectl.Shadow
 }
 
 // newVTView creates an embedded terminal of the given size.
@@ -61,12 +71,16 @@ func newVTView(cols, rows int) *vtView {
 		EnableMode: func(m ansi.Mode) {
 			if m == ansi.ModeTextCursorEnable {
 				v.cursorHidden = false
+				return
 			}
+			v.mouse.Note(m, true)
 		},
 		DisableMode: func(m ansi.Mode) {
 			if m == ansi.ModeTextCursorEnable {
 				v.cursorHidden = true
+				return
 			}
+			v.mouse.Note(m, false)
 		},
 	})
 	installMarginClamps(v.term.(*vt.Emulator))
@@ -129,11 +143,13 @@ func (v *vtView) pumpReplies() {
 // the emulator lays the fresh grid out at the final dimensions. cursorHidden is
 // reset by hand because RIS clears the screen's cursor to visible without
 // necessarily firing the callbacks that shadow it (the same subtlety newVTView
-// documents).
+// documents), and for the same reason the mouse shadow is cleared by hand: a
+// hop must not inherit the previous guest's wheel ownership.
 func (v *vtView) reset(cols, rows int) {
 	v.write([]byte("\x1bc"))
 	v.resize(cols, rows)
 	v.cursorHidden = false
+	v.mouse.Clear()
 }
 
 // resize resizes the emulator (the client viewport changed; smallest-attached-

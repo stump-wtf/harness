@@ -98,7 +98,7 @@ func newDaemonCmd(g *globalOpts) *cobra.Command {
 	daemon.PersistentFlags().StringVar(&d.logLevel, "log-level", "", "log level: debug, info, warn, error")
 	daemon.PersistentFlags().StringVar(&d.logFile, "log-file", "", "append logs to this file instead of stderr")
 	daemon.PersistentFlags().BoolVar(&d.compressLogs, "compress-logs", true, "compress sealed logs (rotated backups, closed runs' logs) with zstd; --compress-logs=false keeps them plain (overrides [daemon] compress_logs)")
-	daemon.PersistentFlags().BoolVar(&d.detach, "detach", false, "fork into the background; redirect stdio to --log-file (dev convenience; prefer systemd in production)")
+	daemon.PersistentFlags().BoolVar(&d.detach, "detach", false, "fork into the background; redirect stdio to --log-file (its default belongs to that detached run alone, so a daemon your init system supervises does not log there; dev convenience; prefer systemd in production)")
 	// Declared for parsing only: the settings ladder reads them back by name
 	// and resolves them into d (resolveDaemonSettings).
 	daemon.PersistentFlags().String("memory-limit", "", "Go soft memory limit, e.g. 2GiB (0 = off; overrides [daemon] memory_limit and GOMEMLIMIT)")
@@ -133,15 +133,23 @@ func newDaemonCmd(g *globalOpts) *cobra.Command {
 		},
 	}
 
+	// daemonDrain is `daemon stop --graceful`: the cap on the turn drain the CLI
+	// arms on the running daemon before it sends the SIGTERM, which is the only
+	// way a flag can reach the daemon's own shutdown path
+	// (stump.wtf/harness#871).
+	var daemonDrain string
+
 	stop := &cobra.Command{
 		Use: "stop", Short: "gracefully stop the running daemon",
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmdStopDaemon(g.opts())
+			return cmdStopDaemon(g.opts(), daemonDrain)
 		},
 	}
+	stop.Flags().StringVar(&daemonDrain, "graceful", "", "let every harness finish its current turn before stopping, at most this long (e.g. 5m); bare means the configured cap")
+	stop.Flags().Lookup("graceful").NoOptDefVal = gracefulDefault
 
 	status := &cobra.Command{
 		Use: "status", Short: "show daemon status",

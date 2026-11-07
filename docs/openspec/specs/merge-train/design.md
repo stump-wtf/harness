@@ -17,10 +17,11 @@ it.
 - Pure, I/O-free eligibility and ordering.
 - A Gitea implementation that never lets the token reach argv, a log line or
   an error string.
+- A GitHub implementation, so a repo that lives on GitHub can be landed by the
+  same train (ADR-0061).
 
 ### Non-Goals
 
-- A GitHub implementation. Gitea is where our CI gates merges.
 - Writing Switchboard todos (ADR-0032, Decision 5, Option 1).
 
 ## Decisions
@@ -32,7 +33,12 @@ internal/forge/            types.go   PullRequest, Review
                            forge.go   Forge, TrainSpec, TrainBranch, errors
 internal/forge/fake/       fake.go    in-memory Forge
 internal/forge/gitea/      gitea.go   REST
-                           git.go     bare cache clone: build, fetch, tree ids
+                           git.go     whoami, then the shared git plumbing
+internal/forge/gitcache/   gitcache.go bare cache clone: build, fetch, tree ids
+internal/forge/github/     github.go  REST
+                           ci.go      check runs, not combined status
+                           train.go   train branch, and its CI gate PR
+                           file.go    file content at a ref
 internal/mergetrain/       types.go   aliases of the forge types
                            eligibility.go order.go verify.go
                            train.go   one attempt: build, wait, delete
@@ -189,6 +195,59 @@ in the child's environment — never a URL with credentials, never argv:
 Commits are authored and committed as the token's user, read once from
 `GET /user` at construction and passed as `GIT_AUTHOR_*`/`GIT_COMMITTER_*`.
 
+### The GitHub implementation (#906, ADR-0061)
+
+The same interface against GitHub's REST API at `https://api.github.com`
+(`github_base_url` overrides it for GHES), `Authorization: Bearer <t>` and a
+30 s per-request timeout, with the same rule that the token never reaches
+argv, a log line or an error string. The git half is the shared
+`internal/forge/gitcache` package: GitHub publishes `refs/pull/<n>/head` too,
+and over HTTPS the token travels in the child's environment as
+`http.extraHeader` with Basic auth, so both forges run one copy of the plumbing
+with a different prefix and header.
+
+| Method | Call |
+|---|---|
+| `ListOpenPRs` | `GET /repos/{r}/pulls?state=open&per_page=100` (paged), then per PR `GET /repos/{r}/pulls/{n}/reviews`; `draft` and `mergeable` map onto the same fields |
+| `CombinedStatus` | `GET /repos/{r}/commits/{sha}/check-runs` (Actions) folded with `GET /repos/{r}/commits/{sha}/status` (legacy statuses) |
+| `BranchHead` | `GET /repos/{r}/branches/{branch}` → `commit.sha` |
+| `DeleteBranch` | close the gate PR, then `DELETE /repos/{r}/git/refs/heads/{branch}`; 404 is success |
+| `SquashMerge` | `PUT /repos/{r}/pulls/{n}/merge` `{"merge_method":"squash","sha":…,"commit_title":…}` → `sha` |
+| `Comment` | `POST /repos/{r}/issues/{n}/comments` `{"body":…}` |
+| `ListComments` | `GET /repos/{r}/issues/{n}/comments` (paged) |
+| `FileContentAtRef` | `GET /repos/{r}/contents/{path}?ref={ref}` raw; on a too-large 403, `GET /repos/{r}/git/trees/{ref}?recursive=1` then `GET /repos/{r}/git/blobs/{sha}` raw |
+| `CreateTrainBranch` | the shared git build and push, then the CI gate below |
+
+Two answers here are GitHub-specific and both are load-bearing.
+
+**Check runs, not combined status.** Actions report as check runs. `GET
+/repos/{r}/commits/{sha}/status` answers `success` with `total_count == 0` for
+a commit no workflow has touched, so a train gated on it would land an untested
+tree. Folding therefore waits for every check run to complete, reads "nothing
+has reported yet" as `pending`, and counts `action_required`, `timed_out`,
+`stale`, `startup_failure` and `cancelled` as failure. An unrecognised
+conclusion is `pending`: never success.
+
+**How a push gates CI.** A workflow triggered `on: pull_request` runs when a PR
+is opened or synchronised, not when a branch is pushed; a workflow triggered
+`on: push` has to name `train/**` in its `branches`. A GitHub repo therefore
+gates one of two ways, set by `github_ci_gate`:
+
+- `draft-pr` (default) — `CreateTrainBranch` opens the train branch as a
+  **draft PR against `base_branch`**, which is what triggers `pull_request`.
+  It is a gate, not a proposal: its body says nothing needs reviewing, it
+  stays draft so nothing can merge it, and eligibility ignores drafts, so the
+  train never lands its own gate. This is the shape for a repo whose
+  `.github/workflows/` the train cannot edit — a fork, or a repo whose
+  workflows live elsewhere.
+- `train-push` — no pull request; the repo's own workflows declare `train/**`,
+  and the push itself gates.
+
+`DeleteBranch` cleans up either shape, statelessly: it lists open PRs whose
+head is `<owner>:<branch>`, closes them, then deletes the ref. So a daemon
+restart mid-attempt leaves no orphan gate PR, and a repo moving between the two
+topologies needs no migration.
+
 ### Logging
 
 `mergetrain` takes a small interface that `charmbracelet/log`'s `*Logger`
@@ -225,6 +284,43 @@ bottleneck. Batching spends **one CI run on up to `batch` heads**:
   `OnTrain` hook already decides what a build produces, so tests script
   batch builds without a new interface.
 
+### Classifying a red train (`flake_cool_down`, REQ-18)
+
+A red train normally means the tree is bad, and the driver's answer is to
+remember the `(pr, head, base)` and stop touching it until `main` or the head
+moves. When the failure is a runner that never attached, that answer costs
+hours and the next roll can land on another flake (#1016).
+
+The distinction has to come from the forge, because the combined status cannot
+make it: a job whose runner never attaches fails the same way a failing test
+fails. Gitea's Actions job-log endpoint answers `job not started` for exactly
+those jobs, so the adapter asks it, per failed job, and reports the verdict as
+`forge.Job.NeverStarted`. Making that an **optional** capability
+(`forge.JobReporter`) rather than a method on `Forge` keeps every other
+implementation and test double compiling unchanged, and forces the conservative
+reading: a forge that cannot answer is a forge reporting a real failure.
+
+Two things make the rule safe to leave on:
+
+- **All or nothing.** Every failed job on the commit must carry the signature.
+  One job with a log, and the failure is the tree's. Skipped jobs are not
+  failures, and a `cancelled` or timed-out job says nothing about runners, so
+  neither can fire the rule.
+- **Once per triple.** The retry is remembered in the same map as the attempt
+  memory, so the worst a misclassification can cost is one extra CI run per
+  `(pr, head, base)`; there is no loop to converge, and the second failure gets
+  today's comment.
+
+The wait is a timestamp in that map, not a sleep: a tick never blocks on a
+flake, and the next eligible PR uses the ticks the cool-down would otherwise
+have wasted. `flake_cool_down = 0` leaves the old behaviour intact; it is the
+shipped default until ADR-0056 is accepted, so the retry is opt-in.
+
+What the driver deliberately does not do: re-run a workflow, cancel a run, or
+adjust a runner or any Actions setting. Deciding that a fleet is unhealthy is
+host work, and a train that retried once and failed the same way says so
+instead of hiding it (ADR-0056).
+
 ### Configuration (#604)
 
 ```toml
@@ -233,11 +329,15 @@ enabled = false                 # REQ-1
 mode = "report"                 # or "merge"
 repos = ["stump.wtf/harness"]
 batch = 1                       # REQ-17: PRs per train commit; > 1 batches and bisects on red
+flake_cool_down = "5m"          # REQ-18: wait before the one runner-failure retry; unset = 0 (off) until ADR-0056 is accepted
 base_branch = "main"
 poll_interval = "60s"
 ci_timeout = "30m"
 forge_base_url = "https://gitea.example.com"
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN"   # the variable's NAME
+github_base_url = "https://api.github.com"     # default; only read if a repo names GitHub
+github_token_env = "HARNESS_MERGETRAIN_GITHUB_TOKEN"
+github_ci_gate = "draft-pr"                    # or "train-push" (ADR-0061)
 ```
 
 A change to `[mergetrain]` takes effect at the next daemon restart, like
@@ -247,8 +347,29 @@ A change to `[mergetrain]` takes effect at the next daemon restart, like
 above 1 switches on the batching described above: the daemon hands it to
 every repo's driver and stays quiet about it.
 
+`flake_cool_down` is the one duration that accepts `0`, because there `0` means
+"off" rather than "immediately"; a negative duration is a config error with its
+line. Unset means `0`: the retry ships off until ADR-0056 is accepted.
+
+A `repos` entry may be `"github:owner/name"` to put that repo on the GitHub
+forge; a bare `owner/name` stays on the forge `forge_base_url` names
+(ADR-0061). Naming one GitHub repo makes `github_token_env` required, and a
+repo list that is all GitHub does not need `forge_base_url` or
+`forge_token_env` at all. Each forge gets its own clone cache
+(`<state>/mergetrain/cache/<forge>/<owner>/<name>.git`), because the same
+`owner/name` can exist on two forges and their objects are not the same
+repository.
+
 ## Risks / Trade-offs
 
+- **A GitHub train commit whose gate is mis-set tests nothing** (ADR-0061). If
+  `github_ci_gate` does not match how the repo's workflows trigger, no check
+  run ever appears for the train commit, and the train waits for `ci_timeout`
+  and comments `timeout` rather than merging. Absent CI is never read as green.
+- **The draft gate PR is a visible artifact** on a GitHub repo: one open draft
+  per train attempt, closed by the same attempt. `report` mode opens and closes
+  it like `merge` mode does, because building the gate is how the train gets a
+  CI verdict at all.
 - **An untested tree can land in a race** (a bypass in the milliseconds
   between the re-read and the merge). Bounded to one merge, detected by
   REQ-8, and the train halts.

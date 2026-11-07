@@ -27,10 +27,10 @@ enabled = false
 
 | Field | Meaning |
 |-------|---------|
-| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `pi`, `omp`, `generic`, `command`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args. To run any other program, use `command` with an `argv` — see [The `command` kind](#the-command-kind). `generic` takes no `prompt` or `prompt_file` — see [Agent adapters](#agent-adapters) |
+| `harness` | **required** — the harness kind, an enum: `crush`, `claude-code`, `codex`, `pi`, `omp`, `opencode`, `generic`, `command`. There is no default; every harness says what it runs. It selects the adapter, which owns the executable a long-running harness runs — `args` are appended after it. `generic` runs `sh`, so its `args` are **sh's** args. To run any other program, use `command` with an `argv` — see [The `command` kind](#the-command-kind). `generic` takes no `prompt` or `prompt_file` — see [Agent adapters](#agent-adapters) |
 | `args` | argument list appended after the adapter's executable. Not accepted on `command`, which takes `argv` instead |
 | `argv` | `command` only: the whole process, `argv[0]` first, exec'd **without a shell**. See [The `command` kind](#the-command-kind) |
-| `transcripts` | `command` only: observe the harness's sessions as those of `claude-code`, `crush`, `codex`, `pi` or `omp`. See [Binding transcripts](#binding-transcripts) |
+| `transcripts` | `command` only: observe the harness's sessions as those of `claude-code`, `crush`, `codex`, `pi`, `omp` or `opencode`. See [Binding transcripts](#binding-transcripts) |
 | `workdir` | working directory (**required** for most commands) |
 | `env_file` | optional `KEY=VALUE` file sourced before launch (secrets stay here, out of the config). Also accepts a **list** of files loaded in order, a later file winning a key collision — `env_file = ["claude.env", "reviewer.env"]` — so a shared credential file and a per-persona one compose without copying. A missing file is tolerated, exactly as a missing string is; an empty list is a load error |
 | `description` | free-text shown in the dashboard |
@@ -103,17 +103,20 @@ is dropped, not emulated:
 | `codex` | `codex exec [--model M] [--full-auto] <prompt>` | `quiet`, `max_turns` |
 | `pi` | `pi --print [--model M] <prompt>` | `auto_accept` (Pi has no permission prompts), `max_turns`, `quiet` (`--print` is already headless) |
 | `omp` | `omp --print [--model M] <prompt>` | `auto_accept`, `max_turns`, `quiet`, as for `pi` |
+| `opencode` | `opencode run [--auto] [--model M] <prompt>` | `max_turns`, `quiet` |
 | `generic` | none — a `prompt` or `prompt_file` on `generic` is a config error | — |
 
 ⚠️ `auto_accept` bypasses **ALL** of the agent's permission prompts. Only enable
-it on trusted, headless runs.
+it on trusted, headless runs. OpenCode's is the narrow exception: `--auto`
+approves the permissions that are not explicitly denied, so explicit denials
+in OpenCode's own permission config still hold.
 
 ### Stream-json one-shots run without a terminal
 
 A `claude-code` one-shot prints `stream-json`, one JSON object per line, so the
 daemon runs it on pipes rather than under a PTY
 ([ADR-0033](/decisions/adr-0033-trace-first-run-records)). Every other kind
-keeps its PTY: `crush`, `codex`, `pi` and `omp` one-shots, every resident
+keeps its PTY: `crush`, `codex`, `pi`, `omp` and `opencode` one-shots, every resident
 harness, and every `command` harness, whatever its `argv`.
 
 - **No terminal.** The process has no controlling terminal and its stdin is
@@ -342,8 +345,10 @@ keep_runs = 30         # default 20
   line per line, private to your user. Its `<run_id>.log` then holds the
   lifecycle lines and the agent's stderr. The stream is compressed to
   `<run_id>.stream.jsonl.zst` when the run closes, like the log. `keep_runs`
-  deletes a run's stream with its log. `harness logs <name> --run N --raw`
-  prints the stream, then the run log once the run has ended.
+  deletes a run's stream with its log. `harness logs <name> --run N` renders
+  the stream as readable entries (its raw masked tail when it parses to
+  nothing), then the run log once the run has ended — see
+  [CLI → Logs](./cli#logs).
 
 :::note Upgrading from a release before the ledger
 The first daemon that has the ledger copies each harness's run history out of
@@ -678,14 +683,14 @@ the file, line, harness and key:
 ## Agent adapters
 
 The `harness` key is a **required** enum selecting the adapter (ADR-0011,
-SPEC-0006): `crush`, `claude-code` ([what it runs](/guides/claude-code)), `codex`, `pi`, `omp`, `generic`, `command`. It has no default —
+SPEC-0006): `crush`, `claude-code` ([what it runs](/guides/claude-code)), `codex`, `pi`, `omp`, `opencode`, `generic`, `command`. It has no default —
 what a harness runs is the most consequential thing it declares, so a table
 that omits the key is a config error rather than an agent nobody asked for:
 
 ```
 harness "web": missing required key "harness" (want one of: crush, claude-code,
-codex, pi, omp, generic, command — use "command" with argv = ["…"] for an arbitrary
-program)
+codex, pi, omp, opencode, generic, command — use "command" with argv = ["…"] for an
+arbitrary program)
 ```
  The
 adapter owns both the tool-specific behaviour (trajectory discovery) and the
@@ -703,7 +708,8 @@ scratchpad and the edit form refuse it too:
 
 ```
 harness "triage": "generic" runs sh and has no prompt synthesis, so it takes no
-"prompt"; use harness = "crush"|"claude-code"|"codex"|"pi"|"omp" for a prompt one-shot, or
+"prompt"; use harness = "crush"|"claude-code"|"codex"|"pi"|"omp"|"opencode" for a
+prompt one-shot, or
 harness = "command" with argv to run another program without a shell
 ```
 
@@ -771,8 +777,8 @@ workdir = "~/src/report"
 ```
 
 Any agent CLI not listed above runs this way: `harness = "command"`,
-`argv = ["…", …]`, resident, on a `schedule`, or on `triggers`. Pi and OMP
-have adapters of their own (below).
+`argv = ["…", …]`, resident, on a `schedule`, or on `triggers`. Pi, OMP and
+OpenCode have adapters of their own (below).
 
 #### Argv templates
 
@@ -865,8 +871,8 @@ workdir = "~/src/app"
 enabled = true
 ```
 
-- The value is one of `claude-code`, `crush`, `codex`, `pi` or `omp`; anything
-  else fails to load, listing those.
+- The value is one of `claude-code`, `crush`, `codex`, `pi`, `omp` or `opencode`;
+  anything else fails to load, listing those.
 - It is accepted on `command` only. An adapter kind already binds its own
   transcripts, so `transcripts` on `crush` (even `transcripts = "crush"`) is a
   config error.
@@ -912,6 +918,38 @@ so an `omp` harness claims exactly its own.
 [harness.my-agent]
 harness = "claude-code"
 ```
+
+### OpenCode
+
+`opencode` runs [OpenCode](https://opencode.ai), the SST coding agent. A
+resident harness runs `opencode` with `args` appended, and a prompt one-shot
+runs `opencode run` with `model` passed as `--model` in the CLI's
+`provider/model` form. `auto_accept`, `max_turns` and `quiet` are accepted and
+add nothing: OpenCode declares tool permissions in its own configuration rather
+than through a skip-permissions flag, and has no turn budget or quiet switch.
+
+```toml
+[harness.oc-triage]
+harness = "opencode"
+model = "anthropic/claude-opus-5"
+prompt = "triage the open issues"
+schedule = "0 8 * * *"
+workdir = "~/src/app"
+```
+
+⚠️ **The argv is not verified against a real binary.** It was written from the
+adapter template and the CLI's documented `run` mode, because no `opencode` was
+installed where this was built (issue #919). Check `opencode run --help` on the
+host: if the flags have drifted, run the CLI as `harness = "command"` with your
+own `argv` and `transcripts = "opencode"` until the adapter is updated.
+
+**Observation.** Observed through the same session reader agent-trace has used
+for OpenCode since before v0.4.0 (ADR-0033). OpenCode keeps every session in
+one SQLite database, `~/.opencode/opencode.db`, so a harness's sessions are the
+rows recorded with its own working directory, and the database follows the
+`HOME` its `env_file` gives it. Its sessions are attributed to it and counted
+in the model-call metrics. A database the CLI has not written yet is no
+sessions, not an error.
 
 ## Agent packages and stables
 
@@ -1077,6 +1115,42 @@ table, the per-client route offers, and how the pin surfaces in the daemon
 protocol and the TUI are in [Model pins](./model-pins); the decision is
 [ADR-0026](/decisions/adr-0026-fail-closed-model-pinning) and the behaviour
 is [SPEC-0020](/specs/model-pinning/spec).
+
+## Skill repos
+
+A `[skill_repo.<name>]` table declares a git repository of skills the daemon
+serves to agents through the facade's `search_skills` and `get_skill` tools,
+and a `[skills]` table tunes serving. Both are **global config only**: a
+project `harness.toml` is refused them the same way it is refused `[server]`
+and `[telemetry]`, so a cloned repository cannot declare its own skill repo.
+With no skill repo declared, the facade registers no skill tools and creates
+no index.
+
+```toml
+[skill_repo.fleet]
+remote   = "https://gitea.stump.rocks/stump.wtf/skills-fleet"
+path     = "skills"          # where skill files live inside the repo (default)
+serve_to = ["*"]             # who may search it; globs over harness names
+public   = true              # default; distiller-side, not a serving scope
+
+[skills]
+summary_max_chars  = 1000    # get_skill summary cap (200-5000)
+retire_grace_days  = 30      # a merged skill cannot be retired before this
+retire_window_days = 60      # zero-retrieval window after the grace period
+```
+
+| Table | Key | Required | Meaning |
+| --- | --- | --- | --- |
+| `[skill_repo.<name>]` | `remote` | yes | Forge URL of the skill repository; the name may not contain `/` or `.` |
+| | `path` | no (default `skills`) | Directory inside the repo holding the skill files |
+| | `serve_to` | no (default `["*"]`) | Harness selectors admitted to search the repo; the bare `"*"` matches every harness, any other selector is a glob over qualified harness names in which `*` does not match `/` |
+| | `public` | no (default `true`) | Whether the repo is public; distiller-side, not a serving scope |
+| `[skills]` | `summary_max_chars` | no (default `1000`) | Cap on the `get_skill` summary render, 200-5000 |
+| | `retire_grace_days` | no (default `30`) | Days after merge during which a skill cannot be retired |
+| | `retire_window_days` | no (default `60`) | Zero-retrieval window after the grace; must not be shorter than `retire_grace_days` |
+
+The serving clones, the index, the scoping and the two facade tools are in
+[Skill search and retrieval](./skills).
 
 ## Trajectory harvesting & facade scope
 
@@ -1339,14 +1413,29 @@ repos = ["stump.wtf/harness"]                # required when enabled
 base_branch = "main"                         # default "main"
 poll_interval = "60s"                        # default 60s, minimum 5s
 ci_timeout = "30m"                           # default 30m
+flake_cool_down = "5m"                       # default 0 (retry off) until ADR-0056 is accepted; "5m" is the proposed value
 sequence_paths = ["docs/adrs", "migrations"] # watched for colliding numbers; default below
 forge_base_url = "https://gitea.stump.rocks" # required when enabled
 forge_token_env = "HARNESS_MERGETRAIN_TOKEN" # the variable's NAME, required when enabled
+github_base_url = "https://api.github.com"    # default; only read when a repo names GitHub
+github_token_env = "HARNESS_MERGETRAIN_GITHUB_TOKEN" # the variable's NAME, required for a "github:" repo
+github_ci_gate = "draft-pr"                   # or "train-push" (ADR-0061)
 ```
 
 - **The token is never in this file.** `forge_token_env` names an environment
   variable in the daemon's environment, and a `token` key is refused. The
   daemon refuses to start if the train is enabled and that variable is empty.
+- **Two forges, one train.** A `repos` entry of `"github:owner/name"` is driven
+  by the GitHub forge, which authenticates from `github_token_env`; an
+  unprefixed entry uses the default forge (`forge_base_url`). A train whose
+  repos are all GitHub needs no `forge_base_url` or `forge_token_env`. See
+  [Merge train](./merge-train#repos-on-github) and ADR-0061.
+- **A red train whose jobs never reached a runner is retried once** after
+  `flake_cool_down` instead of waiting for `main` to move; every failed job has
+  to carry that signature, and the retry happens at most once per tree. The
+  retry is off until you set `flake_cool_down` (the shipped default is `0`
+  until ADR-0056 is accepted); setting it to `"0"` goes back to waiting
+  (SPEC-0025 REQ-18).
 - **Global only.** A project `harness.toml` or a `harness_d` drop-in that
   contains `[mergetrain]` is refused.
 - **One train per repo.** Each repo's driver holds a lock under
@@ -1439,6 +1528,64 @@ a healthy probe clears the streak.
 probe that is itself broken (exit 127, say) is readable instead of silent.
 Like the `[notify]` hook, the probe is a daemon-side hook, not a supervised
 harness: no PTY, no restart policy, no run record.
+
+## Run lifecycle hooks and per-run work directories
+
+A one-shot's `workdir` is a directory every run of that harness shares, which
+means a run inherits whatever its last run left behind: stale plan files,
+another run's uncommitted edits, an agent's scratch from three weeks ago
+(issue #980). Four keys close that.
+
+```toml
+[harness.sweep]
+harness = "crush"
+prompt = "sweep the inbox and report"
+schedule = "0 6 * * *"
+workdir = "~/sweeps/{{harness.name}}/runs/{{run.id}}"
+workdir_retain = 10
+pre_run  = ["/usr/local/bin/prepare-workspace.sh"]
+post_run = ["/usr/local/bin/check-workspace.sh", "{{run.outcome}}", "{{run.exit_code}}"]
+```
+
+`workdir` is a template rendered per run and created `0700` before the spawn,
+so a run starts clean instead of clean-ish. It may name `harness.name`, `model`,
+`package.dir`, `run.id`, `run.trigger`, `run.source`, `run.date` and
+`run.started_at` — identifiers and dates, never an event field or untrusted
+text, because where a process is born is never an outside party's decision. It
+requires a one-shot: a resident harness is one process, not one directory per
+run.
+
+`workdir_retain` keeps the newest N run directories and removes the rest, the
+run in flight always among them. With a cap set, the template may vary only in
+its LAST element, and pruning removes only directories that match the
+template's own shape, are real directories rather than symlinks, and carry the
+daemon's `.harness-run-dir` mark — so a cap can never reach a directory that
+was there before harness created it.
+
+`pre_run` runs after the run's record is open and before the harness process
+spawns; `post_run` runs after it is reaped and before the record closes, so the
+run's verdict is already known and a failing `post_run` can still change it.
+Each element is templated like a `command` harness's argv and exec'd directly —
+never through a shell — with ten minutes to finish. A hook sees the daemon's
+environment plus `HARNESS_NAME`, `HARNESS_WORKDIR`, `HARNESS_RUN_DATADIR` and
+the run's `HARNESS_RUN_*` variables, and for `post_run` also
+`HARNESS_RUN_OUTCOME` and `HARNESS_RUN_EXIT_CODE`. Its own output lands in the
+run's log.
+
+A failed `pre_run` means the harness never spawns: the run closes `failed` with
+reason `pre_run_failed`, because a hook that sets a run up is worth nothing if
+the run proceeds without it having been set up. A failed `post_run` demotes a
+`success` to `failed` with reason `post_run_failed` and leaves every other
+outcome exactly as the process earned it. `{{run.datadir}}` names a fresh
+directory inside the run's workdir for whatever the agent leaves behind,
+exported to hooks as `HARNESS_RUN_DATADIR`; under a plain shared workdir it is
+nested by run id and bounded by `keep_runs`.
+
+Hooks are valid only on a one-shot — a prompt harness, or a `command` harness
+with a schedule or triggers. Like `[notify]` and `health_cmd` they are
+daemon-side hooks, not supervised harnesses: no PTY, no run record, no restart
+policy (ADR-0051, proposed). `success_check` (#493) is the designed post-run
+verifier with a report attached; it will build on the same slot.
 
 ## The stall watchdog
 

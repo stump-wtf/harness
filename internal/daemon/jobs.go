@@ -24,6 +24,7 @@ package daemon
 // SPEC-0014 REQ "Manual Trigger With Event", REQ "Run Record Fields").
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -274,14 +275,22 @@ func (c *conn) opLogsRun(req protocol.ControlReq, snap supervisor.Snapshot, line
 	text, hasLog := readRunLogTail(logPath, lines)
 	var notices []string
 	// A pipe run's output is its stream file; its run log follows once the
-	// run has ended (streamlog.go; ADR-0033).
+	// run has ended (streamlog.go; ADR-0033). The raw view renders the
+	// stream as the entries agent-trace parses from it, the raw tail being
+	// the fallback for a stream that parses to nothing; the events view
+	// renders it through activity() (#915's design decision).
 	streamPath := supervisor.StreamPathFor(logPath)
-	if stream, ok := readStreamTail(streamPath, lines); ok {
-		ended := rec.Outcome != supervisor.OutcomeRunning
-		text, hasLog = pipeRunText(streamPath, stream, logPath, text, ended), true
-		if !ended {
-			notices = append(notices, fmt.Sprintf("run %d runs on pipes: this is its stdout stream; its stderr and lifecycle lines are in %s, shown here once it ends", rec.RunID, logPath))
+	ended := rec.Outcome != supervisor.OutcomeRunning
+	isPipe := streamPath != "" && !sealedlog.Missing(streamPath)
+	if !req.Events && isPipe {
+		if h, _, ok := c.srv.mgr.HarnessRecord(req.Name); ok {
+			if rendered, ok := c.pipeRunStreamRender(h, rec, streamPath, logPath, text, lines); ok {
+				text, hasLog = rendered, true
+			}
 		}
+	}
+	if isPipe && !ended {
+		notices = append(notices, fmt.Sprintf("run %d runs on pipes: its stderr and lifecycle lines are in %s, shown here once it ends", rec.RunID, logPath))
 	}
 	if !hasLog {
 		notices = append(notices, noRunLogNotice(rec))
@@ -309,10 +318,38 @@ func (c *conn) opLogsRun(req protocol.ControlReq, snap supervisor.Snapshot, line
 		data.Run.ExitCode = rec.ExitCode
 	}
 	if data.Source != protocol.LogSourceAgentTrace || data.Text != "" {
+		if isPipe {
+			if h, _, ok := c.srv.mgr.HarnessRecord(req.Name); ok {
+				if rendered, ok := c.pipeRunStreamRender(h, rec, streamPath, logPath, text, lines); ok {
+					text = rendered
+				}
+			}
+		}
 		data.Text = text
 	}
 	data.Notices = append(data.Notices, notices...)
 	c.respond(req, data)
+}
+
+// pipeRunStreamRender is the text reply's rendering of a pipe run's stream:
+// the entries agent-trace parses from it, one logview line each, or the raw
+// tail when the stream parses to nothing; the run log follows once the run
+// has ended. ok is false when the stream rendered to nothing.
+func (c *conn) pipeRunStreamRender(h core.Harness, rec supervisor.RunRecord, streamPath, logPath, runLog string, lines int) (string, bool) {
+	ended := rec.Outcome != supervisor.OutcomeRunning
+	ctx, cancel := context.WithTimeout(context.Background(), activityTimeout)
+	defer cancel()
+	entries, _ := pipeStreamEntries(ctx, h, streamPath, rec.StartedAt)
+	if lines > 0 && len(entries) > lines {
+		entries = entries[len(entries)-lines:]
+	}
+	if len(entries) > 0 {
+		return pipeRunEntries(streamPath, entries, logPath, runLog, ended), true
+	}
+	if stream, ok := readStreamTail(streamPath, lines); ok {
+		return pipeRunText(streamPath, stream, logPath, runLog, ended), true
+	}
+	return "", false
 }
 
 // findRun returns name's record for run id, from the run ledger.

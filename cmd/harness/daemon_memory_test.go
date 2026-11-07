@@ -309,22 +309,27 @@ func TestDaemonBinaryMemoryLimitAndPprof(t *testing.T) {
 		{"off when nothing is set", "", []string{"HARNESS_MEMORY_LIMIT=", "GOMEMLIMIT="}, math.MaxInt64, "limit=off source=default"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			metricsAddr := "127.0.0.1:" + freePort(t)
+			// The Go families below ride the /metrics listener, so it binds
+			// 127.0.0.1:0 and the real address is read back from the daemon's
+			// log: two daemons handed the same reserved port under load is how
+			// main lost a listener in run 15678 (harness#857). pprof keeps a
+			// reserved port, because its endpoint is the assertion here.
 			pprofAddr := "127.0.0.1:" + freePort(t)
+			logPath := filepath.Join(shortSockDir(t), "daemon.log")
 			cfg := fmt.Sprintf("[daemon]\npprof_addr = %q\n", pprofAddr)
 			if tc.limit != "" {
 				cfg += "memory_limit = " + tc.limit + "\n"
 			}
-			cfg += fmt.Sprintf("\n[server]\nmetrics_listen = %q\n", metricsAddr)
+			cfg += "[server]\nmetrics_listen = \"127.0.0.1:0\"\n"
 			env := append([]string{"HARNESS_PPROF_ADDR="}, tc.env...)
-			cmd, out, _ := runDaemonBinary(t, bin, cfg, env...)
-			// The daemon writes out from exec's copy goroutine until it
-			// exits, so out is read only after stop (cmd.Wait also waits for
-			// that copy to finish).
+			cmd, _ := spawnDaemonWithLog(t, bin, cfg, logPath, env...)
+			metricsAddr := boundAddr(t, logPath, "metrics listening")
+			// Killing first makes the log complete: the daemon writes the log
+			// file itself, so once it has stopped the whole startup is there.
 			stop := func() string {
 				_ = cmd.Process.Kill()
 				_ = cmd.Wait()
-				return out.String()
+				return logged(logPath)
 			}
 
 			waitHTTP(t, "http://"+metricsAddr+"/metrics", stop)

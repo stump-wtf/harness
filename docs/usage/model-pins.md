@@ -101,6 +101,7 @@ below; an adapter that offers no route fails any pin at load.
 | --- | --- | --- | --- |
 | `crush` | offered | not offered | offered |
 | `pi`, `omp` | offered | not offered | offered |
+| `opencode` | offered | not offered | offered |
 | `claude-code` | not offered | offered | offered |
 | `codex` | not offered | not offered | not offered |
 | `generic` | not offered | not offered | not offered |
@@ -119,6 +120,7 @@ served call: `model`, or `model+provider`.
 | `crush` on `openrouter` / `litellm` | `model` |
 | `pi`, `omp` on `openrouter` | `model+provider` |
 | `pi`, `omp` on `litellm` | `model` |
+| `opencode` on `openrouter` / `litellm` | `model` (the session row records the model id, not the upstream provider) |
 | `claude-code` on `anthropic` | `model+provider` (first party, by construction, when `ANTHROPIC_BASE_URL` is unset) |
 | `claude-code` on `litellm` | `model` |
 

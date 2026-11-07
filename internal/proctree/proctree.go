@@ -37,6 +37,14 @@ const DefaultLimit = 12
 // the cap the eldest are still the ones reported.
 const ChildLimit = 24
 
+// maxStartSkew is how far into the future a child's started_at may read
+// before we attribute it to a skewed host clock rather than to the process.
+// A box whose btime/uptime pair disagrees with its wall clock makes ps date
+// a just-spawned child decades from now (issue #1002); such a reading is
+// unknown, not a moment. It bounds wall skew, not age: a child that has been
+// up for years still carries its start.
+const maxStartSkew = 5 * time.Minute
+
 // Line is one process in the tree.
 type Line struct {
 	PID    int
@@ -149,7 +157,8 @@ type Child struct {
 	Command string
 	// StartedAt is when the child came up, from the table's own elapsed-time
 	// column, so it is accurate to the second. Zero when the table would not
-	// say.
+	// say, or when the pair would read as a start in the future (a skewed
+	// host clock, issue #1002).
 	StartedAt time.Time
 	// CPU is the child's cumulative user+system time. Age without CPU is the
 	// wedged-child signal: a process alive for hours that has burned seconds
@@ -252,7 +261,13 @@ func (t *Table) Children(root, limit int) []Child {
 	for _, pid := range kids {
 		c := Child{PID: pid, Command: t.names[pid], CPU: t.cpu[pid]}
 		if age, ok := t.elapsed[pid]; ok {
-			c.StartedAt = t.now.Add(-age)
+			// Round(0) strips the monotonic reading, so the instant hands out
+			// as a wall instant: a skewed monotonic source must not ride along
+			// (issue #1002). A start the pair would read as future is a skewed
+			// clock, not a process, and reads as unknown.
+			if started := t.now.Add(-age).Round(0); !started.After(time.Now().Add(maxStartSkew)) {
+				c.StartedAt = started
+			}
 		}
 		out = append(out, c)
 	}

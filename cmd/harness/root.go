@@ -125,6 +125,8 @@ func newRootCmd() *cobra.Command {
 		newLifecycleCmd(g, "start", "start a harness"),
 		newLifecycleCmd(g, "stop", "stop a harness"),
 		newLifecycleCmd(g, "restart", "restart a harness"),
+		newDrainCmd(g),
+		newUndrainCmd(g),
 		newLogsCmd(g),
 		newSimpleCmd(g, "jobs", "list triggered harnesses and how their runs went", nameNone),
 		newSimpleCmd(g, "triggers", "list trigger sources: state, last event, counters, harnesses", nameNone),
@@ -132,6 +134,7 @@ func newRootCmd() *cobra.Command {
 		newRunsCmd(g),
 		newAttachCmd(g),
 		newCaptureCmd(g),
+		newMcpCmd(g),
 		newSkillsCmd(g),
 		newStableCmd(g),
 		newAgentCmd(g),
@@ -206,8 +209,9 @@ func newSimpleCmd(g *globalOpts, verb, short string, arity nameArity) *cobra.Com
 // rejects the start when no lease applies to the target.
 func newLifecycleCmd(g *globalOpts, verb, short string) *cobra.Command {
 	var (
-		all    bool
-		forDur string
+		all      bool
+		forDur   string
+		graceful string
 	)
 	cmd := &cobra.Command{
 		Use:           verb,
@@ -237,13 +241,20 @@ func newLifecycleCmd(g *globalOpts, verb, short string) *cobra.Command {
 				}
 			}
 			o := g.opts()
-			o.name, o.all, o.forDur = name, all, forDur
+			o.name, o.all, o.forDur, o.graceful = name, all, forDur, graceful
 			return run(verb, o)
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "apply to every harness (name is ignored)")
 	if verb == "start" {
 		cmd.Flags().StringVar(&forDur, "for", "", "run under an after-hours lease for this long (e.g. 2h30m)")
+	}
+	if verb == "stop" || verb == "restart" {
+		// --graceful takes an optional cap: bare waits out the turn under the
+		// harness's configured shutdown timeout, an explicit cap bounds it
+		// (stump.wtf/harness#871).
+		cmd.Flags().StringVar(&graceful, "graceful", "", "wait for the harness's current turn to end before stopping, at most this long (e.g. 5m); bare means the configured cap")
+		cmd.Flags().Lookup("graceful").NoOptDefVal = gracefulDefault
 	}
 	return cmd
 }

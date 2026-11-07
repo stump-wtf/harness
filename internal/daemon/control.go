@@ -59,6 +59,12 @@ func (c *conn) handleControl(payload []byte) {
 		c.opReload(req)
 	case protocol.OpDaemonInfo:
 		c.respond(req, c.opDaemonInfo())
+	case protocol.OpArmShutdown:
+		c.opArmShutdown(req)
+	case protocol.OpDrain:
+		c.opDrain(req)
+	case protocol.OpUndrain:
+		c.opUndrain(req)
 	case protocol.OpProjectUp:
 		c.opProjectUp(req)
 	case protocol.OpProjectDown:
@@ -187,6 +193,11 @@ func (c *conn) infoFor(snap supervisor.Snapshot) protocol.HarnessInfo {
 	// harness is held for, gated or not — a park or a spent budget holds an
 	// ungated harness too. Omitted when it is not held; there is no `held`.
 	info.HoldReasons = snap.Holds.Strings()
+	// The operator drain gate (stump.wtf/harness#828): "draining" while a
+	// drained harness still has a run in flight, "drained" once it is idle,
+	// omitted when nothing drains it. A label over State and HoldReasons, so
+	// an older client reads the same gate off hold_reasons alone.
+	info.Drain = supervisor.DrainLabel(snap)
 	// Operating-hours projection (ADR-0019, SPEC-0012 REQ "Operating Hours
 	// Visibility"). Gated is the snapshot's own record of "has operating_hours"
 	// (set on the actor loop, so it can never disagree with Holds/Closing);
@@ -442,9 +453,25 @@ func (c *conn) opLifecycle(req protocol.ControlReq) {
 		}
 		ok, refused = c.srv.mgr.StartChecked(req.Name, c.peer)
 	case protocol.OpStop:
-		ok = c.srv.mgr.StopPeer(req.Name, c.peer)
+		wait, bad := c.gracefulWait(req)
+		if bad {
+			return
+		}
+		if req.Graceful == "" {
+			ok = c.srv.mgr.StopPeer(req.Name, c.peer)
+		} else {
+			ok = c.srv.mgr.StopGracefulPeer(req.Name, c.peer, wait)
+		}
 	case protocol.OpRestart:
-		ok, refused = c.srv.mgr.RestartChecked(req.Name, c.peer)
+		wait, bad := c.gracefulWait(req)
+		if bad {
+			return
+		}
+		if req.Graceful == "" {
+			ok, refused = c.srv.mgr.RestartChecked(req.Name, c.peer)
+		} else {
+			ok, refused = c.srv.mgr.RestartGracefulPeer(req.Name, c.peer, wait)
+		}
 	}
 	if !ok {
 		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "unknown harness %q", req.Name)
@@ -456,6 +483,118 @@ func (c *conn) opLifecycle(req protocol.ControlReq) {
 	// Reply with the fresh snapshot so the client can render the new state.
 	snap, _ := c.srv.mgr.Snapshot(req.Name)
 	c.respond(req, c.infoFor(snap))
+}
+
+// gracefulWait parses a lifecycle request's --graceful cap (stump.wtf/harness#871):
+// empty means the caller asked for nothing graceful and the op runs as it always
+// did; a duration bounds the wait for the current turn, and "0" bounds it with
+// the harness's configured shutdown timeout instead. A malformed value is
+// answered here, and bad reports that it was.
+func (c *conn) gracefulWait(req protocol.ControlReq) (wait time.Duration, bad bool) {
+	if req.Graceful == "" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(req.Graceful)
+	if err != nil || d < 0 {
+		_ = c.pc.WriteError(req.ID, protocol.ErrBadRequest,
+			"graceful must be a duration (e.g. 5m) or 0 for the configured cap, got %q", req.Graceful)
+		return 0, true
+	}
+	return d, false
+}
+
+// opArmShutdown arms the daemon-wide turn drain that Manager.Close then honors
+// before stopping anything (stump.wtf/harness#871). `harness daemon stop
+// --graceful` calls this, and only then sends the SIGTERM, so a daemon that is
+// not asked to drain shuts down on exactly the old timing.
+func (c *conn) opArmShutdown(req protocol.ControlReq) {
+	wait, bad := c.gracefulWait(req)
+	if bad {
+		return
+	}
+	c.srv.mgr.ArmShutdownDrain(wait)
+	c.respond(req, c.opDaemonInfo())
+}
+
+// opDrain arms the operator drain gate on every named harness
+// (stump.wtf/harness#828): no source starts a new run from then on, the run in
+// flight finishes untouched, and a queued firing is held for undrain unless the
+// request discards it. Wait holds the reply until every drained harness is
+// idle, bounded by Timeout; a deadline that passes with a run still up answers
+// ErrDrainTimeout, which is what makes the exit status usable as a restart
+// gate. Names arrives already expanded from --all, the way the lifecycle
+// verbs expand it, so an empty list means the caller asked for the wait alone.
+func (c *conn) opDrain(req protocol.ControlReq) {
+	timeout := time.Duration(0)
+	if req.Timeout != "" {
+		d, err := time.ParseDuration(req.Timeout)
+		if err != nil || d <= 0 {
+			_ = c.pc.WriteError(req.ID, protocol.ErrBadRequest,
+				"timeout must be a positive duration (e.g. 30m), got %q", req.Timeout)
+			return
+		}
+		timeout = d
+	}
+	if len(req.Names) == 0 && !req.Wait {
+		_ = c.pc.WriteError(req.ID, protocol.ErrBadRequest,
+			"drain needs a harness name, --all, or --wait")
+		return
+	}
+	if err := c.srv.mgr.Drain(req.Names, req.Discard); err != nil {
+		c.writeDrainError(req, err)
+		return
+	}
+	if req.Wait {
+		if err := c.srv.mgr.DrainWait(timeout); err != nil {
+			if errors.Is(err, supervisor.ErrDrainTimeout) {
+				_ = c.pc.WriteError(req.ID, protocol.ErrDrainTimeout,
+					"still draining after %s", timeout)
+			} else {
+				_ = c.pc.WriteError(req.ID, protocol.ErrInternal, "drain wait: %v", err)
+			}
+			return
+		}
+	}
+	c.respond(req, c.drainInfos(req.Names))
+}
+
+// opUndrain clears the drain gate on every named harness and releases the
+// firings the drain held (stump.wtf/harness#828).
+func (c *conn) opUndrain(req protocol.ControlReq) {
+	if len(req.Names) == 0 {
+		_ = c.pc.WriteError(req.ID, protocol.ErrBadRequest,
+			"undrain needs a harness name or --all")
+		return
+	}
+	if err := c.srv.mgr.Undrain(req.Names); err != nil {
+		c.writeDrainError(req, err)
+		return
+	}
+	c.respond(req, c.drainInfos(req.Names))
+}
+
+// writeDrainError answers a drain or undrain whose name list named a harness
+// the daemon does not have. The gate is refused whole (Manager.drainTargets),
+// so an unknown name means nothing was armed and the operator can fix the
+// name and try again; anything else is the daemon's own failure.
+func (c *conn) writeDrainError(req protocol.ControlReq, err error) {
+	if errors.Is(err, supervisor.ErrUnknownHarness) {
+		_ = c.pc.WriteError(req.ID, protocol.ErrUnknownHarness, "%v", err)
+		return
+	}
+	_ = c.pc.WriteError(req.ID, protocol.ErrInternal, "%v", err)
+}
+
+// drainInfos projects each named harness's fresh snapshot onto the wire, in
+// the order the operator named them, so `drain --all` answers as one table.
+func (c *conn) drainInfos(names []string) []protocol.HarnessInfo {
+	infos := make([]protocol.HarnessInfo, 0, len(names))
+	for _, n := range names {
+		if snap, ok := c.srv.mgr.Snapshot(n); ok {
+			infos = append(infos, c.infoFor(snap))
+		}
+	}
+	return infos
 }
 
 // writeRefusal answers req with the structured error a start admission
@@ -638,6 +777,10 @@ func (c *conn) opDaemonInfo() protocol.DaemonInfo {
 		res.SshKeys = keys
 	}
 	res.Notify = c.srv.notifyInfo()
+	// Where this process's own log lines land (stump.wtf/harness#583). The
+	// server resolved it when it started, so it names the surface the logger
+	// chose, not the path config or a stale detach log happens to mention.
+	res.LogDestination = c.srv.logDestination
 	// The webhook listener, likewise only when it actually bound (SPEC-0014
 	// REQ "Webhook Listener"), so doctor judges the live bind.
 	res.WebhookAddr, res.WebhookTLS = c.srv.webhook()

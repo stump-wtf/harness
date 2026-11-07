@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/stump-wtf/harness/internal/client"
+	"github.com/stump-wtf/harness/internal/protocol"
 	"github.com/stump-wtf/harness/internal/sealedlog"
 	"github.com/stump-wtf/harness/internal/supervisor"
 )
@@ -66,6 +67,61 @@ func TestRunLogServedAfterCompression(t *testing.T) {
 	}
 	if !strings.Contains(events.Text, "from-a-compressed-run") {
 		t.Errorf("events --run 1 text:\n%s", events.Text)
+	}
+}
+
+// TestPipeRunStreamServedAfterCompression: a pipe run's stream seals to
+// .stream.jsonl.zst beside its log (ADR-0033), and the readable rendering
+// reads through the seal — raw shows the stream's entries, events carries
+// them as entries — where a bare os.Open would read nothing at all.
+func TestPipeRunStreamServedAfterCompression(t *testing.T) {
+	dir := t.TempDir()
+	const sid = "abcdef12-3456-7890-abcd-ef1234567890"
+	fakeClaude(t, `echo '{"type":"system","subtype":"init","session_id":"`+sid+`"}'
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"readable through the seal","session_id":"`+sid+`"}'
+`)
+	td, _, _ := newJobsDaemonWith(t, func(o *supervisor.ManagerOptions) { o.CompressLogs = true },
+		pipeOneShot("sweep", dir))
+	c := td.dial(t, nil)
+	if _, err := c.Trigger("sweep"); err != nil {
+		t.Fatal(err)
+	}
+	waitRunsOver(t, c, "sweep", finishedN(1))
+	td.mgr.WaitSealed()
+
+	stream := supervisor.StreamPathFor(td.mgr.RunLogPath("sweep", 1))
+	if _, err := os.Stat(stream); !os.IsNotExist(err) {
+		t.Fatalf("plain stream still on disk after the run closed (err %v)", err)
+	}
+	if _, err := os.Stat(sealedlog.Compressed(stream)); err != nil {
+		t.Fatalf("compressed stream missing: %v", err)
+	}
+
+	raw, err := c.RunLogs("sweep", 1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw.Text, "abcdef12") || !strings.Contains(raw.Text, "readable through the seal") {
+		t.Fatalf("the sealed stream's entries do not render:\n%s", raw.Text)
+	}
+	if strings.Contains(raw.Text, `{"type":"`) {
+		t.Errorf("the sealed stream renders as raw JSON instead of entries:\n%s", raw.Text)
+	}
+	events, err := c.LogEvents("sweep", client.LogOptions{Run: 1, Lines: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sess, result bool
+	for _, e := range events.Entries {
+		if e.Kind == protocol.LogEntrySession {
+			sess = true
+		}
+		if strings.Contains(e.Summary, "readable through the seal") {
+			result = true
+		}
+	}
+	if !sess || !result {
+		t.Errorf("the events view lost the sealed stream's entries (session %v, result %v): %+v", sess, result, events.Entries)
 	}
 }
 

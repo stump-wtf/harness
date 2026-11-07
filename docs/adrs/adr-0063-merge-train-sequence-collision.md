@@ -6,7 +6,7 @@ extends: [ADR-0032]
 related: [SPEC-0025, ADR-0032]
 ---
 
-# ADR-0052: the merge train refuses a train commit where two files claim one sequence number
+# ADR-0063: the merge train refuses a train commit where two files claim one sequence number
 
 > **Not yet accepted.** Proposed in the PR closing stump.wtf/harness#981. The
 > issue asks for detection and settled the what ("fail the attempt, name both

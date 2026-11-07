@@ -343,6 +343,11 @@ func (s *Supervisor) readPipes(proc *process, done chan struct{}) {
 		}
 	}
 	s.stream = stream
+	// A consumer watching this run's stream (the daemon's agent event
+	// observer, issue #995) gets the same masked lines the file does, as
+	// they are written. nil when nothing is watching.
+	s.streamIngest = s.openStreamIngest()
+	ingest := s.streamIngest
 	logOut, tee := s.historyOut(), s.extraOut
 	if lo, ok := tee.(LineOuter); ok {
 		// The attach registry serves a pipe run from a mux with no
@@ -357,9 +362,12 @@ func (s *Supervisor) readPipes(proc *process, done chan struct{}) {
 	go func() {
 		defer wg.Done()
 		defer prog.live.Add(-1)
-		pipeStdout(stdout, stream, logOut, tee)
+		pipeStdout(stdout, stream, ingest, logOut, tee)
 		if stream != nil {
 			_ = stream.Close()
+		}
+		if ingest != nil {
+			ingest.Close()
 		}
 	}()
 	go func() {
@@ -378,19 +386,40 @@ func (s *Supervisor) readPipes(proc *process, done chan struct{}) {
 // lost. The reader normally closed it at EOF already; the wait is the same
 // bounded drain the run's log gets.
 func (s *Supervisor) sealStream() {
-	if s.stream == nil {
+	if s.stream == nil && s.streamIngest == nil {
 		return
 	}
 	s.awaitReader()
-	_ = s.stream.Close()
-	s.stream = nil
+	if s.stream != nil {
+		_ = s.stream.Close()
+		s.stream = nil
+	}
+	if s.streamIngest != nil {
+		s.streamIngest.Close()
+		s.streamIngest = nil
+	}
+}
+
+// openStreamIngest asks the daemon's seam for this run's stream, so a
+// consumer can normalize it while the run is live (issue #995). A journal
+// with no seam — a test's stub, or a Manager the daemon never wired — hands
+// out nothing, and the run's stream reaches only its file.
+func (s *Supervisor) openStreamIngest() StreamSink {
+	if s.run == nil {
+		return nil
+	}
+	if j, ok := s.journal.(streamIngestJournal); ok {
+		return j.OpenRunStream(s.harness.Name, s.run.rec.RunID)
+	}
+	return nil
 }
 
 // pipeStdout moves stdout lines, masked, to the stream file (or, for a run
-// with none, the durable log) and on to the attach mux. A dropped line leaves
-// a JSON marker, so the file still parses line by line; its key is not
-// "type", so it cannot pass for one of the agent's own events.
-func pipeStdout(r io.Reader, stream *streamSink, logOut, tee io.Writer) {
+// with none, the durable log), to whoever is normalizing the stream (ingest,
+// nil for a daemon that built no observer), and on to the attach mux. A
+// dropped line leaves a JSON marker, so the file still parses line by line;
+// its key is not "type", so it cannot pass for one of the agent's own events.
+func pipeStdout(r io.Reader, stream *streamSink, ingest StreamSink, logOut, tee io.Writer) {
 	var mask redact.Lines
 	readLines(r, maxPipeLine, func(line []byte, dropped int) {
 		out := fmt.Sprintf(`{"harness":"line_dropped","stream":"stdout","bytes":%d,"limit":%d}`, dropped, maxPipeLine)
@@ -402,6 +431,11 @@ func pipeStdout(r io.Reader, stream *streamSink, logOut, tee io.Writer) {
 			stream.writeLine(out)
 		case logOut != nil:
 			_, _ = io.WriteString(logOut, out+"\n")
+		}
+		if ingest != nil {
+			// What the file gets, the consumer gets: masked, whole lines, in
+			// order. It never blocks the pipe reader (ADR-0007).
+			ingest.Line(out)
 		}
 		if tee != nil {
 			_, _ = io.WriteString(tee, out+"\r\n")

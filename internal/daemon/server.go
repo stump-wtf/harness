@@ -69,7 +69,11 @@ type Server struct {
 	socketPath string
 	configPath string
 	version    string
-	started    time.Time
+	// logDestination names where this process's own log lines land
+	// (stump.wtf/harness#583), resolved once at NewServer from the log file it
+	// was handed and the environment, and carried verbatim in daemon_info.
+	logDestination string
+	started        time.Time
 	// procs samples the process table so list and describe can name each
 	// running harness's children without shelling out on the request path
 	// (issue #958; ADR-0048).
@@ -147,6 +151,12 @@ type Options struct {
 	SocketPath string
 	ConfigPath string // for the reload op
 	Version    string
+	// LogFile is the path the daemon's logger actually opened, empty when it
+	// writes to stderr. A --log-file that failed to open must arrive empty:
+	// the daemon fell back to stderr, and daemon_info should say so
+	// (stump.wtf/harness#583). Optional: an unset LogFile still answers, as
+	// the journal or as stderr, because the process knows its own stderr.
+	LogFile string
 
 	// PingInterval and LivenessTimeout override the heartbeat defaults. Zero
 	// (the production case) means defaultPingInterval / defaultLivenessTimeout;
@@ -209,6 +219,7 @@ func NewServer(opts Options) *Server {
 		socketPath:      opts.SocketPath,
 		configPath:      opts.ConfigPath,
 		version:         opts.Version,
+		logDestination:  LogDestination(opts.LogFile, nil, os.Stderr),
 		progress:        opts.Progress,
 		procs:           newProcSampler(opts.ChildrenInterval),
 		started:         time.Now(),

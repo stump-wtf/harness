@@ -273,6 +273,11 @@ func (s *Supervisor) refuseRun(req RunRequest, res AdmitResult) RunDecision {
 // (SPEC-0014 REQ "Run Record Fields" as SPEC-0021 amends it).
 func skipReasonFor(r budget.Reason) RunReason {
 	switch r {
+	case budget.ReasonDrain:
+		// The operator's gate, not an automatic condition: the record says the
+		// harness was draining, the same reason `drain --discard` gives the
+		// firing it drops (stump.wtf/harness#828).
+		return ReasonDraining
 	case budget.ReasonHours:
 		return ReasonOutsideHours
 	case budget.ReasonQuotaParked:

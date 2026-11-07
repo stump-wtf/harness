@@ -92,13 +92,23 @@ type rawHarness struct {
 	HealthAction   string  `toml:"health_action"`
 	Backend        string  `toml:"backend"`
 	Description    string  `toml:"description"`
-	Enabled        *bool   `toml:"enabled"`
-	TmuxSocket     string  `toml:"tmux_socket"`
-	Schedule       string  `toml:"schedule"`
-	CatchUp        *bool   `toml:"catch_up"`
-	Timeout        *string `toml:"timeout"`
-	OnOverlap      *string `toml:"on_overlap"`
-	KeepRuns       *int    `toml:"keep_runs"`
+	// PreRun and PostRun are the run lifecycle hooks' argv lists (ADR-0051):
+	// plain slices, because no exclusion keys on their PRESENCE alone — a hook
+	// on a harness that has no discrete runs is refused by its own check, and
+	// an empty list configures no hook at all.
+	PreRun  []string `toml:"pre_run"`
+	PostRun []string `toml:"post_run"`
+	// WorkdirRetain is the per-run workdir retention cap; a pointer so
+	// `workdir_retain = 0` is refused as a value error rather than read as an
+	// absent key.
+	WorkdirRetain *int    `toml:"workdir_retain"`
+	Enabled       *bool   `toml:"enabled"`
+	TmuxSocket    string  `toml:"tmux_socket"`
+	Schedule      string  `toml:"schedule"`
+	CatchUp       *bool   `toml:"catch_up"`
+	Timeout       *string `toml:"timeout"`
+	OnOverlap     *string `toml:"on_overlap"`
+	KeepRuns      *int    `toml:"keep_runs"`
 	// StallTimeout and StallAction are the progress-based watchdog for a
 	// persistent harness (issue #959): no observed successful model call for
 	// StallTimeout trips it, and StallAction says what to do. Pointers, like
@@ -877,7 +887,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}, {"prompt_template", rh.PromptTemplate}, {"prompt_template_file", rh.PromptTemplateFile}} {
 			if k.val != "" {
 				return newError(filename, line,
-					"harness %q: \"generic\" runs sh and has no prompt synthesis, so it takes no %q; use harness = \"crush\"|\"claude-code\"|\"codex\"|\"pi\"|\"omp\" for a prompt one-shot, or harness = \"command\" with argv to run another program without a shell",
+					"harness %q: \"generic\" runs sh and has no prompt synthesis, so it takes no %q; use harness = \"crush\"|\"claude-code\"|\"codex\"|\"pi\"|\"omp\"|\"opencode\" for a prompt one-shot, or harness = \"command\" with argv to run another program without a shell",
 					name, k.key)
 			}
 		}
@@ -1629,6 +1639,24 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	}
 	useDefaultSkillPaths := rh.UseDefaultSkillPaths == nil || *rh.UseDefaultSkillPaths
 
+	// The run lifecycle hooks and the per-run workdir (issue #980, ADR-0051).
+	// "One-shot" here means every start is a run someone asked for — a prompt
+	// harness, or a `command` harness a schedule or trigger fires — which is
+	// what makes a hook around the run and a directory per run mean something.
+	oneShot := isAgent || commandOneShot
+	preRun, err := checkRunHook(filename, name, line, core.HookPreRun, rh.PreRun, oneShot)
+	if err != nil {
+		return err
+	}
+	postRun, err := checkRunHook(filename, name, line, core.HookPostRun, rh.PostRun, oneShot)
+	if err != nil {
+		return err
+	}
+	workdirRetain, err := checkRunWorkdir(filename, name, line, resolve(rh.Workdir), rh.WorkdirRetain, oneShot)
+	if err != nil {
+		return err
+	}
+
 	h := core.Harness{
 		Name:                 name,
 		PackageSource:        sourceValue,
@@ -1653,6 +1681,9 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		MCPConfig:            mcpConfigPath,
 		AllowedTools:         allowedTools,
 		Workdir:              resolve(rh.Workdir),
+		WorkdirRetain:        workdirRetain,
+		PreRun:               preRun,
+		PostRun:              postRun,
 		EnvFiles:             resolveEnvFiles(rh.EnvFile, resolve),
 		RestartDelay:         time.Duration(rh.RestartDelay) * time.Second,
 		Restart:              restartPolicy,

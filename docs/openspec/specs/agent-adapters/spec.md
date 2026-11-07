@@ -261,6 +261,14 @@ daemon SHALL expose trajectories through the SPEC-0005 facade as read-only
 operations (`list_trajectories`, `get_trajectory`) and MUST NOT write to, alter,
 or delete a tool's trajectory.
 
+A store is machine-global, so discovery alone does not make a session one
+harness's. `list_trajectories` SHALL report a native session only when the Run
+Correlation requirement below attributes it to a run of that harness, and
+`get_trajectory` SHALL serve only a session `list_trajectories` reports for the
+same harness: the caller's path is a key into that list, never a path to open.
+When nothing says when the harness ran, the honest answer is no sessions —
+a facade listing MUST NOT fall back to enumerating the store.
+
 **Implementation note:** Trajectory parsing is delegated to
 [agent-trace](https://github.com/stump-wtf/agent-trace) (`tail` package),
 which ships per-agent JSONL parsers for Claude Code, Codex, Crush, OpenCode,
@@ -286,6 +294,14 @@ consumers (SPEC-0007 distillation, OTel export).
 - **WHEN** any trajectory operation is invoked
 - **THEN** the underlying transcript is read only, and no daemon code path
   writes to it
+
+#### Scenario: A session predating every run is not listed
+
+- **WHEN** a session in the harness's working directory started before any run
+  the daemon has a record of
+- **THEN** `list_trajectories` does not report it, and `get_trajectory` refuses
+  its path with the same answer it gives any other path the list does not
+  report
 
 ### Requirement: Run Correlation
 
@@ -403,9 +419,11 @@ distinguish:
   repeated hour when clocks fall back: lifecycle stamps are zoneless local wall
   time, read in the daemon's current zone.
 
-Attribution is not an exposure control. Harvest Opt-In below remains the gate for
-the facade; this requirement decides what `harness logs` and the chatroom credit
-to a harness.
+Attribution is not how exposure is decided. Harvest Opt-In below remains the
+gate for the facade; this requirement decides which of a shared store's
+sessions a harness may be shown at all — what `harness logs` and the chatroom
+credit to a harness, and, per Trajectory Discovery above, what
+`list_trajectories` reports and `get_trajectory` will serve.
 
 #### Scenario: A session started during the run is attributed
 

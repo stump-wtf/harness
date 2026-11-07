@@ -17,6 +17,10 @@ package core
 // @joestump-agent 09/28/2026 - Added Batch: the strict loader refused the
 // documented `batch` key, so a [mergetrain] table copied from the spec failed
 // the whole config load.
+//
+// @joestump-agent 10/29/2026 - DefaultMergeTrainFlakeCoolDown is 0 until
+// ADR-0056 is accepted: a proposed ADR must not switch behaviour on by
+// itself, so the runner-flake retry is opt-in per config (review on #1017).
 
 import (
 	"slices"
@@ -35,11 +39,19 @@ const (
 	// MinMergeTrainPollInterval is the floor on poll_interval; the train's CI
 	// polling never goes below 5 s either (SPEC-0025 REQ-5).
 	MinMergeTrainPollInterval = 5 * time.Second
+	// DefaultMergeTrainFlakeCoolDown is how long the train waits before it
+	// retries a red attempt that failed only on jobs no runner ever started
+	// (SPEC-0025 REQ-18). Zero until ADR-0056 is accepted — a proposed ADR must
+	// not switch behaviour on by itself — so the retry is opt-in, set by
+	// flake_cool_down in harness.toml. The proposed running value is 5 minutes:
+	// long enough for a congested runner pool to clear, and short next to the
+	// hours a stalled train otherwise waits.
+	DefaultMergeTrainFlakeCoolDown time.Duration = 0
 )
 
 // DefaultMergeTrainSequencePaths are the directories whose files carry a
 // sequence number in their names, and where a collision between two pull
-// requests lands a duplicate instead of a conflict (ADR-0052).
+// requests lands a duplicate instead of a conflict (ADR-0063).
 var DefaultMergeTrainSequencePaths = []string{
 	"docs/adrs/",
 	"docs/openspec/specs/",
@@ -57,14 +69,45 @@ type MergeTrainConfig struct {
 	// Batch is the PRs-per-train size (SPEC-0025 REQ-17), at least 1. Above
 	// 1 a tick batches that many heads onto one train commit.
 	Batch int
+	// FlakeCoolDown is how long a red attempt waits for its one infra retry
+	// (SPEC-0025 REQ-18). Zero turns the retry off, leaving a red attempt to
+	// wait for the base branch or the head to move.
+	FlakeCoolDown time.Duration
 	// SequencePaths are the directories the train watches for two files
-	// claiming the same sequence number (ADR-0052). Empty disables the check.
+	// claiming the same sequence number (ADR-0063). Empty disables the check.
 	SequencePaths []string
 	// ForgeBaseURL is the forge's root, e.g. "https://gitea.stump.rocks".
 	ForgeBaseURL string
 	// ForgeTokenEnv is the NAME of the environment variable holding the
 	// forge token, never the token.
 	ForgeTokenEnv string
+	// GitHub, when non-nil, is the train's second forge: the repos whose
+	// entries in Repos carried the "github:" prefix are driven by it
+	// (ADR-0061).
+	GitHub *MergeTrainGitHub
+	// RepoForge says which forge drives each repo in Repos: "" is the default
+	// forge above, "github" is GitHub. Every repo in Repos has an entry.
+	RepoForge map[string]string
+}
+
+// GitHub CI gate topologies (ADR-0061).
+const (
+	// GitHubGateDraftPR gates a train commit with a draft pull request from
+	// the train branch, which runs the repository's existing pull_request
+	// workflows. It is the default, and the only gate that works where the
+	// train may not edit .github/workflows/.
+	GitHubGateDraftPR = "draft-pr"
+	// GitHubGateTrainPush gates a train commit by pushing train/**, which
+	// requires the repository's own workflows to name that branch.
+	GitHubGateTrainPush = "train-push"
+)
+
+// MergeTrainGitHub is the GitHub forge: its API root, the name of the
+// environment variable holding its token, and how its train commits are gated.
+type MergeTrainGitHub struct {
+	BaseURL  string
+	TokenEnv string
+	CIGate   string
 }
 
 // DefaultMergeTrainConfig is the table's value when harness.toml omits it:
@@ -76,6 +119,7 @@ func DefaultMergeTrainConfig() MergeTrainConfig {
 		PollInterval:  DefaultMergeTrainPollInterval,
 		CITimeout:     DefaultMergeTrainCITimeout,
 		Batch:         DefaultMergeTrainBatch,
+		FlakeCoolDown: DefaultMergeTrainFlakeCoolDown,
 		SequencePaths: slices.Clone(DefaultMergeTrainSequencePaths),
 	}
 }

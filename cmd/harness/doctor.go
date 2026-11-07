@@ -15,6 +15,11 @@ package main
 //
 // @joestump-agent 09/27/2026 - Added the skill-repo serving-clone row
 // (SPEC-0007 REQ "Default-Branch Gate").
+//
+// @joestump-agent 11/05/2026 - The daemon_log row is skipped when daemon_info
+//   cannot be fetched at all: the version row already carries the
+//   unreachable-daemon complaint, and a second "unknown" row for the same
+//   root problem read as two broken things.
 
 import (
 	"encoding/json"
@@ -52,7 +57,11 @@ type doctorResult struct {
 	Config  checkResult  `json:"config"`
 	Daemon  *checkResult `json:"daemon,omitempty"`
 	Version *checkResult `json:"version,omitempty"`
-	Harness *checkResult `json:"harness,omitempty"`
+	// DaemonLog is where the running daemon says its own lines land: a journal,
+	// a --log-file path, or stderr (stump.wtf/harness#583). Absent only from a
+	// daemon too old to answer, which the row itself says.
+	DaemonLog *checkResult `json:"daemon_log,omitempty"`
+	Harness   *checkResult `json:"harness,omitempty"`
 	// Profile (#99) and Autostart are conditional rows: present only when the
 	// condition fires. Both already counted toward the summary tally, but had no
 	// object here, so `--json` reported `warned: 1` with nothing to point at.
@@ -267,6 +276,23 @@ func runDoctorWith(o verbOpts, notifyTest bool) int {
 				detail: fmt.Sprintf("client %s · daemon %s", buildinfo.Version, di.Version),
 			})
 		}
+	}
+
+	// --- Check: where this daemon actually logs -----------------------------
+	// Governing: ADR-0001 (the daemon logs to stderr and lets the service
+	// manager own the surface). The value is the running process's own answer
+	// over daemon_info, never a re-derivation from config: $XDG_STATE_HOME/
+	// harness/harness-daemon.log exists on most boxes as the leftover of some
+	// detached run, and reading it while a service-run daemon answers the
+	// journal cost an operator an hour of chasing a log that had nothing to
+	// say (stump.wtf/harness#583).
+	// When daemon_info could not be fetched at all the row is skipped: the
+	// version row above already carries the unreachable-daemon complaint, and
+	// a second "unknown" row for the same root problem reads as two broken
+	// things. No row (and no daemon_log object in --json) is the shape of
+	// "no answer available".
+	if diOK {
+		rows = append(rows, daemonLogCheck(&di))
 	}
 
 	// --- Check 4: remote SSH server -----------------------------------------
@@ -491,6 +517,27 @@ func sshCheck(sc core.ServerConfig, di *protocol.DaemonInfo) check {
 	}
 }
 
+// daemonLogCheck builds the "daemon_log" row from what the running daemon
+// answered about its own stderr; the caller skips it entirely when
+// daemon_info could not be fetched, so an answer is always from a live
+// daemon. Three answers are possible and each needs different follow-up: a
+// path (tail it), the journal (journalctl it), or stderr (whatever the caller
+// redirected it to, which only the caller knows). An empty answer is a daemon
+// predating the field, so the row says it went unanswered and how to get one
+// rather than pointing at a file that may be months stale
+// (stump.wtf/harness#583).
+func daemonLogCheck(di *protocol.DaemonInfo) check {
+	if di.LogDestination == "" {
+		return check{
+			name:   "daemon_log",
+			level:  cliui.LevelWarn,
+			detail: "the running daemon did not say",
+			hint:   "restart the daemon to pick up a build that reports where it logs; until then trust the service manager, not any log file you find",
+		}
+	}
+	return check{name: "daemon_log", level: cliui.LevelSuccess, detail: di.LogDestination}
+}
+
 // appendOperatingHoursCheck adds the "operating_hours" row when
 // operatingHoursWarnings finds anything to say. cfg may be nil (config failed
 // to load), in which case there is nothing to check.
@@ -599,6 +646,9 @@ func emitDoctorJSON(w io.Writer, rows []check, resolved []settings.Resolved, tel
 		case "version":
 			c := cr
 			res.Version = &c
+		case "daemon_log":
+			c := cr
+			res.DaemonLog = &c
 		case "harnesses":
 			c := cr
 			res.Harness = &c

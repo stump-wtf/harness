@@ -70,11 +70,20 @@ type world struct {
 	sets map[string][]int
 	// conflict marks PRs whose head rejects the fold.
 	conflict map[int]bool
+	// notStarted marks red PRs whose failing job has no log at all: the
+	// runner never attached, so the forge says nothing about what the tree did.
+	notStarted map[int]bool
 }
 
 func newWorld(t *testing.T, prs ...PullRequest) *world {
 	t.Helper()
-	w := &world{Fake: fake.New(), red: map[int]bool{}, sets: map[string][]int{}, conflict: map[int]bool{}}
+	w := &world{
+		Fake:       fake.New(),
+		red:        map[int]bool{},
+		sets:       map[string][]int{},
+		conflict:   map[int]bool{},
+		notStarted: map[int]bool{},
+	}
 	w.SetBranch(repo, "main", "base0")
 	for _, p := range prs {
 		w.AddPR(repo, p)
@@ -114,6 +123,24 @@ func newWorld(t *testing.T, prs ...PullRequest) *world {
 		}
 		return "success"
 	})
+	// Per-job detail, which is what separates a red the tree caused from a red
+	// no runner ever reported on (REQ-18). A PR's run contributes one job, and
+	// one that is skipped is in every run — a skipped job never started either,
+	// and must never read as an infra failure.
+	w.OnJobs(func(sha string) ([]forge.Job, error) {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		jobs := []forge.Job{{Run: "ci", Name: "scan", Conclusion: "skipped"}}
+		for _, n := range w.sets[sha] {
+			j := forge.Job{Run: "ci", Name: fmt.Sprintf("test%d", n), Conclusion: "success"}
+			if w.red[n] {
+				j.Conclusion = "failure"
+				j.NeverStarted = w.notStarted[n]
+			}
+			jobs = append(jobs, j)
+		}
+		return jobs, nil
+	})
 	return w
 }
 
@@ -121,6 +148,14 @@ func (w *world) setRed(n int, red bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.red[n] = red
+}
+
+// neverStarted marks PR n's failing job as one no runner ever attached to: the
+// forge has no log for it (SPEC-0025 REQ-18).
+func (w *world) neverStarted(n int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.notStarted[n] = true
 }
 
 // conflictOn marks PR n's head as one the three-way fold rejects.

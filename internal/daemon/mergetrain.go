@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -38,8 +39,45 @@ import (
 	"github.com/stump-wtf/harness/internal/core"
 	"github.com/stump-wtf/harness/internal/forge"
 	"github.com/stump-wtf/harness/internal/forge/gitea"
+	"github.com/stump-wtf/harness/internal/forge/github"
 	"github.com/stump-wtf/harness/internal/mergetrain"
 )
+
+// needsDefault / needsGitHub report whether a repo in the table is driven by
+// that forge, so the daemon never demands a token for a forge it will not use.
+func needsDefault(c core.MergeTrainConfig) bool {
+	for _, r := range c.Repos {
+		if c.RepoForge[r] != "github" {
+			return true
+		}
+	}
+	return false
+}
+
+func needsGitHub(c core.MergeTrainConfig) bool {
+	for _, r := range c.Repos {
+		if c.RepoForge[r] == "github" {
+			return true
+		}
+	}
+	return false
+}
+
+// needsGitHubOnly is the config where no repo wants the default forge, so a
+// missing forge_token_env is not the problem.
+func needsGitHubOnly(c core.MergeTrainConfig) bool {
+	return len(c.Repos) > 0 && !needsDefault(c)
+}
+
+// forgeNames lists the forge keys in a stable order.
+func forgeNames(forges map[string]forge.Forge) []string {
+	names := make([]string, 0, len(forges))
+	for n := range forges {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return names
+}
 
 // MergeTrainOptions configures StartMergeTrain.
 type MergeTrainOptions struct {
@@ -54,6 +92,9 @@ type MergeTrainOptions struct {
 	// NewForge builds the forge. Default: the Gitea implementation. Tests
 	// substitute a fake.
 	NewForge func(baseURL, token, cacheDir string) (forge.Forge, error)
+	// NewGitHubForge builds the GitHub forge. Default: the GitHub
+	// implementation. Tests substitute a fake.
+	NewGitHubForge func(baseURL, token, cacheDir, ciGate string) (forge.Forge, error)
 
 	// Driver tuning, for tests; zero takes the driver's defaults.
 	TrainPollMin time.Duration
@@ -79,10 +120,15 @@ func StartMergeTrain(ctx context.Context, o MergeTrainOptions) (*MergeTrain, err
 		return nil, errors.New("[mergetrain] is enabled with no repos")
 	}
 	if o.Getenv == nil || c.ForgeTokenEnv == "" {
-		return nil, errors.New("[mergetrain] is enabled but forge_token_env is not set")
+		if !needsGitHubOnly(c) {
+			return nil, errors.New("[mergetrain] is enabled but forge_token_env is not set")
+		}
 	}
-	token := o.Getenv(c.ForgeTokenEnv)
-	if strings.TrimSpace(token) == "" {
+	token := ""
+	if c.ForgeTokenEnv != "" {
+		token = o.Getenv(c.ForgeTokenEnv)
+	}
+	if strings.TrimSpace(token) == "" && needsDefault(c) {
 		return nil, fmt.Errorf("[mergetrain] is enabled but $%s is empty — set it in the daemon's environment", c.ForgeTokenEnv)
 	}
 	if o.StateDir == "" {
@@ -98,26 +144,68 @@ func StartMergeTrain(ctx context.Context, o MergeTrainOptions) (*MergeTrain, err
 			return gitea.New(gitea.Options{BaseURL: baseURL, Token: token, CacheDir: cacheDir})
 		}
 	}
+	newGitHub := o.NewGitHubForge
+	if newGitHub == nil {
+		newGitHub = func(baseURL, token, cacheDir, ciGate string) (forge.Forge, error) {
+			return github.New(github.Options{BaseURL: baseURL, Token: token, CacheDir: cacheDir, CIGate: ciGate})
+		}
+	}
 	root := filepath.Join(o.StateDir, "mergetrain")
-	f, err := newForge(c.ForgeBaseURL, token, filepath.Join(root, "cache"))
-	if err != nil {
-		return nil, fmt.Errorf("[mergetrain]: %w", err)
+	cacheRoot := filepath.Join(root, "cache")
+
+	// One client per forge, each with its own clone cache: the same owner/name
+	// can exist on two forges, and their objects are not the same repository
+	// (ADR-0061).
+	forges := map[string]forge.Forge{}
+	if needsDefault(c) {
+		f, err := newForge(c.ForgeBaseURL, token, filepath.Join(cacheRoot, "gitea"))
+		if err != nil {
+			return nil, fmt.Errorf("[mergetrain]: %w", err)
+		}
+		forges[""] = f
+	}
+	if needsGitHub(c) {
+		gh := c.GitHub
+		if gh == nil || gh.TokenEnv == "" {
+			return nil, errors.New("[mergetrain]: a repos entry names the GitHub forge but github_token_env is not set")
+		}
+		ghToken := o.Getenv(gh.TokenEnv)
+		if strings.TrimSpace(ghToken) == "" {
+			return nil, fmt.Errorf("[mergetrain] is enabled with a GitHub repo but $%s is empty — set it in the daemon's environment", gh.TokenEnv)
+		}
+		gate := gh.CIGate
+		if gate == "" {
+			gate = core.GitHubGateDraftPR
+		}
+		f, err := newGitHub(gh.BaseURL, ghToken, filepath.Join(cacheRoot, "github"), gate)
+		if err != nil {
+			return nil, fmt.Errorf("[mergetrain] github: %w", err)
+		}
+		forges["github"] = f
 	}
 
-	// Name who the train will act as. A failure here is not fatal: the
-	// first build fails loudly on its own if the token is bad.
-	as := "unknown"
-	if l, ok := f.(interface {
-		Login(context.Context) (string, error)
-	}); ok {
-		lctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		login, lerr := l.Login(lctx)
-		cancel()
-		if lerr != nil {
-			log.Warn("merge train: could not read the forge identity", "err", lerr)
-		} else {
-			as = login
+	// Name who the train will act as, per forge. A failure here is not fatal:
+	// the first build fails loudly on its own if a token is bad.
+	as := make([]string, 0, len(forges))
+	for _, name := range forgeNames(forges) {
+		label := "forge"
+		if name != "" {
+			label = name
 		}
+		login := "unknown"
+		if l, ok := forges[name].(interface {
+			Login(context.Context) (string, error)
+		}); ok {
+			lctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			got, lerr := l.Login(lctx)
+			cancel()
+			if lerr != nil {
+				log.Warn("merge train: could not read the forge identity", "forge", label, "err", lerr)
+			} else {
+				login = got
+			}
+		}
+		as = append(as, label+"="+login)
 	}
 
 	m := &MergeTrain{}
@@ -129,12 +217,13 @@ func StartMergeTrain(ctx context.Context, o MergeTrainOptions) (*MergeTrain, err
 			PollInterval:  c.PollInterval,
 			CITimeout:     c.CITimeout,
 			Batch:         c.Batch,
+			FlakeCoolDown: c.FlakeCoolDown,
 			SequencePaths: c.SequencePaths,
 			LockDir:       root,
 			Log:           log,
 			TrainPollMin:  o.TrainPollMin,
 			RetryPause:    o.RetryPause,
-		}, f)
+		}, forges[c.RepoForge[repo]])
 		if err != nil {
 			if errors.Is(err, mergetrain.ErrLocked) {
 				log.Error("merge train: repo skipped", "repo", repo, "err", err)
@@ -146,7 +235,7 @@ func StartMergeTrain(ctx context.Context, o MergeTrainOptions) (*MergeTrain, err
 		m.drivers = append(m.drivers, d)
 	}
 
-	log.Warn("merge train enabled", "mode", c.Mode, "repos", strings.Join(c.Repos, ","), "as", as,
+	log.Warn("merge train enabled", "mode", c.Mode, "repos", strings.Join(c.Repos, ","), "as", strings.Join(as, " "),
 		"running", len(m.drivers), "base_branch", c.BaseBranch, "batch", c.Batch)
 
 	rctx, cancel := context.WithCancel(ctx)

@@ -362,8 +362,26 @@ type Harness struct {
 	// (SPEC-0018 REQ-11), each entry its own argv element after
 	// --allowedTools. Entries never start with "-" (validation enforces it).
 	AllowedTools []string
-	// Workdir is the process working directory (may contain a leading ~).
+	// Workdir is the process working directory (may contain a leading ~, and
+	// may be a template, in which case the daemon renders it per run and gives
+	// each run a directory of its own (ADR-0051)).
 	Workdir string
+	// WorkdirRetain caps how many per-run workdir directories the daemon keeps
+	// for this harness, newest first, the run in flight always among them.
+	// Zero means no pruning. It requires a templated Workdir whose last
+	// element is the varying one.
+	// Governing: ADR-0051 (proposed); stump.wtf/harness#980.
+	WorkdirRetain int
+	// PreRun and PostRun are argv lists the daemon execs around a one-shot
+	// run: pre_run after the run's record is open and before the harness
+	// process spawns, post_run after the process is reaped and before the
+	// record closes, so a failing post_run can demote the outcome. Each
+	// element is a template (see internal/core/hooktmpl.go); neither is
+	// exec'd through a shell, and neither is a supervised harness — like
+	// health_cmd and [notify] they are daemon-side hooks (ADR-0033).
+	// Governing: ADR-0051 (proposed); stump.wtf/harness#980.
+	PreRun  []string
+	PostRun []string
 	// EnvFiles are files of KEY=VALUE pairs sourced before launch, in order,
 	// a later file winning a key collision (ADR-0008; secrets stay here, out
 	// of the config; SPEC-0018 REQ-12 accepts a list of env_file). Nil and a
@@ -458,7 +476,8 @@ type Harness struct {
 	// History"; issue #119.
 	KeepRuns int
 	// Adapter is the harness kind — the config `harness` key, an enum:
-	// "crush", "claude-code", "codex", "pi", "omp", "generic", "command". It
+	// core.HarnessKinds ("crush", "claude-code", "codex", "pi", "omp",
+	// "opencode", "generic", "command"). It
 	// selects the adapter, which supplies BOTH the tool-specific behaviour
 	// (trajectory discovery, prompt flag mapping) and the executable a
 	// long-running (non-prompt) harness runs; `args` are appended after it.
@@ -643,16 +662,21 @@ const (
 	AdapterOMP = "omp"
 )
 
+// AdapterOpenCode is the OpenCode CLI (SST's opencode, https://opencode.ai).
+// agent-trace has read its session database since before v0.4.0, so under
+// ADR-0033's trace-first rule the adapter here is the second half.
+const AdapterOpenCode = "opencode"
+
 // HarnessKinds is the `harness` enum, in the order errors list it. Every front
 // door (config files, the project-up and scratchpad wire, the TUI form)
 // checks against this one list so they cannot disagree on what exists.
 // Governing: SPEC-0006 REQ "Adapter Selection" as amended by SPEC-0017 REQ-17.
-var HarnessKinds = []string{"crush", "claude-code", "codex", AdapterPi, AdapterOMP, "generic", AdapterCommand}
+var HarnessKinds = []string{"crush", "claude-code", "codex", AdapterPi, AdapterOMP, AdapterOpenCode, "generic", AdapterCommand}
 
 // TranscriptSources are the values `transcripts` accepts on a command harness:
 // every adapter kind with a trajectory store of its own. The order is the one
 // errors list them in.
-var TranscriptSources = []string{"claude-code", "crush", "codex", AdapterPi, AdapterOMP}
+var TranscriptSources = []string{"claude-code", "crush", "codex", AdapterPi, AdapterOMP, AdapterOpenCode}
 
 // CheckTranscripts enforces SPEC-0017 REQ-4 for a harness of kind adapter
 // declaring transcripts, shared by every front door so they cannot drift. An

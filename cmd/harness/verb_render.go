@@ -60,10 +60,15 @@ func plainLifecycleLine(info protocol.HarnessInfo) string {
 	return fmt.Sprintf("%s %s → %s\n", stateGlyph(info.State), info.Name, info.State)
 }
 
+// gracefulDefault is what a bare --graceful sends as its cap: the daemon reads a
+// zero duration as the harness's configured shutdown timeout, so the flag on its
+// own waits out the turn without inventing a number here (stump.wtf/harness#871).
+const gracefulDefault = "0"
+
 // callLifecycle issues one start/stop/restart. It is the only place the verb
 // becomes an RPC, so the plain path, the single-harness animation and the
 // --all animation cannot drift into asking the daemon different things.
-func callLifecycle(c *client.Client, verb, name, forDur string) (protocol.HarnessInfo, error) {
+func callLifecycle(c *client.Client, verb, name, forDur, graceful string) (protocol.HarnessInfo, error) {
 	switch verb {
 	case "start":
 		if forDur != "" {
@@ -71,8 +76,14 @@ func callLifecycle(c *client.Client, verb, name, forDur string) (protocol.Harnes
 		}
 		return c.Start(name)
 	case "stop":
+		if graceful != "" {
+			return c.StopGraceful(name, graceful)
+		}
 		return c.Stop(name)
 	case "restart":
+		if graceful != "" {
+			return c.RestartGraceful(name, graceful)
+		}
 		return c.Restart(name)
 	}
 	return protocol.HarnessInfo{}, fmt.Errorf("unknown lifecycle verb %q", verb)
@@ -267,7 +278,7 @@ func runLifecycleOneAnimated(c *client.Client, verb, name, forDur string) error 
 		oerr error
 	)
 	op := func() (protocol.HarnessInfo, error) {
-		once.Do(func() { info, oerr = callLifecycle(c, verb, name, forDur) })
+		once.Do(func() { info, oerr = callLifecycle(c, verb, name, forDur, "") })
 		return info, oerr
 	}
 

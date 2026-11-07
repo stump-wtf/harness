@@ -45,8 +45,11 @@ func (m *Model) onMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// onAttachedMouse handles mouse events while in attached mode. Wheel-up in
-// the interactive substate enters scrollback; wheel in scrollback navigates.
+// onAttachedMouse handles mouse events while in attached mode. Ownership comes
+// first: while the guest has mouse reporting on, the wheel, clicks and motion
+// are the guest's and are encoded and forwarded to it (ADR-0055). A guest that
+// never asked for the mouse keeps harness's behaviour: wheel-up in the
+// interactive substate enters scrollback, wheel in scrollback navigates.
 // Shift+click/drag releases the TUI's mouse grab so the terminal handles
 // native text selection (tmux-style shift-passthrough, #49); wheel events
 // keep their normal meaning even with shift held. Any key press re-enables
@@ -69,6 +72,17 @@ func (m *Model) onAttachedMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		// session was killed.
 		m.mouseReleased = true
 		return m, mouseRegrab()
+	}
+	if m.guestOwnsMouse() {
+		// The wheel and the clicks are the guest's for as long as it holds the
+		// mouse (ADR-0055). An event that landed outside its screen, on the
+		// status bar harness owns, is then nobody's: opening harness scrollback
+		// there would scroll the viewer away from a guest that is still waiting
+		// for the event, and tmux drops pane-less events the same way.
+		if cmd, forwarded := m.forwardGuestMouse(msg); forwarded {
+			return m, cmd
+		}
+		return m, nil
 	}
 	if !isWheel {
 		return m, nil
@@ -457,8 +471,11 @@ func (m *Model) onAttachedKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// PgUp enters scrollback without the prefix.
-	if key.Matches(msg, m.keys.Scrollback) {
+	// PgUp enters scrollback without the prefix, unless the guest owns the
+	// mouse, in which case PgUp is the guest's own paging key and falls through
+	// to the PTY below, the way PgDn already does (ADR-0055). `^b [` still
+	// opens harness scrollback either way.
+	if key.Matches(msg, m.keys.Scrollback) && !m.guestOwnsMouse() {
 		m.att.enterScrollback(m.peekLines(), m.scrollbackHeight())
 		return m, nil
 	}
@@ -467,9 +484,7 @@ func (m *Model) onAttachedKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// SPEC-0001 REQ "Attached Mode" + ADR-0008).
 	if !m.att.readOnly() && m.attach != nil {
 		if b := keyToBytes(msg); len(b) > 0 {
-			sid := m.att.sessionID
-			data := b
-			return m, func() tea.Msg { _ = m.attach.AttachInput(sid, data); return nil }
+			return m, m.queueAttachInput(m.att.sessionID, b)
 		}
 	}
 	return m, nil
@@ -525,9 +540,7 @@ func (m *Model) onPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	// so the next real keystroke isn't swallowed as one (tmux behaves the
 	// same way).
 	m.att.prefixArmed = false
-	sid := m.att.sessionID
-	data := []byte("\x1b[200~" + msg.Content + "\x1b[201~")
-	return m, func() tea.Msg { _ = m.attach.AttachInput(sid, data); return nil }
+	return m, m.queueAttachInput(m.att.sessionID, []byte("\x1b[200~"+msg.Content+"\x1b[201~"))
 }
 
 // focusedPasteInput returns the textinput that currently owns the keyboard,
@@ -772,6 +785,9 @@ func (m *Model) attachTo(info protocol.HarnessInfo, direction int) tea.Cmd {
 	} else {
 		m.attachView.reset(cols, rows)
 	}
+	// The keystrokes behind a hop belong to the harness being left, not the
+	// one being opened (#952).
+	m.attachInput.drop()
 	m.att = newAttachStateWith(info.Name, mode, sid, m.attachView)
 	// Fresh formatter per session (#825): the same PeekFormatter the preview
 	// uses, resolved from the harness's adapter — nil for every backend that
@@ -819,6 +835,10 @@ func (m *Model) detach() tea.Cmd {
 		sid := m.att.sessionID
 		cmd = func() tea.Msg { _ = m.attach.AttachClose(sid); return nil }
 	}
+	// Keystrokes still buffered belong to the session being left: flushing
+	// them after the close would put them on the wire behind it, and a
+	// dashboard peek or the next attach would inherit them (#952).
+	m.attachInput.drop()
 	m.att = nil
 	if m.opts.AttachOnly != "" {
 		// Attach-only mode: detach = quit. Tear down cleanly.

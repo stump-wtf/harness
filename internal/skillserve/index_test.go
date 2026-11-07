@@ -51,7 +51,7 @@ func TestSearchLiteralSymptomAndStemming(t *testing.T) {
 
 	// Literal symptom text matches (SPEC-0007 REQ "Embedded Retrieval
 	// Index": a query containing a literal string from symptoms finds it).
-	hits, err := idx.Search("cannot find main module", nil, 5)
+	hits, err := idx.Search("cannot find main module", nil, 5, nil)
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestSearchLiteralSymptomAndStemming(t *testing.T) {
 	}
 
 	// Porter stemming: "modules" matches the symptom's "module".
-	hits, err = idx.Search("modules", nil, 5)
+	hits, err = idx.Search("modules", nil, 5, nil)
 	if err != nil {
 		t.Fatalf("stemmed search: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestIndexRecordsRepoAndNoBodies(t *testing.T) {
 	if err := idx.ReindexRepo("go-stack", []Entry{testEntry("go-stack", "pin-go", "Pin the toolchain.", "failure")}); err != nil {
 		t.Fatal(err)
 	}
-	hits, err := idx.Search("toolchain", nil, 5)
+	hits, err := idx.Search("toolchain", nil, 5, nil)
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("search: %v %v", hits, err)
 	}
@@ -100,11 +100,11 @@ func TestReindexReplacesRepoRows(t *testing.T) {
 	if err := idx.ReindexRepo("go-stack", []Entry{testEntry("go-stack", "new", "New skill.", "beta")}); err != nil {
 		t.Fatal(err)
 	}
-	hits, err := idx.Search("beta", nil, 5)
+	hits, err := idx.Search("beta", nil, 5, nil)
 	if err != nil || len(hits) != 1 || hits[0].Slug != "new" {
 		t.Fatalf("want new only, got %v %v", hits, err)
 	}
-	hits, err = idx.Search("alpha", nil, 5)
+	hits, err = idx.Search("alpha", nil, 5, nil)
 	if err != nil || len(hits) != 0 {
 		t.Fatalf("old skill must leave the index, got %v %v", hits, err)
 	}
@@ -125,11 +125,11 @@ func TestReindexAtomicOnMidTransactionFailure(t *testing.T) {
 	if err := idx.ReindexRepo("go-stack", broken); err == nil {
 		t.Fatal("want an error from the mid-transaction failure")
 	}
-	hits, err := idx.Search("existing", nil, 5)
+	hits, err := idx.Search("existing", nil, 5, nil)
 	if err != nil || len(hits) != 1 || hits[0].Slug != "good" {
 		t.Fatalf("previous index must stay queryable, got %v %v", hits, err)
 	}
-	hits, err = idx.Search("fine failure", nil, 5)
+	hits, err = idx.Search("fine failure", nil, 5, nil)
 	if err != nil || len(hits) != 0 {
 		t.Fatalf("no partial state may be visible, got %v %v", hits, err)
 	}
@@ -151,7 +151,7 @@ func TestIndexIsRebuildable(t *testing.T) {
 		if err := idx.ReindexRepo("go-stack", entries); err != nil {
 			t.Fatalf("reindex: %v", err)
 		}
-		hits, err := idx.Search("toolchain pin", nil, 5)
+		hits, err := idx.Search("toolchain pin", nil, 5, nil)
 		if err != nil {
 			t.Fatalf("search: %v", err)
 		}
@@ -183,7 +183,7 @@ func TestSearchAppliesToBoosts(t *testing.T) {
 	if err := idx.ReindexRepo("go-stack", entries); err != nil {
 		t.Fatal(err)
 	}
-	hits, err := idx.Search("pin failure", []string{".gitea/workflows/ci.yml"}, 5)
+	hits, err := idx.Search("pin failure", []string{".gitea/workflows/ci.yml"}, 5, nil)
 	if err != nil || len(hits) != 2 {
 		t.Fatalf("search: %v %v", hits, err)
 	}
@@ -201,14 +201,14 @@ func TestSearchNeutralizesQuerySyntax(t *testing.T) {
 	// query's structure (SPEC-0007 REQ "Database Operation Standards"): the
 	// operators become plain quoted tokens, so the query degrades to a
 	// narrow AND instead of a set difference or column filter.
-	hits, err := idx.Search(`module" NOT (nefarious OR phrase) *`, nil, 5)
+	hits, err := idx.Search(`module" NOT (nefarious OR phrase) *`, nil, 5, nil)
 	if err != nil {
 		t.Fatalf("query syntax must be neutralized, got %v", err)
 	}
 	if len(hits) != 0 {
 		t.Fatalf("NOT/OR must not act as operators, got %+v", hits)
 	}
-	if empty, err := idx.Search("", nil, 5); err != nil || len(empty) != 0 {
+	if empty, err := idx.Search("", nil, 5, nil); err != nil || len(empty) != 0 {
 		t.Fatalf("empty query returns nothing without error: %v %v", empty, err)
 	}
 }

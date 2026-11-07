@@ -50,7 +50,7 @@ run 2026-09-11 07:40:00 → 07:56:21 · exit 1 · crush
 07:40:00  state     starting → running
 07:40:02  session   e088ec4e · crush · your-model
 07:40:05  read      /home/you/sweeps/infra-check/prompt.md
-07:41:10  exec      ssh web01 docker ps  (failed)
+07:41:10  exec      ssh web01 docker ps  (failed)  ssh: connect to host web01 port 22: Connection refused
 07:56:20  ERROR     Bad Request: context window exceeded
 07:56:21  exited    code=1
 07:56:21  state     running → stopped
@@ -63,7 +63,11 @@ Read it top to bottom:
    exit.
 3. **`session`** is the agent session that ran: its id, the tool and the model.
 4. **Tool entries** are what the agent did. `read` and `edit` show a file,
-   `exec` a command, and `(failed)` marks a tool call that errored.
+   `exec` a command, and `(failed)` marks a tool call that errored. A failed
+   call carries a short excerpt of what it printed beside the marker, masked of
+   any credential it held, so the reason is on the same line and the transcript
+   stays where it is. The whole excerpt is one `--json` away, as a long summary
+   is.
 5. **`ERROR`** is the error the agent reported. Here it is the reason for exit
    code 1.
 
@@ -184,6 +188,7 @@ CHECK         STATUS      DETAIL
 config        ok          /home/you/.config/harness/harness.toml — 4 harnesses
 daemon        ok          listening at /run/user/1000/harness.sock
 version       ok          client v0.5.0 · daemon v0.5.0
+daemon_log    ok          journal (stderr)
 ssh           ok          off (not enabled in config)
 harnesses     warn        1/4 degraded: sb-worker
                           → check `harness logs <name>` for the failure
@@ -197,6 +202,9 @@ summary       4 passed · 1 warning(s) · 0 failed
 - **`daemon`:** the socket is reachable.
 - **`version`:** client and daemon are the same build. After an upgrade,
   restart the daemon so they match.
+- **`daemon_log`:** where the running daemon's own lines land: its journal, a
+  `--log-file` path, or stderr. See
+  [Where the daemon's own log lives](#where-the-daemons-own-log-lives).
 - **`ssh`:** the remote cockpit's state.
 - **`harnesses`:** anything `degraded` or `failed`.
 
@@ -212,13 +220,41 @@ Two more views help:
 
 ```sh
 harness describe NAME     # one harness: state, restarts, last exit, flapping, schedule, attached sessions
-harness daemon status     # version, pid, uptime, socket, harness count
+harness daemon status     # version, pid, uptime, socket, harness count, where it logs
 ```
 
-The daemon's own log goes wherever your service sends it:
-`journalctl --user -u harness` under systemd, or the `StandardErrorPath` file
-under launchd. For more detail, start the daemon with `--log-level debug` or
-`HARNESS_LOG_LEVEL=debug`.
+### Where the daemon's own log lives
+
+Which surface holds the daemon's lines depends on how the daemon was started,
+not on which log files happen to exist. Ask the running process, which knows:
+
+```sh
+harness doctor            # the daemon_log row
+harness daemon status     # the logs field
+```
+
+Both take the answer from the daemon over its control socket rather than from
+config or from the filesystem, so a leftover from an old detached run cannot be
+mistaken for the live surface (stump.wtf/harness#583).
+
+| How the daemon was started       | It answers              | Read it with                                             |
+| -------------------------------- | ----------------------- | -------------------------------------------------------- |
+| a systemd user service           | `journal (stderr)`      | `journalctl --user -u harness -f`                        |
+| a LaunchAgent plist              | `stderr`                | the plist's `StandardOutPath` / `StandardErrorPath` file  |
+| `harness daemon --log-file PATH` | that path               | `tail -f PATH`                                           |
+| `harness daemon --detach`        | the file it detached to | `tail -f ~/.local/state/harness/harness-daemon.log`      |
+| `harness daemon` in a terminal   | `stderr`                | that terminal                                            |
+
+The `--detach` default, `$XDG_STATE_HOME/harness/harness-daemon.log`, belongs
+to the one run that wrote it. On a box whose daemon runs as a service it is
+usually the leftover of some development run long finished, and tailing it
+while the daemon you are chasing logs to the journal is how an hour goes
+missing.
+
+For more detail, start the daemon with `--log-level debug` or
+`HARNESS_LOG_LEVEL=debug`. A `daemon_log` row saying the daemon did not answer
+means that daemon predates the check: restart it, and until you do, trust the
+service manager rather than any log file you find.
 
 ## The SSH cockpit
 

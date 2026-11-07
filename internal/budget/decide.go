@@ -24,6 +24,13 @@ import (
 // refusal that applies, or an admission. It reads no clock: req.Now is the
 // only "now" it knows.
 func Decide(req AdmitRequest, st State) Decision {
+	// 0. An operator drain (stump.wtf/harness#828): the out-of-service gate
+	// comes before the automatic reasons, so a harness that is both draining
+	// and out of hours reports the reason an `undrain` can clear. Nothing
+	// clears it on its own, so there is no next instant to name.
+	if req.Holds.Has(drainReason) {
+		return refuse(req, ReasonDrain, "drained by operator", time.Time{})
+	}
 	// 1. Operating hours: SPEC-0012's verdict, as the gate keeps it.
 	if req.Holds.Has(hoursReason) {
 		detail := "out of operating hours"
@@ -70,6 +77,9 @@ func Decide(req AdmitRequest, st State) Decision {
 
 // hoursReason is core.HoldHours, named here so Decide reads as the REQ-4 list.
 var hoursReason = ReasonHours.HoldReason()
+
+// drainReason is core.HoldDrain, the operator's out-of-service gate.
+var drainReason = ReasonDrain.HoldReason()
 
 // refuse is a refusal for reason: a held resident, or a skipped firing.
 func refuse(req AdmitRequest, reason Reason, detail string, next time.Time) Decision {

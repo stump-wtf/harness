@@ -2,7 +2,7 @@ package fake
 
 // TreePaths Tests
 //
-// Governing tests: SPEC-0025 REQ-18 — the fake answers a watched-directory
+// Governing tests: SPEC-0025 REQ-19 — the fake answers a watched-directory
 // read from the files set at a sha, or at the sha a branch name points at.
 
 import (
