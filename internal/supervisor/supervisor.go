@@ -72,7 +72,6 @@ const (
 	// while the run in flight finishes; `undrain` clears the gate and starts
 	// a firing the drain held (drain_gate.go).
 	cmdDrain
-	cmdUndrain
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -802,8 +801,6 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.release(c.holdReason)
 	case cmdDrain:
 		s.drain(c.drainDiscard)
-	case cmdUndrain:
-		s.release(core.HoldDrain)
 	case cmdCloseStep:
 		s.closeStep(c.step)
 	case cmdLogEvent:
