@@ -52,6 +52,8 @@ var helpText = struct {
 		{"start NAME", "start (enable) a harness"},
 		{"stop NAME", "stop (disable) a harness"},
 		{"restart NAME", "restart a harness (clears a failed latch)"},
+		{"drain [NAME] [--all] [--discard] [--wait] [--timeout D]", "take a harness out of service: start no new run from any source, let the run in flight finish; --wait exits non-zero on timeout"},
+		{"undrain [NAME] [--all]", "put a drained harness back in service and start the firing the drain held"},
 		{"logs NAME [--lines N] [--follow] [--raw] [--run N]", "show what a harness's latest run (or run N) did"},
 		{"jobs", "list triggered harnesses: sources, next run, last run, consecutive failures"},
 		{"triggers", "list trigger sources: state, last event and error, counters, harnesses"},

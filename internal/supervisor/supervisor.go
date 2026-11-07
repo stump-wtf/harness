@@ -68,6 +68,10 @@ const (
 	// close in flight and return, leaving the stop to the close step
 	// (stump.wtf/harness#871).
 	cmdArmDrain
+	// Operator drain (stump.wtf/harness#828): hold every start at admission
+	// while the run in flight finishes; `undrain` clears the gate and starts
+	// a firing the drain held (drain_gate.go).
+	cmdDrain
 )
 
 // restoreData seeds persisted intent + counters on daemon start (ADR-0007).
@@ -147,6 +151,9 @@ type command struct {
 	graceful *gracefulClose
 	// cmdArmDrain payload: the cap bounding a daemon-shutdown drain.
 	drain *gracefulClose
+	// cmdDrain payload: drop the queued firing instead of holding it
+	// (`drain --discard`, stump.wtf/harness#828).
+	drainDiscard bool
 	// cmdLogEvent payload: logEvent is loop-owned state (s.evlog), so a
 	// lifecycle line decided outside the loop — an after-hours lease start/end
 	// (Manager.LogLifecycle) — is written on the loop like every other
@@ -792,6 +799,8 @@ func (s *Supervisor) handleCommand(c command) (shutdown bool) {
 		s.hold(c.holdReason, c.enable, c.mode, c.closeAt, c.source, c.park)
 	case cmdRelease:
 		s.release(c.holdReason)
+	case cmdDrain:
+		s.drain(c.drainDiscard)
 	case cmdCloseStep:
 		s.closeStep(c.step)
 	case cmdLogEvent:

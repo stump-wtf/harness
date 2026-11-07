@@ -24,8 +24,17 @@ import "strings"
 type HoldReason uint8
 
 const (
+	// HoldDrain: an operator took the harness out of service with
+	// `harness drain`. Unlike the other reasons it stops nothing that is
+	// already running: it is a gate on starting, checked first in
+	// admission, and it is cleared only by `harness undrain`. It is
+	// derived runtime state like the rest of the set, never persisted:
+	// a daemon restart resumes every harness, which is what a packaging
+	// script that drained-then-restarted wants. It amends stump.wtf/
+	// harness#828.
+	HoldDrain HoldReason = iota + 1
 	// HoldHours: the harness is out of its operating hours (SPEC-0012).
-	HoldHours HoldReason = iota + 1
+	HoldHours
 	// HoldQuota: the harness, or its quota group, is parked on an exhausted
 	// provider quota until a reset instant (SPEC-0021 REQ-12).
 	HoldQuota
@@ -40,11 +49,13 @@ const (
 // place in this list where REQ-4 evaluates it, between hours and quota, and
 // needs no other change: the release rule only ever asks whether the set is
 // empty.
-var holdOrder = [...]HoldReason{HoldHours, HoldQuota, HoldBudget}
+var holdOrder = [...]HoldReason{HoldDrain, HoldHours, HoldQuota, HoldBudget}
 
 // String is the reason's wire name, as hold_reasons carries it.
 func (r HoldReason) String() string {
 	switch r {
+	case HoldDrain:
+		return "drain"
 	case HoldHours:
 		return "hours"
 	case HoldQuota:

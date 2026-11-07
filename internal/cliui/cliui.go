@@ -413,6 +413,9 @@ func classify(err error) (Level, string, string, string) {
 			noProjectHint(err)
 	case refusalCode(err) != "":
 		return refusalDetail(err)
+	case drainWaitTimedOut(err):
+		return LevelError, "still draining", cleanMessage(err.Error()),
+			"the gate is armed, so nothing new starts: raise --timeout, or run harness undrain to put it back in service"
 	default:
 		return LevelError, "error", cleanMessage(err.Error()), ""
 	}
@@ -621,6 +624,16 @@ func refusalCode(err error) protocol.ErrCode {
 		return em.Code
 	}
 	return ""
+}
+
+// drainWaitTimedOut reports whether err is the daemon's answer to
+// `harness drain --wait --timeout D` whose deadline passed with a drained
+// harness still running (stump.wtf/harness#828). The exit status is the verdict
+// a packaging script gates its restart on, so the case gets a title of its own
+// instead of the generic "error".
+func drainWaitTimedOut(err error) bool {
+	var em *protocol.ErrorMsg
+	return errors.As(err, &em) && em.Code == protocol.ErrDrainTimeout
 }
 
 // refusalDetail is classify's answer for an admission refusal.
