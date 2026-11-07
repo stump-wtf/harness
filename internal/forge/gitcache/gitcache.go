@@ -297,7 +297,7 @@ func (c *Cache) TreeOf(ctx context.Context, repo, sha string) (string, error) {
 // TreePaths lists the files under prefixes at commit sha, sorted. The train
 // uses it to read a whole watched directory, which a diff of one head cannot
 // show: the other claimant of a sequence number is usually not in the diff at
-// all (ADR-0052).
+// all (ADR-0063).
 func (c *Cache) TreePaths(ctx context.Context, repo, sha string, prefixes []string) ([]string, error) {
 	unlock := c.lockRepo(repo)
 	defer unlock()

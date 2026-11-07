@@ -80,7 +80,7 @@ func (c *Client) TreeOf(ctx context.Context, repo, sha string) (string, error) {
 	return c.git.TreeOf(ctx, repo, sha)
 }
 
-// TreePaths lists the files under prefixes at commit sha, sorted (ADR-0052).
+// TreePaths lists the files under prefixes at commit sha, sorted (ADR-0063).
 func (c *Client) TreePaths(ctx context.Context, repo, sha string, prefixes []string) ([]string, error) {
 	if _, err := repoPath(repo); err != nil {
 		return nil, err
