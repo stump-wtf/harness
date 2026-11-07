@@ -125,6 +125,8 @@ func newRootCmd() *cobra.Command {
 		newLifecycleCmd(g, "start", "start a harness"),
 		newLifecycleCmd(g, "stop", "stop a harness"),
 		newLifecycleCmd(g, "restart", "restart a harness"),
+		newDrainCmd(g),
+		newUndrainCmd(g),
 		newLogsCmd(g),
 		newSimpleCmd(g, "jobs", "list triggered harnesses and how their runs went", nameNone),
 		newSimpleCmd(g, "triggers", "list trigger sources: state, last event, counters, harnesses", nameNone),

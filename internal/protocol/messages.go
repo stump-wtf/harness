@@ -169,7 +169,15 @@ const (
 	// or from a file that may be a stale leftover. Additive only: an older
 	// daemon leaves it empty, and the CLI then says the daemon did not answer
 	// rather than guessing from the filesystem.
-	ProtoMinor = 31
+	// ProtoMinor 32 added OpDrain and OpUndrain, the ControlReq.Discard,
+	// Wait and Timeout fields, and Drain on HarnessInfo
+	// (stump.wtf/harness#828): the operator drain gate. Additive only: the
+	// drain reason simply joins hold_reasons, which older clients already
+	// print as one more string; an older daemon answers the two new ops
+	// with unknown_op, which the CLI reports instead of pretending the
+	// harness is out of service; an older client ignores the Drain field
+	// and still sees the hold on hold_reasons.
+	ProtoMinor = 32
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -272,6 +280,17 @@ const (
 	// does not carry (ADR-0007 as amended for #279 stores scrolled-off rows
 	// only). Governing: issue #735; ADR-0040.
 	OpCapture Op = "capture"
+
+	// OpDrain arms the operator drain gate on each harness named in Names:
+	// no source starts a new run while it is armed, and the run in flight
+	// finishes untouched (stump.wtf/harness#828). Discard drops a queued
+	// firing instead of holding it for undrain; Wait makes the reply block
+	// until every drained harness is idle, bounded by Timeout (a Go
+	// duration string; empty means no deadline). OpUndrain clears the gate
+	// on each named harness. Additive: a daemon older than 32 answers both
+	// with unknown_op.
+	OpDrain   Op = "drain"
+	OpUndrain Op = "undrain"
 )
 
 // ControlReq is a control-plane request. ID correlates the response; Name
@@ -347,6 +366,16 @@ type ControlReq struct {
 	// Ansi asks capture for the styled ANSI repaint in addition to the plain
 	// text (issue #735). Additive; ignored by a daemon older than 21.
 	Ansi bool `json:"ansi,omitempty"`
+
+	// Discard, Wait and Timeout tune drain (stump.wtf/harness#828), named
+	// harnesses coming from Names. Discard drops a queued firing instead of
+	// holding it for undrain; Wait holds the reply until every drained
+	// harness is idle, bounded by Timeout (a Go duration string; empty
+	// means no deadline). Additive: a drain without them holds queued
+	// firings and answers as soon as the gate is armed.
+	Discard bool   `json:"discard,omitempty"`
+	Wait    bool   `json:"wait,omitempty"`
+	Timeout string `json:"timeout,omitempty"`
 }
 
 // ProjectHarness is one project-local harness definition carried by a
@@ -655,12 +684,19 @@ type HarnessInfo struct {
 	// next flip to report.
 	HoursNext string `json:"hours_next,omitempty"`
 	// HoldReasons is the set of reasons the daemon is holding this harness
-	// down for, in canonical order ("hours", "quota", "budget"), omitted
+	// down for, in canonical order ("drain", "hours", "quota", "budget"), omitted
 	// when it is not held, gated or not (ADR-0027, SPEC-0021 REQ-14,
 	// REQ-16). It replaces SPEC-0012's `held` boolean outright: a harness
 	// held for its operating hours is one whose HoldReasons contains
 	// "hours", and no `held` is sent (ProtoMinor 24).
 	HoldReasons []string `json:"hold_reasons,omitempty"`
+	// Drain is the operator drain gate's surface label
+	// (stump.wtf/harness#828, ProtoMinor 32): "draining" while a drained
+	// harness still has a run in flight, "drained" once it is idle, empty
+	// when nothing drains it. It rides alongside hold_reasons containing
+	// "drain" rather than replacing State: SPEC-0003's lifecycle states are
+	// untouched, and an older client still reads the hold on hold_reasons.
+	Drain string `json:"drain,omitempty"`
 	// ClosingUntil is the close deadline, RFC 3339, present only while a
 	// graceful close is in progress (SPEC-0012 REQ "Graceful Shutdown") — the
 	// close's own deadline (CloseAt + hours_shutdown_timeout), not the window
@@ -1330,6 +1366,10 @@ const (
 	// harness subject to a budget, so it was refused rather than run
 	// uncounted.
 	ErrLedgerUnavailable ErrCode = "ledger_unavailable"
+	// ErrDrainTimeout: `drain --wait --timeout D` passed its deadline with
+	// a drained harness still running (stump.wtf/harness#828). The gate
+	// armed; it just has not drained yet. The CLI exits non-zero on it.
+	ErrDrainTimeout ErrCode = "drain_timeout"
 )
 
 // ErrorMsg is a structured error frame body. ID echoes the request it answers

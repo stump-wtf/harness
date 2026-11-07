@@ -98,6 +98,9 @@ type Reason string
 const (
 	// ReasonNone: admitted.
 	ReasonNone Reason = ""
+	// ReasonDrain: an operator drained the harness with `harness drain`
+	// (check 0; stump.wtf/harness#828).
+	ReasonDrain Reason = "drain"
 	// ReasonHours: out of operating hours (check 1).
 	ReasonHours Reason = "hours"
 	// ReasonQuotaParked: parked on an exhausted quota (check 2).
@@ -112,12 +115,14 @@ const (
 	ReasonLedgerUnavailable Reason = "ledger_unavailable"
 )
 
-// HoldReason is the hold reason a resident refused for r is held for: hours,
-// quota or budget. A refusal that holds nothing (concurrency, which only a
+// HoldReason is the hold reason a resident refused for r is held for: drain,
+// hours, quota or budget. A refusal that holds nothing (concurrency, which only a
 // one-shot meets, and a ledger failure, which is not a condition a hold can
 // wait out) is the zero HoldReason.
 func (r Reason) HoldReason() core.HoldReason {
 	switch r {
+	case ReasonDrain:
+		return core.HoldDrain
 	case ReasonHours:
 		return core.HoldHours
 	case ReasonQuotaParked:

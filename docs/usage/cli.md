@@ -52,6 +52,35 @@ The client warns when its own build is older or newer than the daemon's
 (client/daemon skew) — after upgrading, restart the daemon so both sides speak
 the same protocol version.
 
+### Taking a harness out of service
+
+`stop` disables a harness and stops the run in flight. `drain` takes it out of
+service without touching that run: no source starts a new one (cron, a channel,
+a webhook, `harness trigger`, a `catch_up` pass, a self-triggered queue), and
+whatever the run in flight earns for `on_overlap = "queue"` stays queued.
+
+```sh
+harness drain <name>              # no new runs; the run in flight finishes
+harness drain <name> --discard    # ... and drop the queued firing instead of holding it
+harness drain --all               # every harness the daemon lists
+harness undrain <name>            # back in service; starts the firing the drain held
+```
+
+A drained harness reads `draining` while its run is still going and `drained`
+once it is idle, in `describe` and in `--json` (the `drain` field, next to
+`hold_reasons: ["drain"]`). The gate is runtime state, so a daemon restart
+resumes every harness.
+
+`--wait` is the half a script uses:
+
+```sh
+harness drain --all && harness drain --wait --timeout 30m && brew services restart harness
+```
+
+`--wait` blocks until every drained harness is idle. A `--timeout` that passes
+first exits non-zero (`drain_timeout`) with the gate still armed, so the
+`&&` stops before the restart rather than SIGTERMing an agent mid-run.
+
 ## Listing & inspection
 
 ```sh

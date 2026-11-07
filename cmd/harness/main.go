@@ -65,6 +65,8 @@ type verbOpts struct {
 	forDur     string // start --for: after-hours lease length (SPEC-0012)
 	graceful   string // stop|restart --graceful: wait out the current turn first, bounded (stump.wtf/harness#871); empty means do not wait
 	ansi       bool   // capture --ansi: the styled ANSI repaint (issue #735)
+	discard    bool   // drain --discard: drop the queued firing instead of holding it (stump.wtf/harness#828)
+	timeout    string // drain --wait --timeout: bound the wait (stump.wtf/harness#828); empty means no deadline
 	// cmd is the invoking command, for doctor's settings report: only its
 	// flag set knows whether --config or --socket was typed, which the
 	// report's source column ranks above the environment (SPEC-0010).
@@ -113,6 +115,11 @@ func run(verb string, o verbOpts) error {
 		return withClient(o, nil, projectScoped(verb, true, lifecycle(verb)))
 	case "logs":
 		return withClient(o, nil, projectScoped(verb, false, cmdLogs))
+	case "drain", "undrain":
+		// Out of service, and back in (stump.wtf/harness#828). Scoped like the
+		// lifecycle verbs: a bare NAME inside a project resolves to
+		// <project>/NAME, and --all keeps its daemon-wide meaning.
+		return withClient(o, nil, projectScoped(verb, true, drainVerb(verb)))
 	case "jobs":
 		// Scheduled harnesses are global-config only, so the job verbs are
 		// never project-scoped (SPEC-0008 REQ "Schedule Exclusions").
