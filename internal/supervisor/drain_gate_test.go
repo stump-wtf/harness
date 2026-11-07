@@ -20,6 +20,7 @@ package supervisor
 // "Admission", REQ-14 "Release and hold reasons".
 //
 // @joestump-agent 11/06/2026 - Added for stump.wtf/harness#828.
+// @joestump-agent 11/07/2026 - Pinned the arm-before-wait ordering (PR #1056 review).
 
 import (
 	"errors"
@@ -249,6 +250,35 @@ func TestDrainIsRuntimeStateOnly(t *testing.T) {
 	restarted, _ := e.manager(t, sweepCfg(sweep("p", "sleep 0.2")), fastPolicy())
 	if holds := drainSnapshot(t, restarted, "p").Holds; !holds.Empty() {
 		t.Errorf("a restart kept the drain gate: holds = %s, want none", holds)
+	}
+}
+
+// TestDrainIsVisibleWhenDrainReturns pins the ordering the restart-gate
+// contract rests on (PR #1056 review): Supervisor.send blocks until the loop
+// has run drain() and publishSnapshot(), so when Manager.Drain returns the
+// gate is already in every targeted snapshot, and a DrainWait that starts
+// after it cannot mistake a not-yet-armed harness for idle. A regression to
+// an async arm shows up here as a snapshot missing the hold the instant the
+// call returns with a run in flight — the exact state that would let a
+// single `drain --all --wait --timeout D && <restart>` restart with runs
+// still up.
+func TestDrainIsVisibleWhenDrainReturns(t *testing.T) {
+	e := newRunsEnv(t)
+	m, _ := e.manager(t, sweepCfg(
+		sweep("arma", "sleep 0.2"),
+		sweep("armb", "sleep 0.2"),
+		sweep("armc", "sleep 0.2"),
+	), fastPolicy())
+	for _, name := range []string{"arma", "armb", "armc"} {
+		m.StartRun(name, RunRequest{Trigger: TriggerSchedule})
+		waitRuns(t, m, name, "run in flight", outcomesAre(OutcomeRunning))
+		if err := m.Drain([]string{name}, false); err != nil {
+			t.Fatal(err)
+		}
+		if snap := drainSnapshot(t, m, name); !snap.Holds.Has(core.HoldDrain) {
+			t.Fatalf("%s: the snapshot right after Drain returned carries no drain hold (state %s, pid %d) — arming and the wait are not ordered", name, snap.State, snap.PID)
+		}
+		waitRuns(t, m, name, "the in-flight run finishes on its own", outcomesAre(OutcomeSuccess))
 	}
 }
 
