@@ -98,7 +98,7 @@ func newDaemonCmd(g *globalOpts) *cobra.Command {
 	daemon.PersistentFlags().StringVar(&d.logLevel, "log-level", "", "log level: debug, info, warn, error")
 	daemon.PersistentFlags().StringVar(&d.logFile, "log-file", "", "append logs to this file instead of stderr")
 	daemon.PersistentFlags().BoolVar(&d.compressLogs, "compress-logs", true, "compress sealed logs (rotated backups, closed runs' logs) with zstd; --compress-logs=false keeps them plain (overrides [daemon] compress_logs)")
-	daemon.PersistentFlags().BoolVar(&d.detach, "detach", false, "fork into the background; redirect stdio to --log-file (dev convenience; prefer systemd in production)")
+	daemon.PersistentFlags().BoolVar(&d.detach, "detach", false, "fork into the background; redirect stdio to --log-file (its default belongs to that detached run alone, so a daemon your init system supervises does not log there; dev convenience; prefer systemd in production)")
 	// Declared for parsing only: the settings ladder reads them back by name
 	// and resolves them into d (resolveDaemonSettings).
 	daemon.PersistentFlags().String("memory-limit", "", "Go soft memory limit, e.g. 2GiB (0 = off; overrides [daemon] memory_limit and GOMEMLIMIT)")

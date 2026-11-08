@@ -160,15 +160,16 @@ func pipeStreamEntries(ctx context.Context, h core.Harness, streamPath string, r
 			last = t
 		}
 		out = append(out, protocol.LogEntry{
-			ID:      fmt.Sprintf("stream/%s/tool/%d", sid, ev.Seq),
-			Time:    t.Format(time.RFC3339Nano),
-			Kind:    protocol.LogEntryTool,
-			Action:  ev.Action,
-			Tool:    ev.Tool,
-			Target:  redact.Redact(runtrace.PrimaryTarget(ev)),
-			Summary: redact.Redact(runtrace.ToolSummary(ev.Summary)),
-			Session: sid,
-			Error:   ev.IsError,
+			ID:       fmt.Sprintf("stream/%s/tool/%d", sid, ev.Seq),
+			Time:     t.Format(time.RFC3339Nano),
+			Kind:     protocol.LogEntryTool,
+			Action:   ev.Action,
+			Tool:     ev.Tool,
+			Target:   redact.Redact(runtrace.PrimaryTarget(ev)),
+			Summary:  redact.Redact(runtrace.ToolSummary(ev.Summary)),
+			Programs: runtrace.ProgramNames(ev.Programs),
+			Session:  sid,
+			Error:    ev.IsError,
 		})
 	}
 	for i, mk := range marks {

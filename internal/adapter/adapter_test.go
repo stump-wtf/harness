@@ -19,6 +19,7 @@ func TestRegistryGet(t *testing.T) {
 		{"codex", false},
 		{"pi", false},
 		{"omp", false},
+		{"opencode", false},
 		{"generic", false},
 		{"command", false},
 		{"nonexistent", true},
@@ -49,7 +50,7 @@ func TestRegistryGet(t *testing.T) {
 func TestRegistryNames(t *testing.T) {
 	r := NewRegistryWithDefaults()
 	names := r.Names()
-	want := []string{"claude-code", "crush", "codex", "pi", "omp", "generic", "command"}
+	want := []string{"claude-code", "crush", "codex", "pi", "omp", "opencode", "generic", "command"}
 	if len(names) != len(want) {
 		t.Fatalf("got %d names, want %d", len(names), len(want))
 	}

@@ -433,17 +433,25 @@ func agentEntry(e runtrace.Entry) protocol.LogEntry {
 	case runtrace.KindMark:
 		kind = protocol.LogEntryMark
 	}
+	// Only a tool call runs programs: a mark is a message about the run, and a
+	// program list on it would render as a fact the transcript never stated.
+	var progs []string
+	if e.Kind == runtrace.KindTool {
+		progs = e.Programs
+	}
 	return protocol.LogEntry{
-		ID:        e.ID,
-		Time:      e.Time.Format(time.RFC3339Nano),
-		Kind:      kind,
-		Action:    e.Action,
-		Tool:      e.Tool,
-		Target:    e.Target,
-		Summary:   e.Summary,
-		Session:   e.Session,
-		Error:     e.Error,
-		Ambiguous: e.Ambiguous,
+		ID:           e.ID,
+		Time:         e.Time.Format(time.RFC3339Nano),
+		Kind:         kind,
+		Action:       e.Action,
+		Tool:         e.Tool,
+		Target:       e.Target,
+		Summary:      e.Summary,
+		Programs:     progs,
+		Session:      e.Session,
+		Error:        e.Error,
+		ErrorExcerpt: e.ErrorExcerpt,
+		Ambiguous:    e.Ambiguous,
 	}
 }
 

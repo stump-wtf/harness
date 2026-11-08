@@ -158,7 +158,26 @@ const (
 	// arm_shutdown with an unknown-op error, which the CLI reports instead of
 	// silently stopping; an older client sends neither, and keeps the
 	// immediate lifecycle timing it has always had.
-	ProtoMinor = 29
+	// ProtoMinor 30 added Programs on LogEntry (stump.wtf/harness#913): the
+	// executables a shell tool call runs, as agent-trace names them. Additive
+	// only: an older daemon omits the field and a newer CLI prints the entry
+	// without them; an older client ignores what it does not decode.
+	// ProtoMinor 31 added LogDestination on DaemonInfo
+	// (stump.wtf/harness#583): the log surface the *running* daemon's own
+	// lines land in, so `doctor` and `daemon status` can answer "where does
+	// this daemon log" from the process instead of re-deriving it from config
+	// or from a file that may be a stale leftover. Additive only: an older
+	// daemon leaves it empty, and the CLI then says the daemon did not answer
+	// rather than guessing from the filesystem.
+	// ProtoMinor 32 added OpDrain and OpUndrain, the ControlReq.Discard,
+	// Wait and Timeout fields, and Drain on HarnessInfo
+	// (stump.wtf/harness#828): the operator drain gate. Additive only: the
+	// drain reason simply joins hold_reasons, which older clients already
+	// print as one more string; an older daemon answers the two new ops
+	// with unknown_op, which the CLI reports instead of pretending the
+	// harness is out of service; an older client ignores the Drain field
+	// and still sees the hold on hold_reasons.
+	ProtoMinor = 32
 )
 
 // ProtoVersion is the "major.minor" string carried in HELLO.
@@ -261,6 +280,17 @@ const (
 	// does not carry (ADR-0007 as amended for #279 stores scrolled-off rows
 	// only). Governing: issue #735; ADR-0040.
 	OpCapture Op = "capture"
+
+	// OpDrain arms the operator drain gate on each harness named in Names:
+	// no source starts a new run while it is armed, and the run in flight
+	// finishes untouched (stump.wtf/harness#828). Discard drops a queued
+	// firing instead of holding it for undrain; Wait makes the reply block
+	// until every drained harness is idle, bounded by Timeout (a Go
+	// duration string; empty means no deadline). OpUndrain clears the gate
+	// on each named harness. Additive: a daemon older than 32 answers both
+	// with unknown_op.
+	OpDrain   Op = "drain"
+	OpUndrain Op = "undrain"
 )
 
 // ControlReq is a control-plane request. ID correlates the response; Name
@@ -336,6 +366,16 @@ type ControlReq struct {
 	// Ansi asks capture for the styled ANSI repaint in addition to the plain
 	// text (issue #735). Additive; ignored by a daemon older than 21.
 	Ansi bool `json:"ansi,omitempty"`
+
+	// Discard, Wait and Timeout tune drain (stump.wtf/harness#828), named
+	// harnesses coming from Names. Discard drops a queued firing instead of
+	// holding it for undrain; Wait holds the reply until every drained
+	// harness is idle, bounded by Timeout (a Go duration string; empty
+	// means no deadline). Additive: a drain without them holds queued
+	// firings and answers as soon as the gate is armed.
+	Discard bool   `json:"discard,omitempty"`
+	Wait    bool   `json:"wait,omitempty"`
+	Timeout string `json:"timeout,omitempty"`
 }
 
 // ProjectHarness is one project-local harness definition carried by a
@@ -644,12 +684,19 @@ type HarnessInfo struct {
 	// next flip to report.
 	HoursNext string `json:"hours_next,omitempty"`
 	// HoldReasons is the set of reasons the daemon is holding this harness
-	// down for, in canonical order ("hours", "quota", "budget"), omitted
+	// down for, in canonical order ("drain", "hours", "quota", "budget"), omitted
 	// when it is not held, gated or not (ADR-0027, SPEC-0021 REQ-14,
 	// REQ-16). It replaces SPEC-0012's `held` boolean outright: a harness
 	// held for its operating hours is one whose HoldReasons contains
 	// "hours", and no `held` is sent (ProtoMinor 24).
 	HoldReasons []string `json:"hold_reasons,omitempty"`
+	// Drain is the operator drain gate's surface label
+	// (stump.wtf/harness#828, ProtoMinor 32): "draining" while a drained
+	// harness still has a run in flight, "drained" once it is idle, empty
+	// when nothing drains it. It rides alongside hold_reasons containing
+	// "drain" rather than replacing State: SPEC-0003's lifecycle states are
+	// untouched, and an older client still reads the hold on hold_reasons.
+	Drain string `json:"drain,omitempty"`
 	// ClosingUntil is the close deadline, RFC 3339, present only while a
 	// graceful close is in progress (SPEC-0012 REQ "Graceful Shutdown") — the
 	// close's own deadline (CloseAt + hours_shutdown_timeout), not the window
@@ -859,8 +906,17 @@ type LogEntry struct {
 	Tool    string `json:"tool,omitempty"`
 	Target  string `json:"target,omitempty"`
 	Summary string `json:"summary,omitempty"`
-	Session string `json:"session,omitempty"`
-	Error   bool   `json:"error,omitempty"`
+	// Programs lists the executables a shell tool call runs, in the order the
+	// command names them, empty for a call that is not a shell. It is a lower
+	// bound: agent-trace names only what a static read of the command can
+	// name, and never an env assignment (issue #913).
+	Programs []string `json:"programs,omitempty"`
+	Session  string   `json:"session,omitempty"`
+	Error    bool     `json:"error,omitempty"`
+	// ErrorExcerpt is the bounded, credential-masked piece of output a failing
+	// tool call produced, empty for everything that succeeded. It answers why
+	// the call failed, which the action and summary columns cannot.
+	ErrorExcerpt string `json:"error_excerpt,omitempty"`
 	// Ambiguous marks an entry from an excluded session, present only on an
 	// IncludeAmbiguous request.
 	Ambiguous bool `json:"ambiguous,omitempty"`
@@ -1180,6 +1236,13 @@ type DaemonInfo struct {
 	// Scenario "The ledger cannot be written", REQ-7 Scenario "A lost ledger
 	// file".
 	RunLedger *RunLedgerInfo `json:"run_ledger,omitempty"`
+	// LogDestination is where this daemon's own log lines land, as the running
+	// process knows it (ProtoMinor 31, stump.wtf/harness#583): the absolute
+	// path it opened for `--log-file`, `journal (stderr)` when a service
+	// manager owns its stderr, or `stderr`. Empty means the daemon predates
+	// the field — never "it logs nowhere". Governing: ADR-0001 (the daemon
+	// logs to stderr and lets the service manager own the surface).
+	LogDestination string `json:"log_destination,omitempty"`
 }
 
 // RunLedgerInfo is what SPEC-0021's admission met of the run ledger.
@@ -1303,6 +1366,10 @@ const (
 	// harness subject to a budget, so it was refused rather than run
 	// uncounted.
 	ErrLedgerUnavailable ErrCode = "ledger_unavailable"
+	// ErrDrainTimeout: `drain --wait --timeout D` passed its deadline with
+	// a drained harness still running (stump.wtf/harness#828). The gate
+	// armed; it just has not drained yet. The CLI exits non-zero on it.
+	ErrDrainTimeout ErrCode = "drain_timeout"
 )
 
 // ErrorMsg is a structured error frame body. ID echoes the request it answers

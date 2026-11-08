@@ -11,7 +11,8 @@ package forge
 // The interface first sketched in #599 is amended by SPEC-0025 design.md, each
 // change forced by ADR-0032: CreateBranch became CreateTrainBranch (the train
 // commit does not exist on the forge until the train makes it), SquashMerge
-// pins the head, and BranchHead, ListComments and TreeOf were added.
+// pins the head, and BranchHead, ListComments and TreeOf were added. TreePaths
+// came later, for the train's sequence-collision check (ADR-0063).
 
 import (
 	"context"
@@ -36,8 +37,9 @@ const statusMethodNotAllowed = 405
 // because it counts too few approvals. Gitea's is "Does not have enough
 // approvals", and it is the answer a PR gets when its APPROVED reviews are no
 // longer official, which is a state the reviewer can produce without touching
-// the code (ADR-0050).
-var approvalsRefusalRE = regexp.MustCompile(`(?i)(not enough |insufficient |does not have (enough|sufficient) )approvals`)
+// the code (ADR-0050). The second alternative is GitHub's wording for the same
+// refusal, which its branch-protection settings produce (ADR-0061).
+var approvalsRefusalRE = regexp.MustCompile(`(?i)(not enough |insufficient |does not have (enough|sufficient) )approvals|must have[^\n]{0,40}?approving review|requir[^\n]{0,40}?approving review`)
 
 // Forge is what the merge train needs from a code forge. repo is always
 // "owner/name".
@@ -72,12 +74,21 @@ type Forge interface {
 	// TreeOf returns the git tree id of commit sha. It must come from git
 	// itself: Gitea's REST API reports the commit id in its tree fields.
 	TreeOf(ctx context.Context, repo, sha string) (string, error)
+	// TreePaths returns every file path in commit sha's tree that lies under
+	// one of prefixes, sorted. A prefix names a directory; an empty list
+	// means the whole tree. The train needs it to see a sequence claim the
+	// diff alone does not reveal (ADR-0063).
+	TreePaths(ctx context.Context, repo, sha string, prefixes []string) ([]string, error)
 }
 
 // TrainSpec says what train commit to build.
 type TrainSpec struct {
 	Branch  string // "train/<pr>", or "train/batch/<pr>-…" when Heads carries more than one head
 	BaseSHA string // the base branch head the train is built on
+	// BaseRef names the base branch itself. A forge whose gate runs on a
+	// pull_request rather than a branch push needs it to open the train
+	// branch's gate PR (ADR-0061); a forge gated by push ignores it.
+	BaseRef string
 	PR      int    // the first PR in the batch
 	HeadSHA string // the first PR's head; the build fails with ErrStale if the forge disagrees
 	// Heads pins every PR in the batch, in the order their heads fold onto

@@ -26,6 +26,14 @@ import (
 // rebuildable from the serving clones.
 var ErrIndexUnavailable = errors.New("skillserve: index unavailable")
 
+// Result limits for search_skills (SPEC-0007 REQ "Search And Retrieval
+// Tools"): three hits unless the caller asks for more, and five at most
+// however loudly it asks.
+const (
+	DefaultSearchLimit = 3
+	MaxSearchLimit     = 5
+)
+
 // Index is the embedded full-text retrieval index. It holds no external
 // service, no network access and no model weights; deleting the database file
 // and reindexing from the serving clones restores equivalent behavior.
@@ -168,16 +176,21 @@ func buildMatchQuery(query string) string {
 	return strings.Join(quoted, " ")
 }
 
-// Search runs a full-text query and returns at most limit hits. paths, when
-// given, rank a skill whose applies_to matches any of them above an otherwise
-// equal skill (SPEC-0007 REQ "Search And Retrieval Tools"). Scores follow
-// bm25(); lower is better.
-func (i *Index) Search(query string, paths []string, limit int) ([]SearchHit, error) {
+// Search runs a full-text query and returns at most limit hits, restricted to
+// the named repos (empty means every indexed repo: scoping by serve_to happens
+// here, so no caller can read past its own grant). paths, when given, rank a
+// skill whose applies_to matches any of them above an otherwise equal skill
+// (SPEC-0007 REQ "Search And Retrieval Tools"). Scores follow bm25(); lower is
+// better.
+func (i *Index) Search(query string, paths []string, limit int, repos []string) ([]SearchHit, error) {
 	if i == nil || i.db == nil {
 		return nil, fmt.Errorf("%w: not open", ErrIndexUnavailable)
 	}
 	if limit <= 0 {
-		limit = 3
+		limit = DefaultSearchLimit
+	}
+	if limit > MaxSearchLimit {
+		limit = MaxSearchLimit
 	}
 	match := buildMatchQuery(query)
 	if match == "" {
@@ -185,12 +198,21 @@ func (i *Index) Search(query string, paths []string, limit int) ([]SearchHit, er
 	}
 	// Over-fetch so applies_to ranking can reorder within the requested limit.
 	fetch := limit * 4
+	args := []any{match}
+	where := "WHERE skill_fts MATCH ?"
+	if len(repos) > 0 {
+		where += " AND m.repo IN (" + placeholders(len(repos)) + ")"
+		for _, r := range repos {
+			args = append(args, r)
+		}
+	}
+	args = append(args, fetch)
 	rows, err := i.db.Query(
 		`SELECT m.repo, m.slug, f.description, m.applies_to, bm25(skill_fts) AS score
-		 FROM skill_fts f JOIN skill_meta m ON m.rowid = f.rowid
-		 WHERE skill_fts MATCH ?
-		 ORDER BY score
-		 LIMIT ?`, match, fetch)
+	 FROM skill_fts f JOIN skill_meta m ON m.rowid = f.rowid
+	 `+where+`
+	 ORDER BY score
+	 LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("%w: search: %v", ErrIndexUnavailable, err)
 	}
@@ -225,6 +247,61 @@ func (i *Index) Search(query string, paths []string, limit int) ([]SearchHit, er
 		hits = hits[:limit]
 	}
 	return hits, nil
+}
+
+// placeholders returns n bound-parameter markers, so a repo list reaches
+// SQLite as parameters and never as interpolated SQL (SPEC-0007 REQ "Database
+// Operation Standards").
+func placeholders(n int) string {
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+}
+
+// SkillRef is one active skill's identity, as the MCP resource listing and
+// get_skill address it.
+type SkillRef struct {
+	Repo        string `json:"repo"`
+	Slug        string `json:"slug"`
+	Description string `json:"description"`
+}
+
+// ListSkills returns every active skill in the named repos (empty means every
+// indexed repo), ordered by repo and slug. Only active skills are indexed, so
+// this is the set the per-skill MCP resources cover (SPEC-0007 REQ "Search And
+// Retrieval Tools").
+func (i *Index) ListSkills(repos []string) ([]SkillRef, error) {
+	if i == nil || i.db == nil {
+		return nil, fmt.Errorf("%w: not open", ErrIndexUnavailable)
+	}
+	args := []any{}
+	where := ""
+	if len(repos) > 0 {
+		where = "WHERE m.repo IN (" + placeholders(len(repos)) + ")"
+		for _, r := range repos {
+			args = append(args, r)
+		}
+	}
+	rows, err := i.db.Query(
+		`SELECT m.repo, m.slug, f.description
+	 FROM skill_meta m JOIN skill_fts f ON f.rowid = m.rowid
+	 `+where+`
+	 ORDER BY m.repo, m.slug`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%w: list skills: %v", ErrIndexUnavailable, err)
+	}
+	defer rows.Close()
+
+	var out []SkillRef
+	for rows.Next() {
+		var s SkillRef
+		if err := rows.Scan(&s.Repo, &s.Slug, &s.Description); err != nil {
+			return nil, fmt.Errorf("%w: list scan: %v", ErrIndexUnavailable, err)
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: list rows: %v", ErrIndexUnavailable, err)
+	}
+	return out, nil
 }
 
 func splitFields(s string) []string {

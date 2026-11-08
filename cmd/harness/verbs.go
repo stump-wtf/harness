@@ -219,6 +219,12 @@ func cmdDescribe(c *client.Client, o verbOpts) error {
 	// same harness `harness list` shows as amber "armed" (#268, #331). schedfmt exists
 	// so the surfaces cannot phrase one harness two ways.
 	t.Row("state", t.stateCell(h.State, harnessFiring(h), schedfmt.HoursHeld(h.HoldReasons), h.ClosingUntil != "", h.ScheduleSuppressed))
+	// Operator drain (stump.wtf/harness#828): the row appears only for a
+	// harness that is out of service. "draining" still has a run in flight,
+	// "drained" is idle, so a packaging script knows a restart is safe.
+	if h.Drain != "" {
+		t.Row("drain", t.amberBold(h.Drain))
+	}
 	// Stuck-at-prompt projection (issue #735; ADR-0040): a full-screen prompt
 	// never reaches the durable log, so this row is the only truthful answer
 	// to "why has this harness printed nothing for an hour?".
@@ -601,6 +607,16 @@ func cmdDaemonInfo(c *client.Client, o verbOpts) error {
 	t.Row("pid", fmt.Sprintf("%d", di.PID))
 	t.Row("uptime", fmt.Sprintf("%ds", di.UptimeSeconds))
 	t.Row("socket", t.faintPlain(di.Socket))
+	// Which surface this daemon's own lines land in, answered by the running
+	// process rather than re-derived from config or guessed from a file that
+	// may be a leftover of some earlier `--detach`
+	// (stump.wtf/harness#583). An empty answer is a daemon predating the
+	// field, and says so: a missing row would read as though nothing logged.
+	logs := di.LogDestination
+	if logs == "" {
+		logs = "not reported by this daemon"
+	}
+	t.Row("logs", t.faintPlain(logs))
 	t.Row("harnesses", fmt.Sprintf("%d", di.Harnesses))
 	if di.ActiveProfile != "" {
 		profileLabel := di.ActiveProfile

@@ -171,6 +171,7 @@ what is leaking, see
 | `harness_consecutive_failures{harness}` | gauge | The supervisor's give-up count. Once it exceeds the restart budget, the harness moves to `failed`. |
 | `harness_state_transitions_total{harness,to}` | counter | One series per supervisor state (`to` has 7 values), starting at zero. |
 | `harness_model_calls_total{harness,outcome}` | counter | `success` counts tool calls. `error` counts agent error marks. |
+| `harness_agent_program_calls_total{harness,program,outcome}` | counter | Shell tool calls by the program they run. `outcome` is `ok` or `error`, taken from the tool result. A program is a lowercase executable name; anything else, and every name past 64 for one harness, is counted as `program="other"`. A program never run is **absent**, not zero. |
 | `harness_model_call_errors_total{harness,class}` | counter | `quota`, `auth`, `timeout`, `transport`, `other`. Crush and Claude Code harnesses only, for now; see below. |
 | `harness_model_call_errors_unclassified_total{harness}` | counter | Errors that matched no known pattern. Each one is also counted as `class="other"`. |
 | `harness_last_successful_call_timestamp{harness}` | gauge | Unix seconds. **Absent** until the harness's first success in this daemon's lifetime. It is never reported as zero, because zero would read as 1970. |
@@ -228,7 +229,8 @@ successful model call, because the model answered with work. It counts an
 call is not counted.
 
 Only a harness whose adapter writes a readable transcript (`claude-code`,
-`crush`, `codex`, `pi`, `omp`, or a `command` harness bound to one of those
+`crush`, `codex`, `pi`, `omp`, `opencode`, or a `command` harness bound to one
+of those
 with `transcripts`) **and** that has a `workdir` gets model-call series. A
 `generic` harness, an unbound `command` harness, or an agent harness with no
 workdir, has none. The daemon
@@ -243,7 +245,7 @@ counted, but its provider errors do not appear yet.
 Until an adapter's errors do appear, its harnesses have no error-side series:
 `harness_model_calls_total{outcome="error"}`, `harness_model_call_errors_total`
 and `harness_model_call_errors_unclassified_total` are **absent** for `codex`,
-`pi` and `omp` harnesses today, not zero. A zero would say "no quota
+`pi`, `omp` and `opencode` harnesses today, not zero. A zero would say "no quota
 errors" through the very outage the quota alert exists to catch. For those
 harnesses, the staleness alert on `harness_last_successful_call_timestamp` is
 the one that fires.
@@ -301,6 +303,12 @@ share `harness="__other__"`, where counters add up and `harness_harness_state`
 counts how many overflow harnesses are in each state. When a harness is
 removed, its slot is freed. Session IDs, prompts, model names, credentials and
 environment values never appear as labels.
+
+`harness_agent_program_calls_total`'s `program` label is capped at 64 distinct
+names per harness, and only names shaped like a lowercase executable are kept,
+so an env assignment, an argument or a path is counted as `program="other"`
+rather than becoming a label. Overflow folds the same way. A query for one
+program is still exact; `sum by (program)` just shows `other` as the long tail.
 
 The `source` label takes only the names of sources your config declares, so it
 has no cap of its own. A source that a reload removes or renames disappears

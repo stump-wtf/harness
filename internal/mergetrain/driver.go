@@ -25,7 +25,7 @@ package mergetrain
 //
 // Governing: ADR-0032 (the loop, failure handling, singleton, author todo,
 // bypass audit), ADR-0056 (the infra retry), SPEC-0025 REQ-1, REQ-7..REQ-11,
-// REQ-13..REQ-18.
+// REQ-13..REQ-19.
 
 import (
 	"context"
@@ -71,6 +71,13 @@ type DriverConfig struct {
 	// folds up to Batch eligible PRs onto one train commit and bisects a red
 	// batch by halves.
 	Batch int
+
+	// SequencePaths are the directories whose files carry a sequence number
+	// in their names, watched for a collision the train would otherwise land
+	// as a duplicate (ADR-0063). Empty disables the check; the daemon passes
+	// the [mergetrain] value, whose default covers docs/adrs, docs/openspec
+	// specs and migrations.
+	SequencePaths []string
 
 	// TrainPollMin overrides the derived first CI poll wait
 	// (max(PollInterval/4, 5s)); tests use it to run in milliseconds.
@@ -304,6 +311,10 @@ func (d *Driver) attemptResult(ctx context.Context, pr PullRequest, base string,
 		return false, nil
 	case OutcomeStale:
 		return false, nil
+	case OutcomeSequenceConflict:
+		d.attempted[key] = res.Outcome
+		d.fail(ctx, key, pr, CauseSequenceConflict, CollisionDetail(res.Collisions, d.cfg.BaseBranch))
+		return false, nil
 	case OutcomeCancelled:
 		return false, ctx.Err()
 	default: // forge error, already logged by RunTrain
@@ -359,7 +370,10 @@ func (d *Driver) resolveBatch(ctx context.Context, cur []PullRequest, base strin
 			return false, nil
 		}
 		return d.resolveBatch(ctx, cur[:idx], base)
-	case OutcomeRed, OutcomeTimeout:
+	case OutcomeRed, OutcomeTimeout, OutcomeSequenceConflict:
+		// A colliding batch is bisected like a red one: the half that carries
+		// no collision lands, and the one that carries it is narrowed until a
+		// single PR is told which file claims the same number (ADR-0063).
 		first, rest := halves(cur)
 		landed, err := d.resolveBatch(ctx, first, base)
 		if err != nil {
@@ -771,12 +785,14 @@ func (d *Driver) trainConfig() TrainConfig {
 		pollMin = max(d.cfg.PollInterval/4, minPoll)
 	}
 	return TrainConfig{
-		Repo:        d.cfg.Repo,
-		PollMin:     pollMin,
-		PollMax:     max(d.cfg.PollInterval, pollMin),
-		Timeout:     d.cfg.CITimeout,
-		DeleteRetry: d.cfg.RetryPause,
-		Log:         d.log,
+		Repo:          d.cfg.Repo,
+		BaseBranch:    d.cfg.BaseBranch,
+		PollMin:       pollMin,
+		PollMax:       max(d.cfg.PollInterval, pollMin),
+		Timeout:       d.cfg.CITimeout,
+		DeleteRetry:   d.cfg.RetryPause,
+		SequencePaths: d.cfg.SequencePaths,
+		Log:           d.log,
 	}
 }
 

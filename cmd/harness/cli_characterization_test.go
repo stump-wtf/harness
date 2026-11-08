@@ -200,7 +200,7 @@ func TestCLINameRequiredVerbs(t *testing.T) {
 	bin := buildHarnessBinary(t)
 	env, _ := isolatedEnv(t)
 
-	for _, verb := range []string{"describe", "logs", "start", "stop", "restart", "use-profile"} {
+	for _, verb := range []string{"describe", "logs", "start", "stop", "restart", "use-profile", "drain", "undrain"} {
 		t.Run("requires-name/"+verb, func(t *testing.T) {
 			out, code := runCLI(t, bin, env, verb)
 			if code == 0 {

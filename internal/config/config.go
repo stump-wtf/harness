@@ -887,7 +887,7 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		for _, k := range []struct{ key, val string }{{"prompt", rh.Prompt}, {"prompt_file", rh.PromptFile}, {"prompt_template", rh.PromptTemplate}, {"prompt_template_file", rh.PromptTemplateFile}} {
 			if k.val != "" {
 				return newError(filename, line,
-					"harness %q: \"generic\" runs sh and has no prompt synthesis, so it takes no %q; use harness = \"crush\"|\"claude-code\"|\"codex\"|\"pi\"|\"omp\" for a prompt one-shot, or harness = \"command\" with argv to run another program without a shell",
+					"harness %q: \"generic\" runs sh and has no prompt synthesis, so it takes no %q; use harness = \"crush\"|\"claude-code\"|\"codex\"|\"pi\"|\"omp\"|\"opencode\" for a prompt one-shot, or harness = \"command\" with argv to run another program without a shell",
 					name, k.key)
 			}
 		}

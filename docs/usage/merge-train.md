@@ -43,6 +43,37 @@ forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
 | `batch` | PRs per train commit, a whole number of at least 1 (default 1). Above 1 batches heads onto one train commit and bisects on red; see [Batching](#batching) |
 | `flake_cool_down` | how long a red train waits before its one retry on a runner failure (default `0` — retry off — until ADR-0056 is accepted; set e.g. `5m` to turn it on); see [Runner flakes](#runner-flakes) |
 
+### Repos on GitHub
+
+A repo that lives on GitHub is served by the same train. Prefix its `repos`
+entry with `github:` and give that forge its own credentials:
+
+```toml
+[mergetrain]
+enabled = true
+repos = ["stump.wtf/harness", "github:octo/widgets"]
+forge_base_url = "https://gitea.stump.rocks"
+forge_token_env = "HARNESS_MERGETRAIN_TOKEN"
+github_base_url = "https://api.github.com"          # default; set it for GHES
+github_token_env = "HARNESS_MERGETRAIN_GITHUB_TOKEN" # required once a repo names GitHub
+github_ci_gate = "draft-pr"                         # or "train-push"
+```
+
+| Field | Meaning |
+|-------|---------|
+| `repos` entries prefixed `github:` | drive that repo through the GitHub forge; the `github:` prefix is not part of the repo's name |
+| `github_base_url` | the GitHub API base (default `https://api.github.com`) |
+| `github_token_env` | the NAME of the variable holding the GitHub token; required when any repo names GitHub, and a `token` key is refused just as it is for the default forge |
+| `github_ci_gate` | how a train commit gets its CI run: `draft-pr` (default) opens the train branch as a draft PR against `base_branch`, which is what triggers a repo's `pull_request` workflows; `train-push` pushes the branch and the repo's own workflows must declare `train/**` |
+
+An entry list that is entirely GitHub does not need `forge_base_url` or
+`forge_token_env`. Each forge keeps its own clone cache under
+`$XDG_STATE_HOME/harness/mergetrain/cache/<forge>/`, so the same `owner/name`
+on both forges is two repositories, not one. See
+[ADR-0061](/decisions/adr-0061-github-forge-backend) for why a GitHub train
+gates on a draft pull request, and for the check-run rule that keeps an
+untested commit from reading as green.
+
 A change to `[mergetrain]` takes effect at the next daemon restart. The train
 holds an exclusive per-repo lock
 (`$XDG_STATE_HOME/harness/mergetrain/<owner>_<name>.lock`), so a second driver
@@ -64,7 +95,7 @@ for the same repo fails to start rather than racing.
 Every transition is one structured line, message `mergetrain <event>`, with
 `repo` and where applicable `pr`, `head`, `base`, `train`, `tree`, `cause`,
 `err`: `started`, `queue`, `building`, `built`, `green`, `red`, `conflict`,
-`timeout`, `stale`, `deleted`, `delete failed`, `would merge`,
+`timeout`, `stale`, `sequence conflict`, `deleted`, `delete failed`, `would merge`,
 `would comment`, `merged`, `verified`, `merge refused`, `commented`,
 `flake retry`, `flake retry exhausted`, `tick failed`, `bypass detected`,
 `halted`, `shutting down`, `stopped`.
@@ -92,6 +123,24 @@ behaviour exactly.
 The value must be a whole number of at least 1 (`0`, a negative number or a
 string is a config error with its line). Batch train commits live on
 `train/batch/<pr>-<pr>…` branches, which are deleted when the attempt ends.
+
+## Sequence collisions
+
+Two pull requests that each add an ADR, a spec or a migration with the same
+number merge cleanly, because their paths differ, and `main` ends up holding
+both. Renaming one afterwards is a push, which dismisses approvals and re-runs
+CI, so the train refuses that commit instead and logs `sequence conflict`: it
+reads the watched directories at the train commit before CI is asked to run on
+it, and names in the PR comment which files claim the number and which pull
+request brings each (SPEC-0025 REQ-19, ADR-0063).
+
+A claim is the first run of two or more digits in a file's name, scoped to
+the directory holding it, so an ADR and a migration may share a number. The
+watched directories are `docs/adrs/`, `docs/openspec/specs/` and
+`migrations/`, overridable per daemon with `sequence_paths`
+([configuration](./configuration#merge-train-mergetrain)). A duplicate the
+base branch already holds is not blamed on the next attempt: it is cleaned up
+on `main` like any other broken thing on the base branch.
 
 ## Runner flakes
 

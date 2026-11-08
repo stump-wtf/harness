@@ -106,9 +106,9 @@ func newFixture(t *testing.T) fixture {
 func gitClient(t *testing.T, fx fixture, gitBin string) *Client {
 	s, c := newServer(t)
 	s.route("GET /api/v1/user", 200, map[string]any{"login": "joestump-agent", "email": "agent@example.invalid"})
-	c.gitURL = func(string) string { return fx.origin }
+	c.git.GitURL = func(string) string { return fx.origin }
 	if gitBin != "" {
-		c.gitBin = gitBin
+		c.git.GitBinary = gitBin
 	}
 	return c
 }
@@ -336,12 +336,57 @@ func TestTokenNeverInArgv(t *testing.T) {
 func TestGitErrorsCarryNoStderr(t *testing.T) {
 	fx := newFixture(t)
 	c := gitClient(t, fx, "")
-	c.gitURL = func(string) string { return filepath.Join(t.TempDir(), "no-such-remote-"+token) }
+	c.git.GitURL = func(string) string { return filepath.Join(t.TempDir(), "no-such-remote-"+token) }
 	_, err := c.CreateTrainBranch(ctx, repo, forge.TrainSpec{Branch: "train/1", BaseSHA: fx.main2, PR: 1, HeadSHA: fx.head})
 	if err == nil {
 		t.Fatal("fetch from a missing remote succeeded")
 	}
 	if strings.Contains(err.Error(), token) {
 		t.Fatalf("git error leaks what the remote said: %v", err)
+	}
+}
+
+func TestTreePaths(t *testing.T) {
+	fx := newFixture(t)
+	work := filepath.Join(filepath.Dir(fx.origin), "work")
+	runGit(t, work, "checkout", "-qb", "adrs", fx.base)
+	if err := os.MkdirAll(filepath.Join(work, "docs", "adrs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(work, "docs", "guides"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(work, "docs/adrs/adr-0051-b.md"), "b\n", 0o644)
+	write(t, filepath.Join(work, "docs/adrs/adr-0051-a.md"), "a\n", 0o644)
+	write(t, filepath.Join(work, "docs/guides/index.md"), "i\n", 0o644)
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-qm", "adrs")
+	adrs := runGit(t, work, "rev-parse", "HEAD")
+	runGit(t, work, "push", "-q", fx.origin, "adrs")
+
+	c := gitClient(t, fx, "")
+	got, err := c.TreePaths(ctx, repo, adrs, []string{"docs/adrs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"docs/adrs/adr-0051-a.md", "docs/adrs/adr-0051-b.md"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("TreePaths(adrs, docs/adrs) = %v, want %v", got, want)
+	}
+
+	all, err := c.TreePaths(ctx, repo, fx.base, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(all, "f.txt") || !slices.Contains(all, "gone.txt") {
+		t.Errorf("whole-tree read = %v, want the base's files", all)
+	}
+
+	empty, err := c.TreePaths(ctx, repo, fx.base, []string{"migrations"})
+	if err != nil {
+		t.Fatalf("a watched directory the commit lacks is not an error: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("TreePaths(base, migrations) = %v, want none", empty)
 	}
 }

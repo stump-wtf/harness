@@ -65,9 +65,16 @@ Day to day:
 ```sh
 systemctl --user status harness     # is the daemon up
 journalctl --user -u harness -f     # the daemon's own log
-harness daemon status               # version, pid, uptime, socket, harness count
+harness daemon status               # version, pid, uptime, socket, harness count, where it logs
 harness doctor                      # the full health report
 ```
+
+A service-run daemon logs to stderr and journald collects it, so the file
+`harness daemon --detach` would have used (`$XDG_STATE_HOME/harness/harness-daemon.log`)
+is not this daemon's log; it is usually the leftover of some development run.
+`daemon status` and `doctor` report the surface the running daemon answered
+with, which is the one to read:
+[Observability → Where the daemon's own log lives](./observability#where-the-daemons-own-log-lives).
 
 ### Don't hard-depend on things that restart
 

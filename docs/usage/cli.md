@@ -52,13 +52,42 @@ The client warns when its own build is older or newer than the daemon's
 (client/daemon skew) — after upgrading, restart the daemon so both sides speak
 the same protocol version.
 
+### Taking a harness out of service
+
+`stop` disables a harness and stops the run in flight. `drain` takes it out of
+service without touching that run: no source starts a new one (cron, a channel,
+a webhook, `harness trigger`, a `catch_up` pass, a self-triggered queue), and
+whatever the run in flight earns for `on_overlap = "queue"` stays queued.
+
+```sh
+harness drain <name>              # no new runs; the run in flight finishes
+harness drain <name> --discard    # ... and drop the queued firing instead of holding it
+harness drain --all               # every harness the daemon lists
+harness undrain <name>            # back in service; starts the firing the drain held
+```
+
+A drained harness reads `draining` while its run is still going and `drained`
+once it is idle, in `describe` and in `--json` (the `drain` field, next to
+`hold_reasons: ["drain"]`). The gate is runtime state, so a daemon restart
+resumes every harness.
+
+`--wait` is the half a script uses:
+
+```sh
+harness drain --all && harness drain --wait --timeout 30m && brew services restart harness
+```
+
+`--wait` blocks until every drained harness is idle. A `--timeout` that passes
+first exits non-zero (`drain_timeout`) with the gate still armed, so the
+`&&` stops before the restart rather than SIGTERMing an agent mid-run.
+
 ## Listing & inspection
 
 ```sh
 harness list                  # table of every harness: name, state, enabled, restarts, PID
 harness ps                    # inside a project: only that project's harnesses
 harness describe <name>       # one harness in detail (state, harness kind, backend, flapping, ...)
-harness daemon status         # daemon version, proto, PID, uptime, socket, active profile
+harness daemon status         # daemon version, proto, PID, uptime, socket, active profile, where it logs
 ```
 
 `list` and `describe` also surface **schedule metadata** for scheduled
@@ -226,6 +255,38 @@ TRIGGERS column shows each source with that source's state
 (`webhook.ci listening, channel.sb backoff`), so a job that never runs starts
 its explanation in the row; a harness with no `schedule` shows no next
 window.
+
+### Where TOKENS and COST come from
+
+The TOKENS and COST cells of `--wide` are the usage folded into the run's
+ledger record at run end (SPEC-0022 REQ-8). A run's usage can come from two
+sources, and the two must never count the same run twice:
+
+- **The run's own stream.** A [stream-json one-shot](./configuration#stream-json-one-shots-run-without-a-terminal)
+  (a pipe run) writes `jobs/<name>/<run_id>.stream.jsonl`. When the run ends,
+  the daemon reads that sealed stream once and folds its final `result`
+  record — the agent's own account of the run's tokens and, when the agent
+  recorded one, its cost — into the record with `cost_source = "recorded"`
+  (ADR-0033). A pipe run has no transcript for the observer to read, so this
+  is how a one-shot's usage reaches the ledger at all.
+- **The transcript.** A run the observer watches through a
+  [`transcripts` binding](./configuration#binding-transcripts) can also carry
+  usage from the agent's transcript. The observer's usage items are not read
+  yet, so today the stream is the only source that folds usage in.
+
+The stream's final `result` covers the whole run exactly as a transcript's
+report would, so the no-double-count rule is binary: a run that already
+carries folded usage skips the stream's. A run folds nothing — and shows `—`
+in both cells rather than a zero it is not — when it has no stream file (a
+PTY run, or a spawn that never opened one) or its stream ends without a
+`result` (the process was killed before it finished).
+
+The TOKENS cell sums input and output tokens. COST prints with its source
+when that source is not the recorded one: a recorded cost prints bare, a cost
+the daemon priced from [`[budget]` prices](./configuration#run-budgets) prints
+with `priced`, and a run whose cost no one could resolve prints `?` (ADR-0027).
+`--json` carries the same totals per run — `tokens`, `cost_usd`,
+`cost_source` and `models` — as the run's `closed` ledger line.
 
 ## Trigger sources
 
@@ -697,8 +758,8 @@ file schema.
 ```sh
 harness daemon                # run the supervisor in the foreground (== daemon run)
 harness daemon stop           # ask the running daemon to shut down (SIGTERM)
-harness daemon status         # one-shot: daemon info
-harness daemon --detach       # fork into the background (dev convenience)
+harness daemon status         # one-shot: daemon info, including where that daemon logs
+harness daemon --detach       # fork into the background (dev convenience; its log file is that run's own)
 ```
 
 Daemon flags: `--config`, `--socket`, `--scrollback-bytes SIZE` (per-harness

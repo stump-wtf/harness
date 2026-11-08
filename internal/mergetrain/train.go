@@ -39,6 +39,10 @@ const (
 	OutcomeStale      Outcome = "stale"       // the head or base moved; retry silently
 	OutcomeForgeError Outcome = "forge error" // the forge failed; retry next tick
 	OutcomeCancelled  Outcome = "cancelled"   // the context was cancelled
+	// OutcomeSequenceConflict says two files of the train commit claim the
+	// same sequence number, so landing it would duplicate an ADR, a spec or a
+	// migration (ADR-0063).
+	OutcomeSequenceConflict Outcome = "sequence conflict"
 )
 
 // Combined CI states.
@@ -53,13 +57,17 @@ const deleteBudget = 30 * time.Second
 
 // TrainConfig tunes one attempt.
 type TrainConfig struct {
-	Repo    string
-	PollMin time.Duration // first wait before polling CI
-	PollMax time.Duration // backoff cap
-	Timeout time.Duration // overall CI deadline, from the branch's creation
+	Repo       string
+	BaseBranch string        // the base branch's name, for a forge whose gate needs it
+	PollMin    time.Duration // first wait before polling CI
+	PollMax    time.Duration // backoff cap
+	Timeout    time.Duration // overall CI deadline, from the branch's creation
 	// DeleteRetry is the pause between cleanup attempts. Default 1 s.
 	DeleteRetry time.Duration
-	Log         Logger
+	// SequencePaths are the directories whose files carry a sequence number
+	// in their names; empty skips the collision check (ADR-0063).
+	SequencePaths []string
+	Log           Logger
 }
 
 // Result is what one attempt produced.
@@ -72,6 +80,9 @@ type Result struct {
 	// batch build that ended OutcomeConflict (SPEC-0025 REQ-17); 0 when the
 	// forge did not say or the train carried one PR.
 	ConflictPR int
+	// Collisions lists the sequence numbers two files of the train commit
+	// claim on an OutcomeSequenceConflict (ADR-0063).
+	Collisions []SequenceCollision
 	// Want holds, on green, the bytes of every path the train commit adds or
 	// modifies, read from the train commit before its branch was deleted.
 	// VerifyLanded checks them on the base branch after the merge.
@@ -160,6 +171,7 @@ func RunTrainBatch(ctx context.Context, f forge.Forge, cfg TrainConfig, prs []Pu
 	spec := forge.TrainSpec{
 		Branch:  branch,
 		BaseSHA: base,
+		BaseRef: cfg.BaseBranch,
 		PR:      prs[0].Number,
 		HeadSHA: prs[0].HeadSHA,
 		Message: trainMessage(prs),
@@ -190,6 +202,23 @@ func RunTrainBatch(ctx context.Context, f forge.Forge, cfg TrainConfig, prs []Pu
 	res.Train = tb
 	kv = append(kv, "train", tb.SHA, "tree", tb.Tree)
 	log.Info(event("built"), kv...)
+
+	// A colliding sequence number merges cleanly and lands a duplicate, so
+	// it is refused here, on the built commit, before CI is asked to spend
+	// itself on a tree that will not merge (ADR-0063).
+	if len(cfg.SequencePaths) > 0 {
+		collisions, err := checkSequences(ctx, f, cfg.Repo, cfg.SequencePaths, prs, tb.SHA, base)
+		switch {
+		case err != nil && ctx.Err() != nil:
+			return Result{Outcome: OutcomeCancelled, Base: base, Train: tb, Err: ctx.Err()}
+		case err != nil:
+			log.Warn(event("tick failed"), append(kv, "err", err)...)
+			return Result{Outcome: OutcomeForgeError, Base: base, Train: tb, Err: err}
+		case len(collisions) > 0:
+			log.Info(event("sequence conflict"), append(kv, "collisions", len(collisions))...)
+			return Result{Outcome: OutcomeSequenceConflict, Base: base, Train: tb, Collisions: collisions}
+		}
+	}
 
 	res.Outcome, res.Status, res.Err = waitCI(ctx, f, cfg, tb.SHA)
 	switch res.Outcome {

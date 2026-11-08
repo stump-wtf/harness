@@ -67,6 +67,10 @@ jobs:
       # local and CI gates cannot drift.
       lint_cmd: make check
       build_cmd: make build
+      # `make check` includes mod-downgrade-check, which diffs go.mod against
+      # the base ref (#1047) and cannot run without it. Same need msgbrowse's
+      # migration-immutability guard documents in the shared workflow.
+      fetch_base: "true"
       # `make check` includes `race`, and -race REQUIRES cgo. The shared
       # workflow defaults CGO_ENABLED=0 so pure-Go modules prove they stay
       # cgo-free; inheriting that default would break the race target.

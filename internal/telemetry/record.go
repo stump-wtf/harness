@@ -253,6 +253,13 @@ func (c *converter) record(ev observe.Event) Record {
 			otlpexport.KeyValue{Key: "agent.tool.is_error", Value: t.IsError},
 			otlpexport.KeyValue{Key: "agent.result.bytes", Value: int64(t.ResultBytes)},
 		)
+		if t.IsError && t.ErrorExcerpt != "" {
+			// What the failing call said, which is the reason for the warn
+			// severity. The adapter masked it over the whole result before cutting
+			// the excerpt; clean masks it again and caps it, as every other
+			// exported string here is.
+			attrs = append(attrs, otlpexport.KeyValue{Key: "agent.tool.error_excerpt", Value: clean(t.ErrorExcerpt, attrCap)})
+		}
 		if len(t.Targets) > 0 {
 			n := min(len(t.Targets), targetsMax)
 			paths := make([]string, 0, n)

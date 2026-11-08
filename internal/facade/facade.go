@@ -57,6 +57,10 @@ var (
 	// ErrUnknownTool is returned when a tool name does not resolve to a
 	// registered facade tool.
 	ErrUnknownTool = errors.New("unknown facade tool")
+
+	// ErrUnknownResource is returned when a resource URI is outside every
+	// namespace the facade serves.
+	ErrUnknownResource = errors.New("unknown facade resource")
 )
 
 // TrajectoryTools are the two read-class trajectory tools required by SPEC-0006
@@ -75,11 +79,16 @@ var TrajectoryTools = []Tool{
 	},
 }
 
-// AllTools returns every facade tool currently registered. For issue #76 this
-// is only the trajectory pair; the SPEC-0005 story adds the control-plane
-// mirror (harness_list, harness_describe, etc.).
-func AllTools() []Tool {
-	return append([]Tool{}, TrajectoryTools...)
+// AllTools returns every facade tool registered for a daemon's configuration:
+// the trajectory pair always, and the skill pair only when at least one skill
+// repo is declared (SPEC-0007 REQ "Skill Repos": with no skill repo declared
+// the facade does not register the skill tools, and it stays inert).
+func AllTools(skillReposDeclared bool) []Tool {
+	out := append([]Tool{}, TrajectoryTools...)
+	if skillReposDeclared {
+		out = append(out, SkillTools...)
+	}
+	return out
 }
 
 // Allowed reports whether the given harness's mcp_allow permits a tool of the
@@ -101,11 +110,12 @@ func Allowed(h core.Harness, class Class) bool {
 }
 
 // CheckTool verifies that the calling harness is permitted to invoke a tool
-// of the given name. Returns ErrUnknownTool for unrecognized tool names and
+// of the given name, among the tools registered for that configuration. It
+// returns ErrUnknownTool for a tool the daemon does not expose, and
 // ErrNotPermitted when the harness's mcp_allow does not include the required
 // class.
-func CheckTool(h core.Harness, toolName string) error {
-	for _, t := range AllTools() {
+func CheckTool(h core.Harness, toolName string, skillReposDeclared bool) error {
+	for _, t := range AllTools(skillReposDeclared) {
 		if t.Name == toolName {
 			if !Allowed(h, t.Class) {
 				return fmt.Errorf("%w: %s requires %s", ErrNotPermitted, toolName, t.Class)
@@ -162,6 +172,9 @@ func HandleGetTrajectory(svc *trajectory.Service, cfg *core.Config, harnessName,
 // errorCode maps a sentinel error to a stable string code for structured error
 // responses (SPEC-0005 REQ "Error Handling Standards").
 func errorCode(err error) string {
+	if code, ok := skillErrorCode(err); ok {
+		return code
+	}
 	switch {
 	case errors.Is(err, trajectory.ErrHarvestDisabled):
 		return "harvest_disabled"
@@ -171,6 +184,8 @@ func errorCode(err error) string {
 		return "unknown_session"
 	case errors.Is(err, ErrNotPermitted):
 		return "not_permitted"
+	case errors.Is(err, ErrUnknownResource):
+		return "unknown_resource"
 	default:
 		return "internal"
 	}

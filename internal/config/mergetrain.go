@@ -38,16 +38,26 @@ import (
 // rawMergeTrain mirrors [mergetrain] before validation. Tuning keys are
 // pointers so an absent key takes its default and an explicit zero is refused.
 type rawMergeTrain struct {
-	Enabled       bool     `toml:"enabled"`
-	Mode          *string  `toml:"mode"`
-	Repos         []string `toml:"repos"`
-	BaseBranch    *string  `toml:"base_branch"`
-	PollInterval  *string  `toml:"poll_interval"`
-	CITimeout     *string  `toml:"ci_timeout"`
-	Batch         *int64   `toml:"batch"`
-	FlakeCoolDown *string  `toml:"flake_cool_down"`
-	ForgeBaseURL  string   `toml:"forge_base_url"`
-	ForgeTokenEnv string   `toml:"forge_token_env"`
+	Enabled      bool     `toml:"enabled"`
+	Mode         *string  `toml:"mode"`
+	Repos        []string `toml:"repos"`
+	BaseBranch   *string  `toml:"base_branch"`
+	PollInterval *string  `toml:"poll_interval"`
+	CITimeout    *string  `toml:"ci_timeout"`
+	Batch        *int64   `toml:"batch"`
+	// SequencePaths replaces the watched directories of the sequence check
+	// (ADR-0063). A pointer, like the other tuning keys: an absent key keeps
+	// the defaults, an explicit empty list disables the check (REQ-19).
+	SequencePaths *[]string `toml:"sequence_paths"`
+	FlakeCoolDown *string   `toml:"flake_cool_down"`
+	ForgeBaseURL  string    `toml:"forge_base_url"`
+	ForgeTokenEnv string    `toml:"forge_token_env"`
+
+	// GitHub is the train's second forge, decoded flat rather than as a table
+	// so a repo's forge stays one prefix on its repos entry (ADR-0061).
+	GitHubBaseURL  string `toml:"github_base_url"`
+	GitHubTokenEnv string `toml:"github_token_env"`
+	GitHubCIGate   string `toml:"github_ci_gate"`
 
 	// Token is decoded only so its presence can be refused.
 	Token any `toml:"token"`
@@ -56,7 +66,20 @@ type rawMergeTrain struct {
 var (
 	envNameRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	repoNameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	// sequencePathRe is a repo-relative directory: no leading slash, no
+	// backslash, nothing empty.
+	sequencePathRe = regexp.MustCompile(`^[^/.\\][^\\]*$`)
 )
+
+// hasDotSegment reports whether p contains a "." or ".." path segment.
+func hasDotSegment(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "." || seg == ".." || seg == "" {
+			return true
+		}
+	}
+	return false
+}
 
 // buildMergeTrain validates rm into a core.MergeTrainConfig.
 func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (core.MergeTrainConfig, error) {
@@ -76,6 +99,7 @@ func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (
 
 	mc := core.DefaultMergeTrainConfig()
 	mc.Enabled = rm.Enabled
+	var hasGitHubRepo, hasDefaultRepo bool
 
 	if rm.Mode != nil {
 		m := strings.TrimSpace(*rm.Mode)
@@ -101,13 +125,45 @@ func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (
 
 	for _, r := range rm.Repos {
 		r = strings.TrimSpace(r)
+		forgeName := ""
+		if kind, rest, ok := strings.Cut(r, ":"); ok {
+			if kind != "github" {
+				return fail("repos", "names forge %q, which [mergetrain] has no configuration for; the only forge a repos entry can name is \"github:\" (got %q)", kind, r)
+			}
+			forgeName, r = kind, strings.TrimSpace(rest)
+		}
 		if !repoNameRe.MatchString(r) {
-			return fail("repos", "each entry must be \"owner/name\" (got %q)", r)
+			return fail("repos", "each entry must be \"owner/name\", or \"github:owner/name\" to use the GitHub forge (got %q)", r)
 		}
 		if slices.Contains(mc.Repos, r) {
 			return fail("repos", "lists %q twice", r)
 		}
 		mc.Repos = append(mc.Repos, r)
+		if mc.RepoForge == nil {
+			mc.RepoForge = map[string]string{}
+		}
+		mc.RepoForge[r] = forgeName
+		switch forgeName {
+		case "github":
+			hasGitHubRepo = true
+		default:
+			hasDefaultRepo = true
+		}
+	}
+
+	if rm.SequencePaths != nil {
+		var paths []string
+		for _, p := range *rm.SequencePaths {
+			p = strings.TrimSuffix(strings.TrimSpace(p), "/")
+			if p == "" || !sequencePathRe.MatchString(p) || hasDotSegment(p) {
+				return fail("sequence_paths", "must be a repo-relative directory such as \"docs/adrs\", with no leading slash and no \".\" or \"..\" segment (got %q)", p)
+			}
+			if slices.Contains(paths, p+"/") {
+				return fail("sequence_paths", "lists %q twice", p)
+			}
+			paths = append(paths, p+"/")
+		}
+		mc.SequencePaths = paths
 	}
 
 	durations := []struct {
@@ -150,14 +206,43 @@ func buildMergeTrain(filename string, data []byte, line int, rm rawMergeTrain) (
 		mc.ForgeTokenEnv = name
 	}
 
+	gh := &core.MergeTrainGitHub{BaseURL: strings.TrimRight(strings.TrimSpace(rm.GitHubBaseURL), "/"), CIGate: core.GitHubGateDraftPR}
+	if gh.BaseURL != "" {
+		u, err := url.Parse(gh.BaseURL)
+		switch {
+		case err != nil || !u.IsAbs() || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
+			return fail("github_base_url", "must be an absolute http or https URL with a host (got %q)", redactURL(gh.BaseURL))
+		case u.User != nil:
+			return fail("github_base_url", "must not carry userinfo — a credential in the URL is a credential in harness.toml (ADR-0008)")
+		}
+	}
+	if gate := strings.TrimSpace(rm.GitHubCIGate); gate != "" {
+		if gate != core.GitHubGateDraftPR && gate != core.GitHubGateTrainPush {
+			return fail("github_ci_gate", "must be %q or %q (got %q)", core.GitHubGateDraftPR, core.GitHubGateTrainPush, gate)
+		}
+		gh.CIGate = gate
+	}
+	if name := strings.TrimSpace(rm.GitHubTokenEnv); name != "" {
+		if !envNameRe.MatchString(name) {
+			return fail("github_token_env", "must be the NAME of an environment variable, such as \"HARNESS_MERGETRAIN_GITHUB_TOKEN\" — never the token itself")
+		}
+		gh.TokenEnv = name
+	}
+	if !hasGitHubRepo && gh.BaseURL == "" && gh.TokenEnv == "" && strings.TrimSpace(rm.GitHubCIGate) == "" {
+		gh = nil // nothing names the GitHub forge, so the train has only one
+	}
+	mc.GitHub = gh
+
 	if mc.Enabled {
 		switch {
 		case len(mc.Repos) == 0:
 			return fail("repos", "must list at least one \"owner/name\" when enabled = true")
-		case mc.ForgeBaseURL == "":
+		case hasDefaultRepo && mc.ForgeBaseURL == "":
 			return fail("forge_base_url", "is required when enabled = true")
-		case mc.ForgeTokenEnv == "":
+		case hasDefaultRepo && mc.ForgeTokenEnv == "":
 			return fail("forge_token_env", "is required when enabled = true")
+		case hasGitHubRepo && (gh == nil || gh.TokenEnv == ""):
+			return fail("github_token_env", "is required when a repos entry names the GitHub forge")
 		}
 	}
 	return mc, nil

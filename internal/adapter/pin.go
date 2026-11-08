@@ -52,13 +52,14 @@ type PinEvidence interface {
 // `transcripts` binding — checked by the config loader, because that is
 // where the binding is known.
 var pinOffered = map[string][]modelpin.Route{
-	"crush":             {modelpin.RouteOpenRouter, modelpin.RouteLiteLLM},
-	core.AdapterPi:      {modelpin.RouteOpenRouter, modelpin.RouteLiteLLM},
-	core.AdapterOMP:     {modelpin.RouteOpenRouter, modelpin.RouteLiteLLM},
-	"claude-code":       {modelpin.RouteAnthropic, modelpin.RouteLiteLLM},
-	"codex":             nil,
-	"generic":           nil,
-	core.AdapterCommand: {modelpin.RouteOpenRouter, modelpin.RouteAnthropic, modelpin.RouteLiteLLM},
+	"crush":              {modelpin.RouteOpenRouter, modelpin.RouteLiteLLM},
+	core.AdapterPi:       {modelpin.RouteOpenRouter, modelpin.RouteLiteLLM},
+	core.AdapterOMP:      {modelpin.RouteOpenRouter, modelpin.RouteLiteLLM},
+	core.AdapterOpenCode: {modelpin.RouteOpenRouter, modelpin.RouteLiteLLM},
+	"claude-code":        {modelpin.RouteAnthropic, modelpin.RouteLiteLLM},
+	"codex":              nil,
+	"generic":            nil,
+	core.AdapterCommand:  {modelpin.RouteOpenRouter, modelpin.RouteAnthropic, modelpin.RouteLiteLLM},
 }
 
 // PinRoutes returns the routes kind offers for pins, in table order.
@@ -98,6 +99,13 @@ var pinEvidence = map[string]map[modelpin.Route]modelpin.Capability{
 	},
 	core.AdapterOMP: {
 		modelpin.RouteOpenRouter: modelpin.CapabilityModelProvider,
+		modelpin.RouteLiteLLM:    modelpin.CapabilityModel,
+	},
+	// OpenCode's session row records the model id agent-trace reads
+	// (model.id); the upstream provider is not evidenced per call, so both
+	// rows stay `model`, as for crush.
+	core.AdapterOpenCode: {
+		modelpin.RouteOpenRouter: modelpin.CapabilityModel,
 		modelpin.RouteLiteLLM:    modelpin.CapabilityModel,
 	},
 	"claude-code": {

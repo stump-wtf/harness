@@ -135,6 +135,10 @@ const (
 	// ReasonLedgerUnavailable: a budgeted start refused because its ledger
 	// record could not be written (SPEC-0021 REQ-4).
 	ReasonLedgerUnavailable RunReason = "ledger_unavailable"
+	// ReasonDraining: a firing admission refused while the harness was
+	// drained (`harness drain`, stump.wtf/harness#828), or a queued firing
+	// `drain --discard` dropped.
+	ReasonDraining RunReason = "draining"
 
 	// ReasonTemplateUnresolved: a required argv template value was absent
 	// for this run, so nothing was exec'd. The record names the path in
@@ -912,9 +916,19 @@ func (s *Supervisor) finishRunWith(outcome RunOutcome, code *int, reason RunReas
 		return // a replacement starts next; any queued firing waits behind it
 	}
 	if q := s.queued; q != nil {
-		s.queued = nil
-		s.clearFailLatch()
-		s.beginRun(*q)
+		if s.holds.Has(core.HoldDrain) {
+			// Drained (`harness drain`, stump.wtf/harness#828): the run in
+			// flight ended, but the firing it earned stays queued. Starting
+			// it through admission would only record a skip and lose it;
+			// `undrain` starts it. The log says so, because the queue is
+			// otherwise invisible from outside the loop.
+			s.logEvent("queued firing held by drain", "trigger", string(q.Trigger))
+			s.publishSnapshot()
+		} else {
+			s.queued = nil
+			s.clearFailLatch()
+			s.beginRun(*q)
+		}
 	}
 }
 
