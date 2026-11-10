@@ -153,7 +153,14 @@ func (m *Model) liveFailure(h protocol.HarnessInfo) string {
 	return best.failure
 }
 
-// newestActivity resolves h to the newest action observed for it.
+// newestActivity resolves h to the newest action observed for it; the
+// attribution rule is newestMatch.
+func (m *Model) newestActivity(h protocol.HarnessInfo) (sessionActivity, bool) {
+	return newestMatch(m, h, m.lastActions, func(a sessionActivity) time.Time { return a.at })
+}
+
+// newestMatch is the attribution both watcher-derived fields share: h's newest
+// entry among the ones whose session its workdir and adapter admit.
 //
 // A harness with no configured workdir gets nothing: it inherits the daemon's
 // working directory, which identifies no particular harness, and guessing there
@@ -164,19 +171,20 @@ func (m *Model) liveFailure(h protocol.HarnessInfo) string {
 // spawned it, so an interactive session started by hand in a harness's workdir
 // is indistinguishable from the harness's own. Session-to-PID correlation would
 // settle it and no adapter reports one.
-func (m *Model) newestActivity(h protocol.HarnessInfo) (sessionActivity, bool) {
-	work := cleanDir(h.Workdir)
-	if work == "" || len(m.lastActions) == 0 {
-		return sessionActivity{}, false
-	}
-	var best sessionActivity
+func newestMatch[T any](m *Model, h protocol.HarnessInfo, entries map[activityKey]T, at func(T) time.Time) (T, bool) {
+	var best T
 	var found bool
-	for key, act := range m.lastActions {
-		if !underDir(key.cwd, work) || !adapterHandles(trajectoryKind(h), key.kind) {
+	work := cleanDir(h.Workdir)
+	if work == "" {
+		return best, false
+	}
+	kind := trajectoryKind(h)
+	for key, entry := range entries {
+		if !underDir(key.cwd, work) || !adapterHandles(kind, key.kind) {
 			continue
 		}
-		if !found || act.at.After(best.at) {
-			best, found = act, true
+		if !found || at(entry).After(at(best)) {
+			best, found = entry, true
 		}
 	}
 	return best, found

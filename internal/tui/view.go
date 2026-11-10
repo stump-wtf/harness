@@ -470,6 +470,13 @@ func (m *Model) renderRow(h protocol.HarnessInfo, selected bool) string {
 	if right != "" {
 		line += "  " + m.theme.Faint().Render(right)
 	}
+	// The working-on banner closes the row (issue #826). It is last and it is
+	// padded to a fixed field, so a harness starting a new task changes the
+	// words and nothing else: the row's own fields keep their columns, and the
+	// pane, which is measured from these rows, keeps its width.
+	if gutter := m.workingOnGutter(); gutter > 0 {
+		line += "  " + m.theme.Faint().Render(fitWorkingOn(m.workingOn(h), gutter))
+	}
 	if selected {
 		marker := m.theme.Header().Render("›")
 		return marker + " " + line
@@ -729,6 +736,14 @@ func (m *Model) viewPeek(w, h int) string {
 		head += m.theme.StateStyle(core.StateDegraded).Render(" · failed: " + failure)
 	}
 
+	// The task the selected harness is inside, on the head rather than in the
+	// tail: the head is painted whether or not the preview pane has anything to
+	// show, and the pane beside it is the dashboard's detail surface for the one
+	// harness you are looking at (issue #826).
+	if desc := m.workingOn(sel); desc != "" {
+		head += m.theme.Faint().Render(" · " + workingOnLabel + desc)
+	}
+
 	// When the guest doesn't fit the pane, name its viewport in the head so the
 	// missing rows and columns read as a crop rather than a broken render — the
 	// same "colsxrows" describe reports (#183), and the number to size the
@@ -837,6 +852,10 @@ func (m *Model) viewStatusBar() string {
 		prefixHint = " " + m.theme.Header().Render("^b")
 	}
 	left := logo + " " + ident + stateText + badge + prefixHint
+	// Attached mode's only per-harness field, and the surface where an operator
+	// actually sits while a harness works a queue (issue #826). Clipped to what
+	// the window has left, so the key map keeps its floor.
+	left += m.attachedWorkingOn(lipgloss.Width(left))
 	lw := lipgloss.Width(left)
 
 	// Right: compact attached-mode help (hop / scrollback / detach / ?). Budget
