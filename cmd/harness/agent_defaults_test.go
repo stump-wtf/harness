@@ -250,12 +250,12 @@ func TestAgentInstallDefaultsTriggersNeedDeclaredSources(t *testing.T) {
 // The candidate table is loaded with the daemon's own loader before the
 // write, so a suggestion that would break the file is skipped naming the
 // loader's error rather than leaving the operator a config that will not
-// load: timeout with nothing to time out.
+// load: on_overlap with nothing that fires.
 func TestAgentInstallDefaultsSkipsWhatTheLoaderRefuses(t *testing.T) {
 	e := newAgentEnv(t)
 	e.writeFile("harness.toml", "[server]\nenabled = false\n")
 	remote, _ := agentRemote(t, map[string]string{
-		"packages/pr-reviewer/package.toml": defaultsPkg("timeout = \"45m\"\nworkdir = \"srv/triage\"\n"),
+		"packages/pr-reviewer/package.toml": defaultsPkg("on_overlap = \"queue\"\nworkdir = \"srv/triage\"\n"),
 	})
 	if _, _, err := e.run("stable", "add", "stump-wtf", remote); err != nil {
 		t.Fatal(err)
@@ -264,7 +264,7 @@ func TestAgentInstallDefaultsSkipsWhatTheLoaderRefuses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install failed: %v (out: %s)", err, out)
 	}
-	if !strings.Contains(out, `timeout = 45m: skipped (the config loader refused it`) {
+	if !strings.Contains(out, `on_overlap = queue: skipped (the config loader refused it`) {
 		t.Fatalf("the refused suggestion must name the loader's error:\n%s", out)
 	}
 	if !strings.Contains(out, `requires "schedule" or "triggers"`) {
@@ -275,7 +275,7 @@ func TestAgentInstallDefaultsSkipsWhatTheLoaderRefuses(t *testing.T) {
 	}
 	data := rawConfig(t, e)
 	table := data[strings.Index(data, "[harness.pr-reviewer]"):]
-	if strings.Contains(table, "timeout =") {
+	if strings.Contains(table, "on_overlap =") {
 		t.Fatalf("a suggestion the loader refuses must not be written:\n%s", table)
 	}
 	if !strings.Contains(table, `workdir = "srv/triage"`) {

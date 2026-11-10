@@ -1244,6 +1244,15 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 		return
 	}
 
+	s.evaluateRestart(code, spawnFailed, park, parked, now)
+}
+
+// evaluateRestart decides whether a process that just died (or was killed)
+// should respawn, and arms the restart timer if so. It is the shared tail of a
+// natural exit (onProcessGone) and a timeout kill (handleRunTimeout): the same
+// restart policy, crash-loop accounting, backoff and give-up must apply whether
+// the worker fell over on its own or was killed for outliving its timeout.
+func (s *Supervisor) evaluateRestart(code int, spawnFailed bool, park ParkInfo, parked bool, now time.Time) {
 	// Exit while disabled → stopped, no respawn (SPEC-0003 REQ "Restart On
 	// Exit" / "Intent vs. reality").
 	if !s.enabled {
@@ -1317,6 +1326,15 @@ func (s *Supervisor) onProcessGone(code int, spawnFailed bool) {
 	loop := len(s.crashTimes) >= s.policy.CrashThreshold
 	if loop {
 		s.flapping = true
+	}
+	// Once flapping has tripped, every restart attempt escalates the backoff —
+	// not just ones that land inside a fresh in-window crash cluster. The
+	// curve is otherwise self-limiting: as the delay passes CrashWindow/2,
+	// three exits can no longer fit inside the window, the cluster stops
+	// tripping, and the attempt counter freezes below BackoffCap (issue #335).
+	// Recovery still clears it: a run surviving CrashWindow resets the crash
+	// state above, and give-up keys on consecFailures, not this counter.
+	if s.flapping {
 		s.flapAttempts++
 	}
 
@@ -1371,16 +1389,21 @@ func (s *Supervisor) handleRestartTimer() {
 	if s.state != core.StateRestarting && s.state != core.StateDegraded {
 		return
 	}
-	// degraded/restarting → (starting → running) via beginStart; degraded is
-	// routed degraded→restarting→starting per the SPEC-0003 transition table.
+	// degraded/restarting → (starting → running); degraded is routed
+	// degraded→restarting→starting per the SPEC-0003 transition table. Route
+	// through startProcess so a persistent worker with a timeout re-arms its
+	// timeout on every respawn, not just the first lifetime.
 	if s.state == core.StateDegraded {
 		s.transition(core.StateRestarting)
 	}
 	// The respawn passes admission like every other start (SPEC-0021 REQ-4):
 	// that is how max_runs_per_day bounds a crash loop. A refusal holds the
-	// harness instead of starting it, never a step toward give-up.
+	// harness instead of starting it, never a step toward give-up. Route
+	// through startProcess, not straight to startResident, so a persistent
+	// worker with a timeout re-arms its timeout on every respawn, not just
+	// the first lifetime.
 	s.startTrigger = TriggerRestart
-	s.startResident()
+	s.startProcess(RunRequest{Trigger: TriggerRestart})
 }
 
 // handleSurvival resets crash-loop state once a run outlives the crash window.

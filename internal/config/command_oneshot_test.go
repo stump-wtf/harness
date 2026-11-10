@@ -103,7 +103,6 @@ enabled = true`, `"schedule" and "enabled = true" are mutually exclusive`},
 restart = "always"`, `"schedule" requires restart policy`},
 		{"schedule and operating_hours", `schedule = "0 6 * * *"
 operating_hours = "Mon-Fri 09:00-17:00"`, `"schedule" and "operating_hours" are mutually exclusive`},
-		{"timeout on a resident", `timeout = "5m"`, `"timeout" requires "schedule" or "triggers"`},
 		{"triggers and enabled", `triggers = ["channel.sb"]
 enabled = true`, `"triggers" and "enabled = true" are mutually exclusive`},
 	} {

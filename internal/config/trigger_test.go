@@ -587,12 +587,6 @@ func TestSourceParseErrors(t *testing.T) {
 			want: []string{"pr-review", "triggers", "profile"},
 		},
 		{
-			name: "timeout on a harness nothing fires",
-			toml: "\n" + promptHarness + "timeout = \"20m\"\n",
-			line: 2,
-			want: []string{"pr-review", "timeout", "triggers"},
-		},
-		{
 			name: "on_overlap on a harness nothing fires",
 			toml: "\n" + promptHarness + "on_overlap = \"queue\"\n",
 			line: 2,

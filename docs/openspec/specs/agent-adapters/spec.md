@@ -158,6 +158,17 @@ can never put a terminal-mode CLI on pipes. The declaration SHALL decide only
 how a one-shot is spawned (SPEC-0017 REQ-18). The daemon SHALL NOT parse the
 stream: normalizing it is agent-trace's.
 
+A declared stream SHALL NOT add argv or change how the one-shot is spawned:
+`claude-code` one-shots keep running on pipes with the adapter's existing
+prompt argv, and the stream reader sits beside the adapter's stdout line
+reader rather than replacing it. The masked line the line reader produces —
+`redact.Lines.JSONLine` over the raw line — SHALL be the line that feeds the
+stream parser: the daemon fans that masked line to a per-run pipe whose reader
+the adapter's `ParseStream` consumes, and `ParseStream` SHALL parse it through
+agent-trace's stream parser. Parsing the masked line keeps redaction
+single-pass, so nothing unredacted reaches a stream consumer (ADR-0008), and
+the stream file stays the byte-exact record.
+
 #### Scenario: claude-code declares stream-json
 
 - **WHEN** the adapter registry resolves `claude-code`
@@ -168,6 +179,19 @@ stream: normalizing it is agent-trace's.
 
 - **WHEN** the registry resolves any other adapter
 - **THEN** it declares no stream, and its one-shots run under a PTY
+
+#### Scenario: A declared stream adds no argv
+
+- **WHEN** a `claude-code` one-shot with a declared stream starts
+- **THEN** it runs on pipes with the adapter's existing prompt argv, and the
+  stream parser sits beside the stdout line reader without new flags
+
+#### Scenario: The stream parser reads masked lines
+
+- **WHEN** a stream line arrives on a one-shot's stdout
+- **THEN** the daemon masks that line once, and the stream file and the
+  run's stream parser each receive the masked line, with no unredacted line
+  reaching the parser
 
 ### Requirement: Skill Path Configuration
 

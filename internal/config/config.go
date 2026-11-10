@@ -1402,14 +1402,18 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 	// "is triggered": an event source produces runs the same way a clock
 	// does. With either, each key gets its documented default, so every
 	// triggered harness has a bounded run and a bounded history whether or
-	// not the operator thought to ask.
+	// not the operator thought to ask. timeout is the one exception: it also
+	// bounds a persistent harness's process lifetime — the supervisor kills
+	// a wedged worker at the ceiling and the restart policy respawns it — so
+	// it is accepted without a schedule or triggers, and 0 or omitted means
+	// no limit for a persistent worker.
 	// Governing: ADR-0013; SPEC-0008 REQ "Run Timeout", REQ "Overlap Policy",
 	// REQ "Run History"; ADR-0021; SPEC-0014 REQ "Triggered Harness
 	// Exclusions", REQ "Overlap Default For Triggered Harnesses"; issue #119.
 	for _, k := range []struct {
 		key string
 		set bool
-	}{{"timeout", rh.Timeout != nil}, {"on_overlap", rh.OnOverlap != nil}, {"keep_runs", rh.KeepRuns != nil}} {
+	}{{"on_overlap", rh.OnOverlap != nil}, {"keep_runs", rh.KeepRuns != nil}} {
 		if k.set && !triggered {
 			return newError(filename, line,
 				"harness %q: %q requires \"schedule\" or \"triggers\" (it applies to the runs a firing produces, and nothing fires this harness)", name, k.key)
@@ -1469,16 +1473,20 @@ func registerHarness(cfg *core.Config, filename, name string, line int, rh rawHa
 		overlap  core.OverlapPolicy
 		keepRuns int
 	)
-	if triggered {
-		timeout = core.DefaultRunTimeout
-		if rh.Timeout != nil {
-			d, err := time.ParseDuration(strings.TrimSpace(*rh.Timeout))
-			if err != nil || d < 0 {
-				return newError(filename, line,
-					"harness %q: invalid \"timeout\" %q (want a duration such as \"45m\" or \"2h\", or \"0\" for no limit)", name, *rh.Timeout)
-			}
-			timeout = d
+	if rh.Timeout != nil {
+		d, err := time.ParseDuration(strings.TrimSpace(*rh.Timeout))
+		if err != nil || d < 0 {
+			return newError(filename, line,
+				"harness %q: invalid \"timeout\" %q (want a duration such as \"45m\" or \"2h\", or \"0\" for no limit)", name, *rh.Timeout)
 		}
+		// Explicit wins: on a triggered harness it overrides the
+		// DefaultRunTimeout default (including "0" for no limit); on a
+		// persistent worker it is the whole guard.
+		timeout = d
+	} else if triggered {
+		timeout = core.DefaultRunTimeout
+	}
+	if triggered {
 		// The default differs by what fires the harness, and the asymmetry
 		// is deliberate. A cron firing that arrives during a run is the SAME
 		// work coming round again, so skipping it loses nothing. An event
