@@ -15,8 +15,8 @@ package main
 // only when every source it names is declared, because install never
 // creates a trigger source. And before the write, the table the write would
 // produce is run through the daemon's own loader: a suggestion that would
-// break the file (a schedule beside the operator's enabled = true, a timeout
-// with nothing to time out) is skipped naming the loader's error.
+// break the file (a schedule beside the operator's enabled = true, an
+// on_overlap with nothing that fires) is skipped naming the loader's error.
 //
 // Governing: ADR-0044, SPEC-0026 REQ-6, REQ-8, Error Handling Standards.
 //

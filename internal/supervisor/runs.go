@@ -471,8 +471,11 @@ func (s *Supervisor) startProcess(req RunRequest) RunDecision {
 	// sources, so a webhook-only harness gets a record, a log, `timeout`,
 	// `on_overlap` and `keep_runs` exactly as a cron one-shot does. A bare
 	// `Schedule != ""` here would read a triggered harness as an ordinary
-	// resident one and give its firings none of that.
-	if s.harness.Triggered() {
+	// resident one and give its firings none of that. A persistent harness
+	// with an explicit `timeout` takes the same path: the timeout bounds the
+	// worker's lifetime, so its kill is a recorded, restartable run instead
+	// of an unguarded wedge.
+	if s.harness.Triggered() || s.harness.Timeout > 0 {
 		return s.beginRun(req)
 	}
 	return s.startResident()
@@ -742,16 +745,26 @@ func (s *Supervisor) handleRunTimeout(gen uint64) {
 	if s.bus != nil {
 		s.bus.Publish(Event{Kind: EventExited, Name: s.harness.Name, Time: now, Code: s.lastExitCode})
 	}
-	s.resetCrashState()
-	if s.state == core.StateRunning {
-		s.transition(core.StateDegraded) // running→failed is not a legal edge
-	}
-	s.transition(core.StateFailed)
 	var exit *int
 	if ok {
 		exit = &code
 	}
 	s.finishRun(OutcomeTimedOut, exit)
+
+	if s.harness.Schedule == "" {
+		// A persistent worker: evaluate the restart exactly as a natural exit
+		// would, so restart=always brings a timed-out worker back up (and the
+		// timeout is re-armed on respawn). The timeout kill is not a clean
+		// exit, so it counts toward crash-loop give-up like any other crash.
+		s.evaluateRestart(code, false, ParkInfo{}, false, now)
+		return
+	}
+	// A scheduled one-shot: land in failed; the schedule is its retry.
+	s.resetCrashState()
+	if s.state == core.StateRunning {
+		s.transition(core.StateDegraded) // running→failed is not a legal edge
+	}
+	s.transition(core.StateFailed)
 }
 
 // handleStall ends a resident run the stall watchdog found wedged: the process
