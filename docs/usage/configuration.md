@@ -1472,8 +1472,9 @@ cooldown = "15m"                                    # default 15m, 0s–24h; per
 
 - **Validated at load.** A relative `command[0]`, an unknown event, an empty
   `events` list or an out-of-range duration refuses the config with the
-  offending key's line. `run_failed` is the one event left out of the default
-  set.
+  offending key's line. `run_failed`, `run_started` and `run_finished` are the
+  events left out of the default set; the last two describe single runs and are
+  exempt from `cooldown`.
 - **Global only.** A project `harness.toml` or a `harness_d` drop-in that
   contains `[notify]` is refused: a cloned repository does not get to choose a
   program the daemon runs.

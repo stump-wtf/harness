@@ -46,6 +46,8 @@ something to say.
 | `health` | The harness's `health_cmd` probe failed `health_failures` times in a row and the daemon took its action — `restart` says it restarted the harness, `notify` says nothing was touched. `cause` carries the probe's output tail. See [Health probes](./configuration#health-probes). |
 | `recovered` | A harness you were told was `failed`, `loop_stopped` or `stalled` is running again, so the alert thread can close. |
 | `run_failed` | A scheduled or triggered run ended `failed` or `timed_out`. **Not in the default set** — some jobs fail as their normal "nothing to do" answer. Add it to `events` to opt in. |
+| `run_started` | A scheduled or triggered run started a process. **Not in the default set.** Opt in to follow what the daemon is doing as it happens (a status board, a log) without polling `harness runs`. Exempt from the cooldown: every run is its own event. Carries `run_id`. |
+| `run_finished` | A run that started a process ended, with any outcome (`success`, `failed`, `timed_out`, `cancelled` ...); the outcome is in `state`, the exit code in `exit_code`. A decision that started no process (`skipped`, `missed`) is not reported. **Not in the default set**, and exempt from the cooldown. A failed run is still reported by `run_failed` too; the two are separate opt-ins. |
 
 `test` is what `harness doctor --notify-test` sends; it is never listed in
 `events` and always runs.

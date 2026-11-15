@@ -305,14 +305,17 @@ func (d *Dispatcher) Notify(n Notification) bool {
 		return false
 	}
 	key := cooldownKey{n.Harness, n.Event}
-	if prev, ok := d.sent[key]; ok && cfg.Cooldown > 0 && n.Time.Sub(prev) < cfg.Cooldown {
+	perRun := core.IsPerRunEvent(n.Event) // each run is its own event: never suppressed by, and never recorded for, the cooldown
+	if prev, ok := d.sent[key]; ok && !perRun && cfg.Cooldown > 0 && n.Time.Sub(prev) < cfg.Cooldown {
 		d.mu.Unlock()
 		d.deliveries.WithLabelValues(n.Event, ResultSuppressed).Inc()
 		d.opts.Logger.Debug("notify: suppressed inside cooldown", "event", n.Event, "harness", n.Harness, "cooldown", cfg.Cooldown)
 		return false
 	}
 	prev, hadPrev := d.sent[key]
-	d.sent[key] = n.Time
+	if !perRun {
+		d.sent[key] = n.Time
+	}
 	if n.Event == core.NotifyRecovered {
 		delete(d.sent, cooldownKey{n.Harness, core.NotifyFailed})
 		delete(d.sent, cooldownKey{n.Harness, core.NotifyLoopStopped})
@@ -323,10 +326,12 @@ func (d *Dispatcher) Notify(n Notification) bool {
 		return true
 	default:
 		// Not delivered, so it must not hold the cooldown against the next.
-		if hadPrev {
-			d.sent[key] = prev
-		} else {
-			delete(d.sent, key)
+		if !perRun {
+			if hadPrev {
+				d.sent[key] = prev
+			} else {
+				delete(d.sent, key)
+			}
 		}
 		d.mu.Unlock()
 		d.deliveries.WithLabelValues(n.Event, ResultDropped).Inc()

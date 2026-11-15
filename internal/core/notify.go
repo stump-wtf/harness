@@ -38,6 +38,18 @@ const (
 	// NotifyRunFailed fires when a scheduled or triggered run ends failed
 	// or timed out. Opt-in: a job that fails on purpose would otherwise page.
 	NotifyRunFailed = "run_failed"
+	// NotifyRunStarted fires when a scheduled or triggered run starts a
+	// process. Opt-in, and exempt from the cooldown: every run is its own
+	// event, so a harness that runs every minute is meant to say so every
+	// minute. It exists so an operator's hook can follow what the daemon is
+	// doing as it happens, without polling `harness runs`.
+	NotifyRunStarted = "run_started"
+	// NotifyRunFinished fires when a run that started a process ends, whatever
+	// its outcome (success, failed, timed_out, cancelled ...). A decision that
+	// started no process (skipped, missed) is not reported. Opt-in, and
+	// exempt from the cooldown, like run_started. run_failed still fires
+	// for a failed or timed-out run; the two are separate opt-ins.
+	NotifyRunFinished = "run_finished"
 	// NotifyIntentLost fires when a daemon boot finds an autostart member
 	// left down by a persisted enabled=false (issue #835): the intent
 	// flipped at some point without notice, and a later restart made the
@@ -70,7 +82,14 @@ const (
 
 // NotifyEvents is every event `events` may name, in documentation order.
 var NotifyEvents = []string{
-	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyRunFailed, NotifyIntentLost, NotifyParked, NotifyStalled, NotifyHealth, NotifyRecovered,
+	NotifyFailed, NotifyFlapping, NotifyLoopStopped, NotifySessionRotated, NotifyRunFailed, NotifyRunStarted, NotifyRunFinished, NotifyIntentLost, NotifyParked, NotifyStalled, NotifyHealth, NotifyRecovered,
+}
+
+// IsPerRunEvent reports whether event describes one run rather than a state a
+// harness is in. Those events are not de-duplicated by the cooldown: a second
+// run is not a repeat of the first.
+func IsPerRunEvent(event string) bool {
+	return event == NotifyRunStarted || event == NotifyRunFinished
 }
 
 // DefaultNotifyEvents is `events` when the table omits it: everything that
