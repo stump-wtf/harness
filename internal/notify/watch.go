@@ -44,6 +44,7 @@ package notify
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -120,7 +121,10 @@ func (w *Watcher) handle(ev supervisor.Event) {
 		}
 	case supervisor.EventFlapping:
 		w.flapping(ev)
+	case supervisor.EventRunStarted:
+		w.runStarted(ev)
 	case supervisor.EventRunFinished:
+		w.runDone(ev)
 		w.runFinished(ev)
 	case supervisor.EventHoldChanged:
 		w.holdChanged(ev)
@@ -258,6 +262,41 @@ func (w *Watcher) flapping(ev supervisor.Event) {
 		Time:     ev.Time,
 		ExitCode: &code,
 		Restarts: ev.Restarts,
+	}, false)
+}
+
+// runStarted announces a run that started a process. Opt-in (run_started).
+func (w *Watcher) runStarted(ev supervisor.Event) {
+	r := ev.Run
+	w.send(Notification{
+		Event: core.NotifyRunStarted, Harness: ev.Name, State: string(r.Outcome),
+		Message: fmt.Sprintf("%s run #%d started", ev.Name, r.RunID),
+		Hint:    "harness logs " + ev.Name + " --run " + strconv.Itoa(r.RunID),
+		Time:    ev.Time,
+		RunID:   r.RunID,
+	}, false)
+}
+
+// runDone announces the end of a run that started a process, whatever its
+// outcome. A record for a decision that started no process (skipped, missed)
+// is not a run ending. Opt-in (run_finished); run_failed is reported by
+// runFinished and is a separate opt-in.
+func (w *Watcher) runDone(ev supervisor.Event) {
+	r := ev.Run
+	if r.Outcome == supervisor.OutcomeSkipped || r.Outcome == supervisor.OutcomeMissed || r.Outcome == supervisor.OutcomeRunning {
+		return
+	}
+	msg := fmt.Sprintf("%s run #%d %s", ev.Name, r.RunID, strings.ReplaceAll(string(r.Outcome), "_", " "))
+	if r.ExitCode != nil {
+		msg += fmt.Sprintf(" (exit %d)", *r.ExitCode)
+	}
+	w.send(Notification{
+		Event: core.NotifyRunFinished, Harness: ev.Name, State: string(r.Outcome),
+		Message:  msg,
+		Hint:     "harness logs " + ev.Name + " --run " + strconv.Itoa(r.RunID),
+		Time:     ev.Time,
+		ExitCode: r.ExitCode,
+		RunID:    r.RunID,
 	}, false)
 }
 

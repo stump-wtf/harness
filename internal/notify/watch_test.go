@@ -10,6 +10,8 @@ package notify
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +47,12 @@ func (f *fakeSource) ParkOf(string) (supervisor.ParkInfo, bool) {
 	return f.park, !f.park.Until.IsZero()
 }
 
+// lifecycleEvents is every event except the per-run ones (run_started, run_finished): the tests that use it are about
+// state changes and failures, and a per-run event would report each run they feed in a second time.
+func lifecycleEvents() []string {
+	return slices.DeleteFunc(slices.Clone(core.NotifyEvents), core.IsPerRunEvent)
+}
+
 func newWatcherRig(t *testing.T, events []string) (*fakeSource, *Watcher, string) {
 	t.Helper()
 	argv, out := NewRecorder(t)
@@ -60,7 +68,7 @@ func newWatcherRig(t *testing.T, events []string) (*fakeSource, *Watcher, string
 }
 
 func TestWatcherRunFailedQuotesTheRunLog(t *testing.T) {
-	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src, w, out := newWatcherRig(t, []string{core.NotifyRunFailed})
 	runLog := filepath.Join(src.dir, "nightly", "run.log")
 	if err := os.MkdirAll(filepath.Dir(runLog), 0o755); err != nil {
 		t.Fatal(err)
@@ -81,6 +89,78 @@ func TestWatcherRunFailedQuotesTheRunLog(t *testing.T) {
 	if p.Event != core.NotifyRunFailed || p.RunID != 42 || p.Cause != "fatal: repository not found" ||
 		p.Hint != "harness logs nightly --run 42" || !strings.Contains(p.Message, "run #42 failed (exit 128)") {
 		t.Fatalf("payload = %+v", p)
+	}
+}
+
+// run_started and run_finished are opt-in and report every run that started a
+// process, whatever its outcome; a decision that started none (skipped,
+// missed) is not a run ending. They are exempt from the cooldown, because the
+// second run of a harness is not a repeat of the first.
+func TestWatcherRunStartedAndFinishedAreOptIn(t *testing.T) {
+	for _, e := range core.DefaultNotifyEvents {
+		if core.IsPerRunEvent(e) {
+			t.Fatalf("%s is in the default events: it must stay opt-in", e)
+		}
+	}
+	src, _, out := newWatcherRig(t, nil) // the default events only
+	src.ch <- supervisor.Event{Kind: supervisor.EventRunStarted, Name: "worker", Run: supervisor.RunRecord{RunID: 5, Outcome: supervisor.OutcomeRunning}}
+	src.ch <- supervisor.Event{Kind: supervisor.EventRunFinished, Name: "worker", Run: supervisor.RunRecord{RunID: 5, Outcome: supervisor.OutcomeSuccess}}
+	time.Sleep(150 * time.Millisecond)
+	if n := len(ReadReceived(t, out)); n != 0 {
+		t.Fatalf("%d deliveries with the default events, want 0", n)
+	}
+}
+
+func TestWatcherRunStartedAndFinishedReportEveryRun(t *testing.T) {
+	src, w, out := newWatcherRig(t, []string{core.NotifyRunStarted, core.NotifyRunFinished})
+	code := 0
+	src.ch <- supervisor.Event{Kind: supervisor.EventRunStarted, Name: "worker", Run: supervisor.RunRecord{RunID: 5, Outcome: supervisor.OutcomeRunning}}
+	src.ch <- supervisor.Event{Kind: supervisor.EventRunFinished, Name: "worker", Run: supervisor.RunRecord{RunID: 5, Outcome: supervisor.OutcomeSuccess, ExitCode: &code}}
+	// A second run straight after: inside the one-minute cooldown, and still reported.
+	src.ch <- supervisor.Event{Kind: supervisor.EventRunStarted, Name: "worker", Run: supervisor.RunRecord{RunID: 6, Outcome: supervisor.OutcomeRunning}}
+	src.ch <- supervisor.Event{Kind: supervisor.EventRunFinished, Name: "worker", Run: supervisor.RunRecord{RunID: 6, Outcome: supervisor.OutcomeTimedOut}}
+	r := WaitReceived(t, w.d, out, 4)
+	var got []string
+	for _, d := range r {
+		got = append(got, d.Payload.Event+":"+strconv.Itoa(d.Payload.RunID)+":"+d.Payload.State)
+	}
+	want := []string{"run_finished:5:success", "run_finished:6:timed_out", "run_started:5:running", "run_started:6:running"}
+	slices.Sort(got) // deliveries are not ordered across runs
+	if !slices.Equal(got, want) {
+		t.Fatalf("deliveries = %v, want %v", got, want)
+	}
+	for _, d := range r {
+		if p := d.Payload; p.Event == "run_finished" && p.RunID == 5 &&
+			(p.ExitCode == nil || *p.ExitCode != 0 || !strings.Contains(p.Message, "run #5 success (exit 0)") || p.Hint != "harness logs worker --run 5") {
+			t.Fatalf("finished payload = %+v", p)
+		}
+	}
+}
+
+func TestWatcherRunFinishedIgnoresDecisionsThatStartedNoProcess(t *testing.T) {
+	src, w, out := newWatcherRig(t, []string{core.NotifyRunFinished})
+	src.ch <- supervisor.Event{Kind: supervisor.EventRunFinished, Name: "worker", Run: supervisor.RunRecord{RunID: 7, Outcome: supervisor.OutcomeSkipped}}
+	src.ch <- supervisor.Event{Kind: supervisor.EventRunFinished, Name: "worker", Run: supervisor.RunRecord{RunID: 8, Outcome: supervisor.OutcomeMissed}}
+	src.ch <- supervisor.Event{Kind: supervisor.EventRunFinished, Name: "worker", Run: supervisor.RunRecord{RunID: 9, Outcome: supervisor.OutcomeCancelled}}
+	r := WaitReceived(t, w.d, out, 1)
+	time.Sleep(100 * time.Millisecond)
+	if n := len(ReadReceived(t, out)); n != 1 || r[0].Payload.RunID != 9 {
+		t.Fatalf("%d deliveries, first %+v: want only the cancelled run #9", n, r[0].Payload)
+	}
+}
+
+func TestWatcherFailedRunStillFiresRunFailedAndRunFinishedSeparately(t *testing.T) {
+	src, w, out := newWatcherRig(t, []string{core.NotifyRunFailed, core.NotifyRunFinished})
+	code := 1
+	src.ch <- supervisor.Event{Kind: supervisor.EventRunFinished, Name: "worker", Run: supervisor.RunRecord{RunID: 3, Outcome: supervisor.OutcomeFailed, ExitCode: &code}}
+	r := WaitReceived(t, w.d, out, 2)
+	var events []string
+	for _, d := range r {
+		events = append(events, d.Payload.Event)
+	}
+	slices.Sort(events)
+	if !slices.Equal(events, []string{"run_failed", "run_finished"}) {
+		t.Fatalf("events = %v", events)
 	}
 }
 
@@ -127,7 +207,7 @@ func TestWatcherParkedOncePerPark(t *testing.T) {
 
 // A hold that is not quota is not a park.
 func TestWatcherHoursHoldIsNotAPark(t *testing.T) {
-	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src, w, out := newWatcherRig(t, lifecycleEvents())
 	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "rc", Holds: core.HoldSetOf(core.HoldHours)}
 	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "rc", Holds: core.HoldSetOf(core.HoldBudget)}
 	src.ch <- supervisor.Event{Kind: supervisor.EventFlapping, Name: "sentinel", Restarts: 2}
@@ -142,7 +222,7 @@ func TestWatcherHoursHoldIsNotAPark(t *testing.T) {
 // restart or an upgrade does not repeat it (SPEC-0003 Scenario "A park is
 // heard once").
 func TestWatcherRestoredParkIsNotAnnouncedAgain(t *testing.T) {
-	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src, w, out := newWatcherRig(t, lifecycleEvents())
 	src.park = supervisor.ParkInfo{Until: time.Date(2026, 10, 4, 15, 0, 0, 0, time.UTC), Rule: "common/payment required", Restored: true}
 	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "review", Holds: core.HoldSetOf(core.HoldQuota)}
 	src.ch <- supervisor.Event{Kind: supervisor.EventFlapping, Name: "sentinel", Restarts: 2}
@@ -155,7 +235,7 @@ func TestWatcherRestoredParkIsNotAnnouncedAgain(t *testing.T) {
 
 // A group park says which group, and whose refusal parked it.
 func TestWatcherParkedGroupNamesTheTrigger(t *testing.T) {
-	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src, w, out := newWatcherRig(t, lifecycleEvents())
 	src.park = supervisor.ParkInfo{Until: time.Date(2026, 10, 4, 15, 0, 0, 0, time.UTC), Rule: "crush/litellm.ratelimiterror", Group: "hyper", By: "review"}
 	src.ch <- supervisor.Event{Kind: supervisor.EventHoldChanged, Name: "glm-review", Holds: core.HoldSetOf(core.HoldQuota)}
 	p := WaitReceived(t, w.d, out, 1)[0].Payload
@@ -168,7 +248,7 @@ func TestWatcherParkedGroupNamesTheTrigger(t *testing.T) {
 // closed run is already in it, and records with no verdict (a skip) neither
 // count nor break it.
 func TestWatcherRunFailedCountsTheStreak(t *testing.T) {
-	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src, w, out := newWatcherRig(t, lifecycleEvents())
 	src.runs = []supervisor.RunRecord{
 		{RunID: 1, Outcome: supervisor.OutcomeSuccess},
 		{RunID: 2, Outcome: supervisor.OutcomeFailed},
@@ -186,7 +266,7 @@ func TestWatcherRunFailedCountsTheStreak(t *testing.T) {
 
 // The first failure of a streak is just "failed": "1 in a row" says nothing.
 func TestWatcherRunFailedAloneHasNoStreak(t *testing.T) {
-	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src, w, out := newWatcherRig(t, lifecycleEvents())
 	src.runs = []supervisor.RunRecord{{RunID: 7, Outcome: supervisor.OutcomeSuccess}, {RunID: 8, Outcome: supervisor.OutcomeFailed}}
 	code := 2
 	src.ch <- supervisor.Event{Kind: supervisor.EventRunFinished, Name: "nightly", Run: supervisor.RunRecord{RunID: 8, Outcome: supervisor.OutcomeFailed, ExitCode: &code}}
@@ -201,7 +281,7 @@ func TestWatcherRunFailedAloneHasNoStreak(t *testing.T) {
 // sent "gave up after 0 consecutive failures" and "running again" every ten
 // minutes for ten hours while each run died on the same 402.
 func TestWatcherTriggeredFailedIsNotAGiveUp(t *testing.T) {
-	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src, w, out := newWatcherRig(t, lifecycleEvents())
 	src.snap = supervisor.Snapshot{Name: "review", State: core.StateFailed, Triggered: true, LastExitCode: 1}
 	src.ch <- supervisor.Event{Kind: supervisor.EventStateChanged, Name: "review", From: core.StateDegraded, To: core.StateFailed}
 	src.ch <- supervisor.Event{Kind: supervisor.EventStateChanged, Name: "review", From: core.StateStarting, To: core.StateRunning}
@@ -319,7 +399,7 @@ func TestWatcherSessionRotated(t *testing.T) {
 // the operator, once per harness, and the notification must carry what
 // happened and how to answer it.
 func TestWatcherIntentLostNotifiesPerHarness(t *testing.T) {
-	_, w, out := newWatcherRig(t, core.NotifyEvents)
+	_, w, out := newWatcherRig(t, lifecycleEvents())
 	w.IntentLost([]string{"alpha", "beta"})
 	got := WaitReceived(t, w.d, out, 2)
 	time.Sleep(100 * time.Millisecond)
@@ -352,7 +432,7 @@ func TestWatcherIntentLostNotifiesPerHarness(t *testing.T) {
 // idle span against the configured timeout, the process tree the worker was
 // stuck in, and whether it was revived or left alone.
 func TestWatcherStalledNamesTheCauseAndTheTree(t *testing.T) {
-	_, w, out := newWatcherRig(t, core.NotifyEvents)
+	_, w, out := newWatcherRig(t, lifecycleEvents())
 	w.Stalled(stallguard.Stall{
 		Harness: "worker", Idle: 90 * time.Minute, StallTimeout: 45 * time.Minute,
 		Action: core.StallRestart, Restarts: 2,
@@ -383,7 +463,7 @@ func TestWatcherStalledNamesTheCauseAndTheTree(t *testing.T) {
 // reviving this worker, so a human is in the loop, and the moment it is running
 // again is worth hearing.
 func TestWatcherStallGiveUpOpensAnAlert(t *testing.T) {
-	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src, w, out := newWatcherRig(t, lifecycleEvents())
 	w.Stalled(stallguard.Stall{
 		Harness: "worker", Idle: 3 * time.Hour, StallTimeout: 45 * time.Minute,
 		Action: core.StallRestart, Restarts: 5, GaveUp: true,
@@ -403,7 +483,7 @@ func TestWatcherStallGiveUpOpensAnAlert(t *testing.T) {
 // An ordinary stall revives on its own, so it opens nothing: the operator must
 // not get a recovery notice for a worker that never stopped.
 func TestWatcherStallDoesNotOpenAnAlert(t *testing.T) {
-	src, w, out := newWatcherRig(t, core.NotifyEvents)
+	src, w, out := newWatcherRig(t, lifecycleEvents())
 	w.Stalled(stallguard.Stall{Harness: "worker", Idle: time.Hour, StallTimeout: 45 * time.Minute, Action: core.StallRestart, Restarts: 1})
 	WaitReceived(t, w.d, out, 1)
 	src.ch <- supervisor.Event{Kind: supervisor.EventFlapping, Name: "sentinel", Restarts: 2}

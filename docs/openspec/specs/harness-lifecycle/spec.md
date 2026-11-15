@@ -231,7 +231,12 @@ When a harness needs a person, the daemon SHALL tell one: if the global
 `failed` (give-up), on crash-loop escalation (`flapping`), when the runaway
 tool-loop guard stops a harness (`loop_stopped`), when the session guard rotates
 a wedged session or fails to (`session_rotated`), on a failed or timed-out
-scheduled or triggered run (`run_failed`, opt-in), once per park when a
+scheduled or triggered run (`run_failed`, opt-in), when a scheduled or
+triggered run starts a process (`run_started`, opt-in) and when such a run
+ends with any outcome (`run_finished`, opt-in; a skipped or missed decision
+started no process and SHALL NOT be reported; both SHALL be exempt from the
+per-(harness, event) cooldown, because the second run of a harness is not a
+repeat of the first), once per park when a
 harness is parked on an exhausted provider quota (`parked`, SPEC-0021 REQ-13:
 its message SHALL name the reset and the classifier rule, never the error
 text), once per stall episode when the stall watchdog finds a persistent
@@ -282,6 +287,16 @@ run it once with a `test` event.
 - **WHEN** two firings run and fail
 - **THEN** the hook receives `run_failed` for each, the second saying
   `2 in a row`, and never `failed` or `recovered`
+
+#### Scenario: Every run can be followed
+
+- **GIVEN** a triggered harness, and `events` naming `run_started` and
+  `run_finished`, with the default cooldown
+- **WHEN** it runs twice within the cooldown, the second run timing out, and a
+  third firing is skipped
+- **THEN** the hook receives `run_started` and `run_finished` for each of the
+  two runs (the second `run_finished` with state `timed_out`), and nothing for
+  the skipped firing
 
 #### Scenario: A park is heard once
 
